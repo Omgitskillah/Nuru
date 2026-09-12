@@ -35,3 +35,21 @@ def test_list_notes_raises_clear_error_on_permission_denied(monkeypatch):
 
     with pytest.raises(PermissionError, match="Access denied"):
         server.list_notes()
+
+
+def test_list_files_includes_notes_and_attachments(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("# Welcome")
+    (tmp_path / "diagram.png").write_bytes(b"fake image data")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_files() == ["Welcome.md", "diagram.png"]
+
+
+def test_list_files_excludes_obsidian_config_and_dotfiles(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("# Welcome")
+    (tmp_path / ".DS_Store").write_text("junk")
+    (tmp_path / ".obsidian").mkdir()
+    (tmp_path / ".obsidian" / "app.json").write_text("{}")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_files() == ["Welcome.md"]

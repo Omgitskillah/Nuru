@@ -17,9 +17,7 @@ VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser()
 mcp = MCPServer("obsidian-mcp")
 
 
-@mcp.tool()
-def list_notes() -> list[str]:
-    """List all notes (Markdown files) in the vault, as paths relative to the vault root."""
+def _check_vault_accessible() -> None:
     try:
         # rglob() silently skips directories it can't scan (since Python 3.13),
         # so check accessibility explicitly rather than relying on it to raise.
@@ -29,8 +27,27 @@ def list_notes() -> list[str]:
             f"Access denied to vault. Check the VAULT_PATH env var and its permissions."
         ) from e
 
+
+@mcp.tool()
+def list_notes() -> list[str]:
+    """List all notes (Markdown files) in the vault, as paths relative to the vault root."""
+    _check_vault_accessible()
     return sorted(
         str(path.relative_to(VAULT_PATH)) for path in VAULT_PATH.rglob("*.md")
+    )
+
+
+@mcp.tool()
+def list_files() -> list[str]:
+    """List all files in the vault (notes and attachments alike), as paths relative to the vault root.
+
+    Excludes Obsidian's internal .obsidian/ config folder and dotfiles (e.g. .DS_Store).
+    """
+    _check_vault_accessible()
+    return sorted(
+        str(path.relative_to(VAULT_PATH))
+        for path in VAULT_PATH.rglob("*")
+        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(VAULT_PATH).parts)
     )
 
 

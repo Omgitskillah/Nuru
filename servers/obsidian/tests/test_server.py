@@ -69,11 +69,18 @@ def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
     ]
 
 
-def test_list_files_in_directory_raises_if_missing(tmp_path, monkeypatch):
+def test_list_files_in_directory_returns_empty_list_if_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        server.list_files_in_directory("NoSuchDir")
+    assert server.list_files_in_directory("NoSuchDir") == []
+
+
+def test_list_files_in_directory_finds_first_nested_match_by_name(tmp_path, monkeypatch):
+    (tmp_path / "Projects" / "folder").mkdir(parents=True)
+    (tmp_path / "Projects" / "folder" / "a.md").write_text("a")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_files_in_directory("folder") == ["Projects/folder/a.md"]
 
 
 def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_path, monkeypatch):

@@ -12,7 +12,7 @@ from mcp.server.mcpserver import MCPServer
 
 load_dotenv()
 
-VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser()
+VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser().resolve()
 
 mcp = MCPServer("obsidian-mcp")
 
@@ -60,17 +60,25 @@ def list_files_in_directory(directory: str) -> list[str]:
     """List all files recursively within a subdirectory of the vault, as paths relative to the vault root.
 
     Args:
-        directory: Path to the subdirectory, relative to the vault root.
+        directory: Path to the subdirectory, relative to the vault root. If it
+            isn't found directly under the vault root, the vault is searched
+            recursively for a directory with that name, and the first match
+            (alphabetically, by path) is used.
 
-    Raises FileNotFoundError if the directory does not exist in the vault.
+    Returns an empty list if no matching directory is found anywhere in the vault.
     """
     _check_accessible(VAULT_PATH)
 
     target = (VAULT_PATH / directory).resolve()
-    if not target.is_relative_to(VAULT_PATH.resolve()):
-        raise ValueError(f"Directory '{directory}' is outside the vault.")
-    if not target.is_dir():
-        raise FileNotFoundError(f"Directory '{directory}' does not exist in the vault.")
+    if not target.is_relative_to(VAULT_PATH) or not target.is_dir():
+        name = Path(directory).name
+        matches = sorted(
+            p for p in VAULT_PATH.rglob("*") if p.is_dir() and p.name == name
+        )
+        if not matches:
+            return []
+        target = matches[0]
+
     _check_accessible(target)
 
     return sorted(

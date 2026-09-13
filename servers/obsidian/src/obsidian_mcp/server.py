@@ -107,5 +107,36 @@ def search_notes(query: str) -> list[str]:
     )
 
 
+@mcp.tool()
+def read_note(name: str) -> str:
+    """Return the full contents of a note (Markdown file) by name.
+
+    Args:
+        name: The note's filename, with or without the .md extension. If it
+            isn't found directly under the vault root, the vault is searched
+            recursively for a note with that name, and the first match
+            (alphabetically, by path) is used.
+
+    Returns an empty string if no matching note is found anywhere in the vault.
+    """
+    _check_accessible(VAULT_PATH)
+
+    filename = name if name.endswith(".md") else f"{name}.md"
+
+    target = (VAULT_PATH / filename).resolve()
+    if not target.is_relative_to(VAULT_PATH) or not target.is_file():
+        matches = sorted(p for p in VAULT_PATH.rglob("*.md") if p.name == filename)
+        if not matches:
+            return ""
+        target = matches[0]
+
+    try:
+        return target.read_text()
+    except PermissionError as e:
+        raise PermissionError(
+            f"Access denied to '{target}'. Check the VAULT_PATH env var and its permissions."
+        ) from e
+
+
 def main() -> None:
     mcp.run()

@@ -124,3 +124,54 @@ def test_search_notes_returns_empty_list_when_not_found(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     assert server.search_notes("nonexistent") == []
+
+
+def test_read_note_with_extension(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("Welcome.md") == "Hello World"
+
+
+def test_read_note_without_extension(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("Welcome") == "Hello World"
+
+
+def test_read_note_finds_nested_note_by_name(tmp_path, monkeypatch):
+    (tmp_path / "Projects").mkdir()
+    (tmp_path / "Projects" / "Nuru MCP.md").write_text("# Nuru MCP")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("Nuru MCP") == "# Nuru MCP"
+
+
+def test_read_note_with_relative_subdirectory_path(tmp_path, monkeypatch):
+    (tmp_path / "Learning").mkdir()
+    (tmp_path / "Learning" / "Agents.md").write_text("# Agents note content")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("Learning/Agents.md") == "# Agents note content"
+
+
+def test_read_note_returns_empty_string_if_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("NoSuchNote") == ""
+
+
+def test_read_note_raises_clear_error_on_permission_denied(tmp_path, monkeypatch):
+    import os
+
+    note = tmp_path / "Welcome.md"
+    note.write_text("Hello World")
+    os.chmod(note, 0o000)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    try:
+        with pytest.raises(PermissionError, match="Access denied"):
+            server.read_note("Welcome.md")
+    finally:
+        os.chmod(note, 0o644)

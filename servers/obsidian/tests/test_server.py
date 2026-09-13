@@ -175,3 +175,38 @@ def test_read_note_raises_clear_error_on_permission_denied(tmp_path, monkeypatch
             server.read_note("Welcome.md")
     finally:
         os.chmod(note, 0o644)
+
+
+def test_list_tags_returns_unique_sorted_tags(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("#test #dummy-vault")
+    (tmp_path / "Other.md").write_text("Nothing #relevant here, also #test again")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_tags() == ["dummy-vault", "relevant", "test"]
+
+
+def test_list_tags_ignores_markdown_headings(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("# Welcome\n\nNo tags here.")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_tags() == []
+
+
+def test_list_tags_empty_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_tags() == []
+
+
+def test_count_tags_counts_occurrences_across_notes(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("#test #dummy-vault")
+    (tmp_path / "Other.md").write_text("Nothing #relevant here, also #test again")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.count_tags() == {"dummy-vault": 1, "relevant": 1, "test": 2}
+
+
+def test_count_tags_empty_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.count_tags() == {}

@@ -5,6 +5,8 @@ Run standalone via stdio with: uv run obsidian-mcp
 """
 
 import os
+import re
+from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 load_dotenv()
 
 VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser().resolve()
+TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")
 
 mcp = MCPServer("obsidian-mcp")
 
@@ -105,6 +108,26 @@ def search_notes(query: str) -> list[str]:
         for path in VAULT_PATH.rglob("*.md")
         if query_lower in path.read_text(errors="ignore").lower()
     )
+
+
+@mcp.tool()
+def list_tags() -> list[str]:
+    """List all unique tags (e.g. 'project' for '#project') used across notes in the vault."""
+    _check_accessible(VAULT_PATH)
+    tags: set[str] = set()
+    for path in VAULT_PATH.rglob("*.md"):
+        tags.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
+    return sorted(tags)
+
+
+@mcp.tool()
+def count_tags() -> dict[str, int]:
+    """Count occurrences of each unique tag (e.g. 'project' for '#project') across notes in the vault."""
+    _check_accessible(VAULT_PATH)
+    counts: Counter[str] = Counter()
+    for path in VAULT_PATH.rglob("*.md"):
+        counts.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
+    return dict(sorted(counts.items()))
 
 
 @mcp.tool()

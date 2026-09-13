@@ -53,3 +53,39 @@ def test_list_files_excludes_obsidian_config_and_dotfiles(tmp_path, monkeypatch)
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     assert server.list_files() == ["Welcome.md"]
+
+
+def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
+    (tmp_path / "Projects").mkdir()
+    (tmp_path / "Projects" / "Nuru MCP.md").write_text("# Nuru MCP")
+    (tmp_path / "Projects" / "Sub").mkdir()
+    (tmp_path / "Projects" / "Sub" / "diagram.png").write_bytes(b"data")
+    (tmp_path / "Other.md").write_text("# Other")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_files_in_directory("Projects") == [
+        "Projects/Nuru MCP.md",
+        "Projects/Sub/diagram.png",
+    ]
+
+
+def test_list_files_in_directory_raises_if_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        server.list_files_in_directory("NoSuchDir")
+
+
+def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_path, monkeypatch):
+    import os
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    os.chmod(locked, 0o000)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    try:
+        with pytest.raises(PermissionError, match="Access denied"):
+            server.list_files_in_directory("locked")
+    finally:
+        os.chmod(locked, 0o755)

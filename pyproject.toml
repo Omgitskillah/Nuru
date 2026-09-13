@@ -1,0 +1,16 @@
+[tool.uv.workspace]
+members = ["servers/obsidian", "servers/tools/logging"]
+
+[tool.pytest.ini_options]
+testpaths = ["servers"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "obsidian-mcp",
+    "access-logging",
+]
+
+[tool.uv.sources]
+obsidian-mcp = { workspace = true }
+access-logging = { workspace = true }

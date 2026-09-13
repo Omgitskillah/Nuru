@@ -10,6 +10,7 @@ requires-python = ">=3.14.7"
 dependencies = [
     "mcp>=2.2.0",
     "python-dotenv>=1.2.3",
+    "access-logging",
 ]
 
 [project.scripts]
@@ -18,6 +19,9 @@ obsidian-mcp = "obsidian_mcp:main"
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+access-logging = { workspace = true }
 
 [dependency-groups]
 dev = [

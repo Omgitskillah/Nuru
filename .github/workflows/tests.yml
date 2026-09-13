@@ -5,11 +5,8 @@ on:
   pull_request:
 
 jobs:
-  obsidian-mcp:
+  tests:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: servers/obsidian
     steps:
       - uses: actions/checkout@v4
 

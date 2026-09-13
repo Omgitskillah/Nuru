@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from access_logging import AccessLogMiddleware
 from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 
@@ -17,7 +18,11 @@ load_dotenv()
 VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser().resolve()
 TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")
 
-mcp = MCPServer("obsidian-mcp")
+# Every session's access is logged under here, independent of which client
+# connects (Inspector, Claude Desktop, or anything else) - see tools/logging.
+LOG_DIR = Path(os.environ.get("OBSIDIAN_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+
+mcp = MCPServer("obsidian-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
 
 
 def _check_accessible(path: Path) -> None:
@@ -124,7 +129,7 @@ def search_notes(query: str) -> list[str]:
     )
 
 
-@mcp.tool()
+@mcp.resource("vault://tags", name="tags", description="All unique tags (e.g. 'project' for '#project') used across notes in the vault.")
 def list_tags() -> list[str]:
     """List all unique tags (e.g. 'project' for '#project') used across notes in the vault."""
     _check_accessible(VAULT_PATH)
@@ -134,7 +139,7 @@ def list_tags() -> list[str]:
     return sorted(tags)
 
 
-@mcp.tool()
+@mcp.resource("vault://tags/counts", name="tag_counts", description="Occurrence counts for each unique tag (e.g. 'project' for '#project') across notes in the vault.")
 def count_tags() -> dict[str, int]:
     """Count occurrences of each unique tag (e.g. 'project' for '#project') across notes in the vault."""
     _check_accessible(VAULT_PATH)

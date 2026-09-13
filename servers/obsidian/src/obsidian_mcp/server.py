@@ -59,6 +59,9 @@ def list_files() -> list[str]:
 def list_files_in_directory(directory: str) -> list[str]:
     """List all files recursively within a subdirectory of the vault, as paths relative to the vault root.
 
+    Args:
+        directory: Path to the subdirectory, relative to the vault root.
+
     Raises FileNotFoundError if the directory does not exist in the vault.
     """
     _check_accessible(VAULT_PATH)
@@ -74,6 +77,25 @@ def list_files_in_directory(directory: str) -> list[str]:
         str(path.relative_to(VAULT_PATH))
         for path in target.rglob("*")
         if path.is_file() and _is_visible(path)
+    )
+
+
+@mcp.tool()
+def search_notes(query: str) -> list[str]:
+    """Search notes (Markdown files) for a string, case-insensitive.
+
+    Args:
+        query: The substring to search for within each note's content.
+
+    Returns paths (relative to the vault root) of notes whose content contains
+    the query. Returns an empty list if no notes match.
+    """
+    _check_accessible(VAULT_PATH)
+    query_lower = query.lower()
+    return sorted(
+        str(path.relative_to(VAULT_PATH))
+        for path in VAULT_PATH.rglob("*.md")
+        if query_lower in path.read_text(errors="ignore").lower()
     )
 
 

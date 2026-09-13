@@ -89,3 +89,31 @@ def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_pat
             server.list_files_in_directory("locked")
     finally:
         os.chmod(locked, 0o755)
+
+
+def test_search_notes_finds_matching_notes_case_insensitively(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    (tmp_path / "Other.md").write_text("Nothing relevant here")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.search_notes("hello") == ["Welcome.md"]
+
+def test_search_notes_finds_partial_matching_notes_case_insensitively(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    (tmp_path / "Other.md").write_text("Nothing relevant here")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.search_notes("ell") == ["Welcome.md"]
+
+def test_search_notes_finds_tags_in_notes_case_insensitively(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    (tmp_path / "Other.md").write_text("Nothing #relevant here")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.search_notes("#relevant") == ["Other.md"]
+
+def test_search_notes_returns_empty_list_when_not_found(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.search_notes("nonexistent") == []

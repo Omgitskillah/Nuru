@@ -14,7 +14,7 @@ def test_list_notes_returns_markdown_files_only(tmp_path, monkeypatch):
     (tmp_path / "notes.txt").write_text("not markdown")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_notes() == ["Welcomeing.md"]
+    assert server.list_notes() == ["Welcome.md"]
 
 
 def test_list_notes_includes_nested_files_as_relative_paths(tmp_path, monkeypatch):

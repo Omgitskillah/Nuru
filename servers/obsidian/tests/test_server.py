@@ -210,3 +210,184 @@ def test_count_tags_empty_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     assert server.count_tags() == {}
+
+
+# --- Vault containment: read_note ---
+
+
+def test_read_note_rejects_dotdot_traversal_outside_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (tmp_path / "secret.md").write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note("../secret") == ""
+    assert server.read_note("../secret.md") == ""
+
+
+def test_read_note_rejects_absolute_path_outside_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note(str(outside)) == ""
+
+
+def test_read_note_rejects_nested_dotdot_traversal(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    (vault / "Sub").mkdir(parents=True)
+    (tmp_path / "secret.md").write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note("Sub/../../secret") == ""
+
+
+def test_read_note_rejects_symlinked_note_pointing_outside_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("TOP SECRET")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note("leak") == ""
+    assert server.read_note("leak.md") == ""
+
+
+def test_read_note_rejects_symlinked_note_found_via_nested_fallback_search(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    (vault / "Sub").mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text("TOP SECRET")
+    (vault / "Sub" / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    # Looked up by bare name, so it hits the recursive fallback search.
+    assert server.read_note("leak") == ""
+
+
+def test_read_note_still_reads_legitimate_note_alongside_a_bad_symlink(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("TOP SECRET")
+    (vault / "leak.md").symlink_to(outside)
+    (vault / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note("Welcome") == "Hello World"
+    assert server.read_note("leak") == ""
+
+
+def test_read_note_allows_symlink_pointing_within_the_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "Real.md").write_text("Real content")
+    (vault / "Alias.md").symlink_to(vault / "Real.md")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.read_note("Alias") == "Real content"
+
+
+# --- Vault containment: list_files_in_directory ---
+
+
+def test_list_files_in_directory_rejects_dotdot_traversal_outside_vault(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.list_files_in_directory("../outside") == []
+    assert server.list_files_in_directory("..") == []
+
+
+def test_list_files_in_directory_rejects_absolute_path_outside_vault(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.list_files_in_directory(str(outside_dir)) == []
+
+
+def test_list_files_in_directory_rejects_nested_dotdot_traversal(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    (vault / "Projects").mkdir(parents=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.list_files_in_directory("Projects/../../outside") == []
+
+
+def test_list_files_in_directory_rejects_symlinked_directory_pointing_outside(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    (vault / "link").symlink_to(outside_dir)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.list_files_in_directory("link") == []
+
+
+def test_list_files_in_directory_rejects_symlinked_directory_found_via_fallback(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    (vault / "Projects").mkdir(parents=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    (vault / "Projects" / "link").symlink_to(outside_dir)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    # Looked up by bare name, so it hits the recursive fallback search.
+    assert server.list_files_in_directory("link") == []
+
+
+def test_list_files_in_directory_excludes_symlinked_subdir_pointing_outside(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    (vault / "Projects").mkdir(parents=True)
+    (vault / "Projects" / "real.md").write_text("real content")
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "secret.md").write_text("TOP SECRET")
+    (vault / "Projects" / "link").symlink_to(outside_dir)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.list_files_in_directory("Projects") == ["Projects/real.md"]
+
+
+def test_list_files_in_directory_allows_symlinked_directory_within_the_vault(
+    tmp_path, monkeypatch
+):
+    vault = tmp_path / "vault"
+    (vault / "Real").mkdir(parents=True)
+    (vault / "Real" / "note.md").write_text("content")
+    (vault / "Alias").symlink_to(vault / "Real")
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    # The resolved target is used, so paths come back under its real name.
+    assert server.list_files_in_directory("Alias") == ["Real/note.md"]

@@ -44,6 +44,18 @@ def _is_visible(path: Path) -> bool:
     return not any(part.startswith(".") for part in path.relative_to(VAULT_PATH).parts)
 
 
+def _is_within_vault(path: Path) -> bool:
+    """Check that path, once symlinks are resolved, is actually inside the vault.
+
+    Guards against a symlink stored inside the vault (e.g. VAULT_PATH/leak.md)
+    that points outside of it, which a lexical relative_to() check would miss.
+    """
+    try:
+        return path.resolve().is_relative_to(VAULT_PATH)
+    except OSError:
+        return False
+
+
 @mcp.tool()
 def list_files() -> list[str]:
     """List all files in the vault (notes and attachments alike), as paths relative to the vault root.
@@ -76,7 +88,9 @@ def list_files_in_directory(directory: str) -> list[str]:
     if not target.is_relative_to(VAULT_PATH) or not target.is_dir():
         name = Path(directory).name
         matches = sorted(
-            p for p in VAULT_PATH.rglob("*") if p.is_dir() and p.name == name
+            p
+            for p in VAULT_PATH.rglob("*")
+            if p.is_dir() and p.name == name and _is_within_vault(p)
         )
         if not matches:
             return []
@@ -87,7 +101,7 @@ def list_files_in_directory(directory: str) -> list[str]:
     return sorted(
         str(path.relative_to(VAULT_PATH))
         for path in target.rglob("*")
-        if path.is_file() and _is_visible(path)
+        if path.is_file() and _is_visible(path) and _is_within_vault(path)
     )
 
 
@@ -148,7 +162,11 @@ def read_note(name: str) -> str:
 
     target = (VAULT_PATH / filename).resolve()
     if not target.is_relative_to(VAULT_PATH) or not target.is_file():
-        matches = sorted(p for p in VAULT_PATH.rglob("*.md") if p.name == filename)
+        matches = sorted(
+            p
+            for p in VAULT_PATH.rglob("*.md")
+            if p.name == filename and _is_within_vault(p)
+        )
         if not matches:
             return ""
         target = matches[0]

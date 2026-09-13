@@ -1,0 +1,22 @@
+[project]
+name = "core"
+version = "0.1.0"
+description = "Terminal CLI for chatting with a local Ollama model."
+readme = "README.md"
+requires-python = ">=3.14.7"
+dependencies = [
+    "requests>=2.32.0",
+    "python-dotenv>=1.2.3",
+]
+
+[project.scripts]
+nuru = "core:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

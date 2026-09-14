@@ -18,6 +18,7 @@ from typing import Callable, TypeVar
 
 import yaml
 from access_logging import AccessLogMiddleware
+from unidecode import unidecode
 from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -37,7 +38,34 @@ TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")
 # (which skip dotfiles) never surface it.
 _INDEX_DB_NAME = ".obsidian-mcp-index.sqlite3"
 
+# generate_templates writes here. Placeholder skeletons, not vault content -
+# note-content-scanning tools (list_notes, search_notes, list_tags,
+# count_tags) exclude it, or an agent could retrieve "{{title}}" and
+# unfilled placeholder text as if it were something a person actually wrote.
+_TEMPLATES_FOLDER = "Templates"
+
 _SLUG_INVALID = re.compile(r"[^a-z0-9]+")
+
+_DATE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})$")
+_SESSION_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})$")
+
+
+def _validate_calendar_date(value: str, field_name: str) -> None:
+    """Check value is 'YYYY-MM-DD' and names a real calendar date."""
+    if not _DATE_PATTERN.match(value):
+        raise ValueError(f"{field_name} must be 'YYYY-MM-DD', got '{value}'.")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as e:
+        raise ValueError(f"{field_name} '{value}' is not a valid calendar date.") from e
+
+
+def _validate_session(value: str) -> None:
+    """Check value is 'YYYY-MM-DD-NN' with a real calendar date."""
+    match = _SESSION_PATTERN.match(value)
+    if not match:
+        raise ValueError(f"session must be 'YYYY-MM-DD-NN', got '{value}'.")
+    _validate_calendar_date(match.group(1), "session")
 
 
 class _FrontmatterDumper(yaml.SafeDumper):
@@ -150,15 +178,25 @@ def _check_accessible(path: Path) -> None:
 @mcp.tool()
 @_tool
 def list_notes() -> list[str]:
-    """List all notes (Markdown files) in the vault, as paths relative to the vault root."""
+    """List all notes (Markdown files) in the vault, as paths relative to the vault root.
+
+    Excludes Templates/ - those are placeholder skeletons, not notes.
+    """
     _check_accessible(VAULT_PATH)
     return sorted(
-        str(path.relative_to(VAULT_PATH)) for path in VAULT_PATH.rglob("*.md")
+        str(path.relative_to(VAULT_PATH))
+        for path in VAULT_PATH.rglob("*.md")
+        if not _is_in_templates(path)
     )
 
 
 def _is_visible(path: Path) -> bool:
     return not any(part.startswith(".") for part in path.relative_to(VAULT_PATH).parts)
+
+
+def _is_in_templates(path: Path) -> bool:
+    parts = path.relative_to(VAULT_PATH).parts
+    return bool(parts) and parts[0] == _TEMPLATES_FOLDER
 
 
 def _is_within_vault(path: Path) -> bool:
@@ -233,33 +271,44 @@ def search_notes(query: str) -> list[str]:
         query: The substring to search for within each note's content.
 
     Returns paths (relative to the vault root) of notes whose content contains
-    the query. Returns an empty list if no notes match.
+    the query. Returns an empty list if no notes match. Excludes Templates/ -
+    those are placeholder skeletons, not notes.
     """
     _check_accessible(VAULT_PATH)
     query_lower = query.lower()
     return sorted(
         str(path.relative_to(VAULT_PATH))
         for path in VAULT_PATH.rglob("*.md")
-        if query_lower in path.read_text(errors="ignore").lower()
+        if not _is_in_templates(path) and query_lower in path.read_text(errors="ignore").lower()
     )
 
 
 @mcp.resource("vault://tags", name="tags", description="All unique tags (e.g. 'project' for '#project') used across notes in the vault.")
 def list_tags() -> list[str]:
-    """List all unique tags (e.g. 'project' for '#project') used across notes in the vault."""
+    """List all unique tags (e.g. 'project' for '#project') used across notes in the vault.
+
+    Excludes Templates/ - those are placeholder skeletons, not notes.
+    """
     _check_accessible(VAULT_PATH)
     tags: set[str] = set()
     for path in VAULT_PATH.rglob("*.md"):
+        if _is_in_templates(path):
+            continue
         tags.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
     return sorted(tags)
 
 
 @mcp.resource("vault://tags/counts", name="tag_counts", description="Occurrence counts for each unique tag (e.g. 'project' for '#project') across notes in the vault.")
 def count_tags() -> dict[str, int]:
-    """Count occurrences of each unique tag (e.g. 'project' for '#project') across notes in the vault."""
+    """Count occurrences of each unique tag (e.g. 'project' for '#project') across notes in the vault.
+
+    Excludes Templates/ - those are placeholder skeletons, not notes.
+    """
     _check_accessible(VAULT_PATH)
     counts: Counter[str] = Counter()
     for path in VAULT_PATH.rglob("*.md"):
+        if _is_in_templates(path):
+            continue
         counts.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
     return dict(sorted(counts.items()))
 
@@ -311,11 +360,26 @@ def _resolve_target(path: str) -> Path:
 
 
 def _open_index() -> sqlite3.Connection:
-    return note_index.connect(VAULT_PATH / _INDEX_DB_NAME)
+    """Open the index, reconciled against the current filesystem.
+
+    Reconciling on every open (rather than only "at startup", which this
+    long-running process has no other hook for) keeps it correct regardless
+    of when or how the vault changed outside this server's own tools.
+    """
+    conn = note_index.connect(VAULT_PATH / _INDEX_DB_NAME)
+    note_index.reconcile(conn, VAULT_PATH)
+    return conn
 
 
 def _slugify(title: str) -> str:
-    return _SLUG_INVALID.sub("-", title.strip().lower()).strip("-")
+    """Transliterate to ASCII (unidecode), then keep only [a-z0-9], hyphenated.
+
+    A title that's entirely non-Latin (e.g. all CJK, or all emoji) can
+    transliterate to nothing - callers must fall back to something else
+    (create_note uses the note's own id) rather than treat that as an empty
+    title, which it isn't.
+    """
+    return _SLUG_INVALID.sub("-", unidecode(title).strip().lower()).strip("-")
 
 
 def _reject_hidden(target: Path, rel_path: str) -> None:
@@ -370,7 +434,9 @@ def _build_frontmatter(
         fields[type_field[0]] = type_field[1]
     fields["tags"] = tags
     fields["aliases"] = aliases
-    return yaml.dump(fields, Dumper=_FrontmatterDumper, sort_keys=False, default_flow_style=False)
+    return yaml.dump(
+        fields, Dumper=_FrontmatterDumper, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
 
 
 @mcp.tool()
@@ -397,15 +463,19 @@ def create_note(
             the note's folder.
         title: Human-readable title. Slugified to become the filename, and
             used verbatim as the first alias.
-        author: One of: user, nuru, both.
+        author: One of: user, nuru, both. Types under user/ (directives,
+            daily, correction) require author="user".
         body: Markdown content, placed under the title heading.
         tags: Extra tags, beyond the type itself (which is always a tag).
+            No tag may contain whitespace.
         supersedes: id of the note this one replaces, if any. Must already
             exist in the index.
-        date: Required, and only valid, for type="daily": "<YYYY-MM-DD>".
-        targets: Required, and only valid, for type="correction".
+        date: Required, and only valid, for type="daily": "YYYY-MM-DD",
+            a real calendar date.
+        targets: Required, and only valid, for type="correction". Every id
+            in the list must already exist in the index.
         session: Required, and only valid, for type="transcript" or
-            type="session": "<YYYY-MM-DD>-NN".
+            type="session": "YYYY-MM-DD-NN", with a real calendar date.
 
     Returns {"id": <ulid>, "path": <vault-relative path>}.
     """
@@ -415,6 +485,10 @@ def create_note(
         raise ValueError(f"Unknown type '{type}'. Valid types: {', '.join(sorted(template.TYPE_FOLDER))}.")
     if author not in template.VALID_AUTHORS:
         raise ValueError(f"Unknown author '{author}'. Valid authors: {', '.join(sorted(template.VALID_AUTHORS))}.")
+    if template.TYPE_FOLDER[type] == _PROTECTED_FOLDER and author != "user":
+        raise ValueError(
+            f"type '{type}' is under '{_PROTECTED_FOLDER}/', which only author=\"user\" may create."
+        )
 
     type_fields = {
         name: value
@@ -426,19 +500,36 @@ def create_note(
     if set(type_fields) != allowed_fields:
         expected = f"'{required_field}'" if required_field else "none"
         raise ValueError(f"type '{type}' expects exactly these extra fields: {expected}; got {sorted(type_fields)}.")
+    if date is not None:
+        _validate_calendar_date(date, "date")
+    if session is not None:
+        _validate_session(session)
 
-    slug = _slugify(title)
-    if not slug:
-        raise ValueError(f"title '{title}' is empty, or has no characters left once slugified.")
+    if tags:
+        invalid_tags = [t for t in tags if re.search(r"\s", t)]
+        if invalid_tags:
+            raise ValueError(f"tags must not contain whitespace: {invalid_tags}.")
+
+    if not title.strip():
+        raise ValueError("title is empty.")
+
+    note_id = str(ULID())
+    # A title that's entirely non-Latin (all CJK, all emoji, ...) can
+    # transliterate to nothing - fall back to the id rather than reject a
+    # non-empty title just because ASCII slugification couldn't represent it.
+    slug = _slugify(title) or note_id.lower()
 
     with contextlib.closing(_open_index()) as conn:
         if supersedes is not None and not note_index.note_exists(conn, supersedes):
             raise ValueError(f"supersedes references unknown note id '{supersedes}'.")
+        if targets is not None:
+            unknown_targets = [t for t in targets if not note_index.note_exists(conn, t)]
+            if unknown_targets:
+                raise ValueError(f"targets references unknown note id(s): {unknown_targets}.")
 
     rel_path = f"{template.TYPE_FOLDER[type]}/{slug}.md"
     target = _resolve_target(rel_path)
 
-    note_id = str(ULID())
     created = datetime.now().strftime("%Y-%m-%dT%H:%M")
     type_field = (required_field, type_fields[required_field]) if required_field else None
     frontmatter = _build_frontmatter(
@@ -477,6 +568,16 @@ def create_note(
                     created=created,
                     supersedes=supersedes,
                 )
+        except sqlite3.IntegrityError as e:
+            # A UNIQUE violation here means the index already has a row at
+            # this path or id despite reconciliation and the atomic create
+            # above - e.g. two callers racing on the same title. Give a
+            # message instead of letting a bare sqlite3 error reach the
+            # caller as the framework's generic, contentless crash message.
+            target.unlink(missing_ok=True)
+            raise ValueError(
+                f"The index already has an entry for path '{rel_path}' or id '{note_id}'."
+            ) from e
         except Exception:
             # The index insert is what makes this note visible to
             # supersedes/append_note lookups - if it fails, the file must
@@ -609,7 +710,7 @@ def generate_templates(overwrite: bool = False) -> dict[str, list[str]]:
     written: list[str] = []
     skipped: list[str] = []
     for type, filename in template_bodies.FILENAMES.items():
-        rel_path = f"Templates/{filename}"
+        rel_path = f"{_TEMPLATES_FOLDER}/{filename}"
         target = _resolve_target(rel_path)
 
         if not overwrite and target.exists():
@@ -633,6 +734,11 @@ def generate_templates(overwrite: bool = False) -> dict[str, list[str]]:
 def rename_or_move_file(source_path: str, destination_path: str) -> str:
     """Rename or move a file within the vault.
 
+    If a note create_note made is being moved, its index row is repointed to
+    the new path in the same operation, so it stays reachable by id
+    afterward - this is what makes archive-by-move (a move, not a rewrite)
+    viable under the append-only design.
+
     Args:
         source_path: Current path of the file, relative to the vault root.
         destination_path: New path for the file, relative to the vault root.
@@ -653,18 +759,38 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     if destination.exists():
         raise FileExistsError(f"A file already exists at '{destination_path}'.")
 
+    source_rel = str(source.relative_to(VAULT_PATH))
+    destination_rel = str(destination.relative_to(VAULT_PATH))
+
     def _move() -> None:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        source.rename(destination)
+        # Opened (and reconciled) before the physical move: _open_index()
+        # reconciles against whatever's on disk right now, and reconciling
+        # after the move would see source_rel already gone and delete its
+        # row out from under update_path below, rather than repoint it.
+        with contextlib.closing(_open_index()) as conn:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(destination)
+            try:
+                note_index.update_path(conn, source_rel, destination_rel)
+            except Exception:
+                # Keep the index and the filesystem in agreement: if the
+                # index update fails, undo the move rather than leave a
+                # note's id pointing at wherever it used to be.
+                destination.rename(source)
+                raise
 
     _run_with_timeout(_move)
-    return str(destination.relative_to(VAULT_PATH))
+    return destination_rel
 
 
 @mcp.tool()
 @_tool
 def delete_file_or_directory(path: str) -> list[str]:
     """Delete a file or directory (recursively) from the vault.
+
+    Any note create_note made among what's deleted has its index row removed
+    too, in the same operation - otherwise its id would keep resolving to a
+    path that no longer exists.
 
     Args:
         path: Path to the file or directory, relative to the vault root.
@@ -688,10 +814,16 @@ def delete_file_or_directory(path: str) -> list[str]:
             manifest = sorted(str(p.relative_to(VAULT_PATH)) for p in target.rglob("*"))
             manifest.append(str(target.relative_to(VAULT_PATH)))
             shutil.rmtree(target)
-            return sorted(manifest)
+            manifest = sorted(manifest)
+            with contextlib.closing(_open_index()) as conn:
+                for rel in manifest:
+                    note_index.delete_by_path(conn, rel)
+            return manifest
         elif target.is_file():
             rel = str(target.relative_to(VAULT_PATH))
             target.unlink()
+            with contextlib.closing(_open_index()) as conn:
+                note_index.delete_by_path(conn, rel)
             return [rel]
         else:
             raise FileNotFoundError(f"No file or directory found at '{path}'.")

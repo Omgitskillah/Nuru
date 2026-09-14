@@ -59,3 +59,85 @@ def test_connect_is_idempotent_against_an_existing_database(tmp_path):
 
     conn2 = index.connect(db_path)
     assert index.note_exists(conn2, "id1") is True
+
+
+def test_update_path_repoints_the_note(tmp_path):
+    conn = _connect(tmp_path)
+    index.insert_note(
+        conn, id="id1", path="shared/x.md", type="project", title="X", author="both",
+        created="2026-09-14T12:00", supersedes=None,
+    )
+
+    index.update_path(conn, "shared/x.md", "shared/y.md")
+
+    assert index.get_path(conn, "id1") == "shared/y.md"
+
+
+def test_update_path_is_a_no_op_if_nothing_is_indexed_at_old_path(tmp_path):
+    conn = _connect(tmp_path)
+
+    index.update_path(conn, "shared/nonexistent.md", "shared/new.md")  # must not raise
+
+
+def test_delete_by_path_removes_the_note(tmp_path):
+    conn = _connect(tmp_path)
+    index.insert_note(
+        conn, id="id1", path="shared/x.md", type="project", title="X", author="both",
+        created="2026-09-14T12:00", supersedes=None,
+    )
+
+    index.delete_by_path(conn, "shared/x.md")
+
+    assert index.note_exists(conn, "id1") is False
+    assert index.get_path(conn, "id1") is None
+
+
+def test_delete_by_path_is_a_no_op_if_nothing_is_indexed_at_path(tmp_path):
+    conn = _connect(tmp_path)
+
+    index.delete_by_path(conn, "shared/nonexistent.md")  # must not raise
+
+
+def _vault(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    return vault
+
+
+def test_reconcile_removes_a_row_whose_file_no_longer_exists(tmp_path):
+    vault = _vault(tmp_path)
+    conn = index.connect(vault / "index.sqlite3")
+    index.insert_note(
+        conn, id="id1", path="shared/x.md", type="project", title="X", author="both",
+        created="2026-09-14T12:00", supersedes=None,
+    )
+    # No shared/x.md written to vault - simulates the vault having changed
+    # (deleted, moved, cleared) outside this server's own tools.
+
+    removed = index.reconcile(conn, vault)
+
+    assert removed == ["shared/x.md"]
+    assert index.note_exists(conn, "id1") is False
+
+
+def test_reconcile_keeps_a_row_whose_file_still_exists(tmp_path):
+    vault = _vault(tmp_path)
+    (vault / "shared").mkdir()
+    (vault / "shared" / "x.md").write_text("content")
+    conn = index.connect(vault / "index.sqlite3")
+    index.insert_note(
+        conn, id="id1", path="shared/x.md", type="project", title="X", author="both",
+        created="2026-09-14T12:00", supersedes=None,
+    )
+
+    removed = index.reconcile(conn, vault)
+
+    assert removed == []
+    assert index.note_exists(conn, "id1") is True
+
+
+def test_reconcile_is_a_no_op_on_an_empty_index(tmp_path):
+    vault = _vault(tmp_path)
+    conn = index.connect(vault / "index.sqlite3")
+
+    assert index.reconcile(conn, vault) == []

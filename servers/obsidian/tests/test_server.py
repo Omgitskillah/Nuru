@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -39,6 +41,15 @@ def test_list_notes_raises_clear_error_on_permission_denied(monkeypatch):
 
     with pytest.raises(ToolError, match="Access denied"):
         server.list_notes()
+
+
+def test_list_notes_excludes_templates_folder(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("# Welcome")
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Templates" / "01 Profile.md").write_text("---\n---\n\n# {{title}}\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_notes() == ["Welcome.md"]
 
 
 # --- list_files ---
@@ -139,6 +150,17 @@ def test_search_notes_returns_empty_list_when_not_found(tmp_path, monkeypatch):
     assert server.search_notes("nonexistent") == []
 
 
+def test_search_notes_excludes_templates_folder(tmp_path, monkeypatch):
+    """Regression test: search_notes("{{title}}") used to return all eleven
+    generated templates, so an agent could retrieve unfilled placeholder text
+    as if it were real vault content."""
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Templates" / "01 Profile.md").write_text("---\n---\n\n# {{title}}\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.search_notes("{{title}}") == []
+
+
 # --- read_note ---
 
 
@@ -218,6 +240,14 @@ def test_list_tags_empty_vault(tmp_path, monkeypatch):
     assert server.list_tags() == []
 
 
+def test_list_tags_excludes_templates_folder(tmp_path, monkeypatch):
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Templates" / "01 Profile.md").write_text("#profile")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.list_tags() == []
+
+
 # --- count_tags ---
 
 
@@ -230,6 +260,14 @@ def test_count_tags_counts_occurrences_across_notes(tmp_path, monkeypatch):
 
 
 def test_count_tags_empty_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.count_tags() == {}
+
+
+def test_count_tags_excludes_templates_folder(tmp_path, monkeypatch):
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Templates" / "01 Profile.md").write_text("#profile")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     assert server.count_tags() == {}
@@ -470,7 +508,7 @@ def test_create_note_slugifies_title_for_filename(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     result = server.create_note(type="topic", title="Café & Co: A Story!", author="nuru")
-    assert result["path"] == "nuru/caf-co-a-story.md"
+    assert result["path"] == "nuru/cafe-co-a-story.md"
 
 
 def test_create_note_tags_include_type_plus_extras(tmp_path, monkeypatch):
@@ -513,14 +551,14 @@ def test_create_note_rejects_empty_title(tmp_path, monkeypatch):
 def test_create_note_requires_the_type_specific_field(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(ToolError, match="ValueError"):
-        server.create_note(type="daily", title="X", author="nuru")
+    with pytest.raises(ToolError, match="expects exactly these extra fields"):
+        server.create_note(type="daily", title="X", author="user")
 
 
 def test_create_note_accepts_the_type_specific_field(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.create_note(type="daily", title="X", author="nuru", date="2026-09-14")
+    result = server.create_note(type="daily", title="X", author="user", date="2026-09-14")
     text = (tmp_path / result["path"]).read_text()
     assert "date: '2026-09-14'\n" in text
 
@@ -530,6 +568,119 @@ def test_create_note_rejects_type_specific_field_on_wrong_type(tmp_path, monkeyp
 
     with pytest.raises(ToolError, match="ValueError"):
         server.create_note(type="project", title="X", author="both", date="2026-09-14")
+
+
+def test_create_note_rejects_a_malformed_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="date must be 'YYYY-MM-DD'"):
+        server.create_note(type="daily", title="X", author="user", date="not-a-date")
+
+
+def test_create_note_rejects_a_date_that_is_not_a_real_calendar_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="not a valid calendar date"):
+        server.create_note(type="daily", title="X", author="user", date="2026-02-30")
+
+
+def test_create_note_rejects_a_malformed_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="session must be 'YYYY-MM-DD-NN'"):
+        server.create_note(type="transcript", title="X", author="nuru", session="garbage-session-value")
+
+
+def test_create_note_accepts_a_well_formed_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="transcript", title="X", author="nuru", session="2026-09-14-01")
+    text = (tmp_path / result["path"]).read_text()
+    assert "session: 2026-09-14-01\n" in text
+
+
+def test_create_note_rejects_targets_referencing_unknown_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="unknown note id"):
+        server.create_note(type="correction", title="X", author="user", targets=["nope1", "nope2"])
+
+
+def test_create_note_accepts_targets_referencing_existing_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    original = server.create_note(type="project", title="Original", author="both")
+
+    result = server.create_note(type="correction", title="Fix", author="user", targets=[original["id"]])
+    text = (tmp_path / result["path"]).read_text()
+    assert f"targets:\n  - {original['id']}\n" in text
+
+
+def test_create_note_rejects_a_tag_containing_whitespace(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="whitespace"):
+        server.create_note(type="project", title="X", author="both", tags=["bad\n\n author: hacked"])
+
+
+def test_create_note_accepts_tags_without_whitespace(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="project", title="X", author="both", tags=["good-tag"])
+    text = (tmp_path / result["path"]).read_text()
+    assert "  - good-tag\n" in text
+
+
+def test_create_note_transliterates_accented_latin_characters(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="topic", title="Café Story", author="nuru")
+    assert result["path"] == "nuru/cafe-story.md"
+
+
+def test_create_note_transliterates_a_non_latin_title_instead_of_dropping_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="topic", title="日本語のノート", author="nuru")
+    assert result["path"] != "nuru/.md"
+    assert result["path"].startswith("nuru/")
+    assert result["path"] != f"nuru/{result['id'].lower()}.md"  # real transliteration happened
+
+
+def test_create_note_falls_back_to_the_id_when_transliteration_yields_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="topic", title="🎉🎊✨", author="nuru")
+    assert result["path"] == f"nuru/{result['id'].lower()}.md"
+
+
+def test_create_note_still_rejects_a_genuinely_empty_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="title is empty"):
+        server.create_note(type="topic", title="   ", author="nuru")
+
+
+def test_create_note_preserves_unicode_in_aliases(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="topic", title="日本語のノート", author="nuru")
+    text = (tmp_path / result["path"]).read_text()
+    assert "日本語のノート" in text
+    assert "\\u" not in text
+
+
+def test_create_note_rejects_a_user_folder_type_with_a_non_user_author(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match='only author="user" may create'):
+        server.create_note(type="directives", title="X", author="nuru")
+
+
+def test_create_note_accepts_a_user_folder_type_with_author_user(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.create_note(type="directives", title="X", author="user")
+    assert result["path"] == "user/x.md"
 
 
 def test_create_note_rejects_unknown_supersedes(tmp_path, monkeypatch):
@@ -593,6 +744,39 @@ def test_create_note_rolls_back_the_file_if_the_index_insert_fails(tmp_path, mon
     with pytest.raises(RuntimeError, match="boom"):
         server.create_note(type="project", title="X", author="both")
     assert not (tmp_path / "shared" / "x.md").exists()
+
+
+def test_create_note_reports_an_index_integrity_error_clearly(tmp_path, monkeypatch):
+    """Regression test: a sqlite3.IntegrityError from the index insert used
+    to propagate unwrapped - not one of _tool's anticipated error types - so
+    it reached the caller as a bare, message-less "Error executing tool
+    create_note" crash instead of an explainable ValueError."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    def failing_insert_note(*args, **kwargs):
+        raise sqlite3.IntegrityError("UNIQUE constraint failed: notes.path")
+
+    monkeypatch.setattr(server.note_index, "insert_note", failing_insert_note)
+
+    with pytest.raises(ToolError, match="ValueError") as exc_info:
+        server.create_note(type="project", title="X", author="both")
+    assert "already has an entry" in str(exc_info.value)
+    assert not (tmp_path / "shared" / "x.md").exists()
+
+
+def test_create_note_recreating_a_title_after_the_vault_was_cleared_externally(tmp_path, monkeypatch):
+    """Regression test: emptying the vault outside the MCP left stale index
+    rows behind (their files gone, but their paths still UNIQUE-constrained),
+    so recreating a previously-used title failed - the exact path is covered
+    by test_create_note_reports_an_index_integrity_error_clearly above; this
+    checks reconciliation prevents the collision from happening at all."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="topic", title="Alpha Topic", author="nuru")
+
+    (tmp_path / "nuru" / "alpha-topic.md").unlink()  # vault cleared outside the MCP
+
+    result = server.create_note(type="topic", title="Alpha Topic", author="nuru")
+    assert result["path"] == "nuru/alpha-topic.md"
 
 
 # --- append_note ---
@@ -913,6 +1097,45 @@ def test_rename_or_move_file_rejects_destination_under_user_folder(tmp_path, mon
         server.rename_or_move_file("note.md", "user/note.md")
 
 
+def test_rename_or_move_file_keeps_an_indexed_note_reachable_by_id(tmp_path, monkeypatch):
+    """Regression test: moving a note used to leave its index row pointing at
+    the old path, so append_note("<id>", ...) failed with "indexed at
+    <old path>, but that file no longer exists" even though the note still
+    exists - just moved. This is what archive-by-move relies on."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="Move Target", author="both", body="Original.")
+
+    new_path = server.rename_or_move_file(created["path"], "shared/moved-target.md")
+
+    assert server.append_note(created["id"], "Still reachable.") == new_path
+    assert (tmp_path / new_path).read_text().endswith("Original.\n\nStill reachable.")
+
+
+def test_rename_or_move_file_survives_index_reconciliation_racing_the_move(tmp_path, monkeypatch):
+    """Regression test: _open_index() reconciles against whatever's on disk
+    at the moment it's called. rename_or_move_file used to physically move
+    the file first and only then open the index to repoint the row - so
+    reconciliation, running after the move, saw the *old* path already gone
+    and deleted the row before update_path could repoint it, silently
+    dropping the note from the index instead of moving it."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="X", author="both")
+
+    server.rename_or_move_file(created["path"], "shared/moved.md")
+
+    with server._open_index() as conn:
+        assert server.note_index.note_exists(conn, created["id"]) is True
+        assert server.note_index.get_path(conn, created["id"]) == "shared/moved.md"
+
+
+def test_rename_or_move_file_of_a_non_indexed_file_is_a_no_op_on_the_index(tmp_path, monkeypatch):
+    (tmp_path / "attachment.png").write_bytes(b"data")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    # Must not raise just because nothing in the index matches this path.
+    assert server.rename_or_move_file("attachment.png", "moved.png") == "moved.png"
+
+
 # --- delete_file_or_directory ---
 
 
@@ -1000,6 +1223,39 @@ def test_delete_file_or_directory_rejects_a_path_under_user_folder(tmp_path, mon
     with pytest.raises(ToolError, match="PermissionError"):
         server.delete_file_or_directory("user/note.md")
     assert (tmp_path / "user" / "note.md").exists()
+
+
+def test_delete_file_or_directory_removes_the_note_s_index_row(tmp_path, monkeypatch):
+    """Regression test: deleting a note used to leave its index row behind,
+    so append_note("<id>", ...) reported a stale "indexed at <path>, but
+    that file no longer exists" instead of a clean "no note with id"."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="X", author="both")
+
+    server.delete_file_or_directory(created["path"])
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.append_note(created["id"], "content")
+    assert "no longer exists" not in str(exc_info.value)
+
+
+def test_delete_file_or_directory_removes_index_rows_for_notes_in_a_deleted_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="X", author="both")
+    note_dir = (tmp_path / created["path"]).parent
+
+    server.delete_file_or_directory(str(note_dir.relative_to(tmp_path)))
+
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.append_note(created["id"], "content")
+
+
+def test_delete_file_or_directory_of_a_non_indexed_file_is_a_no_op_on_the_index(tmp_path, monkeypatch):
+    (tmp_path / "attachment.png").write_bytes(b"data")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    # Must not raise just because nothing in the index matches this path.
+    assert server.delete_file_or_directory("attachment.png") == ["attachment.png"]
 
 
 def test_delete_file_or_directory_rejects_symlinked_target_pointing_outside_vault(

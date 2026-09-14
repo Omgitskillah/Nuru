@@ -18,6 +18,32 @@ shape applies everywhere.
 
 VERSION = "0.1.0"
 
+# The authoritative definition of what each VERSION means: the exact field
+# list, order, and semantics that version's frontmatter has. A note's
+# `version` field is this table's key - anything reading notes back (rather
+# than only ever writing new ones, which is all this server does today)
+# looks its note's version up here to know how to parse it, rather than
+# assuming the current shape applies to every note in the vault.
+#
+# 0.1.0 (current):
+#   Field order: id, version, type, created, author, supersedes,
+#   [<type-specific field>], tags, aliases.
+#     - id: ULID, minted once by create_note. Immutable - append_note never
+#       touches frontmatter.
+#     - version: this table's key.
+#     - type: one of TYPE_FOLDER's keys; fixes the note's folder.
+#     - created: "YYYY-MM-DDTHH:mm", server clock, set once at creation.
+#     - author: one of VALID_AUTHORS.
+#     - supersedes: id of the note this one replaces, or blank.
+#     - <type-specific field>: present only for a type in TYPE_FIELD, named
+#       and validated per TYPE_FIELD (date: "YYYY-MM-DD"; session:
+#       "YYYY-MM-DD-NN"; targets: a list of existing note ids).
+#     - tags: block list, [type, *any extra caller-supplied tags]. No tag
+#       contains whitespace.
+#     - aliases: block list, [title, id].
+
+
+
 # Frontmatter fields the server owns are minted here, never accepted from the
 # caller. Folder is keyed by type; the eleven types are exactly these keys.
 TYPE_FOLDER = {

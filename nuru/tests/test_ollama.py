@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 import requests
@@ -77,6 +78,78 @@ def test_ensure_server_running_raises_if_it_never_comes_up(monkeypatch):
 
     with pytest.raises(RuntimeError, match="did not come up"):
         ollama.ensure_server_running(timeout=5)
+
+
+# --- unload_all_models / stop_server ---
+
+
+def test_unload_all_models_unloads_every_loaded_model(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "qwen3:8b"}, {"name": "gemma4"}])
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json))
+        return FakeResponse()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    ollama.unload_all_models()
+
+    assert calls == [
+        (f"{ollama.BASE}/api/generate", {"model": "qwen3:8b", "keep_alive": 0}),
+        (f"{ollama.BASE}/api/generate", {"model": "gemma4", "keep_alive": 0}),
+    ]
+
+
+def test_stop_server_does_nothing_if_we_did_not_start_it(monkeypatch):
+    monkeypatch.setattr(ollama, "_server_process", None)
+
+    ollama.stop_server()  # must not raise
+
+    assert ollama._server_process is None
+
+
+def test_stop_server_terminates_the_process_we_started(monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            pass
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(ollama, "_server_process", fake_process)
+
+    ollama.stop_server()
+
+    assert fake_process.terminated is True
+    assert ollama._server_process is None
+
+
+def test_stop_server_kills_if_terminate_does_not_stop_it_in_time(monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.killed = False
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="ollama serve", timeout=timeout)
+
+        def kill(self):
+            self.killed = True
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(ollama, "_server_process", fake_process)
+
+    ollama.stop_server()
+
+    assert fake_process.killed is True
 
 
 # --- loaded_models / model_info ---
@@ -204,6 +277,51 @@ def test_chat_sends_think_and_num_ctx_options(monkeypatch):
     assert seen["json"]["think"] is False
     assert seen["json"]["options"] == {"num_ctx": 4096}
     assert seen["json"]["stream"] is True
+
+
+def test_chat_sends_tools_when_given(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, stream, timeout):
+        seen["json"] = json
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    tools = [{"type": "function", "function": {"name": "get_temperature"}}]
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}], tools=tools))
+
+    assert seen["json"]["tools"] == tools
+
+
+def test_chat_omits_tools_key_when_not_given(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, stream, timeout):
+        seen["json"] = json
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
+
+    assert "tools" not in seen["json"]
+
+
+def test_chat_yields_tool_calls(monkeypatch):
+    tool_call = {"function": {"name": "get_temperature", "arguments": {"city": "Berlin"}}}
+    lines = _sse_lines(
+        {"message": {"content": "", "tool_calls": [tool_call]}, "done": False},
+        {"message": {"content": ""}, "done": True, "prompt_eval_count": 5, "eval_count": 2, "done_reason": "stop"},
+    )
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(lines=lines))
+
+    results = list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
+
+    assert results == [
+        {"tool_calls": [tool_call]},
+        {"prompt_tokens": 5, "completion_tokens": 2, "stop_reason": "stop"},
+    ]
 
 
 def test_chat_raises_on_http_error(monkeypatch):

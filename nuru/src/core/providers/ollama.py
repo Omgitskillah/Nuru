@@ -10,6 +10,10 @@ import requests
 
 BASE = "http://localhost:11434"
 
+# Handle for the `ollama serve` process we spawned, if any (set by
+# ensure_server_running, used by stop_server to shut it back down).
+_server_process: subprocess.Popen | None = None
+
 
 def is_server_running() -> bool:
     try:
@@ -20,11 +24,13 @@ def is_server_running() -> bool:
 
 def ensure_server_running(timeout: float = 15) -> None:
     """Start `ollama serve` in the background if it isn't already up."""
+    global _server_process
+
     if is_server_running():
         return
 
     print("Ollama not running, starting it...")
-    subprocess.Popen(
+    _server_process = subprocess.Popen(
         ["ollama", "serve"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -37,6 +43,28 @@ def ensure_server_running(timeout: float = 15) -> None:
             return
         time.sleep(0.5)
     raise RuntimeError(f"ollama serve did not come up within {timeout}s")
+
+
+def unload_all_models() -> None:
+    """Unloads every model currently resident in memory."""
+    for m in loaded_models():
+        r = requests.post(f"{BASE}/api/generate", json={"model": m["name"], "keep_alive": 0}, timeout=30)
+        r.raise_for_status()
+
+
+def stop_server() -> None:
+    """Stops the `ollama serve` process we started, if we started it."""
+    global _server_process
+
+    if _server_process is None:
+        return
+
+    _server_process.terminate()
+    try:
+        _server_process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        _server_process.kill()
+    _server_process = None
 
 
 def loaded_models() -> list[dict]:
@@ -69,23 +97,27 @@ def ensure_model_loaded(model: str) -> None:
     )
 
 
-def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = True):
-    """Yields text chunks, then a final usage dict.
+def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = True, tools: list[dict] | None = None):
+    """Yields text chunks, then a dict with tool_calls (if the model made any), then a final usage dict.
 
     `think` is ignored by models that don't support reasoning/thinking mode.
     """
     for message in messages:
-        print(f"[{message['role']}] {message['content']}")
+        print(f"[{message['role']}] {message.get('content', '')}")
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "think": think,
+        "options": {"num_ctx": num_ctx},
+    }
+    if tools:
+        payload["tools"] = tools
 
     r = requests.post(
         f"{BASE}/api/chat",
-        json={
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "think": think,
-            "options": {"num_ctx": num_ctx},
-        },
+        json=payload,
         stream=True,
         timeout=(5, 300),   # connect, read
     )
@@ -95,8 +127,11 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = Tr
         if not line:
             continue
         obj = json.loads(line)
-        if chunk := obj.get("message", {}).get("content"):
+        message = obj.get("message", {})
+        if chunk := message.get("content"):
             yield chunk
+        if tool_calls := message.get("tool_calls"):
+            yield {"tool_calls": tool_calls}
         if obj.get("done"):
             yield {
                 "prompt_tokens": obj.get("prompt_eval_count", 0),

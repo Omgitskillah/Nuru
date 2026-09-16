@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 
 import pytest
 import requests
@@ -200,7 +201,7 @@ def test_is_model_loaded_false_when_absent(monkeypatch):
 # --- ensure_model_loaded ---
 
 
-def test_ensure_model_loaded_skips_generate_call_if_already_loaded(monkeypatch, capsys):
+def test_ensure_model_loaded_skips_generate_call_if_already_loaded(monkeypatch):
     monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "qwen3:8b"}])
     monkeypatch.setattr(
         ollama,
@@ -211,13 +212,11 @@ def test_ensure_model_loaded_skips_generate_call_if_already_loaded(monkeypatch, 
     called = []
     monkeypatch.setattr(requests, "post", lambda *a, **k: called.append(a) or FakeResponse())
 
-    ollama.ensure_model_loaded("qwen3:8b")
+    info = ollama.ensure_model_loaded("qwen3:8b")
 
     assert called == []
-    out = capsys.readouterr().out
-    assert "qwen3:8b" in out
-    assert "8B" in out
-    assert "supports_thinking=True" in out
+    assert info["parameter_size"] == "8B"
+    assert info["supports_thinking"] is True
 
 
 def test_ensure_model_loaded_extracts_context_window_and_embedding_length(monkeypatch):
@@ -238,13 +237,14 @@ def test_ensure_model_loaded_extracts_context_window_and_embedding_length(monkey
     assert info["embedding_length"] == 4096
 
 
-def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch, capsys):
+def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch):
     monkeypatch.setattr(ollama, "loaded_models", lambda: [])
     monkeypatch.setattr(
         ollama,
         "model_info",
         lambda model: {"details": {"parameter_size": "8B"}, "capabilities": []},
     )
+    monkeypatch.setattr(ollama.time, "sleep", lambda _: None)
 
     calls = []
 
@@ -254,10 +254,33 @@ def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch, capsys):
 
     monkeypatch.setattr(requests, "post", fake_post)
 
-    ollama.ensure_model_loaded("qwen3:8b")
+    info = ollama.ensure_model_loaded("qwen3:8b")
 
     assert calls == [(f"{ollama.BASE}/api/generate", {"model": "qwen3:8b"})]
-    assert "supports_thinking=False" in capsys.readouterr().out
+    assert info["supports_thinking"] is False
+
+
+def test_ensure_model_loaded_shows_spinner_while_loading(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [])
+    monkeypatch.setattr(
+        ollama,
+        "model_info",
+        lambda model: {"details": {"parameter_size": "8B"}, "capabilities": []},
+    )
+    monkeypatch.setattr(ollama, "_SPIN_INTERVAL_SECONDS", 0.01)
+
+    def fake_post(url, json, timeout):
+        time.sleep(0.1)
+        return FakeResponse()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    printed = []
+    monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(a))
+
+    ollama.ensure_model_loaded("qwen3:8b")
+
+    assert any("Loading qwen3:8b" in "".join(str(x) for x in call) for call in printed)
 
 
 # --- chat ---
@@ -267,7 +290,7 @@ def _sse_lines(*objs):
     return [json.dumps(obj).encode() for obj in objs]
 
 
-def test_chat_yields_content_chunks_then_usage_dict(monkeypatch, capsys):
+def test_chat_yields_content_chunks_then_usage_dict(monkeypatch):
     lines = _sse_lines(
         {"message": {"content": "Hel"}, "done": False},
         {"message": {"content": "lo"}, "done": False},
@@ -282,7 +305,6 @@ def test_chat_yields_content_chunks_then_usage_dict(monkeypatch, capsys):
         "lo",
         {"prompt_tokens": 5, "completion_tokens": 2, "stop_reason": "stop"},
     ]
-    assert "[user] hi" in capsys.readouterr().out
 
 
 def test_chat_skips_blank_lines(monkeypatch):

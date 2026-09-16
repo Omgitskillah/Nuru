@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from mcp import StdioServerParameters
 
 from core.cli_logging import CLILogger
+from core.conversation_store import ConversationStore
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -24,12 +25,12 @@ load_dotenv()
 
 MODEL = os.environ.get("MODEL", "qwen3:8b")
 THINK = os.environ.get("THINK", "true").lower() != "false"
-print(f"think={THINK}")
 
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
 OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
 
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -40,9 +41,18 @@ HELP_TEXT = """Available commands:
 Anything else you type is sent to the model as a prompt (this also loads the model first if it isn't loaded yet)."""
 
 
-def run_turn(tools_client: MCPTools, tools: list[dict], text: str, logger: CLILogger) -> None:
+def run_turn(
+    tools_client: MCPTools,
+    tools: list[dict],
+    text: str,
+    logger: CLILogger,
+    store: ConversationStore,
+    conversation_id: int,
+    user_message_id: int,
+) -> None:
     turn_id = logger.turn_start(text)
     messages = [{"role": "user", "content": text}]
+    prompt_tokens_recorded = False
 
     while True:
         server_spawned = ensure_server_running()
@@ -68,6 +78,10 @@ def run_turn(tools_client: MCPTools, tools: list[dict], text: str, logger: CLILo
             output_text += out
         print()
 
+        if not prompt_tokens_recorded:
+            store.update_tokens(user_message_id, usage.get("prompt_tokens"))
+            prompt_tokens_recorded = True
+
         logger.model_call(
             turn_id=turn_id,
             duration_ms=(time.monotonic() - start) * 1000,
@@ -79,6 +93,7 @@ def run_turn(tools_client: MCPTools, tools: list[dict], text: str, logger: CLILo
         )
 
         if not tool_calls:
+            store.add_message(conversation_id, "nuru", output_text, usage.get("completion_tokens"))
             logger.turn_end(turn_id)
             return
 
@@ -105,11 +120,17 @@ def main() -> None:
     tools = tools_client.list_tools()
 
     logger = CLILogger(LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp")
+    store = ConversationStore(DB_PATH)
+    conversation_id = store.create_conversation()
+
+    server_spawned = ensure_server_running()
+    model_loaded_info = ensure_model_loaded(MODEL)
+    logger.model_lifecycle(server_spawned, model_loaded_info)
 
     try:
         while True:
             try:
-                text = input("> ")
+                text = input("[user] ")
             except EOFError:
                 break
 
@@ -130,9 +151,11 @@ def main() -> None:
             elif text.strip() == "/help":
                 print(HELP_TEXT)
             else:
-                run_turn(tools_client, tools, text, logger)
+                user_message_id = store.add_message(conversation_id, "user", text)
+                run_turn(tools_client, tools, text, logger, store, conversation_id, user_message_id)
     finally:
         tools_client.close()
+        store.close()
 
 
 if __name__ == "__main__":

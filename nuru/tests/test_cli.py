@@ -8,6 +8,7 @@ from core import cli
 @pytest.fixture(autouse=True)
 def _isolate_log_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(cli, "DB_PATH", tmp_path / "conversation.db")
 
 
 def fake_input(lines):
@@ -111,7 +112,7 @@ def test_main_checks_server_and_model_before_each_send(monkeypatch):
 
     cli.main()
 
-    assert calls == ["server", ("model", cli.MODEL)]
+    assert calls == ["server", ("model", cli.MODEL), "server", ("model", cli.MODEL)]
 
 
 def test_main_passes_think_setting_to_chat(monkeypatch):
@@ -210,16 +211,17 @@ def test_main_show_command_prints_model_info_when_loaded(monkeypatch, capsys):
 
 def test_main_show_command_prints_no_model_loaded_when_not_loaded(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["/show"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
     monkeypatch.setattr(cli, "is_model_loaded", lambda model: False)
 
-    def unexpected_call(*a, **k):
-        raise AssertionError("ensure_model_loaded should not be called for /show when not loaded")
-
-    monkeypatch.setattr(cli, "ensure_model_loaded", unexpected_call)
+    calls = []
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: calls.append(model) or {})
     patch_mcp(monkeypatch, FakeMCPTools())
 
     cli.main()
 
+    # Only the startup load happens; /show itself must not trigger another one.
+    assert calls == [cli.MODEL]
     assert "no model loaded" in capsys.readouterr().out
 
 
@@ -238,7 +240,7 @@ def test_main_load_command_loads_model_without_chatting(monkeypatch):
 
     cli.main()
 
-    assert calls == ["server", ("model", cli.MODEL)]
+    assert calls == ["server", ("model", cli.MODEL), "server", ("model", cli.MODEL)]
 
 
 def test_main_help_command_lists_commands_without_chatting(monkeypatch, capsys):

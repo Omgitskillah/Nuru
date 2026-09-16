@@ -4,6 +4,7 @@ the server and a model on demand and stream chat responses from it.
 
 import json
 import subprocess
+import threading
 import time
 
 import requests
@@ -89,14 +90,37 @@ def is_model_loaded(model: str) -> bool:
     return any(m["name"] == model for m in loaded_models())
 
 
+_SPIN_INTERVAL_SECONDS = 1
+
+
+def _load_model_with_spinner(model: str) -> None:
+    """Issues the blocking load request while printing increasing dots once a second."""
+    done = threading.Event()
+
+    def spin() -> None:
+        dots = 0
+        while not done.wait(_SPIN_INTERVAL_SECONDS):
+            dots += 1
+            print(f"\rLoading {model}" + "." * dots, end="", flush=True)
+
+    spinner = threading.Thread(target=spin, daemon=True)
+    spinner.start()
+    try:
+        r = requests.post(f"{BASE}/api/generate", json={"model": model}, timeout=300)
+        r.raise_for_status()
+    finally:
+        done.set()
+        spinner.join()
+        print("\r" + " " * (len(model) + 20) + "\r", end="", flush=True)
+
+
 def ensure_model_loaded(model: str) -> dict:
     """Load `model` into memory first if it isn't resident yet.
 
     Returns its static info (parameter_size, quantization_level, family, supports_thinking).
     """
     if not is_model_loaded(model):
-        r = requests.post(f"{BASE}/api/generate", json={"model": model}, timeout=300)
-        r.raise_for_status()
+        _load_model_with_spinner(model)
 
     info = model_info(model)
     details = info.get("details", {})
@@ -105,11 +129,6 @@ def ensure_model_loaded(model: str) -> dict:
     context_window = model_arch_info.get(f"{architecture}.context_length")
     embedding_length = model_arch_info.get(f"{architecture}.embedding_length")
     supports_thinking = "thinking" in info.get("capabilities", [])
-    print(
-        f"{model}: {details.get('parameter_size', '?')} params, "
-        f"{details.get('quantization_level', '?')}, family={details.get('family', '?')}, "
-        f"supports_thinking={supports_thinking}"
-    )
     return {
         "parameter_size": details.get("parameter_size", "?"),
         "quantization_level": details.get("quantization_level", "?"),
@@ -125,9 +144,6 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = Tr
 
     `think` is ignored by models that don't support reasoning/thinking mode.
     """
-    for message in messages:
-        print(f"[{message['role']}] {message.get('content', '')}")
-
     payload = {
         "model": model,
         "messages": messages,

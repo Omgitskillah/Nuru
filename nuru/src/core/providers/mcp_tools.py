@@ -10,8 +10,10 @@ import concurrent.futures
 import threading
 from contextlib import AsyncExitStack
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
+
+_CLIENT_INFO = types.Implementation(name="nuru-agent-obsidian", version="0.1.0")
 
 
 class MCPTools:
@@ -37,7 +39,9 @@ class MCPTools:
         try:
             async with AsyncExitStack() as stack:
                 read, write = await stack.enter_async_context(stdio_client(self._server_params))
-                session = await stack.enter_async_context(ClientSession(read, write))
+                session = await stack.enter_async_context(
+                    ClientSession(read, write, client_info=_CLIENT_INFO)
+                )
                 await session.initialize()
                 session_ready.set_result(session)
                 await self._stop_event.wait()

@@ -6,15 +6,17 @@ the logging lives in the server process itself rather than in any one
 client's own logging.
 
 Each session (starting at an `initialize` request) gets its own log file,
-named `<count_up_id>_<date_time>_<client_name>.log` under the configured log
-directory.
+named `<count_up_id>_<date_time>_<client_name>.jsonl` under the configured
+log directory. Each line is a standalone JSON object (JSON Lines format).
 """
 
+import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from mcp.server.context import CallNext, HandlerResult, ServerMiddleware, ServerRequestContext
@@ -40,14 +42,18 @@ def _next_session_id(log_dir: Path) -> int:
     """The next count-up id: one past the highest id already used in log_dir."""
     ids = [
         int(match.group(1))
-        for path in log_dir.glob("*.log")
+        for path in log_dir.glob("*.jsonl")
         if (match := re.match(r"(\d+)_", path.name))
     ]
     return max(ids, default=0) + 1
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
 class AccessLogMiddleware(ServerMiddleware[Any]):
-    """Logs every inbound request/notification to a per-session log file under `log_dir`."""
+    """Logs every inbound request/notification to a per-session JSON-lines file under `log_dir`."""
 
     def __init__(self, log_dir: Path) -> None:
         self._log_dir = Path(log_dir)
@@ -58,29 +64,30 @@ class AccessLogMiddleware(ServerMiddleware[Any]):
         self._logger = logging.getLogger(f"access_logging.{uuid.uuid4().hex}")
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False  # never fall through to a stdio-adjacent root handler
+        self._session_id = 0
 
     def _start_session(self, params: dict[str, Any] | None) -> None:
         for handler in list(self._logger.handlers):
             self._logger.removeHandler(handler)
             handler.close()
 
-        session_id = _next_session_id(self._log_dir)
+        self._session_id = _next_session_id(self._log_dir)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         client_name = _client_name_from_params(params)
-        filename = f"{session_id}_{timestamp}_{client_name}.log"
+        filename = f"{self._session_id}_{timestamp}_{client_name}.jsonl"
 
         try:
             handler: logging.Handler = logging.FileHandler(self._log_dir / filename)
-            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            handler.setFormatter(logging.Formatter("%(message)s"))
         except OSError:
             # A client may launch the server with a cwd/permissions where the
             # log file can't be created - that must never stop the server.
             handler = logging.NullHandler()
         self._logger.addHandler(handler)
 
-    def _log(self, direction: str, entry: dict[str, Any]) -> None:
+    def _log(self, entry: dict[str, Any]) -> None:
         try:
-            self._logger.info("%s %s", direction, entry)
+            self._logger.info(json.dumps(entry, default=str))
         except Exception:
             pass
 
@@ -90,11 +97,49 @@ class AccessLogMiddleware(ServerMiddleware[Any]):
             # one already open (e.g. a client that skips it) still gets a file.
             self._start_session(ctx.params)
 
-        self._log("->", {"lt": ctx.method, "params": ctx.params})
+        request_id = uuid.uuid4().hex[:8]
+        tool_name = ctx.params.get("name") if ctx.method == "tools/call" and ctx.params else None
+
+        self._log(
+            {
+                "ts": _now_iso(),
+                "session_id": self._session_id,
+                "request_id": request_id,
+                "event": "request",
+                "method": ctx.method,
+                "tool_name": tool_name,
+                "params": ctx.params,
+            }
+        )
+        start = monotonic()
         try:
             result = await call_next(ctx)
         except Exception as e:
-            self._log("<-", {"lt": ctx.method, "result": "error", "error": str(e)})
+            self._log(
+                {
+                    "ts": _now_iso(),
+                    "session_id": self._session_id,
+                    "request_id": request_id,
+                    "event": "response",
+                    "method": ctx.method,
+                    "tool_name": tool_name,
+                    "status": "error",
+                    "error": str(e),
+                    "duration_ms": round((monotonic() - start) * 1000, 3),
+                }
+            )
             raise
-        self._log("<-", {"lt": ctx.method, "result": "ok"})
+        self._log(
+            {
+                "ts": _now_iso(),
+                "session_id": self._session_id,
+                "request_id": request_id,
+                "event": "response",
+                "method": ctx.method,
+                "tool_name": tool_name,
+                "status": "ok",
+                "error": None,
+                "duration_ms": round((monotonic() - start) * 1000, 3),
+            }
+        )
         return result

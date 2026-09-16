@@ -3,10 +3,13 @@ giving it access to the tools exposed by the obsidian MCP server."""
 
 import json
 import os
+import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 from mcp import StdioServerParameters
 
+from core.cli_logging import CLILogger
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import chat, ensure_model_loaded, ensure_server_running, stop_server, unload_all_models
 
@@ -19,27 +22,49 @@ print(f"think={THINK}")
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
 OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
 
+LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
 
-def run_turn(tools_client: MCPTools, tools: list[dict], text: str) -> None:
+
+def run_turn(tools_client: MCPTools, tools: list[dict], text: str, logger: CLILogger) -> None:
+    turn_id = logger.turn_start(text)
     messages = [{"role": "user", "content": text}]
 
     while True:
-        ensure_server_running()
-        ensure_model_loaded(MODEL)
+        server_spawned = ensure_server_running()
+        model_info = ensure_model_loaded(MODEL)
+        logger.model_lifecycle(server_spawned, model_info)
 
         first_chunk = True
         tool_calls = None
+        usage: dict = {}
+        output_text = ""
+        start = time.monotonic()
         for out in chat(MODEL, messages, think=THINK, tools=tools):
             if isinstance(out, dict):
-                tool_calls = out.get("tool_calls") or tool_calls
+                if "tool_calls" in out:
+                    tool_calls = out["tool_calls"]
+                else:
+                    usage = out
                 continue
             if first_chunk:
                 print("[nuru] ", end="", flush=True)
                 first_chunk = False
             print(out, end="", flush=True)
+            output_text += out
         print()
 
+        logger.model_call(
+            turn_id=turn_id,
+            duration_ms=(time.monotonic() - start) * 1000,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            stop_reason=usage.get("stop_reason"),
+            tool_calls_requested=[call["function"]["name"] for call in tool_calls] if tool_calls else [],
+            output_text=output_text,
+        )
+
         if not tool_calls:
+            logger.turn_end(turn_id)
             return
 
         messages.append({"role": "assistant", "tool_calls": tool_calls})
@@ -49,7 +74,13 @@ def run_turn(tools_client: MCPTools, tools: list[dict], text: str) -> None:
             if isinstance(args, str):
                 args = json.loads(args)
             print(f"[tool] {fn['name']}({args})")
-            content = tools_client.call_tool(fn["name"], args)
+            tool_start = time.monotonic()
+            try:
+                content = tools_client.call_tool(fn["name"], args)
+            except Exception as e:
+                logger.tool_call(turn_id, fn["name"], args, "error", str(e), (time.monotonic() - tool_start) * 1000)
+                raise
+            logger.tool_call(turn_id, fn["name"], args, "ok", None, (time.monotonic() - tool_start) * 1000)
             messages.append({"role": "tool", "content": content})
 
 
@@ -57,6 +88,8 @@ def main() -> None:
     tools_client = MCPTools(OBSIDIAN_SERVER_PARAMS)
     tools_client.connect()
     tools = tools_client.list_tools()
+
+    logger = CLILogger(LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp")
 
     try:
         while True:
@@ -68,9 +101,10 @@ def main() -> None:
             if text.strip() == "/exit":
                 unload_all_models()
                 stop_server()
+                logger.session_end(reason="/exit", models_unloaded=True, server_stopped=True)
                 break
 
-            run_turn(tools_client, tools, text)
+            run_turn(tools_client, tools, text, logger)
     finally:
         tools_client.close()
 

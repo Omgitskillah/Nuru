@@ -1,8 +1,8 @@
 [tool.uv.workspace]
-members = ["servers/obsidian", "servers/tools/logging", "nuru"]
+members = ["servers/obsidian", "tools/logging", "nuru"]
 
 [tool.pytest.ini_options]
-testpaths = ["servers", "nuru"]
+testpaths = ["servers", "nuru", "tools"]
 
 [dependency-groups]
 dev = [

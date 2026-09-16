@@ -22,12 +22,15 @@ def is_server_running() -> bool:
         return False
 
 
-def ensure_server_running(timeout: float = 15) -> None:
-    """Start `ollama serve` in the background if it isn't already up."""
+def ensure_server_running(timeout: float = 15) -> bool:
+    """Start `ollama serve` in the background if it isn't already up.
+
+    Returns whether this call spawned it (False if it was already running).
+    """
     global _server_process
 
     if is_server_running():
-        return
+        return False
 
     print("Ollama not running, starting it...")
     _server_process = subprocess.Popen(
@@ -40,7 +43,7 @@ def ensure_server_running(timeout: float = 15) -> None:
     while time.monotonic() < deadline:
         if is_server_running():
             print("Ollama started.")
-            return
+            return True
         time.sleep(0.5)
     raise RuntimeError(f"ollama serve did not come up within {timeout}s")
 
@@ -81,8 +84,11 @@ def model_info(model: str) -> dict:
     return r.json()
 
 
-def ensure_model_loaded(model: str) -> None:
-    """Load `model` into memory first if it isn't resident yet."""
+def ensure_model_loaded(model: str) -> dict:
+    """Load `model` into memory first if it isn't resident yet.
+
+    Returns its static info (parameter_size, quantization_level, family, supports_thinking).
+    """
     if not any(m["name"] == model for m in loaded_models()):
         r = requests.post(f"{BASE}/api/generate", json={"model": model}, timeout=300)
         r.raise_for_status()
@@ -95,6 +101,12 @@ def ensure_model_loaded(model: str) -> None:
         f"{details.get('quantization_level', '?')}, family={details.get('family', '?')}, "
         f"supports_thinking={supports_thinking}"
     )
+    return {
+        "parameter_size": details.get("parameter_size", "?"),
+        "quantization_level": details.get("quantization_level", "?"),
+        "family": details.get("family", "?"),
+        "supports_thinking": supports_thinking,
+    }
 
 
 def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = True, tools: list[dict] | None = None):

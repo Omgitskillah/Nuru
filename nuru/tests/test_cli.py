@@ -1,6 +1,13 @@
 import builtins
 
+import pytest
+
 from core import cli
+
+
+@pytest.fixture(autouse=True)
+def _isolate_log_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "LOG_DIR", tmp_path)
 
 
 def fake_input(lines):

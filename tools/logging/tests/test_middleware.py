@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -36,11 +37,11 @@ def call_next_raises(exc: Exception):
 
 
 def log_files(log_dir):
-    return sorted(log_dir.glob("*.log"))
+    return sorted(log_dir.glob("*.jsonl"))
 
 
-def read_lines(path):
-    return path.read_text().splitlines()
+def read_entries(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
 
 
 def test_creates_log_dir_if_missing(tmp_path):
@@ -63,7 +64,7 @@ def test_initialize_creates_session_file_named_with_id_date_and_client(tmp_path)
 
     files = log_files(tmp_path)
     assert len(files) == 1
-    assert re.match(r"^1_\d{8}-\d{6}_mcp-inspector\.log$", files[0].name)
+    assert re.match(r"^1_\d{8}-\d{6}_mcp-inspector\.jsonl$", files[0].name)
 
 
 def test_missing_client_name_falls_back_to_unknown(tmp_path):
@@ -73,7 +74,7 @@ def test_missing_client_name_falls_back_to_unknown(tmp_path):
     run(middleware(ctx, call_next_ok()))
 
     files = log_files(tmp_path)
-    assert re.match(r"^1_\d{8}-\d{6}_unknown\.log$", files[0].name)
+    assert re.match(r"^1_\d{8}-\d{6}_unknown\.jsonl$", files[0].name)
 
 
 def test_no_client_info_at_all_falls_back_to_unknown(tmp_path):
@@ -83,7 +84,7 @@ def test_no_client_info_at_all_falls_back_to_unknown(tmp_path):
     run(middleware(ctx, call_next_ok()))
 
     files = log_files(tmp_path)
-    assert re.match(r"^1_\d{8}-\d{6}_unknown\.log$", files[0].name)
+    assert re.match(r"^1_\d{8}-\d{6}_unknown\.jsonl$", files[0].name)
 
 
 def test_sanitizes_unsafe_characters_in_client_name(tmp_path):
@@ -98,7 +99,7 @@ def test_sanitizes_unsafe_characters_in_client_name(tmp_path):
     files = log_files(tmp_path)
     assert len(files) == 1
     # Only safe filename characters remain, no path separators or spaces.
-    assert re.match(r"^1_\d{8}-\d{6}_My-Client-v1-beta\.log$", files[0].name)
+    assert re.match(r"^1_\d{8}-\d{6}_My-Client-v1-beta\.jsonl$", files[0].name)
 
 
 def test_each_initialize_starts_a_new_session_file_with_incrementing_id(tmp_path):
@@ -146,14 +147,24 @@ def test_log_line_format_for_successful_call(tmp_path):
     call_ctx = FakeContext("tools/call", {"name": "list_notes", "arguments": {}})
     run(middleware(call_ctx, call_next_ok("some result")))
 
-    lines = read_lines(log_files(tmp_path)[0])
-    timestamp_re = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}"
+    entries = read_entries(log_files(tmp_path)[0])
+    request, response = entries[2], entries[3]
 
-    assert re.match(
-        timestamp_re + r" -> \{'lt': 'tools/call', 'params': \{'name': 'list_notes', 'arguments': \{\}\}\}$",
-        lines[2],
-    )
-    assert re.match(timestamp_re + r" <- \{'lt': 'tools/call', 'result': 'ok'\}$", lines[3])
+    ts_re = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
+    assert re.match(ts_re, request["ts"])
+    assert request["session_id"] == 1
+    assert request["event"] == "request"
+    assert request["method"] == "tools/call"
+    assert request["tool_name"] == "list_notes"
+    assert request["params"] == {"name": "list_notes", "arguments": {}}
+
+    assert response["request_id"] == request["request_id"]
+    assert response["event"] == "response"
+    assert response["method"] == "tools/call"
+    assert response["tool_name"] == "list_notes"
+    assert response["status"] == "ok"
+    assert response["error"] is None
+    assert isinstance(response["duration_ms"], (int, float))
 
 
 def test_failed_call_is_logged_as_error_and_exception_still_propagates(tmp_path):
@@ -165,8 +176,10 @@ def test_failed_call_is_logged_as_error_and_exception_still_propagates(tmp_path)
     with pytest.raises(ValueError, match="boom"):
         run(middleware(ctx, call_next_raises(ValueError("boom"))))
 
-    lines = read_lines(log_files(tmp_path)[0])
-    assert "'lt': 'tools/call', 'result': 'error', 'error': 'boom'" in lines[3]
+    entries = read_entries(log_files(tmp_path)[0])
+    response = entries[3]
+    assert response["status"] == "error"
+    assert response["error"] == "boom"
 
 
 def test_call_next_return_value_is_passed_through(tmp_path):

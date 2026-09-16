@@ -190,6 +190,74 @@ def test_main_exit_command_unloads_models_and_stops_server_without_chatting(monk
     assert calls == ["unload", "stop"]
 
 
+def test_main_show_command_prints_model_info_when_loaded(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["/show"]))
+    monkeypatch.setattr(cli, "is_model_loaded", lambda model: True)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"family": "qwen3", "context_window": 4096})
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    def unexpected_chat(*a, **k):
+        raise AssertionError("chat should not be called for /show")
+
+    monkeypatch.setattr(cli, "chat", unexpected_chat)
+
+    cli.main()
+
+    out = capsys.readouterr().out
+    assert "qwen3" in out
+    assert "4096" in out
+
+
+def test_main_show_command_prints_no_model_loaded_when_not_loaded(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["/show"]))
+    monkeypatch.setattr(cli, "is_model_loaded", lambda model: False)
+
+    def unexpected_call(*a, **k):
+        raise AssertionError("ensure_model_loaded should not be called for /show when not loaded")
+
+    monkeypatch.setattr(cli, "ensure_model_loaded", unexpected_call)
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    cli.main()
+
+    assert "no model loaded" in capsys.readouterr().out
+
+
+def test_main_load_command_loads_model_without_chatting(monkeypatch):
+    monkeypatch.setattr(builtins, "input", fake_input(["/load"]))
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    calls = []
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: calls.append("server") or True)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: calls.append(("model", model)) or {})
+
+    def unexpected_chat(*a, **k):
+        raise AssertionError("chat should not be called for /load")
+
+    monkeypatch.setattr(cli, "chat", unexpected_chat)
+
+    cli.main()
+
+    assert calls == ["server", ("model", cli.MODEL)]
+
+
+def test_main_help_command_lists_commands_without_chatting(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["/help"]))
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    def unexpected_chat(*a, **k):
+        raise AssertionError("chat should not be called for /help")
+
+    monkeypatch.setattr(cli, "chat", unexpected_chat)
+
+    cli.main()
+
+    out = capsys.readouterr().out
+    assert "/load" in out
+    assert "/show" in out
+    assert "/exit" in out
+
+
 def test_main_executes_tool_call_and_sends_result_back_to_model(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["what's the weather in Berlin?"]))
     monkeypatch.setattr(cli, "ensure_server_running", lambda: None)

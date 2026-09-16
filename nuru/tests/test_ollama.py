@@ -184,6 +184,19 @@ def test_model_info_posts_to_show_endpoint(monkeypatch):
     assert info == {"details": {"family": "qwen3"}}
 
 
+# --- is_model_loaded ---
+
+
+def test_is_model_loaded_true_when_present(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "qwen3:8b"}])
+    assert ollama.is_model_loaded("qwen3:8b") is True
+
+
+def test_is_model_loaded_false_when_absent(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "other-model"}])
+    assert ollama.is_model_loaded("qwen3:8b") is False
+
+
 # --- ensure_model_loaded ---
 
 
@@ -205,6 +218,24 @@ def test_ensure_model_loaded_skips_generate_call_if_already_loaded(monkeypatch, 
     assert "qwen3:8b" in out
     assert "8B" in out
     assert "supports_thinking=True" in out
+
+
+def test_ensure_model_loaded_extracts_context_window_and_embedding_length(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "qwen3:8b"}])
+    monkeypatch.setattr(
+        ollama,
+        "model_info",
+        lambda model: {
+            "details": {"family": "qwen3", "parameter_size": "8B"},
+            "capabilities": [],
+            "model_info": {"qwen3.context_length": 40960, "qwen3.embedding_length": 4096},
+        },
+    )
+
+    info = ollama.ensure_model_loaded("qwen3:8b")
+
+    assert info["context_window"] == 40960
+    assert info["embedding_length"] == 4096
 
 
 def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch, capsys):

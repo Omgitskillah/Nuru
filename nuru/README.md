@@ -40,9 +40,18 @@ uv run nuru
 
 Each message is sent as an independent, single-turn conversation - there's no chat history carried across turns.
 
+## Commands
+
+Anything you type that isn't one of the commands below is sent to the model as a prompt (which also loads the model first if it isn't loaded yet).
+
+- **`/help`** - Print the list of available commands.
+- **`/load`** - Load the model into memory (starting the server first if needed) without sending a prompt.
+- **`/show`** - Print the extracted model info (`parameter_size`, `quantization_level`, `family`, `supports_thinking`, `context_window`, `embedding_length`) - the same fields recorded in the logs.
+- **`/exit`, `/bye`, `/end`, `/quit`** - Unload all models, stop the Ollama server (if this process started it), and exit.
+
 ## Exiting
 
-Ctrl-D (EOF) exits cleanly. Ctrl-C is not currently handled and will raise a `KeyboardInterrupt` traceback.
+Ctrl-D (EOF) exits the loop without unloading the model or stopping the server - use `/exit` (or one of its aliases) for a clean shutdown. Ctrl-C is not currently handled and will raise a `KeyboardInterrupt` traceback.
 
 ## Module reference
 
@@ -52,7 +61,7 @@ Ctrl-D (EOF) exits cleanly. Ctrl-C is not currently handled and will raise a `Ke
 - **`ensure_server_running(timeout=15)`** - Starts `ollama serve` in the background if it isn't already up, and waits (up to `timeout` seconds) for it to respond. Raises `RuntimeError` if it never comes up.
 - **`loaded_models()`** - Models currently resident in memory (via `/api/ps`).
 - **`model_info(model)`** - Static info about a model - architecture, parameter size, quantization, capabilities (via `/api/show`).
-- **`ensure_model_loaded(model)`** - Loads `model` into memory if it isn't resident yet, then prints a one-line summary from `model_info`.
+- **`ensure_model_loaded(model)`** - Loads `model` into memory if it isn't resident yet, then prints a one-line summary from `model_info` and returns a dict with `parameter_size`, `quantization_level`, `family`, `supports_thinking`, `context_window`, and `embedding_length`.
 - **`chat(model, messages, num_ctx=8192, think=True)`** - A generator that yields streamed response text chunks (`str`), then a final usage dict (`{"prompt_tokens", "completion_tokens", "stop_reason"}`). Also prints each outgoing message as `[role] content` before sending.
 
 ## Testing

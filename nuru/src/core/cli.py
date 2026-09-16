@@ -11,7 +11,14 @@ from mcp import StdioServerParameters
 
 from core.cli_logging import CLILogger
 from core.providers.mcp_tools import MCPTools
-from core.providers.ollama import chat, ensure_model_loaded, ensure_server_running, stop_server, unload_all_models
+from core.providers.ollama import (
+    chat,
+    ensure_model_loaded,
+    ensure_server_running,
+    is_model_loaded,
+    stop_server,
+    unload_all_models,
+)
 
 load_dotenv()
 
@@ -23,6 +30,14 @@ OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "server
 OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
 
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+
+HELP_TEXT = """Available commands:
+  /help              Show this message.
+  /load              Load the model into memory (starting the server if needed) without sending a prompt.
+  /show              Print static info about the current model (params, quantization, context window, etc).
+  /exit, /bye,       End the session: unload the model, stop the server, and exit.
+  /end, /quit
+Anything else you type is sent to the model as a prompt (this also loads the model first if it isn't loaded yet)."""
 
 
 def run_turn(tools_client: MCPTools, tools: list[dict], text: str, logger: CLILogger) -> None:
@@ -98,13 +113,24 @@ def main() -> None:
             except EOFError:
                 break
 
-            if text.strip() == "/exit":
+            if text.strip() in ("/exit", "/bye", "/end", "/quit"):
                 unload_all_models()
                 stop_server()
                 logger.session_end(reason="/exit", models_unloaded=True, server_stopped=True)
                 break
-
-            run_turn(tools_client, tools, text, logger)
+            elif text.strip() == "/show":
+                if is_model_loaded(MODEL):
+                    print(json.dumps(ensure_model_loaded(MODEL), indent=2))
+                else:
+                    print("no model loaded")
+            elif text.strip() == "/load":
+                server_spawned = ensure_server_running()
+                model_loaded_info = ensure_model_loaded(MODEL)
+                logger.model_lifecycle(server_spawned, model_loaded_info)
+            elif text.strip() == "/help":
+                print(HELP_TEXT)
+            else:
+                run_turn(tools_client, tools, text, logger)
     finally:
         tools_client.close()
 

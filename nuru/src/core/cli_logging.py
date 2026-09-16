@@ -91,6 +91,8 @@ class CLILogger:
                 "quantization_level": model_info.get("quantization_level"),
                 "family": model_info.get("family"),
                 "supports_thinking": model_info.get("supports_thinking"),
+                "context_window": model_info.get("context_window"),
+                "embedding_length": model_info.get("embedding_length"),
             }
         )
 

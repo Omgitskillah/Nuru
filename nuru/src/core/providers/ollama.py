@@ -84,17 +84,26 @@ def model_info(model: str) -> dict:
     return r.json()
 
 
+def is_model_loaded(model: str) -> bool:
+    """Whether `model` is currently resident in memory."""
+    return any(m["name"] == model for m in loaded_models())
+
+
 def ensure_model_loaded(model: str) -> dict:
     """Load `model` into memory first if it isn't resident yet.
 
     Returns its static info (parameter_size, quantization_level, family, supports_thinking).
     """
-    if not any(m["name"] == model for m in loaded_models()):
+    if not is_model_loaded(model):
         r = requests.post(f"{BASE}/api/generate", json={"model": model}, timeout=300)
         r.raise_for_status()
 
     info = model_info(model)
     details = info.get("details", {})
+    model_arch_info = info.get("model_info", {})
+    architecture = details.get("family", "?")
+    context_window = model_arch_info.get(f"{architecture}.context_length")
+    embedding_length = model_arch_info.get(f"{architecture}.embedding_length")
     supports_thinking = "thinking" in info.get("capabilities", [])
     print(
         f"{model}: {details.get('parameter_size', '?')} params, "
@@ -106,6 +115,8 @@ def ensure_model_loaded(model: str) -> dict:
         "quantization_level": details.get("quantization_level", "?"),
         "family": details.get("family", "?"),
         "supports_thinking": supports_thinking,
+        "context_window": context_window,
+        "embedding_length": embedding_length,
     }
 
 

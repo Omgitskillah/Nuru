@@ -175,7 +175,7 @@ def _check_accessible(path: Path) -> None:
         ) from e
 
 
-@mcp.tool()
+@mcp.tool(description="List all Markdown notes in the vault, as vault-relative paths. Excludes Templates/.")
 @_tool
 def list_notes() -> list[str]:
     """List all notes (Markdown files) in the vault, as paths relative to the vault root.
@@ -211,7 +211,10 @@ def _is_within_vault(path: Path) -> bool:
         return False
 
 
-@mcp.tool()
+@mcp.tool(
+    description="List all files in the vault (notes and attachments), as vault-relative paths. "
+    "Excludes .obsidian/ and dotfiles."
+)
 @_tool
 def list_files() -> list[str]:
     """List all files in the vault (notes and attachments alike), as paths relative to the vault root.
@@ -226,7 +229,11 @@ def list_files() -> list[str]:
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    description="List all files recursively under a vault subdirectory, as vault-relative paths. "
+    "directory: subdirectory name or path relative to the vault root (matched by name anywhere in "
+    "the vault if not found directly). Returns [] if no match is found."
+)
 @_tool
 def list_files_in_directory(directory: str) -> list[str]:
     """List all files recursively within a subdirectory of the vault, as paths relative to the vault root.
@@ -262,7 +269,10 @@ def list_files_in_directory(directory: str) -> list[str]:
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Case-insensitive substring search over note content. query: text to search for. "
+    "Returns matching vault-relative paths, or [] if none match. Excludes Templates/."
+)
 @_tool
 def search_notes(query: str) -> list[str]:
     """Search notes (Markdown files) for a string, case-insensitive.
@@ -313,7 +323,10 @@ def count_tags() -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Return a note's full Markdown content by filename. name: filename, with or without "
+    "the .md extension (searched recursively if not at the vault root). Errors if no note is found."
+)
 @_tool
 def read_note(name: str) -> str:
     """Return the full contents of a note (Markdown file) by name.
@@ -439,7 +452,18 @@ def _build_frontmatter(
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    description=(
+        "Create a new note in the vault. type: one of directives, daily, correction, profile, "
+        "preferences, person, topic, index, transcript, project, session. title: human-readable "
+        "title (becomes the filename). author: one of user, nuru, both (directives/daily/correction "
+        "require author=user). body: Markdown content. tags: extra tags, no whitespace. supersedes: "
+        "id of a note this replaces, must already exist. date: required for type=daily, format "
+        "YYYY-MM-DD. targets: required for type=correction, list of existing note ids. session: "
+        "required for type=transcript or type=session, format YYYY-MM-DD-NN. Use append_note (not "
+        "this again) to add to a note afterward. Returns {id, path}."
+    )
+)
 @_tool
 def create_note(
     type: str,
@@ -607,7 +631,10 @@ def _blank_line_separator(existing: str) -> str:
     return "\n\n"
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Append content to an existing note's body. id: the note's id (not its path), as "
+    "returned by create_note. content: Markdown to append. Returns the note's vault-relative path."
+)
 @_tool
 def append_note(id: str, content: str) -> str:
     """Append content to an existing note's body, looked up by id.
@@ -686,7 +713,11 @@ def _build_template_file(type: str) -> str:
     return f"---\n{frontmatter}---\n\n{h1}\n\n{body}" + ("\n" if body else "")
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Regenerate Obsidian template files under Templates/. overwrite: if true, overwrite "
+    "existing template files; default false leaves them untouched. Returns {written, skipped} "
+    "vault-relative paths."
+)
 @_tool
 def generate_templates(overwrite: bool = False) -> dict[str, list[str]]:
     """Generate the vault's Obsidian template files under Templates/.
@@ -729,7 +760,10 @@ def generate_templates(overwrite: bool = False) -> dict[str, list[str]]:
     return {"written": written, "skipped": skipped}
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Rename or move a file within the vault. source_path/destination_path: vault-relative "
+    "paths. Returns the destination path."
+)
 @_tool
 def rename_or_move_file(source_path: str, destination_path: str) -> str:
     """Rename or move a file within the vault.
@@ -783,7 +817,10 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     return destination_rel
 
 
-@mcp.tool()
+@mcp.tool(
+    description="Delete a file or directory (recursively) from the vault. path: vault-relative path. "
+    "Returns every path deleted."
+)
 @_tool
 def delete_file_or_directory(path: str) -> list[str]:
     """Delete a file or directory (recursively) from the vault.

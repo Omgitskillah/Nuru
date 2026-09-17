@@ -3,6 +3,7 @@ import builtins
 import pytest
 
 from core import cli
+from core.conversation_store import ConversationStore
 
 
 @pytest.fixture(autouse=True)
@@ -24,8 +25,22 @@ def fake_input(lines):
     return _input
 
 
+def fake_input_recording_prompts(lines, prompts):
+    """Like fake_input, but also records each prompt string input() was called with."""
+    remaining = iter(lines)
+
+    def _input(prompt=""):
+        prompts.append(prompt)
+        try:
+            return next(remaining)
+        except StopIteration:
+            raise EOFError
+
+    return _input
+
+
 def fake_chat(chunks):
-    def _chat(model, messages, think=True, tools=None):
+    def _chat(model, messages, num_ctx=8192, think=True, tools=None):
         yield from chunks
 
     return _chat
@@ -59,6 +74,58 @@ def patch_mcp(monkeypatch, fake_tools_client):
     monkeypatch.setattr(cli, "MCPTools", lambda server_params: fake_tools_client)
 
 
+def test_context_usage_percent_is_zero_for_an_empty_conversation(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+
+    assert cli._context_usage_percent(store, conversation_id, context_window=1000) == 0
+
+
+def test_context_usage_percent_reflects_full_context_window_not_the_reserved_budget(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    # 400 of a 1000-token window = 40%, even though the 80% response-reserved
+    # budget (800) is what actually bounds which history gets included.
+    store.add_message(conversation_id, "user", "hi", tokens_used=400)
+
+    assert cli._context_usage_percent(store, conversation_id, context_window=1000) == 40
+
+
+def test_context_usage_percent_is_capped_at_100(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "hi", tokens_used=5000)
+
+    assert cli._context_usage_percent(store, conversation_id, context_window=1000) == 100
+
+
+def test_context_usage_percent_uses_only_the_latest_turn_not_a_sum(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    # Each user row's tokens_used is already the FULL prompt size Ollama saw for
+    # that call (history + tool schema + everything) - summing rows would
+    # double-count prior turns' content. Only the latest one should matter.
+    store.add_message(conversation_id, "user", "first", tokens_used=300)
+    store.add_message(conversation_id, "nuru", "reply", tokens_used=50)
+    store.add_message(conversation_id, "user", "second", tokens_used=350)
+
+    assert cli._context_usage_percent(store, conversation_id, context_window=1000) == 35
+
+
+def test_main_shows_context_usage_percent_in_the_input_prompt(monkeypatch):
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"context_window": 1000})
+    monkeypatch.setattr(cli, "chat", fake_chat([]))
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    prompts = []
+    monkeypatch.setattr(builtins, "input", fake_input_recording_prompts(["hi"], prompts))
+
+    cli.main()
+
+    assert prompts[0] == "[user: 0%] "
+
+
 def test_main_echoes_response_prefixed_with_nuru(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["hello"]))
     monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
@@ -72,7 +139,7 @@ def test_main_echoes_response_prefixed_with_nuru(monkeypatch, capsys):
     assert "[nuru] Hi there" in out
 
 
-def test_main_sends_each_line_as_its_own_message(monkeypatch):
+def test_main_includes_prior_turns_from_the_same_conversation_as_history(monkeypatch):
     monkeypatch.setattr(builtins, "input", fake_input(["first", "second"]))
     monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
     monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
@@ -80,7 +147,7 @@ def test_main_sends_each_line_as_its_own_message(monkeypatch):
 
     sent = []
 
-    def recording_chat(model, messages, think=True, tools=None):
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
         sent.append(messages)
         return iter([])
 
@@ -88,9 +155,11 @@ def test_main_sends_each_line_as_its_own_message(monkeypatch):
 
     cli.main()
 
-    assert sent == [
-        [{"role": "user", "content": "first"}],
-        [{"role": "user", "content": "second"}],
+    assert sent[0] == [{"role": "user", "content": "first"}]
+    assert sent[1] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": "second"},
     ]
 
 
@@ -124,7 +193,7 @@ def test_main_passes_think_setting_to_chat(monkeypatch):
 
     seen = {}
 
-    def recording_chat(model, messages, think=True, tools=None):
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
         seen["think"] = think
         return iter([])
 
@@ -158,7 +227,7 @@ def test_main_connects_and_closes_mcp_tools_and_passes_tools_to_chat(monkeypatch
 
     seen = {}
 
-    def recording_chat(model, messages, think=True, tools=None):
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
         seen["tools"] = tools
         return iter([])
 
@@ -276,7 +345,7 @@ def test_main_executes_tool_call_and_sends_result_back_to_model(monkeypatch, cap
         ]
     )
 
-    def recording_chat(model, messages, think=True, tools=None):
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
         yield from next(responses)
 
     monkeypatch.setattr(cli, "chat", recording_chat)

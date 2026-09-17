@@ -1,4 +1,4 @@
-from core.conversation_store import ConversationStore
+from core.conversation_store import _MAX_HISTORY_MESSAGES, ConversationStore
 
 
 def test_creates_db_file_and_parent_dirs_if_missing(tmp_path):
@@ -46,6 +46,104 @@ def test_update_tokens_sets_tokens_used_on_existing_message(tmp_path):
 
     messages = store.get_messages(conversation_id)
     assert messages[0]["tokens_used"] == 42
+
+
+def test_get_latest_prompt_tokens_returns_none_when_no_user_message_exists(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+
+    assert store.get_latest_prompt_tokens(conversation_id) is None
+
+
+def test_get_latest_prompt_tokens_returns_the_most_recent_user_messages_tokens(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=100)
+    store.add_message(conversation_id, "nuru", "reply", tokens_used=20)
+    store.add_message(conversation_id, "user", "second", tokens_used=250)
+
+    assert store.get_latest_prompt_tokens(conversation_id) == 250
+
+
+def test_get_latest_prompt_tokens_ignores_other_conversations(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_a = store.create_conversation()
+    conversation_b = store.create_conversation()
+    store.add_message(conversation_a, "user", "a", tokens_used=111)
+    store.add_message(conversation_b, "user", "b", tokens_used=222)
+
+    assert store.get_latest_prompt_tokens(conversation_a) == 111
+    assert store.get_latest_prompt_tokens(conversation_b) == 222
+
+
+def test_get_recent_messages_returns_all_when_under_budget(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=10)
+    store.add_message(conversation_id, "assistant", "second", tokens_used=10)
+    store.add_message(conversation_id, "user", "third", tokens_used=10)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=100)
+
+    assert [m["content"] for m in messages] == ["first", "second", "third"]
+
+
+def test_get_recent_messages_drops_oldest_once_budget_exceeded(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=50)
+    store.add_message(conversation_id, "assistant", "second", tokens_used=50)
+    store.add_message(conversation_id, "user", "third", tokens_used=50)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=100)
+
+    assert [m["content"] for m in messages] == ["second", "third"]
+
+
+def test_get_recent_messages_always_includes_at_least_the_latest_message(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=500)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=10)
+
+    assert [m["content"] for m in messages] == ["first"]
+
+
+def test_get_recent_messages_treats_null_tokens_as_zero(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=None)
+    store.add_message(conversation_id, "assistant", "second", tokens_used=None)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=0)
+
+    assert [m["content"] for m in messages] == ["first", "second"]
+
+
+def test_get_recent_messages_never_exceeds_the_hard_history_cap(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    total_messages = _MAX_HISTORY_MESSAGES + 10
+    for i in range(total_messages):
+        store.add_message(conversation_id, "user", f"message {i}", tokens_used=0)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=10**9)
+
+    assert len(messages) == _MAX_HISTORY_MESSAGES
+    assert messages[0]["content"] == f"message {10}"
+    assert messages[-1]["content"] == f"message {total_messages - 1}"
+
+
+def test_get_recent_messages_does_not_load_content_for_discarded_history(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "old and discarded", tokens_used=1000)
+    store.add_message(conversation_id, "user", "kept", tokens_used=10)
+
+    messages = store.get_recent_messages(conversation_id, token_budget=50)
+
+    assert [m["content"] for m in messages] == ["kept"]
 
 
 def test_get_messages_only_returns_messages_for_given_conversation(tmp_path):

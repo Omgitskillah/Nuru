@@ -32,6 +32,13 @@ OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsid
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
 
+DEFAULT_NUM_CTX = 8192
+# Leave this fraction of the context window free for the model's response.
+RESPONSE_RESERVE = 0.2
+
+# DB role -> role the chat API expects.
+_ROLE_TO_API = {"user": "user", "nuru": "assistant"}
+
 HELP_TEXT = """Available commands:
   /help              Show this message.
   /load              Load the model into memory (starting the server if needed) without sending a prompt.
@@ -51,7 +58,7 @@ def run_turn(
     user_message_id: int,
 ) -> None:
     turn_id = logger.turn_start(text)
-    messages = [{"role": "user", "content": text}]
+    messages = None
     prompt_tokens_recorded = False
 
     while True:
@@ -59,12 +66,18 @@ def run_turn(
         model_info = ensure_model_loaded(MODEL)
         logger.model_lifecycle(server_spawned, model_info)
 
+        num_ctx = (model_info or {}).get("context_window") or DEFAULT_NUM_CTX
+        if messages is None:
+            token_budget = int(num_ctx * (1 - RESPONSE_RESERVE))
+            history = store.get_recent_messages(conversation_id, token_budget)
+            messages = [{"role": _ROLE_TO_API[m["role"]], "content": m["content"]} for m in history]
+
         first_chunk = True
         tool_calls = None
         usage: dict = {}
         output_text = ""
         start = time.monotonic()
-        for out in chat(MODEL, messages, think=THINK, tools=tools):
+        for out in chat(MODEL, messages, num_ctx=num_ctx, think=THINK, tools=tools):
             if isinstance(out, dict):
                 if "tool_calls" in out:
                     tool_calls = out["tool_calls"]
@@ -114,6 +127,19 @@ def run_turn(
             messages.append({"role": "tool", "content": content})
 
 
+def _context_usage_percent(store: ConversationStore, conversation_id: int, context_window: int) -> int:
+    """Percentage of the model's full context window used as of the most recent
+    turn (the 20% response reserve doesn't shrink the ceiling here - 100% is
+    the full window). Display only - never logged to the DB or the JSONL logs.
+    """
+    if not context_window:
+        return 0
+    latest_prompt_tokens = store.get_latest_prompt_tokens(conversation_id)
+    if not latest_prompt_tokens:
+        return 0
+    return min(100, round(latest_prompt_tokens / context_window * 100))
+
+
 def main() -> None:
     tools_client = MCPTools(OBSIDIAN_SERVER_PARAMS)
     tools_client.connect()
@@ -129,8 +155,10 @@ def main() -> None:
 
     try:
         while True:
+            context_window = (model_loaded_info or {}).get("context_window") or DEFAULT_NUM_CTX
+            usage_pct = _context_usage_percent(store, conversation_id, context_window)
             try:
-                text = input("[user] ")
+                text = input(f"[user: {usage_pct}%] ")
             except EOFError:
                 break
 

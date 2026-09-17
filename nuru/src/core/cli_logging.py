@@ -75,6 +75,9 @@ class CLILogger:
     def turn_end(self, turn_id: str) -> None:
         self._log({"event": "turn_end", "turn_id": turn_id})
 
+    def turn_error(self, turn_id: str, error: str) -> None:
+        self._log({"event": "turn_error", "turn_id": turn_id, "error": error})
+
     def model_lifecycle(self, server_spawned: bool, model_info: dict[str, Any] | None) -> None:
         """Logs the model/server startup info once per session, however many
         times ensure_server_running/ensure_model_loaded get re-checked."""

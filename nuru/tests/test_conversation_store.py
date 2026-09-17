@@ -48,6 +48,29 @@ def test_update_tokens_sets_tokens_used_on_existing_message(tmp_path):
     assert messages[0]["tokens_used"] == 42
 
 
+def test_delete_message_removes_it(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    keep_id = store.add_message(conversation_id, "user", "keep me")
+    delete_id = store.add_message(conversation_id, "user", "delete me")
+
+    store.delete_message(delete_id)
+
+    messages = store.get_messages(conversation_id)
+    assert [m["id"] for m in messages] == [keep_id]
+
+
+def test_get_latest_prompt_tokens_falls_back_after_a_deleted_failed_turn(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    conversation_id = store.create_conversation()
+    store.add_message(conversation_id, "user", "first", tokens_used=500)
+    failed_id = store.add_message(conversation_id, "user", "second, but it failed")
+
+    store.delete_message(failed_id)
+
+    assert store.get_latest_prompt_tokens(conversation_id) == 500
+
+
 def test_get_latest_prompt_tokens_returns_none_when_no_user_message_exists(tmp_path):
     store = ConversationStore(tmp_path / "conversation.db")
     conversation_id = store.create_conversation()

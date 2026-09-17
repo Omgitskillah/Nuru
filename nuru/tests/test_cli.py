@@ -354,3 +354,84 @@ def test_main_executes_tool_call_and_sends_result_back_to_model(monkeypatch, cap
 
     assert fake_tools_client.calls == [("get_temperature", {"city": "Berlin"})]
     assert "[nuru] It's 17C" in capsys.readouterr().out
+
+
+def test_main_survives_a_request_failure_instead_of_crashing(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["hello", "still here?"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    def failing_chat(model, messages, num_ctx=8192, think=True, tools=None):
+        raise cli.requests.exceptions.ReadTimeout("timed out")
+        yield  # pragma: no cover - makes this a generator
+
+    monkeypatch.setattr(cli, "chat", failing_chat)
+
+    cli.main()  # must not raise
+
+    out = capsys.readouterr().out
+    # Both turns ran (the session kept going after the first failure) instead
+    # of the process crashing after the first request timed out.
+    assert out.count("[error]") == 2
+
+
+def test_main_deletes_the_user_message_when_the_request_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(builtins, "input", fake_input(["hello"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    def failing_chat(model, messages, num_ctx=8192, think=True, tools=None):
+        raise cli.requests.exceptions.ReadTimeout("timed out")
+        yield  # pragma: no cover - makes this a generator
+
+    monkeypatch.setattr(cli, "chat", failing_chat)
+
+    cli.main()
+
+    store = ConversationStore(cli.DB_PATH)
+    messages = store.get_messages(1)
+    assert messages == []
+
+
+def test_estimate_tokens_uses_chars_per_token_heuristic():
+    assert cli._estimate_tokens("a" * 400) == 100
+
+
+def test_token_budget_reserves_the_response_fraction():
+    assert cli._token_budget(1000) == 800
+
+
+def test_main_rejects_a_message_that_would_exceed_the_token_budget(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["x" * 100_000]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"context_window": 1000})
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    def unexpected_chat(*a, **k):
+        raise AssertionError("chat should not be called for an over-budget message")
+
+    monkeypatch.setattr(cli, "chat", unexpected_chat)
+
+    cli.main()
+
+    out = capsys.readouterr().out
+    assert "[error] message too long" in out
+
+    store = ConversationStore(cli.DB_PATH)
+    assert store.get_messages(1) == []
+
+
+def test_main_accepts_a_message_within_the_token_budget(monkeypatch, capsys):
+    monkeypatch.setattr(builtins, "input", fake_input(["hi"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"context_window": 1000})
+    monkeypatch.setattr(cli, "chat", fake_chat(["ok", {"prompt_tokens": 1, "completion_tokens": 1}]))
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    cli.main()
+
+    out = capsys.readouterr().out
+    assert "[error] message too long" not in out
+    assert "[nuru] ok" in out

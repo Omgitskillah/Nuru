@@ -3,6 +3,7 @@ the server and a model on demand and stream chat responses from it.
 """
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -10,6 +11,11 @@ import time
 import requests
 
 BASE = "http://localhost:11434"
+
+# Local generation over a large context can legitimately take a long time on
+# modest hardware - default generously rather than have a slow-but-working
+# request get killed as if it had failed. Override via env if needed.
+CHAT_READ_TIMEOUT_SECONDS = int(os.environ.get("NURU_CHAT_TIMEOUT_SECONDS", 1800))
 
 # Handle for the `ollama serve` process we spawned, if any (set by
 # ensure_server_running, used by stop_server to shut it back down).
@@ -158,7 +164,7 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = Tr
         f"{BASE}/api/chat",
         json=payload,
         stream=True,
-        timeout=(5, 300),   # connect, read
+        timeout=(5, CHAT_READ_TIMEOUT_SECONDS),   # connect, read
     )
     r.raise_for_status()
 

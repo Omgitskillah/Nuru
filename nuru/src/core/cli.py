@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from mcp import StdioServerParameters
 
@@ -36,8 +37,22 @@ DEFAULT_NUM_CTX = 8192
 # Leave this fraction of the context window free for the model's response.
 RESPONSE_RESERVE = 0.2
 
+# Rough chars-per-token estimate for rejecting an oversized message before it
+# ever reaches the model - calibrated against an actual measurement (155,667
+# chars of plain English filler text -> ~37,062 prompt tokens once the fixed
+# tool-schema overhead is subtracted, i.e. ~4.2 chars/token).
+CHARS_PER_TOKEN_ESTIMATE = 4
+
 # DB role -> role the chat API expects.
 _ROLE_TO_API = {"user": "user", "nuru": "assistant"}
+
+
+def _token_budget(context_window: int) -> int:
+    return int(context_window * (1 - RESPONSE_RESERVE))
+
+
+def _estimate_tokens(text: str) -> int:
+    return len(text) // CHARS_PER_TOKEN_ESTIMATE
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -68,8 +83,7 @@ def run_turn(
 
         num_ctx = (model_info or {}).get("context_window") or DEFAULT_NUM_CTX
         if messages is None:
-            token_budget = int(num_ctx * (1 - RESPONSE_RESERVE))
-            history = store.get_recent_messages(conversation_id, token_budget)
+            history = store.get_recent_messages(conversation_id, _token_budget(num_ctx))
             messages = [{"role": _ROLE_TO_API[m["role"]], "content": m["content"]} for m in history]
 
         first_chunk = True
@@ -77,19 +91,26 @@ def run_turn(
         usage: dict = {}
         output_text = ""
         start = time.monotonic()
-        for out in chat(MODEL, messages, num_ctx=num_ctx, think=THINK, tools=tools):
-            if isinstance(out, dict):
-                if "tool_calls" in out:
-                    tool_calls = out["tool_calls"]
-                else:
-                    usage = out
-                continue
-            if first_chunk:
-                print("[nuru] ", end="", flush=True)
-                first_chunk = False
-            print(out, end="", flush=True)
-            output_text += out
-        print()
+        try:
+            for out in chat(MODEL, messages, num_ctx=num_ctx, think=THINK, tools=tools):
+                if isinstance(out, dict):
+                    if "tool_calls" in out:
+                        tool_calls = out["tool_calls"]
+                    else:
+                        usage = out
+                    continue
+                if first_chunk:
+                    print("[nuru] ", end="", flush=True)
+                    first_chunk = False
+                print(out, end="", flush=True)
+                output_text += out
+            print()
+        except requests.exceptions.RequestException as e:
+            print(f"\n[error] request to the model failed: {e}")
+            print("Your message was not saved - try again, or try a shorter prompt.")
+            logger.turn_error(turn_id, str(e))
+            store.delete_message(user_message_id)
+            return
 
         if not prompt_tokens_recorded:
             store.update_tokens(user_message_id, usage.get("prompt_tokens"))
@@ -179,6 +200,15 @@ def main() -> None:
             elif text.strip() == "/help":
                 print(HELP_TEXT)
             else:
+                budget = _token_budget(context_window)
+                estimated_tokens = _estimate_tokens(text)
+                if estimated_tokens > budget:
+                    print(
+                        f"[error] message too long: ~{estimated_tokens} estimated tokens, "
+                        f"which exceeds the {budget}-token budget for this model's context window. "
+                        "Please shorten it and try again."
+                    )
+                    continue
                 user_message_id = store.add_message(conversation_id, "user", text)
                 run_turn(tools_client, tools, text, logger, store, conversation_id, user_message_id)
     finally:

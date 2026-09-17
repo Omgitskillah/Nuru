@@ -70,6 +70,15 @@ class ConversationStore:
                 (tokens_used, message_id),
             )
 
+    def delete_message(self, message_id: int) -> None:
+        """Removes a message outright - used to undo a "user" row whose turn
+        never got a response, so it can't linger with tokens_used stuck at
+        NULL and throw off get_latest_prompt_tokens for the rest of the
+        conversation.
+        """
+        with self._conn:
+            self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+
     def _history_cutoff(self, conversation_id: int, token_budget: int) -> tuple[int | None, int]:
         """Scans only (id, tokens_used) - cheap, no message content - to find the
         oldest id that still fits under token_budget, and the resulting token

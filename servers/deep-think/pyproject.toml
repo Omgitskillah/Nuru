@@ -1,0 +1,30 @@
+[project]
+name = "deep-think-mcp"
+version = "0.1.0"
+description = "MCP server enforcing a single Messages/Token Counting/Models/Files API contract across interchangeable providers (Claude, ...)"
+readme = "README.md"
+authors = [
+    { name = "Omgitskillah", email = "clarence.alucho@gmail.com" }
+]
+requires-python = ">=3.14.7"
+dependencies = [
+    "mcp>=2.2.0",
+    "access-logging",
+    "python-dotenv>=1.2.3",
+    "anthropic>=1.0.0",
+]
+
+[project.scripts]
+deep-think-mcp = "deep_think_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+access-logging = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 
@@ -79,6 +80,68 @@ def test_ensure_server_running_raises_if_it_never_comes_up(monkeypatch):
 
     with pytest.raises(RuntimeError, match="did not come up"):
         ollama.ensure_server_running(timeout=5)
+
+
+# --- create_model ---
+
+
+def test_create_model_renders_the_base_model_placeholder_and_calls_ollama_create(monkeypatch, tmp_path):
+    modelfile = tmp_path / "Modelfile"
+    modelfile.write_text('FROM __BASE_MODEL__\n\nSYSTEM """hi"""\n')
+
+    calls = []
+    rendered_contents = []
+
+    def fake_run(cmd, check, capture_output, text):
+        calls.append(cmd)
+        # Read the rendered Modelfile now - create_model deletes it before returning.
+        rendered_contents.append(open(cmd[4]).read())
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(ollama.subprocess, "run", fake_run)
+
+    ollama.create_model("nuru", "qwen3:8b", modelfile)
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[:3] == ["ollama", "create", "nuru"]
+    assert cmd[3] == "-f"
+    assert "FROM qwen3:8b" in rendered_contents[0]
+
+
+def test_create_model_cleans_up_the_rendered_modelfile(monkeypatch, tmp_path):
+    modelfile = tmp_path / "Modelfile"
+    modelfile.write_text("FROM __BASE_MODEL__\n")
+
+    rendered_paths = []
+
+    def fake_run(cmd, check, capture_output, text):
+        rendered_paths.append(cmd[4])
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(ollama.subprocess, "run", fake_run)
+
+    ollama.create_model("nuru", "qwen3:8b", modelfile)
+
+    assert not os.path.exists(rendered_paths[0])
+
+
+def test_create_model_cleans_up_even_if_ollama_create_fails(monkeypatch, tmp_path):
+    modelfile = tmp_path / "Modelfile"
+    modelfile.write_text("FROM __BASE_MODEL__\n")
+
+    rendered_paths = []
+
+    def failing_run(cmd, check, capture_output, text):
+        rendered_paths.append(cmd[4])
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(ollama.subprocess, "run", failing_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        ollama.create_model("nuru", "qwen3:8b", modelfile)
+
+    assert not os.path.exists(rendered_paths[0])
 
 
 # --- unload_all_models / stop_server ---
@@ -196,6 +259,20 @@ def test_is_model_loaded_true_when_present(monkeypatch):
 def test_is_model_loaded_false_when_absent(monkeypatch):
     monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "other-model"}])
     assert ollama.is_model_loaded("qwen3:8b") is False
+
+
+def test_is_model_loaded_true_when_queried_without_a_tag_but_loaded_as_latest(monkeypatch):
+    # Regression: Ollama reports a loaded model with an explicit tag (e.g.
+    # "nuru:latest") even when the caller asked for it without a tag ("nuru") -
+    # a bare string comparison would always miss this and force a needless
+    # reload before every single request.
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "nuru:latest"}])
+    assert ollama.is_model_loaded("nuru") is True
+
+
+def test_is_model_loaded_true_when_queried_with_a_tag_matching_an_untagged_load(monkeypatch):
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "nuru"}])
+    assert ollama.is_model_loaded("nuru:latest") is True
 
 
 # --- ensure_model_loaded ---

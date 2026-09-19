@@ -10,6 +10,9 @@ from core.conversation_store import ConversationStore
 def _isolate_log_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "LOG_DIR", tmp_path)
     monkeypatch.setattr(cli, "DB_PATH", tmp_path / "conversation.db")
+    # Building the custom Ollama model is a real `ollama create` subprocess
+    # call - never let it run for real in a test.
+    monkeypatch.setattr(cli, "create_model", lambda model, base_model, modelfile_path: None)
 
 
 def fake_input(lines):
@@ -165,9 +168,27 @@ def test_main_includes_prior_turns_from_the_same_conversation_as_history(monkeyp
 
 def test_main_exits_cleanly_on_eof(monkeypatch):
     monkeypatch.setattr(builtins, "input", fake_input([]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
     patch_mcp(monkeypatch, FakeMCPTools())
 
     cli.main()  # must not raise
+
+
+def test_main_builds_the_custom_model_from_the_modelfile_before_loading(monkeypatch):
+    monkeypatch.setattr(builtins, "input", fake_input([]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    calls = []
+    monkeypatch.setattr(
+        cli, "create_model", lambda model, base_model, modelfile_path: calls.append((model, base_model, modelfile_path))
+    )
+
+    cli.main()
+
+    assert calls == [(cli.MODEL, cli.BASE_MODEL, cli.MODELFILE_PATH)]
 
 
 def test_main_checks_server_and_model_before_each_send(monkeypatch):
@@ -314,6 +335,8 @@ def test_main_load_command_loads_model_without_chatting(monkeypatch):
 
 def test_main_help_command_lists_commands_without_chatting(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["/help"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
     patch_mcp(monkeypatch, FakeMCPTools())
 
     def unexpected_chat(*a, **k):

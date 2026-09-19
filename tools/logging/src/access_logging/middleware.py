@@ -52,6 +52,45 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+def _extract_usage(result: Any) -> dict[str, Any] | None:
+    """Pull the "usage" object out of a tool's JSON result, if it has one.
+
+    Tools that wrap a Messages/Token-Counting-shaped API response (deep-think's
+    send_message, count_tokens, ask_an_expert, ...) return a dict containing a
+    "usage" field; the MCP framework serializes that dict into the first text
+    content block of the tool result, so this parses it back out.
+
+    The API doesn't report total input tokens as a single field - it's the sum
+    of three separate ones:
+        total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens
+    That total is computed here and added to the returned usage dict so it
+    lands in the log without every caller having to re-derive it.
+    """
+    content = getattr(result, "content", None)
+    if not content:
+        return None
+    text = getattr(content[0], "text", None)
+    if not isinstance(text, str):
+        return None
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    usage = dict(usage)
+    usage["total_input_tokens"] = (
+        usage.get("cache_read_input_tokens", 0)
+        + usage.get("cache_creation_input_tokens", 0)
+        + usage.get("input_tokens", 0)
+    )
+    return usage
+
+
 class AccessLogMiddleware(ServerMiddleware[Any]):
     """Logs every inbound request/notification to a per-session JSON-lines file under `log_dir`."""
 
@@ -125,6 +164,7 @@ class AccessLogMiddleware(ServerMiddleware[Any]):
                     "tool_name": tool_name,
                     "status": "error",
                     "error": str(e),
+                    "usage": None,
                     "duration_ms": round((monotonic() - start) * 1000, 3),
                 }
             )
@@ -139,6 +179,7 @@ class AccessLogMiddleware(ServerMiddleware[Any]):
                 "tool_name": tool_name,
                 "status": "ok",
                 "error": None,
+                "usage": _extract_usage(result),
                 "duration_ms": round((monotonic() - start) * 1000, 3),
             }
         )

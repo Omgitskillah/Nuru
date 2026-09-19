@@ -1,5 +1,6 @@
 """Terminal CLI that sends whatever text you type to a local Ollama model,
-giving it access to the tools exposed by the obsidian MCP server."""
+giving it access to the tools exposed by the obsidian and deep-think MCP
+servers."""
 
 import json
 import os
@@ -15,6 +16,7 @@ from core.conversation_store import ConversationStore
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
+    create_model,
     ensure_model_loaded,
     ensure_server_running,
     is_model_loaded,
@@ -24,11 +26,21 @@ from core.providers.ollama import (
 
 load_dotenv()
 
-MODEL = os.environ.get("MODEL", "qwen3:8b")
+# BASE_MODEL is the plain Ollama model create_model() builds from; MODEL is
+# the derived, custom model - built fresh from Modelfile on every startup -
+# that actually gets loaded and chatted with, carrying the tool-use SYSTEM
+# prompt baked in.
+BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3:8b")
+MODEL = os.environ.get("MODEL", "nuru")
 THINK = os.environ.get("THINK", "true").lower() != "false"
+
+MODELFILE_PATH = Path(__file__).resolve().parents[2] / "Modelfile"
 
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
 OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
+
+DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
+DEEP_THINK_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR)
 
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
@@ -162,11 +174,15 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
 
 
 def main() -> None:
-    tools_client = MCPTools(OBSIDIAN_SERVER_PARAMS)
+    create_model(MODEL, BASE_MODEL, MODELFILE_PATH)
+
+    tools_client = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS])
     tools_client.connect()
     tools = tools_client.list_tools()
 
-    logger = CLILogger(LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp")
+    logger = CLILogger(
+        LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp"
+    )
     store = ConversationStore(DB_PATH)
     conversation_id = store.create_conversation()
 

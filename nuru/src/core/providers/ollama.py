@@ -5,12 +5,18 @@ the server and a model on demand and stream chat responses from it.
 import json
 import os
 import subprocess
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import requests
 
 BASE = "http://localhost:11434"
+
+# Placeholder in the Modelfile template that create_model() substitutes with
+# the actual base model to build from.
+_BASE_MODEL_PLACEHOLDER = "__BASE_MODEL__"
 
 # Local generation over a large context can legitimately take a long time on
 # modest hardware - default generously rather than have a slow-but-working
@@ -55,6 +61,25 @@ def ensure_server_running(timeout: float = 15) -> bool:
     raise RuntimeError(f"ollama serve did not come up within {timeout}s")
 
 
+def create_model(model: str, base_model: str, modelfile_path: Path) -> None:
+    """(Re)builds `model` in Ollama from the Modelfile template at `modelfile_path`,
+    with its __BASE_MODEL__ placeholder filled in with `base_model`.
+
+    `ollama create` overwrites an existing model of the same name, so this is
+    safe (and intended) to call on every startup - it keeps `model`'s baked-in
+    system prompt in sync with the template without ever needing a manual
+    `ollama create` step.
+    """
+    rendered = modelfile_path.read_text().replace(_BASE_MODEL_PLACEHOLDER, base_model)
+    with tempfile.NamedTemporaryFile("w", suffix=".Modelfile", delete=False) as f:
+        f.write(rendered)
+        rendered_path = f.name
+    try:
+        subprocess.run(["ollama", "create", model, "-f", rendered_path], check=True, capture_output=True, text=True)
+    finally:
+        os.remove(rendered_path)
+
+
 def unload_all_models() -> None:
     """Unloads every model currently resident in memory."""
     for m in loaded_models():
@@ -91,9 +116,17 @@ def model_info(model: str) -> dict:
     return r.json()
 
 
+def _normalize_model_name(name: str) -> str:
+    """Ollama reports a loaded model's name with an explicit tag (e.g. `nuru:latest`)
+    even when it was referenced without one - normalize both sides before comparing,
+    or an untagged reference never matches and looks perpetually unloaded."""
+    return name if ":" in name else f"{name}:latest"
+
+
 def is_model_loaded(model: str) -> bool:
     """Whether `model` is currently resident in memory."""
-    return any(m["name"] == model for m in loaded_models())
+    target = _normalize_model_name(model)
+    return any(_normalize_model_name(m["name"]) == target for m in loaded_models())
 
 
 _SPIN_INTERVAL_SECONDS = 1

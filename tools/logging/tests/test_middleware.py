@@ -10,6 +10,20 @@ from access_logging import AccessLogMiddleware
 
 
 @dataclass
+class FakeTextContent:
+    text: str
+
+
+@dataclass
+class FakeCallToolResult:
+    """Minimal stand-in for CallToolResult: the middleware only reads
+    `.content[0].text`, a JSON string, same as the real MCP framework produces
+    for a tool that returns a dict."""
+
+    content: list[FakeTextContent]
+
+
+@dataclass
 class FakeContext:
     """Minimal stand-in for ServerRequestContext: the middleware only reads
     `.method` and `.params`."""
@@ -189,6 +203,50 @@ def test_call_next_return_value_is_passed_through(tmp_path):
     result = run(middleware(FakeContext("tools/call", {}), call_next_ok({"ok": True})))
 
     assert result == {"ok": True}
+
+
+def test_response_includes_usage_and_computed_total_input_tokens(tmp_path):
+    middleware = AccessLogMiddleware(tmp_path)
+    run(middleware(FakeContext("initialize", {"clientInfo": {"name": "alice"}}), call_next_ok()))
+
+    tool_result = FakeCallToolResult(
+        content=[
+            FakeTextContent(
+                text=json.dumps(
+                    {
+                        "usage": {
+                            "input_tokens": 2095,
+                            "output_tokens": 503,
+                            "cache_creation_input_tokens": 2051,
+                            "cache_read_input_tokens": 2051,
+                        }
+                    }
+                )
+            )
+        ]
+    )
+    call_ctx = FakeContext("tools/call", {"name": "send_message", "arguments": {}})
+    run(middleware(call_ctx, call_next_ok(tool_result)))
+
+    entries = read_entries(log_files(tmp_path)[0])
+    response = entries[3]
+
+    assert response["usage"]["input_tokens"] == 2095
+    assert response["usage"]["cache_creation_input_tokens"] == 2051
+    assert response["usage"]["cache_read_input_tokens"] == 2051
+    # total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens + input_tokens
+    assert response["usage"]["total_input_tokens"] == 2095 + 2051 + 2051
+
+
+def test_response_usage_is_none_when_result_has_no_usage(tmp_path):
+    middleware = AccessLogMiddleware(tmp_path)
+    run(middleware(FakeContext("initialize", {"clientInfo": {"name": "alice"}}), call_next_ok()))
+
+    call_ctx = FakeContext("tools/call", {"name": "list_notes", "arguments": {}})
+    run(middleware(call_ctx, call_next_ok("some result")))
+
+    entries = read_entries(log_files(tmp_path)[0])
+    assert entries[3]["usage"] is None
 
 
 def test_logging_failure_does_not_break_the_request(tmp_path, monkeypatch):

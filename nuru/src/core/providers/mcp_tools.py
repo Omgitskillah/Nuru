@@ -7,6 +7,10 @@ methods so the rest of the CLI can stay a plain blocking input() loop.
 session originally reported each tool name, so `call_tool()` can route a
 call to the right server without the caller needing to know which server
 owns which tool.
+
+`hidden_tools` names tools the servers offer but the model must not have: they
+are left out of `list_tools()` and refused by `call_tool()`, so a model that
+names one anyway (from training, or an old prompt) can't reach it.
 """
 
 import asyncio
@@ -21,8 +25,9 @@ _CLIENT_INFO = types.Implementation(name="nuru-agent", version="0.1.0")
 
 
 class MCPTools:
-    def __init__(self, server_params: list[StdioServerParameters]):
+    def __init__(self, server_params: list[StdioServerParameters], hidden_tools: frozenset[str] = frozenset()):
         self._server_params = server_params
+        self._hidden_tools = hidden_tools
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._sessions: list[ClientSession] = []
@@ -66,6 +71,8 @@ class MCPTools:
         for session in self._sessions:
             result = asyncio.run_coroutine_threadsafe(session.list_tools(), self._loop).result()
             for t in result.tools:
+                if t.name in self._hidden_tools:
+                    continue
                 self._tool_sessions[t.name] = session
                 tools.append(
                     {
@@ -81,6 +88,8 @@ class MCPTools:
 
     def call_tool(self, name: str, arguments: dict) -> str:
         """Runs `name` on whichever server reported it and returns its text output."""
+        if name in self._hidden_tools:
+            return f"Error: the tool '{name}' is not available."
         session = self._tool_sessions[name]
         result = asyncio.run_coroutine_threadsafe(session.call_tool(name, arguments), self._loop).result()
         return "\n".join(block.text for block in result.content if hasattr(block, "text"))

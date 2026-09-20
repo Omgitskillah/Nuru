@@ -61,7 +61,7 @@ def test_connect_is_idempotent_against_an_existing_database(tmp_path):
     assert index.note_exists(conn2, "id1") is True
 
 
-def test_all_by_path_returns_id_type_and_title_keyed_by_path(tmp_path):
+def test_all_by_path_returns_id_type_title_and_created_keyed_by_path(tmp_path):
     conn = _connect(tmp_path)
     index.insert_note(
         conn, id="id1", path="shared/x.md", type="project", title="X", author="both",
@@ -73,8 +73,8 @@ def test_all_by_path_returns_id_type_and_title_keyed_by_path(tmp_path):
     )
 
     assert index.all_by_path(conn) == {
-        "shared/x.md": {"id": "id1", "type": "project", "title": "X"},
-        "nuru/y.md": {"id": "id2", "type": "topic", "title": "Y"},
+        "shared/x.md": {"id": "id1", "type": "project", "title": "X", "created": "2026-09-14T12:00"},
+        "nuru/y.md": {"id": "id2", "type": "topic", "title": "Y", "created": "2026-09-14T12:00"},
     }
 
 

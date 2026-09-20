@@ -42,6 +42,13 @@ OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsid
 DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
 DEEP_THINK_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR)
 
+# Tools the servers expose that the local model is never offered or allowed to
+# call. delete_file_or_directory is a recursive delete on a free-form path, the
+# riskiest tool for a model that emits placeholder paths; archive_note does the
+# safe version of it (a reversible move). The obsidian server still offers it to
+# every other client, where a person is choosing the path.
+HIDDEN_FROM_MODEL = frozenset({"delete_file_or_directory"})
+
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
 
@@ -186,7 +193,7 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
 def main() -> None:
     create_model(MODEL, BASE_MODEL, MODELFILE_PATH)
 
-    tools_client = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS])
+    tools_client = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL)
     tools_client.connect()
     tools = tools_client.list_tools()
 

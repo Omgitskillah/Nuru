@@ -97,3 +97,53 @@ def test_close_stops_the_background_thread():
     client.close()
 
     assert not client._thread.is_alive()
+
+
+def test_hidden_tools_are_left_out_of_the_list_but_the_rest_of_the_server_stays():
+    TOOLS["server-a"] = [
+        SimpleNamespace(name="safe_tool", description="ok", input_schema={}),
+        SimpleNamespace(name="dangerous_tool", description="no", input_schema={}),
+    ]
+
+    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client.connect()
+    try:
+        names = [t["function"]["name"] for t in client.list_tools()]
+    finally:
+        client.close()
+
+    assert names == ["safe_tool"]
+
+
+def test_call_tool_refuses_a_hidden_tool_without_reaching_the_server():
+    TOOLS["server-a"] = [
+        SimpleNamespace(name="safe_tool", description="ok", input_schema={}),
+        SimpleNamespace(name="dangerous_tool", description="no", input_schema={}),
+    ]
+
+    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client.connect()
+    try:
+        client.list_tools()
+        refused = client.call_tool("dangerous_tool", {"path": "x"})
+        allowed = client.call_tool("safe_tool", {})
+    finally:
+        client.close()
+
+    assert "not available" in refused
+    assert allowed == "server-a:safe_tool"
+    assert CALLS == [("server-a", "safe_tool", {})]
+
+
+def test_call_tool_refuses_a_hidden_tool_even_before_list_tools_was_called():
+    TOOLS["server-a"] = [SimpleNamespace(name="dangerous_tool", description="no", input_schema={})]
+
+    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client.connect()
+    try:
+        refused = client.call_tool("dangerous_tool", {})
+    finally:
+        client.close()
+
+    assert "not available" in refused
+    assert CALLS == []

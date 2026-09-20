@@ -61,9 +61,12 @@ def get_path(conn: sqlite3.Connection, note_id: str) -> str | None:
 
 
 def all_by_path(conn: sqlite3.Connection) -> dict[str, dict[str, str]]:
-    """Every indexed note's id/type/title, keyed by its vault-relative path."""
-    rows = conn.execute("SELECT path, id, type, title FROM notes").fetchall()
-    return {path: {"id": id, "type": type, "title": title} for path, id, type, title in rows}
+    """Every indexed note's id/type/title/created, keyed by its vault-relative path."""
+    rows = conn.execute("SELECT path, id, type, title, created FROM notes").fetchall()
+    return {
+        path: {"id": id, "type": type, "title": title, "created": created}
+        for path, id, type, title, created in rows
+    }
 
 
 def update_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> None:

@@ -1,4 +1,6 @@
+import os
 import sqlite3
+from datetime import datetime
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -707,11 +709,12 @@ def test_create_note_rejects_empty_title(tmp_path, monkeypatch):
         server.create_note(type="project", title="   ", author="both")
 
 
-def test_create_note_requires_the_type_specific_field(tmp_path, monkeypatch):
+def test_create_note_still_requires_the_type_specific_field_the_server_cannot_default(tmp_path, monkeypatch):
+    """date and session default (see below); targets can't - only the caller knows what is corrected."""
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(ToolError, match="expects exactly these extra fields"):
-        server.create_note(type="daily", title="X", author="user")
+    with pytest.raises(ToolError, match="expects exactly these extra fields: 'targets'"):
+        server.create_note(type="correction", title="X", author="user")
 
 
 def test_create_note_accepts_the_type_specific_field(tmp_path, monkeypatch):
@@ -1430,3 +1433,1492 @@ def test_delete_file_or_directory_rejects_symlinked_target_pointing_outside_vaul
     with pytest.raises(ToolError, match="ValueError"):
         server.delete_file_or_directory("leak.md")
     assert outside.exists()
+
+
+# --- browse_notes ---
+
+
+def _backdate(created_note, created):
+    """Rewrite a create_note note's index `created`, so ordering tests don't
+    depend on two notes landing in different clock minutes."""
+    with server._open_index() as conn:
+        conn.execute("UPDATE notes SET created = ? WHERE id = ?", (created, created_note["id"]))
+
+
+def _touch(path, when):
+    """Set a file's modified time to `when`, a naive local datetime."""
+    stamp = when.timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def _browse_paths(result):
+    return [note["path"] for note in result["notes"]]
+
+
+def test_browse_notes_lists_indexed_notes_newest_created_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    old = server.create_note(type="topic", title="Old", author="nuru")
+    new = server.create_note(type="topic", title="New", author="nuru")
+    mid = server.create_note(type="topic", title="Mid", author="nuru")
+    _backdate(old, "2026-09-01T09:00")
+    _backdate(mid, "2026-09-10T09:00")
+    _backdate(new, "2026-09-18T09:00")
+
+    result = server.browse_notes()
+
+    assert _browse_paths(result) == [new["path"], mid["path"], old["path"]]
+    assert result["count"] == 3
+    assert "hint" not in result
+
+
+def test_browse_notes_returns_path_id_type_and_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="Nuru MCP", author="both")
+
+    assert server.browse_notes()["notes"] == [
+        {"path": created["path"], "id": created["id"], "type": "project", "title": "Nuru MCP"}
+    ]
+
+
+def test_browse_notes_orders_notes_made_in_obsidian_by_modified_time(tmp_path, monkeypatch):
+    """The index only knows create_note's notes, so the rest fall back to mtime."""
+    (tmp_path / "older.md").write_text("x")
+    (tmp_path / "newer.md").write_text("x")
+    _touch(tmp_path / "older.md", datetime(2026, 9, 1, 9, 0))
+    _touch(tmp_path / "newer.md", datetime(2026, 9, 5, 9, 0))
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _browse_paths(server.browse_notes()) == ["newer.md", "older.md"]
+
+
+def test_browse_notes_interleaves_indexed_and_obsidian_notes_by_recency(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    indexed = server.create_note(type="topic", title="Indexed", author="nuru")
+    _backdate(indexed, "2026-09-10T09:00")
+    (tmp_path / "before.md").write_text("x")
+    (tmp_path / "after.md").write_text("x")
+    _touch(tmp_path / "before.md", datetime(2026, 9, 5, 9, 0))
+    _touch(tmp_path / "after.md", datetime(2026, 9, 15, 9, 0))
+
+    assert _browse_paths(server.browse_notes()) == ["after.md", indexed["path"], "before.md"]
+
+
+def test_browse_notes_orders_an_indexed_note_by_created_not_by_a_later_append(tmp_path, monkeypatch):
+    """"What's my latest daily" must not become "the daily I edited last"."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    earlier = server.create_note(type="daily", title="Daily 1", author="user", date="2026-09-01")
+    later = server.create_note(type="daily", title="Daily 2", author="user", date="2026-09-02")
+    _backdate(earlier, "2026-09-01T09:00")
+    _backdate(later, "2026-09-02T09:00")
+    server.append_note(earlier["id"], "edited just now")
+
+    assert _browse_paths(server.browse_notes(type="daily"))[0] == later["path"]
+
+
+def test_browse_notes_gives_a_note_made_in_obsidian_a_null_id_and_its_filename_as_title(tmp_path, monkeypatch):
+    (tmp_path / "Plain.md").write_text("no frontmatter")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.browse_notes()["notes"] == [{"path": "Plain.md", "id": None, "type": None, "title": "Plain"}]
+
+
+def test_browse_notes_filters_by_type(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    daily = server.create_note(type="daily", title="Daily", author="user", date="2026-09-14")
+    server.create_note(type="topic", title="Topic", author="nuru")
+
+    result = server.browse_notes(type="daily")
+
+    assert _browse_paths(result) == [daily["path"]]
+    assert result["count"] == 1
+
+
+def test_browse_notes_type_filter_finds_a_note_made_in_obsidian_from_its_frontmatter(tmp_path, monkeypatch):
+    (tmp_path / "2026-09-17.md").write_text("---\ntype: daily\ndate: 2026-09-17\n---\n\n# 2026-09-17\n")
+    (tmp_path / "other.md").write_text("---\ntype: topic\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes(type="daily")
+
+    assert result["notes"] == [{"path": "2026-09-17.md", "id": None, "type": "daily", "title": "2026-09-17"}]
+
+
+def test_browse_notes_tolerates_broken_frontmatter_in_a_note_made_in_obsidian(tmp_path, monkeypatch):
+    (tmp_path / "broken.md").write_text("---\ntype: [unclosed\ndate: 2026-13-45\n---\n\nbody\n")
+    (tmp_path / "fine.md").write_text("---\ntype: daily\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert sorted(_browse_paths(server.browse_notes())) == ["broken.md", "fine.md"]
+    assert _browse_paths(server.browse_notes(type="daily")) == ["fine.md"]
+
+
+def test_browse_notes_treats_a_blank_type_as_no_filter(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _browse_paths(server.browse_notes(type="  ")) == ["a.md"]
+
+
+def test_browse_notes_type_is_case_insensitive(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    daily = server.create_note(type="daily", title="Daily", author="user", date="2026-09-14")
+
+    assert _browse_paths(server.browse_notes(type="Daily")) == [daily["path"]]
+
+
+def test_browse_notes_rejects_an_unknown_type(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="Unknown type 'dailies'"):
+        server.browse_notes(type="dailies")
+
+
+@pytest.mark.parametrize("limit", [0, -3])
+def test_browse_notes_rejects_a_limit_below_one(tmp_path, monkeypatch, limit):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="limit must be at least 1"):
+        server.browse_notes(limit=limit)
+
+
+def test_browse_notes_caps_at_limit_and_reports_the_true_count(tmp_path, monkeypatch):
+    for i in range(5):
+        (tmp_path / f"note{i}.md").write_text("x")
+        _touch(tmp_path / f"note{i}.md", datetime(2026, 9, 1 + i, 9, 0))
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes(limit=2)
+
+    assert _browse_paths(result) == ["note4.md", "note3.md"]
+    assert result["count"] == 5
+    assert "2 of 5" in result["hint"]
+    assert "type" in result["hint"]
+
+
+def test_browse_notes_defaults_to_ten(tmp_path, monkeypatch):
+    for i in range(12):
+        (tmp_path / f"note{i:02d}.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes()
+
+    assert len(result["notes"]) == 10
+    assert result["count"] == 12
+
+
+def test_browse_notes_clamps_limit_to_the_maximum(tmp_path, monkeypatch):
+    for i in range(server._BROWSE_MAX_LIMIT + 3):
+        (tmp_path / f"note{i:03d}.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes(limit=10_000)
+
+    assert len(result["notes"]) == server._BROWSE_MAX_LIMIT
+    assert result["count"] == server._BROWSE_MAX_LIMIT + 3
+    assert "Raise limit" not in result["hint"]
+
+
+def test_browse_notes_hints_on_an_empty_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes()
+
+    assert result["count"] == 0
+    assert result["notes"] == []
+    assert "no notes" in result["hint"]
+
+
+def test_browse_notes_hints_when_no_note_has_the_type(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.browse_notes(type="daily")
+
+    assert result["notes"] == []
+    assert "type: daily" in result["hint"]
+
+
+def test_browse_notes_excludes_templates_archive_and_hidden_folders(tmp_path, monkeypatch):
+    for folder in ("Templates", "archive", ".trash", ".obsidian"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "hidden.md").write_text("x")
+    (tmp_path / "kept.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _browse_paths(server.browse_notes()) == ["kept.md"]
+
+
+def test_browse_notes_excludes_a_symlink_pointing_outside_the_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("---\ntype: daily\n---\nTOP SECRET")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.browse_notes()["notes"] == []
+
+
+def test_browse_notes_does_not_create_the_index_file(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    server.browse_notes()
+
+    assert not (tmp_path / server._INDEX_DB_NAME).exists()
+
+
+# --- notes_with_tag / all_tags ---
+
+
+def test_notes_with_tag_finds_a_note_by_its_frontmatter_tag(tmp_path, monkeypatch):
+    """create_note writes tags only into frontmatter, never as #tags."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="Nuru MCP", author="both", tags=["mcp"])
+    server.create_note(type="topic", title="Other", author="nuru")
+
+    result = server.notes_with_tag("mcp")
+
+    assert result["count"] == 1
+    assert result["matches"] == [
+        {"path": created["path"], "id": created["id"], "type": "project", "title": "Nuru MCP"}
+    ]
+
+
+def test_notes_with_tag_matches_the_type_tag_create_note_always_adds(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="X", author="both")
+
+    assert [m["path"] for m in server.notes_with_tag("project")["matches"]] == [created["path"]]
+
+
+def test_notes_with_tag_finds_an_inline_hash_tag(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("Some text #router and more")
+    (tmp_path / "b.md").write_text("Nothing here")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert [m["path"] for m in server.notes_with_tag("router")["matches"]] == ["a.md"]
+
+
+@pytest.mark.parametrize("query", ["#Router", "ROUTER", " router ", "#router"])
+def test_notes_with_tag_ignores_case_a_leading_hash_and_whitespace(tmp_path, monkeypatch, query):
+    (tmp_path / "a.md").write_text("---\ntags:\n  - Router\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.notes_with_tag(query)
+
+    assert [m["path"] for m in result["matches"]] == ["a.md"]
+    assert result["tag"] == "router"
+
+
+def test_notes_with_tag_matches_nested_tags_under_a_parent(tmp_path, monkeypatch):
+    (tmp_path / "nested.md").write_text("#project/alpha")
+    (tmp_path / "lookalike.md").write_text("#projector")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert [m["path"] for m in server.notes_with_tag("project")["matches"]] == ["nested.md"]
+    assert [m["path"] for m in server.notes_with_tag("project/alpha")["matches"]] == ["nested.md"]
+    assert server.notes_with_tag("project/beta")["matches"] == []
+
+
+def test_notes_with_tag_reads_a_tags_string_and_ignores_malformed_tags_values(tmp_path, monkeypatch):
+    (tmp_path / "csv.md").write_text("---\ntags: alpha, beta\n---\n")
+    (tmp_path / "junk.md").write_text("---\ntags: {a: 1}\n---\n")
+    (tmp_path / "broken.md").write_text("---\ntags: [unclosed\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert [m["path"] for m in server.notes_with_tag("beta")["matches"]] == ["csv.md"]
+
+
+def test_notes_with_tag_does_not_treat_a_heading_or_frontmatter_hash_as_a_tag(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("---\ntitle: 'Issue #123'\n---\n\n# Heading\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.all_tags()["tags"] == {}
+
+
+def test_notes_with_tag_lists_newest_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    old = server.create_note(type="topic", title="Old", author="nuru", tags=["x"])
+    new = server.create_note(type="topic", title="New", author="nuru", tags=["x"])
+    _backdate(old, "2026-09-01T09:00")
+    _backdate(new, "2026-09-09T09:00")
+
+    assert [m["path"] for m in server.notes_with_tag("x")["matches"]] == [new["path"], old["path"]]
+
+
+def test_notes_with_tag_caps_results_and_reports_the_true_count(tmp_path, monkeypatch):
+    for i in range(server._SEARCH_LIMIT + 4):
+        (tmp_path / f"n{i:02d}.md").write_text("#many")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.notes_with_tag("many")
+
+    assert len(result["matches"]) == server._SEARCH_LIMIT
+    assert result["count"] == server._SEARCH_LIMIT + 4
+    assert "hint" in result
+
+
+def test_notes_with_tag_suggests_close_tags_on_a_miss(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("#project #router")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.notes_with_tag("projects")
+
+    assert result["count"] == 0
+    assert result["matches"] == []
+    assert "Did you mean: project" in result["hint"]
+    assert "all_tags" in result["hint"]
+
+
+def test_notes_with_tag_hints_without_suggestions_when_nothing_is_close(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("#router")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    hint = server.notes_with_tag("zzzzzz")["hint"]
+
+    assert "Did you mean" not in hint
+    assert "all_tags" in hint
+
+
+@pytest.mark.parametrize("query", ["", "  ", "#"])
+def test_notes_with_tag_rejects_an_empty_tag(tmp_path, monkeypatch, query):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="tag is empty"):
+        server.notes_with_tag(query)
+
+
+def test_notes_with_tag_excludes_templates_and_archive(tmp_path, monkeypatch):
+    for folder in ("Templates", "archive"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "x.md").write_text("#profile")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.notes_with_tag("profile")["matches"] == []
+
+
+def test_all_tags_counts_notes_per_tag_most_used_first(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("---\ntags:\n  - project\n  - mcp\n---\n#router")
+    (tmp_path / "b.md").write_text("---\ntags:\n  - project\n---\n#router #router")
+    (tmp_path / "c.md").write_text("#project")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.all_tags()
+
+    # b mentions #router twice but is still one note; project is on 3 notes.
+    assert result["tags"] == {"project": 3, "router": 2, "mcp": 1}
+    assert list(result["tags"]) == ["project", "router", "mcp"]
+    assert result["count"] == 3
+
+
+def test_all_tags_merges_case_variants(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("#Router")
+    (tmp_path / "b.md").write_text("#router")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.all_tags()["tags"] == {"router": 2}
+
+
+def test_all_tags_agrees_with_notes_with_tag(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="topic", title="A", author="nuru", tags=["shared-tag"])
+    server.create_note(type="topic", title="B", author="nuru", tags=["shared-tag"])
+
+    assert server.all_tags()["tags"]["shared-tag"] == server.notes_with_tag("shared-tag")["count"] == 2
+
+
+def test_all_tags_lists_the_tags_of_notes_create_note_made(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="daily", title="D", author="user", date="2026-09-14", tags=["sample"])
+
+    assert set(server.all_tags()["tags"]) == {"daily", "sample"}
+
+
+def test_all_tags_hints_on_an_empty_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.all_tags()
+
+    assert result["tags"] == {}
+    assert result["count"] == 0
+    assert "any tags" in result["hint"]
+
+
+def test_all_tags_caps_the_list_and_reports_the_true_count(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text(" ".join(f"#tag{i:03d}" for i in range(server._LIST_LIMIT + 5)))
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.all_tags()
+
+    assert len(result["tags"]) == server._LIST_LIMIT
+    assert result["count"] == server._LIST_LIMIT + 5
+    assert "hint" in result
+
+
+def test_all_tags_excludes_templates_and_archive(tmp_path, monkeypatch):
+    for folder in ("Templates", "archive"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "x.md").write_text("#profile")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.all_tags()["tags"] == {}
+
+
+# --- read_note: forgiving name matching ---
+
+
+def test_read_note_ignores_case_in_the_filename(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("WELCOME") == "Hello"
+
+
+@pytest.mark.parametrize("name", ["nuru mcp", "Nuru-MCP", "nuru_mcp.md", "NURU MCP"])
+def test_read_note_matches_a_slug_of_the_filename(tmp_path, monkeypatch, name):
+    (tmp_path / "Projects").mkdir()
+    (tmp_path / "Projects" / "Nuru MCP.md").write_text("the note")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note(name) == "the note"
+
+
+def test_read_note_finds_a_note_by_the_title_create_note_gave_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="project", title="Original Title", author="both", body="content here")
+    server.rename_or_move_file(created["path"], "shared/renamed-since.md")
+
+    assert "content here" in server.read_note("Original Title")
+    assert "content here" in server.read_note("original title")
+
+
+def test_read_note_finds_a_note_by_an_alias_in_its_frontmatter(tmp_path, monkeypatch):
+    (tmp_path / "x.md").write_text("---\naliases:\n  - Fancy Name\n  - Other\n---\n\nbody")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("fancy name").endswith("body")
+    assert server.read_note("other").endswith("body")
+
+
+def test_read_note_finds_a_note_by_its_id_in_any_case(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Some Topic", author="nuru", body="topic body")
+    server.rename_or_move_file(created["path"], "nuru/moved-away.md")
+
+    assert "topic body" in server.read_note(created["id"])
+    assert "topic body" in server.read_note(created["id"].lower())
+
+
+def test_read_note_finds_a_note_by_a_frontmatter_id_the_index_does_not_know(tmp_path, monkeypatch):
+    (tmp_path / "typed.md").write_text("---\nid: 01ABCDEF\n---\n\nbody")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("01abcdef").endswith("body")
+
+
+def test_read_note_finds_the_right_name_under_a_wrong_folder(tmp_path, monkeypatch):
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "shared" / "plan.md").write_text("the plan")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("nuru/plan.md") == "the plan"
+
+
+def test_read_note_prefers_an_exact_filename_over_a_forgiving_match(tmp_path, monkeypatch):
+    (tmp_path / "Alpha.md").write_text("the file")
+    (tmp_path / "other.md").write_text("---\naliases:\n  - Alpha\n---\n\nthe alias")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("Alpha") == "the file"
+
+
+def test_read_note_prefers_a_filename_match_over_an_alias_match(tmp_path, monkeypatch):
+    (tmp_path / "a-note.md").write_text("---\naliases:\n  - beta\n---\n\nthe alias")
+    (tmp_path / "Beta.md").write_text("the file")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("BETA") == "the file"
+
+
+def test_read_note_breaks_a_tie_by_taking_the_first_path_alphabetically(tmp_path, monkeypatch):
+    (tmp_path / "b.md").write_text("---\naliases:\n  - Twin\n---\n\nfrom b")
+    (tmp_path / "a.md").write_text("---\naliases:\n  - Twin\n---\n\nfrom a")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.read_note("twin").endswith("from a")
+
+
+def test_read_note_forgiving_match_skips_templates(tmp_path, monkeypatch):
+    (tmp_path / "Templates").mkdir()
+    (tmp_path / "Templates" / "01 Profile.md").write_text("# {{title}}")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.read_note("01-profile")
+
+
+def test_read_note_forgiving_match_skips_hidden_folders(tmp_path, monkeypatch):
+    (tmp_path / ".trash").mkdir()
+    (tmp_path / ".trash" / "Deleted Note.md").write_text("gone")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.read_note("deleted note")
+
+
+def test_read_note_forgiving_match_does_not_reach_a_symlink_pointing_outside_the_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("---\naliases:\n  - Leaky Alias\n---\nTOP SECRET")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.read_note("leaky alias")
+    assert "TOP SECRET" not in str(exc_info.value)
+    assert "leak.md" not in str(exc_info.value)
+
+
+def test_read_note_miss_names_the_closest_notes(tmp_path, monkeypatch):
+    (tmp_path / "Projects").mkdir()
+    (tmp_path / "Projects" / "Nuru MCP.md").write_text("x")
+    (tmp_path / "Unrelated.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.read_note("Nuru MCPP")
+
+    message = str(exc_info.value)
+    assert "No note found named 'Nuru MCPP'" in message
+    assert "Projects/Nuru MCP.md" in message
+    assert "Unrelated.md" not in message
+    assert "browse_notes" in message
+
+
+def test_read_note_miss_names_at_most_three_candidates(tmp_path, monkeypatch):
+    for suffix in "abcdef":
+        (tmp_path / f"router-{suffix}.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError) as exc_info:
+        server.read_note("router")
+
+    assert str(exc_info.value).count("router-") == 3
+
+
+def test_read_note_miss_suggests_a_note_when_the_name_is_a_mistyped_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Battery Life", author="nuru")
+    typo = created["id"][:-1] + ("A" if created["id"][-1] != "A" else "B")
+
+    with pytest.raises(ToolError) as exc_info:
+        server.read_note(typo)
+
+    assert created["path"] in str(exc_info.value)
+
+
+def test_read_note_miss_says_so_plainly_when_nothing_is_close(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError) as exc_info:
+        server.read_note("qqqqqqqqqq")
+
+    message = str(exc_info.value)
+    assert "No note found named 'qqqqqqqqqq'" in message
+    assert "Closest" not in message
+
+
+def test_read_note_miss_in_an_empty_vault_still_raises_file_not_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.read_note("anything")
+
+
+@pytest.mark.parametrize("name", ["", "   ", "🙂"])
+def test_read_note_a_name_with_nothing_to_match_on_is_a_miss_not_a_crash(tmp_path, monkeypatch, name):
+    (tmp_path / "Welcome.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.read_note(name)
+
+
+# --- read_note: section ---
+
+_SECTIONED = """\
+---
+type: project
+---
+
+# Title
+
+Intro line.
+
+## Goal
+
+Ship it.
+
+### Sub goal
+
+A detail.
+
+## Decisions
+
+- chose A
+
+## Blocked on
+
+- nothing
+"""
+
+
+def _write_sectioned(tmp_path, monkeypatch, text=_SECTIONED):
+    (tmp_path / "plan.md").write_text(text)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+
+def test_read_note_section_returns_the_heading_through_to_the_next_same_level_heading(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section="Decisions") == "## Decisions\n\n- chose A"
+
+
+def test_read_note_section_keeps_the_sections_own_subheadings(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section="Goal") == "## Goal\n\nShip it.\n\n### Sub goal\n\nA detail."
+
+
+def test_read_note_section_runs_to_the_end_of_the_note_for_the_last_heading(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section="Blocked on") == "## Blocked on\n\n- nothing"
+
+
+def test_read_note_section_ends_a_deep_section_at_a_higher_level_heading(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section="Sub goal") == "### Sub goal\n\nA detail."
+
+
+def test_read_note_section_can_be_the_top_level_heading_and_take_everything_under_it(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    result = server.read_note("plan", section="Title")
+
+    assert result.startswith("# Title")
+    assert result.endswith("- nothing")
+
+
+@pytest.mark.parametrize("section", ["decisions", "DECISIONS", "## Decisions", "  Decisions  ", "#Decisions"])
+def test_read_note_section_ignores_case_whitespace_and_leading_hashes(tmp_path, monkeypatch, section):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section=section) == "## Decisions\n\n- chose A"
+
+
+def test_read_note_section_collapses_inner_whitespace(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section="Blocked   on").startswith("## Blocked on")
+
+
+def test_read_note_section_ignores_a_closing_hash_sequence_on_the_heading(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch, "## Decisions ##\n\nbody\n")
+
+    assert server.read_note("plan", section="Decisions") == "## Decisions ##\n\nbody"
+
+
+def test_read_note_section_does_not_end_at_a_hash_line_inside_a_code_block(tmp_path, monkeypatch):
+    _write_sectioned(
+        tmp_path, monkeypatch, "## Setup\n\n```bash\n# install it\nmake\n```\n\nafter code\n\n## Next\n\nx\n"
+    )
+
+    result = server.read_note("plan", section="Setup")
+
+    assert "# install it" in result
+    assert result.endswith("after code")
+
+
+def test_read_note_section_does_not_find_a_heading_inside_a_code_block(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch, "## Real\n\n~~~\n## Fake\n~~~\n")
+
+    with pytest.raises(ToolError, match="No section 'Fake'"):
+        server.read_note("plan", section="Fake")
+
+
+def test_read_note_section_does_not_find_a_heading_inside_frontmatter(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch, "---\n# comment in frontmatter\ntype: topic\n---\n\n## Real\n\nx\n")
+
+    with pytest.raises(ToolError, match="No section 'comment in frontmatter'"):
+        server.read_note("plan", section="comment in frontmatter")
+
+
+def test_read_note_section_takes_the_first_of_two_headings_with_the_same_text(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch, "## Notes\n\nfirst\n\n## Notes\n\nsecond\n")
+
+    assert server.read_note("plan", section="Notes") == "## Notes\n\nfirst"
+
+
+def test_read_note_unknown_section_lists_the_notes_headings(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    with pytest.raises(ToolError, match="ValueError") as exc_info:
+        server.read_note("plan", section="Nope")
+
+    message = str(exc_info.value)
+    assert "No section 'Nope' in 'plan.md'" in message
+    for heading in ("'Title'", "'Goal'", "'Sub goal'", "'Decisions'", "'Blocked on'"):
+        assert heading in message
+
+
+def test_read_note_unknown_section_on_a_note_with_no_headings_says_so(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch, "just text\n")
+
+    with pytest.raises(ToolError, match="no headings"):
+        server.read_note("plan", section="Anything")
+
+
+@pytest.mark.parametrize("section", [None, "", "   "])
+def test_read_note_without_a_usable_section_returns_the_whole_note(tmp_path, monkeypatch, section):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("plan", section=section) == _SECTIONED
+
+
+def test_read_note_section_works_through_a_forgiving_name(tmp_path, monkeypatch):
+    _write_sectioned(tmp_path, monkeypatch)
+
+    assert server.read_note("PLAN", section="decisions") == "## Decisions\n\n- chose A"
+
+
+def test_read_note_section_is_optional_in_the_tool_schema():
+    import asyncio
+
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "read_note")
+
+    assert tool.input_schema["required"] == ["name"]
+    assert "section" in tool.input_schema["properties"]
+
+
+# --- create_note: server-side defaults for date and session ---
+
+
+def _today_is(monkeypatch, day):
+    monkeypatch.setattr(server, "_today", lambda: day)
+
+
+def test_create_note_defaults_a_daily_date_to_today(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="daily", title="Daily 2026-09-20", author="user")
+
+    assert "date: '2026-09-20'\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_keeps_an_explicit_daily_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="daily", title="Backfill", author="user", date="2026-01-05")
+
+    assert "date: '2026-01-05'\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_defaults_the_first_session_of_the_day_to_01(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="transcript", title="First", author="nuru")
+
+    assert "session: 2026-09-20-01\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_defaults_a_later_session_to_the_next_number(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    server.create_note(type="transcript", title="First", author="nuru")
+    server.create_note(type="transcript", title="Second", author="nuru")
+
+    third = server.create_note(type="transcript", title="Third", author="nuru")
+
+    assert "session: 2026-09-20-03\n" in (tmp_path / third["path"]).read_text()
+
+
+def test_create_note_default_session_goes_one_past_the_highest_not_into_a_gap(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    server.create_note(type="transcript", title="One", author="nuru", session="2026-09-20-01")
+    server.create_note(type="transcript", title="Three", author="nuru", session="2026-09-20-03")
+
+    created = server.create_note(type="transcript", title="Next", author="nuru")
+
+    assert "session: 2026-09-20-04\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_default_session_ignores_other_days(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    server.create_note(type="transcript", title="Yesterday", author="nuru", session="2026-09-19-07")
+
+    created = server.create_note(type="transcript", title="Today", author="nuru")
+
+    assert "session: 2026-09-20-01\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_default_session_is_counted_per_type(tmp_path, monkeypatch):
+    """A transcript and the session note of one conversation share an id."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    server.create_note(type="transcript", title="Transcript", author="nuru")
+
+    created = server.create_note(type="session", title="Session note", author="nuru")
+
+    assert "session: 2026-09-20-01\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_default_session_counts_notes_made_in_obsidian(tmp_path, monkeypatch):
+    (tmp_path / "typed.md").write_text("---\ntype: session\nsession: 2026-09-20-02\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="session", title="Next", author="nuru")
+
+    assert "session: 2026-09-20-03\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_default_session_counts_an_archived_note(tmp_path, monkeypatch):
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "archive" / "old.md").write_text("---\ntype: session\nsession: 2026-09-20-01\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="session", title="Next", author="nuru")
+
+    assert "session: 2026-09-20-02\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_default_session_refuses_a_hundredth_session_in_a_day(tmp_path, monkeypatch):
+    (tmp_path / "typed.md").write_text("---\ntype: session\nsession: 2026-09-20-99\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    with pytest.raises(ToolError, match="99"):
+        server.create_note(type="session", title="Too many", author="nuru")
+
+
+def test_create_note_keeps_an_explicit_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    created = server.create_note(type="transcript", title="Old", author="nuru", session="2026-09-01-05")
+
+    assert "session: 2026-09-01-05\n" in (tmp_path / created["path"]).read_text()
+
+
+def test_create_note_wrong_extra_field_error_does_not_show_a_defaulted_value(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    with pytest.raises(ToolError, match=r"expects exactly these extra fields: 'date'; got \['session'\]"):
+        server.create_note(type="daily", title="X", author="user", session="2026-09-20-01")
+
+
+def test_create_note_defaults_do_not_apply_to_types_that_take_no_extra_field(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    created = server.create_note(type="project", title="Plain", author="both")
+
+    text = (tmp_path / created["path"]).read_text()
+    assert "date:" not in text
+    assert "session:" not in text
+
+
+def test_create_note_defaults_leave_the_schema_required_set_unchanged():
+    import asyncio
+
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "create_note")
+
+    assert set(tool.input_schema["required"]) == {"type", "title", "author"}
+
+
+# --- add_to_daily ---
+
+
+def test_add_to_daily_creates_todays_daily_when_there_is_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    result = server.add_to_daily("- 09:00 Coffee")
+
+    assert result["created"] is True
+    assert result["path"] == "user/daily-2026-09-20.md"
+    text = (tmp_path / result["path"]).read_text()
+    assert "type: daily\n" in text
+    assert "date: '2026-09-20'\n" in text
+    assert "author: user\n" in text
+    assert "# Daily 2026-09-20\n\n- 09:00 Coffee" in text
+
+
+def test_add_to_daily_returns_the_id_of_the_note_it_created(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    result = server.add_to_daily("x")
+
+    assert server.append_note(result["id"], "y") == result["path"]
+
+
+def test_add_to_daily_appends_to_an_existing_daily_instead_of_making_another(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    first = server.add_to_daily("first")
+
+    second = server.add_to_daily("second")
+
+    assert second == {"path": first["path"], "id": first["id"], "created": False}
+    assert (tmp_path / first["path"]).read_text().endswith("first\n\nsecond")
+    assert len(list((tmp_path / "user").glob("*.md"))) == 1
+
+
+def test_add_to_daily_finds_a_daily_create_note_made_under_any_title(tmp_path, monkeypatch):
+    """The real vault has a daily titled just "Daily Note" - so no filename guess finds it."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    made = server.create_note(type="daily", title="Daily Note", author="user", date="2026-09-20", body="earlier")
+
+    result = server.add_to_daily("later")
+
+    assert result == {"path": made["path"], "id": made["id"], "created": False}
+    assert (tmp_path / made["path"]).read_text().endswith("earlier\n\nlater")
+
+
+def test_add_to_daily_ignores_a_daily_for_another_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    yesterday = server.create_note(type="daily", title="Yesterday", author="user", date="2026-09-19")
+
+    result = server.add_to_daily("today's entry")
+
+    assert result["created"] is True
+    assert result["path"] != yesterday["path"]
+    assert "today's entry" not in (tmp_path / yesterday["path"]).read_text()
+
+
+def test_add_to_daily_ignores_a_non_daily_note_that_mentions_todays_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+    server.create_note(type="project", title="Launch 2026-09-20", author="both", body="due 2026-09-20")
+
+    assert server.add_to_daily("x")["created"] is True
+
+
+def test_add_to_daily_appends_to_a_daily_made_in_obsidian_with_an_unquoted_date(tmp_path, monkeypatch):
+    (tmp_path / "user").mkdir()
+    (tmp_path / "user" / "2026-09-20.md").write_text("---\ntype: daily\ndate: 2026-09-20\n---\n\n# 2026-09-20\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    result = server.add_to_daily("typed elsewhere")
+
+    assert result == {"path": "user/2026-09-20.md", "id": None, "created": False}
+    assert (tmp_path / "user" / "2026-09-20.md").read_text().endswith("# 2026-09-20\n\ntyped elsewhere")
+    assert not (tmp_path / "user" / "daily-2026-09-20.md").exists()
+
+
+def test_add_to_daily_survives_a_note_with_broken_frontmatter_mentioning_the_date(tmp_path, monkeypatch):
+    (tmp_path / "broken.md").write_text("---\ntype: [oops\ndate: 2026-09-20\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    assert server.add_to_daily("x")["created"] is True
+
+
+def test_add_to_daily_uses_one_date_for_the_whole_call(tmp_path, monkeypatch):
+    """A call that starts before midnight must not stamp two different dates."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    days = iter(["2026-09-20", "2026-09-21", "2026-09-21"])
+    monkeypatch.setattr(server, "_today", lambda: next(days))
+
+    result = server.add_to_daily("x")
+
+    assert result["path"] == "user/daily-2026-09-20.md"
+    assert "date: '2026-09-20'\n" in (tmp_path / result["path"]).read_text()
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n"])
+def test_add_to_daily_rejects_empty_text(tmp_path, monkeypatch, text):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="text is empty"):
+        server.add_to_daily(text)
+    assert not (tmp_path / "user").exists()
+
+
+def test_add_to_daily_reports_a_filename_clash_with_a_note_it_could_not_recognise_as_a_daily(tmp_path, monkeypatch):
+    (tmp_path / "user").mkdir()
+    (tmp_path / "user" / "daily-2026-09-20.md").write_text("no frontmatter at all")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    with pytest.raises(ToolError, match="FileExistsError"):
+        server.add_to_daily("x")
+    assert (tmp_path / "user" / "daily-2026-09-20.md").read_text() == "no frontmatter at all"
+
+
+def test_add_to_daily_is_callable_through_the_protocol(tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    result = asyncio.run(server.mcp.call_tool("add_to_daily", {"text": "hello"}))
+
+    assert result.is_error is not True
+    assert (tmp_path / "user" / "daily-2026-09-20.md").exists()
+
+
+# --- get_links ---
+
+
+def _vault_with(tmp_path, monkeypatch, notes):
+    """Write {relative path: text} into tmp_path and point the server at it."""
+    for rel, text in notes.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+
+def test_get_links_resolves_outgoing_links_to_paths(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "See [[Alpha]] and [[Beta]].",
+        "notes/Alpha.md": "a",
+        "notes/Beta.md": "b",
+    })
+
+    assert server.get_links("hub")["outgoing"] == [
+        {"link": "Alpha", "path": "notes/Alpha.md"},
+        {"link": "Beta", "path": "notes/Beta.md"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["[[Alpha]]", "[[Alpha|shown text]]", "[[Alpha#Some heading]]", "[[Alpha#^blockid]]", "[[Alpha#H|shown]]", "![[Alpha]]"],
+)
+def test_get_links_reduces_every_wikilink_form_to_the_note_name(tmp_path, monkeypatch, written):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": f"x {written} y", "Alpha.md": "a"})
+
+    assert server.get_links("hub")["outgoing"] == [{"link": "Alpha", "path": "Alpha.md"}]
+
+
+def test_get_links_lists_a_repeated_link_once_in_order_of_first_appearance(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "[[B]] then [[A]] then [[B]] again and [[A|x]]",
+        "A.md": "a",
+        "B.md": "b",
+    })
+
+    assert [o["link"] for o in server.get_links("hub")["outgoing"]] == ["B", "A"]
+
+
+def test_get_links_resolves_links_forgivingly_like_read_note(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "[[nuru mcp]] [[Fancy Name]] [[shared/plan]] [[wrong-folder/plan]]",
+        "projects/Nuru MCP.md": "a",
+        "aliased.md": "---\naliases:\n  - Fancy Name\n---\n",
+        "shared/plan.md": "p",
+    })
+
+    paths = {o["link"]: o["path"] for o in server.get_links("hub")["outgoing"]}
+
+    assert paths == {
+        "nuru mcp": "projects/Nuru MCP.md",
+        "Fancy Name": "aliased.md",
+        "shared/plan": "shared/plan.md",
+        "wrong-folder/plan": "shared/plan.md",
+    }
+
+
+def test_get_links_resolves_a_link_written_as_a_note_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    target = server.create_note(type="topic", title="Target Topic", author="nuru")
+    source = server.create_note(type="project", title="Source", author="both", body=f"see [[{target['id']}|Target Topic]]")
+
+    assert server.get_links(source["path"])["outgoing"] == [{"link": target["id"], "path": target["path"]}]
+
+
+def test_get_links_marks_a_link_to_no_note_with_a_null_path_and_says_why(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "[[Real]] [[Ghost]]", "Real.md": "r"})
+
+    result = server.get_links("hub")
+
+    assert result["outgoing"] == [{"link": "Real", "path": "Real.md"}, {"link": "Ghost", "path": None}]
+    assert "null" in result["hint"]
+
+
+def test_get_links_omits_the_null_hint_when_every_link_resolves(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "[[Real]]", "Real.md": "r"})
+
+    assert "hint" not in server.get_links("hub")
+
+
+def test_get_links_finds_backlinks_however_the_link_is_written(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    target = server.create_note(type="topic", title="Target Topic", author="nuru")
+    (tmp_path / "by-name.md").write_text("[[target-topic]]")
+    (tmp_path / "by-title.md").write_text("[[Target Topic|the topic]]")
+    (tmp_path / "by-id.md").write_text(f"[[{target['id']}]]")
+    (tmp_path / "by-heading.md").write_text("[[Target Topic#Facts]]")
+    (tmp_path / "unrelated.md").write_text("[[Somewhere Else]]")
+
+    assert server.get_links(target["path"])["backlinks"] == [
+        "by-heading.md", "by-id.md", "by-name.md", "by-title.md",
+    ]
+
+
+def test_get_links_backlinks_do_not_include_the_note_itself(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"A.md": "I am [[A]] and see [[#Heading]]\n\n## Heading", "B.md": "[[A]]"})
+
+    result = server.get_links("A")
+
+    assert result["backlinks"] == ["B.md"]
+    assert result["outgoing"] == [{"link": "A", "path": "A.md"}]
+
+
+def test_get_links_lists_a_note_that_links_here_only_once(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"A.md": "a", "B.md": "[[A]] [[A]] [[a]]"})
+
+    assert server.get_links("A")["backlinks"] == ["B.md"]
+
+
+def test_get_links_backlinks_come_from_archived_notes_but_not_templates_or_hidden_folders(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "A.md": "a",
+        "archive/old.md": "[[A]]",
+        "Templates/t.md": "[[A]]",
+        ".trash/gone.md": "[[A]]",
+    })
+
+    assert server.get_links("A")["backlinks"] == ["archive/old.md"]
+
+
+def test_get_links_resolves_the_note_forgivingly(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"projects/Nuru MCP.md": "[[Other]]", "Other.md": "o"})
+
+    assert server.get_links("nuru mcp")["note"] == "projects/Nuru MCP.md"
+
+
+def test_get_links_on_an_unknown_note_names_the_closest(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"Nuru MCP.md": "x"})
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.get_links("Nuru MCPP")
+
+    assert "Nuru MCP.md" in str(exc_info.value)
+
+
+def test_get_links_hints_when_a_note_has_no_links_either_way(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"lonely.md": "no links here", "other.md": "[[nobody]]"})
+
+    result = server.get_links("lonely")
+
+    assert result["outgoing"] == []
+    assert result["backlinks"] == []
+    assert "no [[links]]" in result["hint"]
+
+
+def test_get_links_caps_each_list_and_says_so(tmp_path, monkeypatch):
+    extra = server._LIST_LIMIT + 3
+    notes = {"hub.md": " ".join(f"[[t{i:02d}]]" for i in range(extra))}
+    notes.update({f"t{i:02d}.md": "[[hub]]" for i in range(extra)})
+    _vault_with(tmp_path, monkeypatch, notes)
+
+    result = server.get_links("hub")
+
+    assert len(result["outgoing"]) == server._LIST_LIMIT
+    assert len(result["backlinks"]) == server._LIST_LIMIT
+    assert f"{server._LIST_LIMIT} of {extra} outgoing" in result["hint"]
+    assert f"{server._LIST_LIMIT} of {extra} backlinks" in result["hint"]
+
+
+def test_get_links_does_not_reach_a_symlink_pointing_outside_the_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("[[A]]")
+    (vault / "A.md").write_text("a")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    assert server.get_links("A")["backlinks"] == []
+
+
+def test_get_links_survives_a_note_with_broken_frontmatter(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"A.md": "a", "broken.md": "---\naliases: [oops\n---\n[[A]]"})
+
+    assert server.get_links("A")["backlinks"] == ["broken.md"]
+
+
+# --- archive_note ---
+
+
+def test_archive_note_moves_a_note_under_archive_keeping_its_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
+
+    result = server.archive_note("Old Idea")
+
+    assert result == {"from": "nuru/old-idea.md", "to": "archive/nuru/old-idea.md"}
+    assert not (tmp_path / "nuru" / "old-idea.md").exists()
+    assert "content" in (tmp_path / "archive" / "nuru" / "old-idea.md").read_text()
+    assert created["path"] == result["from"]
+
+
+def test_archive_note_keeps_the_note_reachable_by_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
+
+    server.archive_note(created["id"])
+
+    assert server.append_note(created["id"], "still here") == "archive/nuru/old-idea.md"
+
+
+def test_archive_note_is_reversible_by_moving_the_file_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
+    before = (tmp_path / created["path"]).read_text()
+
+    result = server.archive_note("Old Idea")
+    server.rename_or_move_file(result["to"], result["from"])
+
+    assert (tmp_path / created["path"]).read_text() == before
+    assert server.append_note(created["id"], "x") == created["path"]
+
+
+def test_archive_note_accepts_a_forgiving_name(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"projects/Nuru MCP.md": "x"})
+
+    assert server.archive_note("nuru mcp") == {
+        "from": "projects/Nuru MCP.md",
+        "to": "archive/projects/Nuru MCP.md",
+    }
+
+
+def test_archive_note_archives_a_note_made_in_obsidian(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"Plain.md": "typed by hand"})
+
+    server.archive_note("Plain")
+
+    assert (tmp_path / "archive" / "Plain.md").read_text() == "typed by hand"
+
+
+def test_archive_note_keeps_links_to_the_note_resolving(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"projects/Target.md": "t", "hub.md": "[[Target]]"})
+
+    server.archive_note("Target")
+
+    assert server.get_links("hub")["outgoing"] == [{"link": "Target", "path": "archive/projects/Target.md"}]
+
+
+def test_archive_note_takes_a_note_out_of_browse_and_tags_but_not_out_of_read_or_search(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="topic", title="Old Idea", author="nuru", body="findable words", tags=["zzz"])
+    server.create_note(type="topic", title="Keeper", author="nuru")
+
+    server.archive_note("Old Idea")
+
+    assert [n["title"] for n in server.browse_notes()["notes"]] == ["Keeper"]
+    assert server.notes_with_tag("zzz")["matches"] == []
+    assert "zzz" not in server.all_tags()["tags"]
+    assert "findable words" in server.read_note("Old Idea")
+    assert server.search_notes("findable")["count"] == 1
+
+
+@pytest.mark.parametrize("type_,extra", [("daily", {"date": "2026-09-14"}), ("directives", {})])
+def test_archive_note_refuses_a_note_under_user(tmp_path, monkeypatch, type_, extra):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type=type_, title="Protected", author="user", **extra)
+
+    with pytest.raises(ToolError, match="PermissionError"):
+        server.archive_note("Protected")
+    assert (tmp_path / created["path"]).exists()
+    assert not (tmp_path / "archive").exists()
+
+
+def test_archive_note_refuses_a_note_in_a_hidden_folder(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {".trash/gone.md": "x"})
+
+    with pytest.raises(ToolError, match="PermissionError"):
+        server.archive_note(".trash/gone.md")
+    assert (tmp_path / ".trash" / "gone.md").exists()
+
+
+def test_archive_note_refuses_a_note_that_is_already_archived(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"archive/old.md": "x"})
+
+    with pytest.raises(ToolError, match="already archived"):
+        server.archive_note("old")
+    assert (tmp_path / "archive" / "old.md").exists()
+    assert not (tmp_path / "archive" / "archive").exists()
+
+
+def test_archive_note_refuses_a_name_that_matches_several_notes_and_moves_none(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a/notes.md": "1", "b/notes.md": "2"})
+
+    with pytest.raises(ToolError, match="ValueError") as exc_info:
+        server.archive_note("notes")
+
+    assert "a/notes.md" in str(exc_info.value)
+    assert "b/notes.md" in str(exc_info.value)
+    assert (tmp_path / "a" / "notes.md").exists()
+    assert (tmp_path / "b" / "notes.md").exists()
+    assert not (tmp_path / "archive").exists()
+
+
+def test_archive_note_takes_the_path_when_a_name_is_ambiguous(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a/notes.md": "1", "b/notes.md": "2"})
+
+    server.archive_note("b/notes.md")
+
+    assert (tmp_path / "archive" / "b" / "notes.md").exists()
+    assert (tmp_path / "a" / "notes.md").exists()
+
+
+def test_archive_note_refuses_a_name_that_shares_an_alias_across_notes(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "a.md": "---\naliases:\n  - Twin\n---\n",
+        "b.md": "---\naliases:\n  - Twin\n---\n",
+    })
+
+    with pytest.raises(ToolError, match="matches 2 notes"):
+        server.archive_note("twin")
+
+
+def test_archive_note_on_an_unknown_note_names_the_closest_and_moves_nothing(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"Nuru MCP.md": "x"})
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.archive_note("Nuru MCPP")
+
+    assert "Nuru MCP.md" in str(exc_info.value)
+    assert (tmp_path / "Nuru MCP.md").exists()
+
+
+def test_archive_note_refuses_to_overwrite_an_existing_archived_note(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"x.md": "new", "archive/x.md": "older"})
+
+    with pytest.raises(ToolError, match="FileExistsError"):
+        server.archive_note("x.md")
+    assert (tmp_path / "x.md").read_text() == "new"
+    assert (tmp_path / "archive" / "x.md").read_text() == "older"
+
+
+def test_archive_note_does_not_reach_a_symlink_pointing_outside_the_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("TOP SECRET")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+
+    with pytest.raises(ToolError):
+        server.archive_note("leak")
+    assert outside.exists()
+
+
+def test_a_note_that_answers_to_one_name_several_ways_is_still_a_single_match(tmp_path, monkeypatch):
+    """create_note's id is in the index, the frontmatter `id` and `aliases` at once."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Old Idea", author="nuru")
+
+    assert server._NoteNames().resolve(created["id"]) == [tmp_path / created["path"]]
+
+
+# --- browse_notes: tie-breaking, and ordering by a note's own date/session ---
+
+
+def test_browse_notes_orders_notes_made_in_the_same_minute_by_when_they_were_made(tmp_path, monkeypatch):
+    """`created` only goes to the minute; the ULID id orders within it."""
+    import time
+
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = []
+    for title in ("Zed", "Mid", "Alpha"):  # deliberately not in path order
+        made.append(server.create_note(type="topic", title=title, author="nuru"))
+        _backdate(made[-1], "2026-09-20T09:00")
+        time.sleep(0.005)
+
+    assert _browse_paths(server.browse_notes()) == [n["path"] for n in reversed(made)]
+
+
+def test_browse_notes_type_daily_orders_by_the_notes_date_not_by_when_it_was_made(tmp_path, monkeypatch):
+    """"Latest daily" is the latest date. A backfilled daily is made today."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    real = server.create_note(type="daily", title="Real", author="user", date="2026-09-20")
+    backfilled = server.create_note(type="daily", title="Backfilled", author="user", date="2026-09-10")
+    _backdate(real, "2026-09-20T08:00")
+    _backdate(backfilled, "2026-09-20T18:00")  # made later, dated earlier
+
+    assert _browse_paths(server.browse_notes(type="daily")) == [real["path"], backfilled["path"]]
+    # With no type the mixed list is still newest-made-first.
+    assert _browse_paths(server.browse_notes()) == [backfilled["path"], real["path"]]
+
+
+def test_browse_notes_type_daily_orders_indexed_and_obsidian_dailies_by_date_together(tmp_path, monkeypatch):
+    (tmp_path / "typed.md").write_text("---\ntype: daily\ndate: 2026-09-19\n---\n")  # unquoted date
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    older = server.create_note(type="daily", title="Older", author="user", date="2026-09-18")
+    newer = server.create_note(type="daily", title="Newer", author="user", date="2026-09-20")
+    _touch(tmp_path / "typed.md", datetime(2026, 1, 1, 9, 0))  # edited long ago: mtime would put it last
+
+    assert _browse_paths(server.browse_notes(type="daily")) == [newer["path"], "typed.md", older["path"]]
+
+
+def test_browse_notes_type_daily_puts_a_daily_with_no_date_after_the_dated_ones(tmp_path, monkeypatch):
+    (tmp_path / "undated.md").write_text("---\ntype: daily\n---\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    dated = server.create_note(type="daily", title="Dated", author="user", date="2026-09-01")
+    _touch(tmp_path / "undated.md", datetime(2030, 1, 1, 9, 0))
+
+    assert _browse_paths(server.browse_notes(type="daily")) == [dated["path"], "undated.md"]
+
+
+def test_browse_notes_type_session_orders_by_session_number(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    first = server.create_note(type="session", title="First", author="nuru", session="2026-09-20-01")
+    third = server.create_note(type="session", title="Third", author="nuru", session="2026-09-20-03")
+    second = server.create_note(type="session", title="Second", author="nuru", session="2026-09-20-02")
+    yesterday = server.create_note(type="session", title="Y", author="nuru", session="2026-09-19-09")
+
+    assert _browse_paths(server.browse_notes(type="session")) == [
+        third["path"], second["path"], first["path"], yesterday["path"],
+    ]
+
+
+def test_browse_notes_type_without_a_date_or_session_field_keeps_created_order(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    old = server.create_note(type="topic", title="Old", author="nuru")
+    new = server.create_note(type="topic", title="New", author="nuru")
+    _backdate(old, "2026-09-01T09:00")
+    _backdate(new, "2026-09-09T09:00")
+
+    assert _browse_paths(server.browse_notes(type="topic")) == [new["path"], old["path"]]
+
+
+def test_notes_with_tag_orders_same_minute_notes_by_when_they_were_made(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = []
+    for title in ("Zed", "Alpha"):
+        made.append(server.create_note(type="topic", title=title, author="nuru", tags=["t"]))
+        _backdate(made[-1], "2026-09-20T09:00")
+        time.sleep(0.005)
+
+    assert [m["path"] for m in server.notes_with_tag("t")["matches"]] == [n["path"] for n in reversed(made)]

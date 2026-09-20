@@ -74,7 +74,7 @@ class FakeMCPTools:
 
 
 def patch_mcp(monkeypatch, fake_tools_client):
-    monkeypatch.setattr(cli, "MCPTools", lambda server_params: fake_tools_client)
+    monkeypatch.setattr(cli, "MCPTools", lambda server_params, **kwargs: fake_tools_client)
 
 
 def test_context_usage_percent_is_zero_for_an_empty_conversation(tmp_path):
@@ -259,6 +259,24 @@ def test_main_connects_and_closes_mcp_tools_and_passes_tools_to_chat(monkeypatch
     assert fake_tools_client.connected is True
     assert fake_tools_client.closed is True
     assert seen["tools"] == tools
+
+
+def test_main_hides_delete_file_or_directory_from_the_local_model(monkeypatch):
+    monkeypatch.setattr(builtins, "input", fake_input([]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: None)
+    seen = {}
+
+    def recording_mcp_tools(server_params, **kwargs):
+        seen.update(kwargs)
+        return FakeMCPTools()
+
+    monkeypatch.setattr(cli, "MCPTools", recording_mcp_tools)
+
+    cli.main()
+
+    assert "delete_file_or_directory" in seen["hidden_tools"]
+    assert "archive_note" not in seen["hidden_tools"]
 
 
 def test_main_exit_command_unloads_models_and_stops_server_without_chatting(monkeypatch):

@@ -6,15 +6,16 @@ Run standalone via stdio with: uv run obsidian-mcp
 
 import concurrent.futures
 import contextlib
+import difflib
 import functools
 import os
 import re
 import shutil
 import sqlite3
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterator, TypeVar, cast
 
 import yaml
 from access_logging import AccessLogMiddleware
@@ -44,11 +45,22 @@ _INDEX_DB_NAME = ".obsidian-mcp-index.sqlite3"
 # unfilled placeholder text as if it were something a person actually wrote.
 _TEMPLATES_FOLDER = "Templates"
 
+# archive_note moves a note here, keeping its folder path underneath
+# (nuru/x.md -> archive/nuru/x.md): the note's filename never changes, so
+# [[links]] to it still resolve, and moving it back is just stripping "archive/".
+# browse_notes and the tag tools skip it - an archived note is out of the
+# working set - while read_note, search_notes and get_links still reach it.
+_ARCHIVE_FOLDER = "archive"
+
 _SLUG_INVALID = re.compile(r"[^a-z0-9]+")
 
 # search_notes returns at most this many hits, best first - a bounded result
-# keeps a broad query from flooding a small model's context window.
+# keeps a broad query from flooding a small model's context window. The other
+# tools that return a list of notes (notes_with_tag, get_links, all_tags,
+# browse_notes) bound theirs the same way, for the same reason.
 _SEARCH_LIMIT = 10
+_LIST_LIMIT = 25
+_BROWSE_MAX_LIMIT = 50
 _SNIPPET_CHARS = 120
 
 # Inside one query word, a run of these matches any run of '-', '_' or
@@ -60,6 +72,17 @@ _FRONTMATTER = re.compile(r"\A---\n(?:.*?\n)?---\n", re.DOTALL)
 
 _DATE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})$")
 _SESSION_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})$")
+
+# [[Note]], [[Note|shown as]], [[Note#Heading]], [[Note#^block]] -> "Note".
+# Obsidian forbids # ^ [ ] | in a filename, so those end the target. A bare
+# [[#Heading]] (a link within the same note) has no target and doesn't match.
+_WIKILINK = re.compile(r"\[\[([^\[\]|#^]+?)(?:[#^][^\[\]|]*)?(?:\|[^\[\]]*)?\]\]")
+_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$")
+_CODE_FENCE = re.compile(r"^ {0,3}(```|~~~)")
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _validate_calendar_date(value: str, field_name: str) -> None:
@@ -202,6 +225,78 @@ def list_notes() -> list[str]:
     )
 
 
+@mcp.tool(
+    description="List notes newest first - the way to get oriented or answer \"what's my latest daily\". "
+    f"type: optional filter, one of {', '.join(sorted(template.TYPE_FOLDER))}. limit: how many notes "
+    f"(default 10, max {_BROWSE_MAX_LIMIT}). Returns {{count, notes, hint}}: notes are {{path, id, type, "
+    "title}}, count is the total that match. Newest = when create_note made it, or last-modified for "
+    "notes made in Obsidian; with type daily, transcript or session it is the latest date / session "
+    "number instead. Excludes Templates/ and archive/. Pass path to read_note, id to append_note "
+    "(id is null for notes not made by create_note)."
+)
+@_tool
+def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
+    """List notes newest first, optionally only one type.
+
+    Replaces list_notes as the way to get oriented: a bounded, ordered slice
+    instead of every path in the vault.
+
+    Args:
+        type: Only notes of this type (one of template.TYPE_FOLDER's keys).
+            A note create_note made has its type in the index; any other note
+            counts as the type its own frontmatter declares, so a note made in
+            Obsidian from a Templates/ file is found too. Blank means no filter.
+        limit: How many notes to return, at least 1; capped at
+            _BROWSE_MAX_LIMIT so this can't turn back into a whole-vault dump.
+
+    Returns {"count", "notes"}: "notes" holds at most `limit` of
+    {"path", "id", "type", "title"}, newest first; "count" is how many notes
+    match in total. Ordered by `created` for a note in the index, else by the
+    file's modified time - except when `type` is daily, transcript or session
+    (the types with a `date` or `session` field), which order by that field,
+    so "the latest daily" is the latest date even if an earlier day's daily
+    was written more recently. A "hint" explains an empty result, or that results
+    were cut off - a bare empty list would reach the model as a blank tool
+    result it can't interpret.
+    Excludes Templates/ and archive/ (see _ARCHIVE_FOLDER).
+    """
+    _check_accessible(VAULT_PATH)
+    wanted = (type or "").strip().lower() or None
+    if wanted is not None and wanted not in template.TYPE_FOLDER:
+        raise ValueError(f"Unknown type '{type}'. Valid types: {', '.join(sorted(template.TYPE_FOLDER))}.")
+    if limit < 1:
+        raise ValueError(f"limit must be at least 1, got {limit}.")
+    limit = min(limit, _BROWSE_MAX_LIMIT)
+
+    indexed = _indexed_notes()
+    newest_first = sorted(_live_notes(), key=lambda p: _newest_key(p, indexed), reverse=True)
+    rows = (_note_row(path, indexed) for path in newest_first)
+    matches = [row for row in rows if wanted is None or row["type"] == wanted]
+    field = template.TYPE_FIELD.get(wanted) if wanted else None
+    if field in ("date", "session"):
+        # "Latest daily" means the latest *date*, not the daily most recently made -
+        # a backfilled one is made today. list.sort is stable, so notes with the
+        # same date/session (or none) keep the newest-made-first order from above.
+        matches.sort(key=lambda row: _sort_field(VAULT_PATH / row["path"], field), reverse=True)
+
+    result: dict[str, Any] = {"count": len(matches), "notes": matches[:limit]}
+    if not matches:
+        result["hint"] = (
+            f"No notes of type '{wanted}' found. A note made in Obsidian only counts if its "
+            f"frontmatter says 'type: {wanted}'. Call browse_notes without a type, or use search_notes."
+            if wanted
+            else "The vault has no notes yet."
+        )
+    elif len(matches) > limit:
+        hint = f"Showing the newest {limit} of {len(matches)} notes."
+        if limit < _BROWSE_MAX_LIMIT:
+            hint += " Raise limit to see more."
+        if wanted is None:
+            hint += " Pass type to narrow."
+        result["hint"] = hint
+    return result
+
+
 def _is_visible(path: Path) -> bool:
     return not any(part.startswith(".") for part in path.relative_to(VAULT_PATH).parts)
 
@@ -221,6 +316,34 @@ def _is_within_vault(path: Path) -> bool:
         return path.resolve().is_relative_to(VAULT_PATH)
     except OSError:
         return False
+
+
+def _rel(path: Path) -> str:
+    return str(path.relative_to(VAULT_PATH))
+
+
+def _is_archived(path: Path) -> bool:
+    parts = path.relative_to(VAULT_PATH).parts
+    return bool(parts) and parts[0] == _ARCHIVE_FOLDER
+
+
+def _all_notes() -> list[Path]:
+    """Every real note in the vault, sorted by path.
+
+    Skips Templates/ (placeholder skeletons), hidden folders (.obsidian,
+    Obsidian's .trash) and any symlink that resolves outside the vault - the
+    notes the tools below are allowed to read the contents of and name.
+    """
+    return sorted(
+        p
+        for p in VAULT_PATH.rglob("*.md")
+        if _is_visible(p) and not _is_in_templates(p) and _is_within_vault(p)
+    )
+
+
+def _live_notes() -> list[Path]:
+    """_all_notes() minus archive/ - the working set browse_notes and the tag tools show."""
+    return [p for p in _all_notes() if not _is_archived(p)]
 
 
 @mcp.tool(
@@ -296,7 +419,7 @@ def list_files_in_directory(directory: str) -> dict[str, Any]:
 
 
 def _indexed_notes() -> dict[str, dict[str, str]]:
-    """id/type/title of every note create_note has made, keyed by vault-relative path.
+    """id/type/title/created of every note create_note has made, keyed by vault-relative path.
 
     Empty if the index file doesn't exist yet, rather than opening it: that
     would create it (or fail, on a read-only vault) just to learn nothing is
@@ -306,6 +429,96 @@ def _indexed_notes() -> dict[str, dict[str, str]]:
         return {}
     with contextlib.closing(_open_index()) as conn:
         return note_index.all_by_path(conn)
+
+
+def _read_frontmatter(text: str) -> dict[str, Any]:
+    """A note's YAML frontmatter as a dict - {} if it has none or it isn't a
+    valid YAML mapping. Notes typed in Obsidian can have anything up there
+    (a hand-written date PyYAML can't parse raises ValueError, not YAMLError),
+    and one bad note must not break a tool that scans the whole vault.
+    """
+    match = _FRONTMATTER.match(text)
+    if not match:
+        return {}
+    try:
+        data: Any = yaml.safe_load(match.group(0)[4:-4])  # between the two "---\n" fences
+    except (yaml.YAMLError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _date_str(value: object) -> str | None:
+    """A frontmatter date as 'YYYY-MM-DD'. create_note quotes its dates, so
+    they read back as str, but an unquoted `date: 2026-09-20` typed in
+    Obsidian reads back as a date object."""
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    return value.strip() if isinstance(value, str) else None
+
+
+def _note_tags(text: str) -> set[str]:
+    """Every tag on a note, lowercased and without the '#'.
+
+    Both the frontmatter `tags` list - the only place create_note puts tags,
+    so the #tag regex alone would find none of the notes this server made -
+    and inline #tags in the body. Lowercased because Obsidian treats tags
+    case-insensitively.
+    """
+    raw: Any = _read_frontmatter(text).get("tags")
+    if isinstance(raw, str):
+        raw = re.split(r"[,\s]+", raw)
+    items = cast("list[object]", raw) if isinstance(raw, list) else []
+    body = _FRONTMATTER.sub("", text, count=1)
+    tags = {t.lstrip("#") for t in items if isinstance(t, str)} | set(TAG_PATTERN.findall(body))
+    return {t.lower() for t in tags if t}
+
+
+def _note_row(path: Path, indexed: dict[str, dict[str, str]], text: str | None = None) -> dict[str, Any]:
+    """{path, id, type, title} for a note, in the shape search_notes uses.
+
+    A note create_note made gets all four from the index. Any other note has
+    no id (append_note can't target it) and its filename as title; its type
+    is whatever its own frontmatter says, which is what lets a note made from
+    a Templates/ file in Obsidian show up under browse_notes(type=...). Pass
+    `text` if the caller already read the note; it's only read here if needed.
+    """
+    rel = _rel(path)
+    info = indexed.get(rel)
+    if info:
+        return {"path": rel, "id": info["id"], "type": info["type"], "title": info["title"]}
+    note_type = _read_frontmatter(path.read_text(errors="ignore") if text is None else text).get("type")
+    return {"path": rel, "id": None, "type": note_type if isinstance(note_type, str) else None, "title": path.stem}
+
+
+def _recency(path: Path, indexed: dict[str, dict[str, str]]) -> str:
+    """'YYYY-MM-DDTHH:MM' to order notes by, newest last.
+
+    create_note's own `created` for a note the index knows; the file's
+    modified time for the rest (made or last saved in Obsidian, so it has no
+    `created` the server can trust). Both are local time in the same format,
+    so they sort together.
+    """
+    info = indexed.get(_rel(path))
+    if info:
+        return info["created"]
+    return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%dT%H:%M")
+
+
+def _newest_key(path: Path, indexed: dict[str, dict[str, str]]) -> tuple[str, str, str]:
+    """Sort key for newest-first: _recency, then the note's id, then its path.
+
+    `created` only goes to the minute, so notes made in the same minute tie on
+    it; a ULID sorts by creation time to the millisecond, which orders them
+    the way they were actually made. (A note with no id sorts before one that
+    has it, then by path - an arbitrary but stable order.)
+    """
+    rel = _rel(path)
+    return (_recency(path, indexed), indexed.get(rel, {}).get("id", ""), rel)
+
+
+def _sort_field(path: Path, field: str) -> str:
+    """A note's own `date` or `session` frontmatter as a string, "" if it has none."""
+    return _date_str(_read_frontmatter(path.read_text(errors="ignore")).get(field)) or ""
 
 
 def _snippet(text: str, patterns: list[re.Pattern[str]]) -> str:
@@ -409,6 +622,97 @@ def search_notes(query: str) -> dict[str, Any]:
     return result
 
 
+@mcp.tool(
+    description="List every tag in use and how many notes carry it, most-used first - both frontmatter "
+    "tags (which create_note writes) and inline #tags. Returns {count, tags: {tag: notes}, hint}. "
+    "Pass a tag to notes_with_tag. Excludes Templates/ and archive/."
+)
+@_tool
+def all_tags() -> dict[str, Any]:
+    """Every tag in use across the vault's notes, with the number of notes carrying each.
+
+    The tool counterpart of the vault://tags and vault://tags/counts
+    resources, which a client that only calls tools (the local model's) can't
+    reach. Unlike them it also reads frontmatter `tags`, where create_note puts
+    every tag - so it lists the tags of notes the server made - and counts
+    notes rather than occurrences, matching what notes_with_tag returns for the
+    same tag.
+
+    Returns {"count", "tags"}: "tags" maps tag -> number of notes, most-used
+    first (ties alphabetical), at most _LIST_LIMIT of them; "count" is the
+    total number of distinct tags. A "hint" explains an empty or cut-off result.
+    Tags are lowercased, without the '#'. Excludes Templates/ and archive/.
+    """
+    _check_accessible(VAULT_PATH)
+    counts: Counter[str] = Counter()
+    for path in _live_notes():
+        counts.update(_note_tags(path.read_text(errors="ignore")))
+
+    most_used = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    result: dict[str, Any] = {"count": len(counts), "tags": dict(most_used[:_LIST_LIMIT])}
+    if not counts:
+        result["hint"] = "No note has any tags."
+    elif len(counts) > _LIST_LIMIT:
+        result["hint"] = (
+            f"Showing the {_LIST_LIMIT} most-used of {len(counts)} tags. "
+            "Pass a tag you expect to notes_with_tag to check it directly."
+        )
+    return result
+
+
+@mcp.tool(
+    description="List the notes carrying a tag, newest first. tag: with or without the '#', any case; "
+    "'project' also matches nested tags like 'project/alpha'. Matches frontmatter tags and inline "
+    "#tags. Returns {tag, count, matches, hint}: up to 10 matches {path, id, type, title}; count is the "
+    "total. A tag that matches nothing gets a hint with the closest real tags. Excludes Templates/ and archive/."
+)
+@_tool
+def notes_with_tag(tag: str) -> dict[str, Any]:
+    """List the notes carrying a tag, newest first (same order as browse_notes).
+
+    Args:
+        tag: The tag, with or without a leading '#', in any case. A parent tag
+            also matches its nested tags, as in Obsidian: "project" finds
+            notes tagged "project/alpha" too.
+
+    Returns {"tag", "count", "matches"}: "matches" holds at most
+    _SEARCH_LIMIT of {"path", "id", "type", "title"}; "count" is the total. A
+    "hint" says how to narrow when results were cut off, and when nothing
+    matches suggests the closest tags actually in use (a typo, a plural) -
+    a bare empty list would reach the model as a blank tool result it can't
+    interpret. Excludes Templates/ and archive/.
+    """
+    _check_accessible(VAULT_PATH)
+    wanted = tag.strip().lstrip("#").lower()
+    if not wanted:
+        raise ValueError("tag is empty - give a tag such as 'project'. Call all_tags to see the tags in use.")
+
+    indexed = _indexed_notes()
+    in_use: set[str] = set()
+    hits: list[tuple[tuple[str, str, str], Path, str]] = []
+    for path in _live_notes():
+        text = path.read_text(errors="ignore")
+        tags = _note_tags(text)
+        in_use |= tags
+        if any(t == wanted or t.startswith(f"{wanted}/") for t in tags):
+            hits.append((_newest_key(path, indexed), path, text))
+
+    hits.sort(key=lambda hit: hit[0], reverse=True)
+    result: dict[str, Any] = {
+        "tag": wanted,
+        "count": len(hits),
+        "matches": [_note_row(path, indexed, text) for _, path, text in hits[:_SEARCH_LIMIT]],
+    }
+    if not hits:
+        hint = f"No note is tagged '{wanted}'."
+        if close := difflib.get_close_matches(wanted, sorted(in_use), n=3, cutoff=0.6):
+            hint += f" Did you mean: {', '.join(close)}?"
+        result["hint"] = f"{hint} Call all_tags to see every tag in use."
+    elif len(hits) > _SEARCH_LIMIT:
+        result["hint"] = f"Showing the newest {_SEARCH_LIMIT} of {len(hits)} notes tagged '{wanted}'."
+    return result
+
+
 @mcp.resource("vault://tags", name="tags", description="All unique tags (e.g. 'project' for '#project') used across notes in the vault.")
 def list_tags() -> list[str]:
     """List all unique tags (e.g. 'project' for '#project') used across notes in the vault.
@@ -439,45 +743,263 @@ def count_tags() -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-@mcp.tool(
-    description="Return a note's full Markdown content by filename. name: filename, with or without "
-    "the .md extension (searched recursively if not at the vault root). Errors if no note is found."
-)
-@_tool
-def read_note(name: str) -> str:
-    """Return the full contents of a note (Markdown file) by name.
+class _NoteNames:
+    """Every name a note answers to, so a loosely written one - a title, an id,
+    a lowercase slug, a [[wikilink]] target - resolves to the note it means.
 
-    Args:
-        name: The note's filename, with or without the .md extension. If it
-            isn't found directly under the vault root, the vault is searched
-            recursively for a note with that name, and the first match
-            (alphabetically, by path) is used.
+    Built once per tool call (one walk of the vault, one frontmatter parse per
+    note), so resolving many names, as get_links does, is dict lookups. Names
+    are compared as slugs, which makes them case- and punctuation-insensitive.
+    Each table maps slug -> notes, in path order, so a tie goes to the first
+    path alphabetically, as everywhere else in this module.
 
-    Raises FileNotFoundError if no matching note is found anywhere in the
-    vault - never returns an empty string, which would be indistinguishable
-    from a note that's genuinely empty.
+    Tried in this order: the note's whole vault-relative path, its filename,
+    then its titles/aliases/ids (the index's title and id, and the
+    frontmatter's `aliases` and `id` - which is where create_note writes its
+    title and id, so a title or an id finds the note).
     """
-    _check_accessible(VAULT_PATH)
 
+    def __init__(self) -> None:
+        indexed = _indexed_notes()
+        self.notes = _all_notes()
+        self._by_path: dict[str, list[Path]] = {}
+        self._by_stem: dict[str, list[Path]] = {}
+        self._by_alias: dict[str, list[Path]] = {}
+        for path in self.notes:
+            rel = _rel(path)
+            info = indexed.get(rel, {})
+            frontmatter = _read_frontmatter(path.read_text(errors="ignore"))
+            aliases = frontmatter.get("aliases")
+            self._add(self._by_path, rel.removesuffix(".md"), path)
+            self._add(self._by_stem, path.stem, path)
+            for name in (
+                info.get("title"),
+                info.get("id"),
+                frontmatter.get("id"),
+                *(aliases if isinstance(aliases, list) else []),
+            ):
+                self._add(self._by_alias, name, path)
+
+    @staticmethod
+    def _add(table: dict[str, list[Path]], name: object, path: Path) -> None:
+        # A name with nothing left after slugifying (empty, all emoji) can't be
+        # matched on, and would otherwise match every other such name.
+        if isinstance(name, str) and (key := _slugify(name)):
+            # A note that answers to one name several ways (create_note's id is in
+            # the index, the frontmatter `id` and the `aliases`) is still one match.
+            paths = table.setdefault(key, [])
+            if path not in paths:
+                paths.append(path)
+
+    def resolve(self, name: str) -> list[Path]:
+        """The notes `name` could mean from the best table that has any - [] if none."""
+        stem = name.strip().removesuffix(".md")
+        last = Path(stem).name  # a wrong or missing folder in front of the right name still finds it
+        for table, key in (
+            (self._by_path, _slugify(stem)),
+            (self._by_stem, _slugify(last)),
+            (self._by_alias, _slugify(last)),
+        ):
+            if key and key in table:
+                return table[key]
+        return []
+
+    def closest(self, name: str, n: int = 3) -> list[Path]:
+        """Up to n notes whose filename or title looks most like `name`, best first."""
+        query = _slugify(Path(name.strip().removesuffix(".md")).name)
+        if not query:
+            return []
+        names = sorted(self._by_stem.keys() | self._by_alias.keys())
+        found: list[Path] = []
+        # Ask for more keys than notes wanted: one note can own several close keys.
+        for key in difflib.get_close_matches(query, names, n=n * 3, cutoff=0.4):
+            for path in self._by_stem.get(key, []) + self._by_alias.get(key, []):
+                if path not in found:
+                    found.append(path)
+        return found[:n]
+
+
+def _resolve_notes(name: str) -> list[Path]:
+    """Every note `name` could mean, best match first.
+
+    Exact first, as read_note always did: `name` as a vault-relative path,
+    then a note with that filename anywhere in the vault (sorted by path).
+    Failing both, forgiving (see _NoteNames): case, slug, title, alias and id.
+    More than one is only returned when a name genuinely matches several -
+    the same filename in two folders, two notes sharing an alias.
+
+    Raises FileNotFoundError, naming the closest notes, if there is none.
+    """
     filename = name if name.endswith(".md") else f"{name}.md"
 
     target = (VAULT_PATH / filename).resolve()
-    if not target.is_relative_to(VAULT_PATH) or not target.is_file():
-        matches = sorted(
-            p
-            for p in VAULT_PATH.rglob("*.md")
-            if p.name == filename and _is_within_vault(p)
-        )
-        if not matches:
-            raise FileNotFoundError(f"No note found named '{name}'.")
-        target = matches[0]
+    if target.is_relative_to(VAULT_PATH) and target.is_file():
+        return [target]
+    exact = sorted(p for p in VAULT_PATH.rglob("*.md") if p.name == filename and _is_within_vault(p))
+    if exact:
+        return exact
+
+    names = _NoteNames()
+    if found := names.resolve(name):
+        return found
+    message = f"No note found named '{name}'."
+    if close := names.closest(name):
+        message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
+    raise FileNotFoundError(f"{message} Use browse_notes or search_notes to find the right note.")
+
+
+def _resolve_note(name: str) -> Path:
+    """The first of _resolve_notes(name) - for a tool where a tie doesn't matter."""
+    return _resolve_notes(name)[0]
+
+
+def _extract_section(text: str, section: str, rel_path: str) -> str:
+    """The part of a note under one heading: the heading line through to just
+    before the next heading of the same or a higher level (so its own
+    subheadings stay in). `section` matches a heading's text ignoring case,
+    extra whitespace and any leading '#'s. A '#' line inside frontmatter or a
+    fenced code block is a comment or a shell prompt, not a heading. If the
+    same heading appears twice, the first is used.
+    """
+    lines = text.splitlines()
+    frontmatter = _FRONTMATTER.match(text)
+    headings: list[tuple[int, int, str]] = []  # (line, level, title)
+    fence: str | None = None
+    for i in range(frontmatter.group(0).count("\n") if frontmatter else 0, len(lines)):
+        if opening := _CODE_FENCE.match(lines[i]):
+            if fence is None:
+                fence = opening.group(1)
+            elif opening.group(1) == fence:
+                fence = None
+        elif fence is None and (heading := _HEADING.match(lines[i])):
+            headings.append((i, len(heading.group(1)), heading.group(2).strip()))
+
+    wanted = " ".join(section.lstrip("#").split()).casefold()
+    for n, (start, level, title) in enumerate(headings):
+        if " ".join(title.split()).casefold() == wanted:
+            end = next((line for line, lvl, _ in headings[n + 1 :] if lvl <= level), len(lines))
+            return "\n".join(lines[start:end]).rstrip()
+
+    listed = ", ".join(f"'{title}'" for _, _, title in headings[:_LIST_LIMIT])
+    raise ValueError(
+        f"No section '{section}' in '{rel_path}'. "
+        + (f"Its headings: {listed}." if headings else "It has no headings - read the whole note.")
+    )
+
+
+@mcp.tool(
+    description="Return a note's Markdown content. name: a path, filename, title, alias or id - case and "
+    "punctuation don't matter ('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the "
+    "closest notes. section: optional heading text (e.g. 'Decisions') to return just that part of a long "
+    "note, through to the next heading of the same or higher level; an unknown section lists the note's headings."
+)
+@_tool
+def read_note(name: str, section: str | None = None) -> str:
+    """Return the contents of a note (Markdown file) by name - all of it, or one section.
+
+    Args:
+        name: Which note. Tried in order: as a vault-relative path, as a
+            filename anywhere in the vault (the first match, alphabetically by
+            path, if several), then forgivingly - case, slug, title, alias and
+            id all match, so "nuru mcp", "Nuru MCP" and "nuru-mcp.md" find
+            the same note, and so does its title or its id.
+        section: A heading's text, to return only that section (see
+            _extract_section). Blank or omitted returns the whole note.
+
+    Raises FileNotFoundError if no matching note is found anywhere in the
+    vault - never returns an empty string, which would be indistinguishable
+    from a note that's genuinely empty - and the message names the closest
+    notes. A hint returned as ordinary text couldn't be told from the note's
+    own content, which is why a miss is an error and not a result. Raises
+    ValueError, listing the note's headings, if `section` isn't one of them.
+    """
+    _check_accessible(VAULT_PATH)
+
+    target = _resolve_note(name)
 
     try:
-        return target.read_text()
+        text = target.read_text()
     except PermissionError as e:
         raise PermissionError(
             f"Access denied to '{target}'. Check the VAULT_PATH env var and its permissions."
         ) from e
+    if section is None or not section.strip():
+        return text
+    return _extract_section(text, section, _rel(target))
+
+
+def _link_targets(text: str) -> list[str]:
+    """The distinct [[wikilink]] targets in `text`, in order of first appearance.
+
+    Only the note name: the |alias, #heading and #^block parts are dropped, and
+    an embed (![[Note]]) counts, as it does in Obsidian's own link graph.
+    """
+    targets = (m.group(1).strip() for m in _WIKILINK.finditer(text))
+    return list(dict.fromkeys(t for t in targets if t))
+
+
+@mcp.tool(
+    description="Show a note's place in the link graph: the notes it links to with [[wikilinks]] (resolved "
+    "to paths) and the notes that link to it (backlinks). name: as for read_note. Returns {note, outgoing, "
+    "backlinks, hint}: outgoing is [{link, path}] with path null if no note has that name; backlinks is a "
+    "list of paths. Follow a path with read_note instead of guessing a search query. Each list shows up "
+    "to 25."
+)
+@_tool
+def get_links(name: str) -> dict[str, Any]:
+    """A note's outgoing [[wikilinks]] resolved to paths, plus its backlinks.
+
+    Args:
+        name: The note, resolved as read_note resolves it.
+
+    Returns {"note", "outgoing", "backlinks"}. "note" is the resolved path.
+    "outgoing" holds {"link", "path"}: `link` is the target as written and
+    `path` the note it names (resolved as read_note resolves a name, so a link
+    by filename, title, alias, id or folder/path all work), or null when no
+    note has that name - a broken link, or an attachment. "backlinks" holds the
+    paths of the other notes that link here, alphabetically. Each list is
+    capped at _LIST_LIMIT, and a "hint" says so, or explains an empty or
+    partly-unresolved result. A note's link to itself, and a bare [[#Heading]],
+    aren't counted. Archived notes take part; Templates/ and hidden folders don't.
+    """
+    _check_accessible(VAULT_PATH)
+    target = _resolve_note(name)
+    target_rel = _rel(target)
+    names = _NoteNames()
+
+    outgoing: list[dict[str, str | None]] = []
+    for link in _link_targets(target.read_text(errors="ignore")):
+        found = names.resolve(link)
+        outgoing.append({"link": link, "path": _rel(found[0]) if found else None})
+
+    backlinks: list[str] = []
+    for path in names.notes:
+        rel = _rel(path)
+        if rel == target_rel:
+            continue
+        for link in _link_targets(path.read_text(errors="ignore")):
+            found = names.resolve(link)
+            if found and _rel(found[0]) == target_rel:
+                backlinks.append(rel)
+                break
+
+    result: dict[str, Any] = {
+        "note": target_rel,
+        "outgoing": outgoing[:_LIST_LIMIT],
+        "backlinks": backlinks[:_LIST_LIMIT],
+    }
+    hints: list[str] = []
+    if len(outgoing) > _LIST_LIMIT:
+        hints.append(f"Showing {_LIST_LIMIT} of {len(outgoing)} outgoing links.")
+    if len(backlinks) > _LIST_LIMIT:
+        hints.append(f"Showing {_LIST_LIMIT} of {len(backlinks)} backlinks.")
+    if any(link["path"] is None for link in result["outgoing"]):
+        hints.append("A link with path null matches no note in the vault (a broken link, or an attachment).")
+    if not outgoing and not backlinks:
+        hints.append("This note has no [[links]] to other notes, and no note links to it.")
+    if hints:
+        result["hint"] = " ".join(hints)
+    return result
 
 
 def _resolve_target(path: str) -> Path:
@@ -568,16 +1090,64 @@ def _build_frontmatter(
     )
 
 
+def _frontmatters_mentioning(needle: str) -> Iterator[tuple[Path, dict[str, Any]]]:
+    """(path, frontmatter) of every note whose text contains `needle`. The
+    substring test comes first, so only the few likely matches pay for a YAML parse."""
+    for path in _all_notes():
+        text = path.read_text(errors="ignore")
+        if needle in text:
+            yield path, _read_frontmatter(text)
+
+
+def _next_session(type: str) -> str:
+    """Today's next unused session id, 'YYYY-MM-DD-NN', for a note of this type.
+
+    One past the highest NN any note of this type already has today - not the
+    first gap - so a session made later never gets a lower number than an
+    earlier one. Per type: a transcript and the session note for the same
+    conversation share an id, so each type's first note of the day is -01.
+    """
+    today = _today()
+    numbers = [0]
+    for _, frontmatter in _frontmatters_mentioning(today):
+        session = frontmatter.get("session")
+        if (
+            frontmatter.get("type") == type
+            and isinstance(session, str)
+            and (match := _SESSION_PATTERN.match(session))
+            and match.group(1) == today
+        ):
+            numbers.append(int(match.group(2)))
+    number = max(numbers) + 1
+    if number > 99:
+        raise ValueError(f"Today already has 99 '{type}' notes - pass session explicitly.")
+    return f"{today}-{number:02d}"
+
+
+def _find_daily(day: str) -> Path | None:
+    """The daily note for `day` ('YYYY-MM-DD'), whoever made it.
+
+    Found by its frontmatter (type daily, that date), not by guessing a
+    filename: a daily made in Obsidian, or by create_note under a title like
+    "Daily Note", can be named anything.
+    """
+    for path, frontmatter in _frontmatters_mentioning(day):
+        if frontmatter.get("type") == "daily" and _date_str(frontmatter.get("date")) == day:
+            return path
+    return None
+
+
 @mcp.tool(
     description=(
         "Create a new note in the vault. type: one of directives, daily, correction, profile, "
         "preferences, person, topic, index, transcript, project, session. title: human-readable "
         "title (becomes the filename). author: one of user, nuru, both (directives/daily/correction "
         "require author=user). body: Markdown content. tags: extra tags, no whitespace. supersedes: "
-        "id of a note this replaces, must already exist. date: required for type=daily, format "
-        "YYYY-MM-DD. targets: required for type=correction, list of existing note ids. session: "
-        "required for type=transcript or type=session, format YYYY-MM-DD-NN. Use append_note (not "
-        "this again) to add to a note afterward. Returns {id, path}."
+        "id of a note this replaces, must already exist. date: for type=daily, YYYY-MM-DD, defaults "
+        "to today. targets: required for type=correction, list of existing note ids. session: for "
+        "type=transcript or type=session, YYYY-MM-DD-NN, defaults to today's next unused number. To "
+        "add to today's daily use add_to_daily; to add to any other note use append_note (not this "
+        "again). Returns {id, path}."
     )
 )
 @_tool
@@ -610,12 +1180,13 @@ def create_note(
             No tag may contain whitespace.
         supersedes: id of the note this one replaces, if any. Must already
             exist in the index.
-        date: Required, and only valid, for type="daily": "YYYY-MM-DD",
-            a real calendar date.
+        date: Only valid for type="daily": "YYYY-MM-DD", a real calendar
+            date. Defaults to today (see _today) if omitted.
         targets: Required, and only valid, for type="correction". Every id
             in the list must already exist in the index.
-        session: Required, and only valid, for type="transcript" or
-            type="session": "YYYY-MM-DD-NN", with a real calendar date.
+        session: Only valid for type="transcript" or type="session":
+            "YYYY-MM-DD-NN", with a real calendar date. Defaults to today's
+            next unused number for that type (see _next_session) if omitted.
 
     Returns {"id": <ulid>, "path": <vault-relative path>}.
     """
@@ -637,6 +1208,16 @@ def create_note(
     }
     required_field = template.TYPE_FIELD.get(type)
     allowed_fields = {required_field} if required_field else set()
+    # date and session, unlike targets, are values the server can supply: left
+    # out entirely, they default rather than have the caller state (or get
+    # wrong) today's date or the next free session number. Only when *no* extra
+    # field was passed, so a wrong one (session on a daily) still fails below
+    # with an accurate "got [...]", not one polluted by a defaulted value.
+    if not type_fields:
+        if required_field == "date":
+            type_fields["date"] = date = _today()
+        elif required_field == "session":
+            type_fields["session"] = session = _next_session(type)
     if set(type_fields) != allowed_fields:
         expected = f"'{required_field}'" if required_field else "none"
         raise ValueError(f"type '{type}' expects exactly these extra fields: {expected}; got {sorted(type_fields)}.")
@@ -747,6 +1328,17 @@ def _blank_line_separator(existing: str) -> str:
     return "\n\n"
 
 
+def _append_text(target: Path, content: str) -> None:
+    """Append content to a note's file, starting its own paragraph (see _blank_line_separator)."""
+
+    def _append() -> None:
+        separator = _blank_line_separator(target.read_text())
+        with target.open("a") as f:
+            f.write(separator + content)
+
+    _run_with_timeout(_append)
+
+
 @mcp.tool(
     description="Append content to an existing note's body. id: the note's id (not its path), as "
     "returned by create_note. content: Markdown to append. Returns the note's vault-relative path."
@@ -779,13 +1371,47 @@ def append_note(id: str, content: str) -> str:
     if not target.is_file():
         raise FileNotFoundError(f"Note '{id}' is indexed at '{rel_path}', but that file no longer exists.")
 
-    def _append() -> None:
-        separator = _blank_line_separator(target.read_text())
-        with target.open("a") as f:
-            f.write(separator + content)
-
-    _run_with_timeout(_append)
+    _append_text(target, content)
     return rel_path
+
+
+@mcp.tool(
+    description="Add text to today's daily note, creating the note first if there isn't one yet. text: "
+    "Markdown to add. No date, title or id needed - use this for anything that belongs in today's daily. "
+    "Returns {path, id, created}: created says whether this call made the note; id is null for a daily "
+    "made in Obsidian rather than by create_note."
+)
+@_tool
+def add_to_daily(text: str) -> dict[str, Any]:
+    """Append text to today's daily note, creating it if it doesn't exist.
+
+    Replaces three decisions the model would otherwise make - does today's
+    daily exist, what is its id, what is today's date - with none. "Today" is
+    the server's clock. An existing daily is found by its frontmatter (see
+    _find_daily), so one made in Obsidian is appended to rather than
+    duplicated; a new one is a normal create_note daily titled
+    "Daily YYYY-MM-DD" (so it's the file daily-YYYY-MM-DD.md), author "user"
+    (the only author a daily may have), with `text` as its body.
+
+    Args:
+        text: The Markdown to add. Starts its own paragraph, like append_note.
+
+    Returns {"path", "id", "created"}. "id" is null for a note the index
+    doesn't know - one made in Obsidian - which append_note couldn't reach.
+    """
+    _check_accessible(VAULT_PATH)
+    if not text.strip():
+        raise ValueError("text is empty - give the Markdown to add.")
+
+    today = _today()
+    existing = _find_daily(today)
+    if existing is None:
+        made = create_note(type="daily", title=f"Daily {today}", author="user", body=text, date=today)
+        return {"path": made["path"], "id": made["id"], "created": True}
+
+    _append_text(existing, text)
+    rel_path = _rel(existing)
+    return {"path": rel_path, "id": _indexed_notes().get(rel_path, {}).get("id"), "created": False}
 
 
 def _build_template_file(type: str) -> str:
@@ -931,6 +1557,48 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
 
     _run_with_timeout(_move)
     return destination_rel
+
+
+@mcp.tool(
+    description="Archive a note: move it under archive/, keeping its folder (nuru/x.md -> archive/nuru/x.md), "
+    "which takes it out of browse_notes and the tag lists. Reversible - nothing is deleted - so prefer this "
+    "to deleting. name: a path, filename, title or id, as for read_note; a name that matches several notes "
+    "is refused, so pass the path. Returns {from, to}; move it back with rename_or_move_file(to, from). "
+    "Notes under user/ (directives, daily, correction) can't be archived."
+)
+@_tool
+def archive_note(name: str) -> dict[str, str]:
+    """Archive a note by moving it to archive/, under its own folder path.
+
+    The safe alternative to deleting: the file, its id and its index row all
+    survive (rename_or_move_file repoints the row), and the filename doesn't
+    change, so [[links]] to the note keep resolving. Undo it by moving the
+    file back - "from" in the result is where it belongs.
+
+    This is a move, so it goes through rename_or_move_file and inherits its
+    boundaries: it refuses hidden folders, anything under user/, a destination
+    that already exists. Since the name is resolved as read_note resolves it,
+    which is forgiving, a name that fits several notes is refused rather than
+    guessed - a wrong guess would archive the wrong note.
+
+    Args:
+        name: The note to archive, as for read_note.
+
+    Returns {"from", "to"}: vault-relative paths before and after.
+    """
+    _check_accessible(VAULT_PATH)
+    matches = _resolve_notes(name)
+    if len(matches) > 1:
+        raise ValueError(
+            f"'{name}' matches {len(matches)} notes: {', '.join(_rel(p) for p in matches[:5])}. "
+            "Pass the path of the one to archive."
+        )
+    source = _rel(matches[0])
+    if _is_archived(matches[0]):
+        raise ValueError(f"'{source}' is already archived.")
+    destination = f"{_ARCHIVE_FOLDER}/{source}"
+    rename_or_move_file(source, destination)
+    return {"from": source, "to": destination}
 
 
 @mcp.tool(

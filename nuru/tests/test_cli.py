@@ -283,6 +283,7 @@ def test_main_exit_command_unloads_models_and_stops_server_without_chatting(monk
 
 def test_main_show_command_prints_model_info_when_loaded(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["/show"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
     monkeypatch.setattr(cli, "is_model_loaded", lambda model: True)
     monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"family": "qwen3", "context_window": 4096})
     patch_mcp(monkeypatch, FakeMCPTools())

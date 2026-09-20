@@ -14,7 +14,7 @@ import sqlite3
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 import yaml
 from access_logging import AccessLogMiddleware
@@ -230,12 +230,13 @@ def list_files() -> list[str]:
 
 
 @mcp.tool(
-    description="List all files recursively under a vault subdirectory, as vault-relative paths. "
-    "directory: subdirectory name or path relative to the vault root (matched by name anywhere in "
-    "the vault if not found directly). Returns [] if no match is found."
+    description="List all files recursively under a vault subdirectory. directory: subdirectory name or "
+    "path relative to the vault root (matched by name anywhere in the vault if not found directly). "
+    "Returns {directory, count, files} with files as vault-relative paths; when files is empty, a "
+    "'hint' explains why."
 )
 @_tool
-def list_files_in_directory(directory: str) -> list[str]:
+def list_files_in_directory(directory: str) -> dict[str, Any]:
     """List all files recursively within a subdirectory of the vault, as paths relative to the vault root.
 
     Args:
@@ -244,7 +245,10 @@ def list_files_in_directory(directory: str) -> list[str]:
             recursively for a directory with that name, and the first match
             (alphabetically, by path) is used.
 
-    Returns an empty list if no matching directory is found anywhere in the vault.
+    Returns {"directory", "count", "files"}. When "files" is empty a "hint"
+    says whether no matching directory exists anywhere in the vault or the
+    directory exists but holds no visible files - a bare empty list would
+    reach the model as a blank tool result it can't interpret.
     """
     _check_accessible(VAULT_PATH)
 
@@ -257,40 +261,62 @@ def list_files_in_directory(directory: str) -> list[str]:
             if p.is_dir() and p.name == name and _is_within_vault(p)
         )
         if not matches:
-            return []
+            return {
+                "directory": directory,
+                "count": 0,
+                "files": [],
+                "hint": f"No directory matching '{directory}' exists in the vault. "
+                "Use list_files to see the real paths.",
+            }
         target = matches[0]
 
     _check_accessible(target)
 
-    return sorted(
+    files = sorted(
         str(path.relative_to(VAULT_PATH))
         for path in target.rglob("*")
         if path.is_file() and _is_visible(path) and _is_within_vault(path)
     )
+    result: dict[str, Any] = {"directory": directory, "count": len(files), "files": files}
+    if not files:
+        result["hint"] = f"The directory '{directory}' exists but contains no visible files."
+    return result
 
 
 @mcp.tool(
-    description="Case-insensitive substring search over note content. query: text to search for. "
-    "Returns matching vault-relative paths, or [] if none match. Excludes Templates/."
+    description="Case-insensitive, literal substring search over note content - search ONE distinctive "
+    "word, not a phrase. query: text to search for. Returns {query, count, matches} with matches as "
+    "vault-relative paths; when nothing matches, a 'hint' says how to retry. Excludes Templates/."
 )
 @_tool
-def search_notes(query: str) -> list[str]:
+def search_notes(query: str) -> dict[str, Any]:
     """Search notes (Markdown files) for a string, case-insensitive.
 
     Args:
         query: The substring to search for within each note's content.
 
-    Returns paths (relative to the vault root) of notes whose content contains
-    the query. Returns an empty list if no notes match. Excludes Templates/ -
-    those are placeholder skeletons, not notes.
+    Returns {"query", "count", "matches"}, where "matches" are paths (relative
+    to the vault root) of notes whose content contains the query. When nothing
+    matches a "hint" explains the search is a literal substring match and how
+    to retry - a bare empty list would reach the model as a blank tool result
+    it can't interpret, and small models fill that gap with invented notes.
+    Excludes Templates/ - those are placeholder skeletons, not notes.
     """
     _check_accessible(VAULT_PATH)
     query_lower = query.lower()
-    return sorted(
+    matches = sorted(
         str(path.relative_to(VAULT_PATH))
         for path in VAULT_PATH.rglob("*.md")
         if not _is_in_templates(path) and query_lower in path.read_text(errors="ignore").lower()
     )
+    result: dict[str, Any] = {"query": query, "count": len(matches), "matches": matches}
+    if not matches:
+        result["hint"] = (
+            f"No note contains the exact text '{query}'. search_notes is a literal, case-insensitive "
+            "substring match: retry with ONE distinctive word or a different format "
+            "(e.g. '2026-09-17' instead of 'September 17')."
+        )
+    return result
 
 
 @mcp.resource("vault://tags", name="tags", description="All unique tags (e.g. 'project' for '#project') used across notes in the vault.")

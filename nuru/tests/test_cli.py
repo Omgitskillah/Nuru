@@ -426,6 +426,38 @@ def test_token_budget_reserves_the_response_fraction():
     assert cli._token_budget(1000) == 800
 
 
+def test_context_window_is_capped_at_max_num_ctx():
+    assert cli._context_window({"context_window": 262144}) == cli.MAX_NUM_CTX
+
+
+def test_context_window_passes_a_smaller_model_window_through_unchanged():
+    assert cli._context_window({"context_window": 4096}) == 4096
+
+
+def test_context_window_falls_back_to_the_default_when_model_info_is_missing():
+    assert cli._context_window(None) == cli.DEFAULT_NUM_CTX
+    assert cli._context_window({}) == cli.DEFAULT_NUM_CTX
+
+
+def test_main_requests_the_capped_context_window_from_chat(monkeypatch):
+    monkeypatch.setattr(builtins, "input", fake_input(["hi"]))
+    monkeypatch.setattr(cli, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(cli, "ensure_model_loaded", lambda model: {"context_window": 262144})
+    patch_mcp(monkeypatch, FakeMCPTools())
+
+    seen = {}
+
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
+        seen["num_ctx"] = num_ctx
+        return iter([])
+
+    monkeypatch.setattr(cli, "chat", recording_chat)
+
+    cli.main()
+
+    assert seen["num_ctx"] == cli.MAX_NUM_CTX
+
+
 def test_main_rejects_a_message_that_would_exceed_the_token_budget(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "input", fake_input(["x" * 100_000]))
     monkeypatch.setattr(cli, "ensure_server_running", lambda: None)

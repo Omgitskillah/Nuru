@@ -84,16 +84,33 @@ def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
     (tmp_path / "Other.md").write_text("# Other")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_files_in_directory("Projects") == [
-        "Projects/Nuru MCP.md",
-        "Projects/Sub/diagram.png",
-    ]
+    result = server.list_files_in_directory("Projects")
+
+    assert result["files"] == ["Projects/Nuru MCP.md", "Projects/Sub/diagram.png"]
+    assert result["count"] == 2
+    assert result["directory"] == "Projects"
+    assert "hint" not in result
 
 
-def test_list_files_in_directory_returns_empty_list_if_missing(tmp_path, monkeypatch):
+def test_list_files_in_directory_returns_empty_files_and_a_hint_if_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_files_in_directory("NoSuchDir") == []
+    result = server.list_files_in_directory("NoSuchDir")
+
+    assert result["files"] == []
+    assert result["count"] == 0
+    assert "NoSuchDir" in result["hint"]
+    assert "list_files" in result["hint"]
+
+
+def test_list_files_in_directory_hints_when_the_directory_exists_but_is_empty(tmp_path, monkeypatch):
+    (tmp_path / "Empty").mkdir()
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.list_files_in_directory("Empty")
+
+    assert result["files"] == []
+    assert "exists but contains no visible files" in result["hint"]
 
 
 def test_list_files_in_directory_finds_first_nested_match_by_name(tmp_path, monkeypatch):
@@ -101,7 +118,7 @@ def test_list_files_in_directory_finds_first_nested_match_by_name(tmp_path, monk
     (tmp_path / "Projects" / "folder" / "a.md").write_text("a")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_files_in_directory("folder") == ["Projects/folder/a.md"]
+    assert server.list_files_in_directory("folder")["files"] == ["Projects/folder/a.md"]
 
 
 def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_path, monkeypatch):
@@ -127,27 +144,37 @@ def test_search_notes_finds_matching_notes_case_insensitively(tmp_path, monkeypa
     (tmp_path / "Other.md").write_text("Nothing relevant here")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("hello") == ["Welcome.md"]
+    result = server.search_notes("hello")
+
+    assert result["matches"] == ["Welcome.md"]
+    assert result["count"] == 1
+    assert result["query"] == "hello"
+    assert "hint" not in result
 
 def test_search_notes_finds_partial_matching_notes_case_insensitively(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
     (tmp_path / "Other.md").write_text("Nothing relevant here")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("ell") == ["Welcome.md"]
+    assert server.search_notes("ell")["matches"] == ["Welcome.md"]
 
 def test_search_notes_finds_tags_in_notes_case_insensitively(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
     (tmp_path / "Other.md").write_text("Nothing #relevant here")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("#relevant") == ["Other.md"]
+    assert server.search_notes("#relevant")["matches"] == ["Other.md"]
 
-def test_search_notes_returns_empty_list_when_not_found(tmp_path, monkeypatch):
+def test_search_notes_returns_no_matches_and_a_retry_hint_when_not_found(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("nonexistent") == []
+    result = server.search_notes("nonexistent")
+
+    assert result["matches"] == []
+    assert result["count"] == 0
+    assert "nonexistent" in result["hint"]
+    assert "ONE distinctive word" in result["hint"]
 
 
 def test_search_notes_excludes_templates_folder(tmp_path, monkeypatch):
@@ -158,7 +185,7 @@ def test_search_notes_excludes_templates_folder(tmp_path, monkeypatch):
     (tmp_path / "Templates" / "01 Profile.md").write_text("---\n---\n\n# {{title}}\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("{{title}}") == []
+    assert server.search_notes("{{title}}")["matches"] == []
 
 
 # --- read_note ---
@@ -377,8 +404,8 @@ def test_list_files_in_directory_rejects_dotdot_traversal_outside_vault(
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("../outside") == []
-    assert server.list_files_in_directory("..") == []
+    assert server.list_files_in_directory("../outside")["files"] == []
+    assert server.list_files_in_directory("..")["files"] == []
 
 
 def test_list_files_in_directory_rejects_absolute_path_outside_vault(
@@ -391,7 +418,7 @@ def test_list_files_in_directory_rejects_absolute_path_outside_vault(
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory(str(outside_dir)) == []
+    assert server.list_files_in_directory(str(outside_dir))["files"] == []
 
 
 def test_list_files_in_directory_rejects_nested_dotdot_traversal(tmp_path, monkeypatch):
@@ -402,7 +429,7 @@ def test_list_files_in_directory_rejects_nested_dotdot_traversal(tmp_path, monke
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("Projects/../../outside") == []
+    assert server.list_files_in_directory("Projects/../../outside")["files"] == []
 
 
 def test_list_files_in_directory_rejects_symlinked_directory_pointing_outside(
@@ -416,7 +443,7 @@ def test_list_files_in_directory_rejects_symlinked_directory_pointing_outside(
     (vault / "link").symlink_to(outside_dir)
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("link") == []
+    assert server.list_files_in_directory("link")["files"] == []
 
 
 def test_list_files_in_directory_rejects_symlinked_directory_found_via_fallback(
@@ -431,7 +458,7 @@ def test_list_files_in_directory_rejects_symlinked_directory_found_via_fallback(
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
     # Looked up by bare name, so it hits the recursive fallback search.
-    assert server.list_files_in_directory("link") == []
+    assert server.list_files_in_directory("link")["files"] == []
 
 
 def test_list_files_in_directory_excludes_symlinked_subdir_pointing_outside(
@@ -446,7 +473,7 @@ def test_list_files_in_directory_excludes_symlinked_subdir_pointing_outside(
     (vault / "Projects" / "link").symlink_to(outside_dir)
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("Projects") == ["Projects/real.md"]
+    assert server.list_files_in_directory("Projects")["files"] == ["Projects/real.md"]
 
 
 def test_list_files_in_directory_allows_symlinked_directory_within_the_vault(
@@ -459,7 +486,7 @@ def test_list_files_in_directory_allows_symlinked_directory_within_the_vault(
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
     # The resolved target is used, so paths come back under its real name.
-    assert server.list_files_in_directory("Alias") == ["Real/note.md"]
+    assert server.list_files_in_directory("Alias")["files"] == ["Real/note.md"]
 
 
 # --- create_note ---

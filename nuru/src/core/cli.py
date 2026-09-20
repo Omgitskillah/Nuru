@@ -46,6 +46,11 @@ LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
 
 DEFAULT_NUM_CTX = 8192
+# Ceiling on the context window nuru asks Ollama to allocate. Ollama sizes the KV
+# cache from num_ctx, so requesting a large model's full architectural maximum
+# (262144 for gemma4:12b) spills part of it onto the CPU and roughly halves
+# generation speed.
+MAX_NUM_CTX = int(os.environ.get("NURU_MAX_NUM_CTX", 32768))
 # Leave this fraction of the context window free for the model's response.
 RESPONSE_RESERVE = 0.2
 
@@ -57,6 +62,11 @@ CHARS_PER_TOKEN_ESTIMATE = 4
 
 # DB role -> role the chat API expects.
 _ROLE_TO_API = {"user": "user", "nuru": "assistant"}
+
+
+def _context_window(model_info: dict | None) -> int:
+    """The window nuru actually requests: the model's own maximum, capped at MAX_NUM_CTX."""
+    return min((model_info or {}).get("context_window") or DEFAULT_NUM_CTX, MAX_NUM_CTX)
 
 
 def _token_budget(context_window: int) -> int:
@@ -93,7 +103,7 @@ def run_turn(
         model_info = ensure_model_loaded(MODEL)
         logger.model_lifecycle(server_spawned, model_info)
 
-        num_ctx = (model_info or {}).get("context_window") or DEFAULT_NUM_CTX
+        num_ctx = _context_window(model_info)
         if messages is None:
             history = store.get_recent_messages(conversation_id, _token_budget(num_ctx))
             messages = [{"role": _ROLE_TO_API[m["role"]], "content": m["content"]} for m in history]
@@ -192,7 +202,7 @@ def main() -> None:
 
     try:
         while True:
-            context_window = (model_loaded_info or {}).get("context_window") or DEFAULT_NUM_CTX
+            context_window = _context_window(model_loaded_info)
             usage_pct = _context_usage_percent(store, conversation_id, context_window)
             try:
                 text = input(f"[user: {usage_pct}%] ")

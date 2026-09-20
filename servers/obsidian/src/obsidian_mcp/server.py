@@ -46,6 +46,18 @@ _TEMPLATES_FOLDER = "Templates"
 
 _SLUG_INVALID = re.compile(r"[^a-z0-9]+")
 
+# search_notes returns at most this many hits, best first - a bounded result
+# keeps a broad query from flooding a small model's context window.
+_SEARCH_LIMIT = 10
+_SNIPPET_CHARS = 120
+
+# Inside one query word, a run of these matches any run of '-', '_' or
+# whitespace in a note: "PDP-drop" finds "PDP_drop" and "PDP drop", yet "09-17"
+# still finds only that adjacent pair, not every note mentioning 09 and 17
+# separately - which is how dates get searched.
+_WORD_JOINERS = re.compile(r"[-_]+")
+_FRONTMATTER = re.compile(r"\A---\n(?:.*?\n)?---\n", re.DOTALL)
+
 _DATE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})$")
 _SESSION_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})$")
 
@@ -283,38 +295,116 @@ def list_files_in_directory(directory: str) -> dict[str, Any]:
     return result
 
 
+def _indexed_notes() -> dict[str, dict[str, str]]:
+    """id/type/title of every note create_note has made, keyed by vault-relative path.
+
+    Empty if the index file doesn't exist yet, rather than opening it: that
+    would create it (or fail, on a read-only vault) just to learn nothing is
+    indexed.
+    """
+    if not (VAULT_PATH / _INDEX_DB_NAME).is_file():
+        return {}
+    with contextlib.closing(_open_index()) as conn:
+        return note_index.all_by_path(conn)
+
+
+def _snippet(text: str, patterns: list[re.Pattern[str]]) -> str:
+    """About _SNIPPET_CHARS of a note's body around the earliest query-word hit.
+
+    Frontmatter is skipped (a hit there is a tag or alias, not readable
+    context). If no word appears in the body - the note matched on its
+    filename or title - this is just the start of the body.
+    """
+    body = _FRONTMATTER.sub("", text, count=1)
+    hits = [m.start() for p in patterns if (m := p.search(body))]
+    start = max(0, min(hits) - _SNIPPET_CHARS // 3) if hits else 0
+    end = start + _SNIPPET_CHARS
+    snippet = " ".join(body[start:end].split())
+    return f"{'…' if start else ''}{snippet}{'…' if end < len(body) else ''}"
+
+
 @mcp.tool(
-    description="Case-insensitive, literal substring search over note content - search ONE distinctive "
-    "word, not a phrase. query: text to search for. Returns {query, count, matches} with matches as "
-    "vault-relative paths; when nothing matches, a 'hint' says how to retry. Excludes Templates/."
+    description="Search notes by content, title and filename. query: one or more words - every word "
+    "must appear, in any order, ignoring case; a word like 'PDP-drop' or '09-17' matches its parts "
+    "side by side, joined by '-', '_' or a space. Returns "
+    "{query, count, matches, hint}: up to 10 matches, best first, each {path, id, type, title, "
+    "snippet}; count is the total. Pass path to read_note and id to append_note (id is null for notes "
+    "not made by create_note). hint says how to retry or narrow. Excludes Templates/."
 )
 @_tool
 def search_notes(query: str) -> dict[str, Any]:
-    """Search notes (Markdown files) for a string, case-insensitive.
+    """Search notes (Markdown files) by content, title and filename.
 
     Args:
-        query: The substring to search for within each note's content.
+        query: One or more whitespace-separated words. Every word must
+            appear somewhere in the note's content, title or filename, in any
+            order, ignoring case. Inside a word, "-" and "_" also match each
+            other and a space, and the parts must sit side by side:
+            "PDP-drop" finds "PDP_drop" and "PDP drop", and "09-17" finds
+            "2026-09-17" but not a note that only mentions 09 and 17
+            separately (written "09 17", those are two words and may be
+            anywhere).
 
-    Returns {"query", "count", "matches"}, where "matches" are paths (relative
-    to the vault root) of notes whose content contains the query. When nothing
-    matches a "hint" explains the search is a literal substring match and how
-    to retry - a bare empty list would reach the model as a blank tool result
-    it can't interpret, and small models fill that gap with invented notes.
+    Returns {"query", "count", "matches"}. "matches" holds at most
+    _SEARCH_LIMIT hits, best first - notes with more query words in their
+    filename or title rank above notes that only match in the body, ties
+    broken by path - each {"path", "id", "type", "title", "snippet"}. "count"
+    is the total number of matching notes, which can exceed len(matches).
+    "id", "type" and "title" come from the index, so they're null (title:
+    the filename) for a note create_note didn't make; "snippet" is a short
+    window of the body around the first hit. A "hint" explains how to retry
+    when nothing matches, or how to narrow when results were cut off - a bare
+    empty list would reach the model as a blank tool result it can't
+    interpret, and small models fill that gap with invented notes.
     Excludes Templates/ - those are placeholder skeletons, not notes.
     """
     _check_accessible(VAULT_PATH)
-    query_lower = query.lower()
-    matches = sorted(
-        str(path.relative_to(VAULT_PATH))
-        for path in VAULT_PATH.rglob("*.md")
-        if not _is_in_templates(path) and query_lower in path.read_text(errors="ignore").lower()
-    )
-    result: dict[str, Any] = {"query": query, "count": len(matches), "matches": matches}
-    if not matches:
+    patterns: list[re.Pattern[str]] = []
+    for word in query.split():
+        parts = [re.escape(part) for part in _WORD_JOINERS.split(word) if part]
+        if parts:
+            patterns.append(re.compile(r"[-_\s]+".join(parts), re.IGNORECASE))
+    if not patterns:
+        raise ValueError("query is empty - give at least one word to search for.")
+    indexed = _indexed_notes()
+
+    hits: list[tuple[int, dict[str, Any]]] = []
+    for path in VAULT_PATH.rglob("*.md"):
+        if _is_in_templates(path):
+            continue
+        rel_path = str(path.relative_to(VAULT_PATH))
+        info: dict[str, str] = indexed.get(rel_path, {})
+        title = info.get("title", path.stem)
+        name = f"{path.stem} {title}"
+        text = path.read_text(errors="ignore")
+        if not all(p.search(name) or p.search(text) for p in patterns):
+            continue
+        rank = sum(1 for p in patterns if p.search(name))
+        match = {
+            "path": rel_path,
+            "id": info.get("id"),
+            "type": info.get("type"),
+            "title": title,
+            "snippet": _snippet(text, patterns),
+        }
+        hits.append((rank, match))
+
+    hits.sort(key=lambda hit: (-hit[0], hit[1]["path"]))
+    result: dict[str, Any] = {
+        "query": query,
+        "count": len(hits),
+        "matches": [match for _, match in hits[:_SEARCH_LIMIT]],
+    }
+    if not hits:
         result["hint"] = (
-            f"No note contains the exact text '{query}'. search_notes is a literal, case-insensitive "
-            "substring match: retry with ONE distinctive word or a different format "
-            "(e.g. '2026-09-17' instead of 'September 17')."
+            f"No note contains all of the words in '{query}'. search_notes matches each word "
+            "case-insensitively, in any order: retry with fewer or different words, or a different "
+            "format (e.g. '2026-09-17' instead of 'September 17')."
+        )
+    elif len(hits) > _SEARCH_LIMIT:
+        result["hint"] = (
+            f"Showing the top {_SEARCH_LIMIT} of {len(hits)} matches - add another word to narrow "
+            "the search."
         )
     return result
 

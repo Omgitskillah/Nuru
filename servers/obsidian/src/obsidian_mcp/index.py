@@ -60,6 +60,12 @@ def get_path(conn: sqlite3.Connection, note_id: str) -> str | None:
     return row[0] if row else None
 
 
+def all_by_path(conn: sqlite3.Connection) -> dict[str, dict[str, str]]:
+    """Every indexed note's id/type/title, keyed by its vault-relative path."""
+    rows = conn.execute("SELECT path, id, type, title FROM notes").fetchall()
+    return {path: {"id": id, "type": type, "title": title} for path, id, type, title in rows}
+
+
 def update_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> None:
     """Repoint whichever indexed note (if any) is at old_path to new_path.
 

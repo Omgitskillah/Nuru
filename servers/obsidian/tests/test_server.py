@@ -139,6 +139,10 @@ def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_pat
 # --- search_notes ---
 
 
+def _search_paths(result):
+    return [match["path"] for match in result["matches"]]
+
+
 def test_search_notes_finds_matching_notes_case_insensitively(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
     (tmp_path / "Other.md").write_text("Nothing relevant here")
@@ -146,7 +150,7 @@ def test_search_notes_finds_matching_notes_case_insensitively(tmp_path, monkeypa
 
     result = server.search_notes("hello")
 
-    assert result["matches"] == ["Welcome.md"]
+    assert _search_paths(result) == ["Welcome.md"]
     assert result["count"] == 1
     assert result["query"] == "hello"
     assert "hint" not in result
@@ -156,14 +160,14 @@ def test_search_notes_finds_partial_matching_notes_case_insensitively(tmp_path, 
     (tmp_path / "Other.md").write_text("Nothing relevant here")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("ell")["matches"] == ["Welcome.md"]
+    assert _search_paths(server.search_notes("ell")) == ["Welcome.md"]
 
 def test_search_notes_finds_tags_in_notes_case_insensitively(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
     (tmp_path / "Other.md").write_text("Nothing #relevant here")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.search_notes("#relevant")["matches"] == ["Other.md"]
+    assert _search_paths(server.search_notes("#relevant")) == ["Other.md"]
 
 def test_search_notes_returns_no_matches_and_a_retry_hint_when_not_found(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("Hello World")
@@ -174,7 +178,135 @@ def test_search_notes_returns_no_matches_and_a_retry_hint_when_not_found(tmp_pat
     assert result["matches"] == []
     assert result["count"] == 0
     assert "nonexistent" in result["hint"]
-    assert "ONE distinctive word" in result["hint"]
+    assert "fewer or different words" in result["hint"]
+
+
+def test_search_notes_requires_every_word_in_any_order(tmp_path, monkeypatch):
+    (tmp_path / "Outage.md").write_text("The modem dropped the connection at noon")
+    (tmp_path / "Modem.md").write_text("The modem is fine")
+    (tmp_path / "Link.md").write_text("Only the connection is mentioned")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    # Word order in the query is the reverse of the text's.
+    assert _search_paths(server.search_notes("connection modem")) == ["Outage.md"]
+
+
+def test_search_notes_treats_hyphen_underscore_and_space_alike(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("Saw a PDP-drop at noon")
+    (tmp_path / "b.md").write_text("PDP_drop happened again")
+    (tmp_path / "c.md").write_text("PDP only")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    for query in ("PDP drop", "PDP-drop", "pdp_drop"):
+        assert _search_paths(server.search_notes(query)) == ["a.md", "b.md"], query
+
+
+def test_search_notes_matches_a_hyphenated_word_as_an_adjacent_pair(tmp_path, monkeypatch):
+    """Dates are searched as e.g. "09-17": that must not match every note that
+    merely mentions 09 and 17 somewhere (a time and a count, say)."""
+    (tmp_path / "a.md").write_text("Standup on 2026-09-17")
+    (tmp_path / "b.md").write_text("Call at 09:00, lead time 17 weeks")
+    (tmp_path / "c.md").write_text("Moved to 09 17 in the plan")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _search_paths(server.search_notes("09-17")) == ["a.md", "c.md"]
+
+
+def test_search_notes_searches_the_filename_not_just_the_body(tmp_path, monkeypatch):
+    (tmp_path / "devops").mkdir()
+    (tmp_path / "devops" / "Kubernetes.md").write_text("Cluster setup notes.")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.search_notes("kubernetes")
+
+    assert _search_paths(result) == ["devops/Kubernetes.md"]
+    # Nothing in the body matched, so the snippet is just the start of the body.
+    assert result["matches"][0]["snippet"] == "Cluster setup notes."
+
+
+def test_search_notes_ranks_filename_and_title_hits_above_body_hits(tmp_path, monkeypatch):
+    # Alphabetically "Alpha" and "Beta" come first, so only ranking puts Kubernetes.md on top.
+    (tmp_path / "Alpha.md").write_text("Mentions kubernetes in passing")
+    (tmp_path / "Beta.md").write_text("Also mentions kubernetes")
+    (tmp_path / "Kubernetes.md").write_text("Cluster setup notes.")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Kubernetes Upgrade", author="nuru", body="Steps.")
+
+    paths = _search_paths(server.search_notes("kubernetes"))
+
+    assert set(paths[:2]) == {"Kubernetes.md", created["path"]}
+    assert paths[2:] == ["Alpha.md", "Beta.md"]
+
+
+def test_search_notes_returns_id_type_title_and_snippet_for_indexed_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Battery Life", author="nuru", body="Discussing the supercap.")
+
+    match = server.search_notes("supercap")["matches"][0]
+
+    assert match["path"] == created["path"]
+    assert match["id"] == created["id"]
+    assert match["type"] == "topic"
+    assert match["title"] == "Battery Life"
+    assert "supercap" in match["snippet"]
+
+
+def test_search_notes_returns_null_id_and_type_for_notes_not_made_by_create_note(tmp_path, monkeypatch):
+    (tmp_path / "Plain.md").write_text("Some text about routers")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    match = server.search_notes("routers")["matches"][0]
+
+    assert match == {
+        "path": "Plain.md",
+        "id": None,
+        "type": None,
+        "title": "Plain",
+        "snippet": "Some text about routers",
+    }
+
+
+def test_search_notes_does_not_create_the_index_file(tmp_path, monkeypatch):
+    (tmp_path / "Plain.md").write_text("Some text")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    server.search_notes("text")
+
+    assert not (tmp_path / server._INDEX_DB_NAME).exists()
+
+
+def test_search_notes_snippet_is_a_window_around_the_first_hit_and_skips_frontmatter(tmp_path, monkeypatch):
+    body = "x" * 300 + "\n\nthe router firmware\nis old " + "y" * 300
+    (tmp_path / "Long.md").write_text(f"---\ntags:\n  - router\n---\n\n# Long\n\n{body}")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    snippet = server.search_notes("router")["matches"][0]["snippet"]
+
+    assert "router firmware is old" in snippet  # newlines collapsed to spaces
+    assert "tags:" not in snippet
+    assert snippet.startswith("…") and snippet.endswith("…")
+    assert len(snippet) <= server._SNIPPET_CHARS + 2
+
+
+def test_search_notes_caps_results_and_reports_the_true_count(tmp_path, monkeypatch):
+    for i in range(12):
+        (tmp_path / f"note{i:02}.md").write_text("A widget note")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.search_notes("widget")
+
+    assert len(result["matches"]) == 10
+    assert result["count"] == 12
+    assert "10 of 12" in result["hint"]
+
+
+@pytest.mark.parametrize("query", ["", "   ", "-_ -"])
+def test_search_notes_rejects_a_query_with_no_words(tmp_path, monkeypatch, query):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="empty"):
+        server.search_notes(query)
 
 
 def test_search_notes_excludes_templates_folder(tmp_path, monkeypatch):

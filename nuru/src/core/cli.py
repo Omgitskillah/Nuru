@@ -3,85 +3,10 @@ giving it access to the tools exposed by the obsidian and deep-think MCP
 servers."""
 
 import json
-import os
-import time
-from pathlib import Path
+from collections.abc import Iterator
 
-import requests
-from dotenv import load_dotenv
-from mcp import StdioServerParameters
-
-from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
-from core.providers.mcp_tools import MCPTools
-from core.providers.ollama import (
-    chat,
-    create_model,
-    ensure_model_loaded,
-    ensure_server_running,
-    is_model_loaded,
-    stop_server,
-    unload_all_models,
-)
-
-load_dotenv()
-
-# BASE_MODEL is the plain Ollama model create_model() builds from; MODEL is
-# the derived, custom model - built fresh from Modelfile on every startup -
-# that actually gets loaded and chatted with, carrying the tool-use SYSTEM
-# prompt baked in.
-BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3:8b")
-MODEL = os.environ.get("MODEL", "nuru")
-THINK = os.environ.get("THINK", "true").lower() != "false"
-
-MODELFILE_PATH = Path(__file__).resolve().parents[2] / "Modelfile"
-
-OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
-OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
-
-DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
-DEEP_THINK_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR)
-
-# Tools the servers expose that the local model is never offered or allowed to
-# call. delete_file_or_directory is a recursive delete on a free-form path, the
-# riskiest tool for a model that emits placeholder paths; archive_note does the
-# safe version of it (a reversible move). The obsidian server still offers it to
-# every other client, where a person is choosing the path.
-HIDDEN_FROM_MODEL = frozenset({"delete_file_or_directory"})
-
-LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
-DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
-
-DEFAULT_NUM_CTX = 8192
-# Ceiling on the context window nuru asks Ollama to allocate. Ollama sizes the KV
-# cache from num_ctx, so requesting a large model's full architectural maximum
-# (262144 for gemma4:12b) spills part of it onto the CPU and roughly halves
-# generation speed.
-MAX_NUM_CTX = int(os.environ.get("NURU_MAX_NUM_CTX", 32768))
-# Leave this fraction of the context window free for the model's response.
-RESPONSE_RESERVE = 0.2
-
-# Rough chars-per-token estimate for rejecting an oversized message before it
-# ever reaches the model - calibrated against an actual measurement (155,667
-# chars of plain English filler text -> ~37,062 prompt tokens once the fixed
-# tool-schema overhead is subtracted, i.e. ~4.2 chars/token).
-CHARS_PER_TOKEN_ESTIMATE = 4
-
-# DB role -> role the chat API expects.
-_ROLE_TO_API = {"user": "user", "nuru": "assistant"}
-
-
-def _context_window(model_info: dict | None) -> int:
-    """The window nuru actually requests: the model's own maximum, capped at MAX_NUM_CTX."""
-    return min((model_info or {}).get("context_window") or DEFAULT_NUM_CTX, MAX_NUM_CTX)
-
-
-def _token_budget(context_window: int) -> int:
-    return int(context_window * (1 - RESPONSE_RESERVE))
-
-
-def _estimate_tokens(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN_ESTIMATE
+from core.session import Event, Session, Text, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -92,89 +17,25 @@ HELP_TEXT = """Available commands:
 Anything else you type is sent to the model as a prompt (this also loads the model first if it isn't loaded yet)."""
 
 
-def run_turn(
-    tools_client: MCPTools,
-    tools: list[dict],
-    text: str,
-    logger: CLILogger,
-    store: ConversationStore,
-    conversation_id: int,
-    user_message_id: int,
-) -> None:
-    turn_id = logger.turn_start(text)
-    messages = None
-    prompt_tokens_recorded = False
-
-    while True:
-        server_spawned = ensure_server_running()
-        model_info = ensure_model_loaded(MODEL)
-        logger.model_lifecycle(server_spawned, model_info)
-
-        num_ctx = _context_window(model_info)
-        if messages is None:
-            history = store.get_recent_messages(conversation_id, _token_budget(num_ctx))
-            messages = [{"role": _ROLE_TO_API[m["role"]], "content": m["content"]} for m in history]
-
-        first_chunk = True
-        tool_calls = None
-        usage: dict = {}
-        output_text = ""
-        start = time.monotonic()
-        try:
-            for out in chat(MODEL, messages, num_ctx=num_ctx, think=THINK, tools=tools):
-                if isinstance(out, dict):
-                    if "tool_calls" in out:
-                        tool_calls = out["tool_calls"]
-                    else:
-                        usage = out
-                    continue
-                if first_chunk:
-                    print("[nuru] ", end="", flush=True)
-                    first_chunk = False
-                print(out, end="", flush=True)
-                output_text += out
+def print_turn(events: Iterator[Event]) -> None:
+    """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply and `[tool] ` for tool calls."""
+    mid_line = False  # reply text is on screen and its line isn't finished yet
+    for event in events:
+        if isinstance(event, Text):
+            if not mid_line:
+                print("[nuru] ", end="", flush=True)
+                mid_line = True
+            print(event.text, end="", flush=True)
+            continue
+        if mid_line:
             print()
-        except requests.exceptions.RequestException as e:
-            print(f"\n[error] request to the model failed: {e}")
-            print("Your message was not saved - try again, or try a shorter prompt.")
-            logger.turn_error(turn_id, str(e))
-            store.delete_message(user_message_id)
-            return
-
-        if not prompt_tokens_recorded:
-            store.update_tokens(user_message_id, usage.get("prompt_tokens"))
-            prompt_tokens_recorded = True
-
-        logger.model_call(
-            turn_id=turn_id,
-            duration_ms=(time.monotonic() - start) * 1000,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            stop_reason=usage.get("stop_reason"),
-            tool_calls_requested=[call["function"]["name"] for call in tool_calls] if tool_calls else [],
-            output_text=output_text,
-        )
-
-        if not tool_calls:
-            store.add_message(conversation_id, "nuru", output_text, usage.get("completion_tokens"))
-            logger.turn_end(turn_id)
-            return
-
-        messages.append({"role": "assistant", "tool_calls": tool_calls})
-        for call in tool_calls:
-            fn = call["function"]
-            args = fn.get("arguments") or {}
-            if isinstance(args, str):
-                args = json.loads(args)
-            print(f"[tool] {fn['name']}({args})")
-            tool_start = time.monotonic()
-            try:
-                content = tools_client.call_tool(fn["name"], args)
-            except Exception as e:
-                logger.tool_call(turn_id, fn["name"], args, "error", str(e), (time.monotonic() - tool_start) * 1000)
-                raise
-            logger.tool_call(turn_id, fn["name"], args, "ok", None, (time.monotonic() - tool_start) * 1000)
-            messages.append({"role": "tool", "content": content})
+            mid_line = False
+        if isinstance(event, ToolCall):
+            print(f"[tool] {event.name}({event.arguments})")
+        else:
+            print(f"[error] {event.message}")
+    if mid_line:
+        print()
 
 
 def _context_usage_percent(store: ConversationStore, conversation_id: int, context_window: int) -> int:
@@ -191,62 +52,29 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
 
 
 def main() -> None:
-    create_model(MODEL, BASE_MODEL, MODELFILE_PATH)
-
-    tools_client = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL)
-    tools_client.connect()
-    tools = tools_client.list_tools()
-
-    logger = CLILogger(
-        LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp"
-    )
-    store = ConversationStore(DB_PATH)
-    conversation_id = store.create_conversation()
-
-    server_spawned = ensure_server_running()
-    model_loaded_info = ensure_model_loaded(MODEL)
-    logger.model_lifecycle(server_spawned, model_loaded_info)
-
+    session = Session.start()
     try:
         while True:
-            context_window = _context_window(model_loaded_info)
-            usage_pct = _context_usage_percent(store, conversation_id, context_window)
+            usage_pct = _context_usage_percent(session.store, session.conversation_id, session.context_window)
             try:
                 text = input(f"[user: {usage_pct}%] ")
             except EOFError:
                 break
 
             if text.strip() in ("/exit", "/bye", "/end", "/quit"):
-                unload_all_models()
-                stop_server()
-                logger.session_end(reason="/exit", models_unloaded=True, server_stopped=True)
+                session.shutdown("/exit")
                 break
             elif text.strip() == "/show":
-                if is_model_loaded(MODEL):
-                    print(json.dumps(ensure_model_loaded(MODEL), indent=2))
-                else:
-                    print("no model loaded")
+                info = session.loaded_model_info()
+                print("no model loaded" if info is None else json.dumps(info, indent=2))
             elif text.strip() == "/load":
-                server_spawned = ensure_server_running()
-                model_loaded_info = ensure_model_loaded(MODEL)
-                logger.model_lifecycle(server_spawned, model_loaded_info)
+                session.load_model()
             elif text.strip() == "/help":
                 print(HELP_TEXT)
             else:
-                budget = _token_budget(context_window)
-                estimated_tokens = _estimate_tokens(text)
-                if estimated_tokens > budget:
-                    print(
-                        f"[error] message too long: ~{estimated_tokens} estimated tokens, "
-                        f"which exceeds the {budget}-token budget for this model's context window. "
-                        "Please shorten it and try again."
-                    )
-                    continue
-                user_message_id = store.add_message(conversation_id, "user", text)
-                run_turn(tools_client, tools, text, logger, store, conversation_id, user_message_id)
+                print_turn(session.ask(text))
     finally:
-        tools_client.close()
-        store.close()
+        session.close()
 
 
 if __name__ == "__main__":

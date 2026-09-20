@@ -1,6 +1,6 @@
 # nuru
 
-A terminal chat CLI backed by a local [Ollama](https://ollama.com) model. Type a line, hit enter, and it's sent straight to the model; the reply streams back live, prefixed with `[nuru]`.
+A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal CLI (`nuru-cli`) or a desktop window (`nuru-ui`). Type a line, hit enter, and it's sent straight to the model; the reply streams back live - prefixed with `[nuru]` in the CLI, drawn as markdown in the UI.
 
 ## Setup
 
@@ -23,21 +23,24 @@ THINK=true
 ```
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
-- `MODEL` - the model actually loaded and chatted with. On every startup, `main()` runs `ollama create $MODEL -f Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
+- `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
 - `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. Any value other than `false` counts as enabled.
 
 ## The custom model and its system prompt
 
 [`Modelfile`](Modelfile) is a template (`FROM __BASE_MODEL__` plus a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
 
-`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `main()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit `Modelfile` and it takes effect on the next run, no manual `ollama create` needed.
+`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit `Modelfile` and it takes effect on the next run, no manual `ollama create` needed.
 
-Install dependencies and run:
+Install dependencies and run either front end:
 
 ```bash
 uv sync
-uv run nuru
+uv run nuru-cli   # in the terminal
+uv run nuru-ui    # in a window
 ```
+
+(`nuru-cli` is what `nuru` used to be called.)
 
 ## What happens on each message
 
@@ -61,7 +64,29 @@ Anything you type that isn't one of the commands below is sent to the model as a
 
 Ctrl-D (EOF) exits the loop without unloading the model or stopping the server - use `/exit` (or one of its aliases) for a clean shutdown. Ctrl-C is not currently handled and will raise a `KeyboardInterrupt` traceback.
 
+## Desktop UI
+
+`uv run nuru-ui` opens the same chat in a window (PyQt6). It runs on the same `core.session` as the CLI - same model, tools, history and logging - so only the display differs.
+
+- **One bubble per reply.** Where the CLI prints `[nuru]` and `[tool]` labels, the UI keeps a whole turn in a single reply bubble and separates its pieces with markdown breaks (`---`). A tool call shows as one small, light-gray line - its name and arguments, cut off at 80 characters - between two breaks, so it reads as Nuru's working and not as part of its answer. Your own message stays in its own bubble.
+- **Starting up.** The window opens straight away with the lantern rocking beside "Starting Nuru…" and no input box. Building the model, connecting the MCP servers and loading the model happen in the background; when they finish, the lantern settles, the greeting replaces the loading text, and the input box appears. If that fails, the reason is shown in the window and the input stays off.
+- **Stop.** The send button becomes a stop button while a reply streams. Stopping keeps what had been said so far as the reply, both in the window and in the saved history.
+- **Closing the window** is `/exit`: it unloads all models and stops the Ollama server if the UI started it.
+- There are no slash commands and no context-usage indicator; those are CLI only.
+
+Links in a reply only open if they go to a web page (`http`, `https`) or a mail client (`mailto`).
+
 ## Module reference
+
+`core.session` - what the CLI and the UI share, with no dependency on either:
+
+- **`Session.start()`** - Builds the custom model, connects the MCP servers, opens the log and the database, loads the model, and returns the `Session`. If a later step fails, whatever was already opened is closed again.
+- **`session.ask(text, cancel=None)`** - A generator for one turn. Yields `Text` chunks of the reply and a `ToolCall` for each tool the model calls (before it runs), then a `Failure` if the turn couldn't be completed (an oversized message, or a failed request - in which case the message is not saved). Setting the `threading.Event` passed as `cancel` stops the turn at the next chunk, or once a running tool call returns, and keeps what was said so far as the reply.
+- **`session.load_model()`** / **`loaded_model_info()`** - Load the model if needed; its static info, or `None` if it isn't in memory.
+- **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
+- **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
+
+`core.reply_markdown` - Qt-free helpers for the UI: `Reply` folds a turn's events into one markdown document, and `split_fences` separates fenced code from the prose around it.
 
 `core.providers.ollama` - a thin client for Ollama's REST API, with no dependency on the CLI:
 
@@ -79,4 +104,4 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 uv run pytest
 ```
 
-No live Ollama server is required - the tests fake out `requests` so they run standalone. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.
+No live Ollama server is required - the tests fake out `requests` so they run standalone. The UI tests run headless on Qt's `offscreen` platform (no display needed); if the machine's Qt libraries can't be loaded, that file is skipped rather than failed. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.

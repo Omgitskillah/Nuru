@@ -5,6 +5,8 @@ create_note **type_fields schema bug and the "Error executing tool X" message
 """
 
 import asyncio
+import json
+import subprocess
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -113,3 +115,45 @@ def test_a_read_note_miss_reaches_the_caller_with_its_closest_candidates(tmp_pat
         _run(server.mcp.call_tool("read_note", {"name": "Nuru MCPP"}))
 
     assert "Nuru MCP.md" in str(exc_info.value)
+
+
+def _stub_rg(monkeypatch, stdout="", returncode=0, stderr=""):
+    """Stand in for the rg binary - what's under test is the protocol layer around it."""
+    monkeypatch.setattr(server.shutil, "which", lambda name: "/fake/rg")
+    monkeypatch.setattr(
+        server.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, returncode, stdout, stderr)
+    )
+
+
+def test_find_in_notes_takes_only_a_pattern_and_returns_its_matches_through_call_tool(tmp_path, monkeypatch):
+    (tmp_path / "Plan.md").write_text("Ship it - café\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    event = {
+        "type": "match",
+        "data": {
+            "path": {"text": str(tmp_path / "Plan.md")},
+            "lines": {"text": "Ship it - café\n"},
+            "line_number": 1,
+            "absolute_offset": 0,
+            "submatches": [{"match": {"text": "Ship"}, "start": 0, "end": 4}],
+        },
+    }
+    _stub_rg(monkeypatch, stdout=json.dumps(event) + "\n")
+
+    schema = next(t for t in _run(server.mcp.list_tools()) if t.name == "find_in_notes").input_schema
+    result = _run(server.mcp.call_tool("find_in_notes", {"pattern": "ship"}))
+
+    assert schema["required"] == ["pattern"]
+    assert set(schema["properties"]) == {"pattern"}
+    assert result.is_error is not True
+    assert "Plan.md" in str(result) and "Ship it - café" in str(result)
+
+
+def test_find_in_notes_bad_pattern_reaches_the_caller_with_ripgreps_message_through_call_tool(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _stub_rg(monkeypatch, returncode=2, stderr="rg: regex parse error: unclosed group")
+
+    with pytest.raises(ToolError, match="ValueError") as exc_info:
+        _run(server.mcp.call_tool("find_in_notes", {"pattern": "("}))
+
+    assert "unclosed group" in str(exc_info.value)

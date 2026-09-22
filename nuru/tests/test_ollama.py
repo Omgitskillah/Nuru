@@ -384,6 +384,24 @@ def test_chat_yields_content_chunks_then_usage_dict(monkeypatch):
     ]
 
 
+def test_chat_yields_the_thinking_before_the_usage_dict(monkeypatch):
+    lines = _sse_lines(
+        {"message": {"thinking": "Let me "}, "done": False},
+        {"message": {"thinking": "check."}, "done": False},
+        {"message": {"content": "Hi"}, "done": False},
+        {"message": {"content": ""}, "done": True, "prompt_eval_count": 5, "eval_count": 2, "done_reason": "stop"},
+    )
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(lines=lines))
+
+    results = list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
+
+    assert results == [
+        "Hi",
+        {"thinking": "Let me check."},
+        {"prompt_tokens": 5, "completion_tokens": 2, "stop_reason": "stop"},
+    ]
+
+
 def test_chat_skips_blank_lines(monkeypatch):
     lines = [b"", json.dumps({"message": {"content": "hi"}, "done": True}).encode()]
     monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(lines=lines))

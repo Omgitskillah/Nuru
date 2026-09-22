@@ -1,5 +1,9 @@
+import base64
+import json
 import os
+import shutil
 import sqlite3
+import subprocess
 from datetime import datetime
 
 import pytest
@@ -2922,3 +2926,330 @@ def test_notes_with_tag_orders_same_minute_notes_by_when_they_were_made(tmp_path
         time.sleep(0.005)
 
     assert [m["path"] for m in server.notes_with_tag("t")["matches"]] == [n["path"] for n in reversed(made)]
+
+
+# --- find_in_notes ---
+#
+# Most of these run against a stand-in for the rg binary that prints the --json
+# events real ripgrep would (paths absolute, since the search root is passed
+# absolute; offsets in bytes), so they run with or without ripgrep installed.
+# The last few, below the stand-in ones, run the real thing and are skipped
+# where it isn't.
+
+
+def _rg_match(path, line, text, needle):
+    """One `rg --json` match event; `needle` is the part of `text` that matched."""
+    start = text.encode().index(needle.encode())
+    return {
+        "type": "match",
+        "data": {
+            "path": {"text": str(path)},
+            "lines": {"text": text + "\n"},
+            "line_number": line,
+            "absolute_offset": 0,
+            "submatches": [{"match": {"text": needle}, "start": start, "end": start + len(needle.encode())}],
+        },
+    }
+
+
+def _fake_rg(monkeypatch, *events, returncode=0, stderr=""):
+    """Stand in for the rg binary: it prints `events` (then the closing summary
+    real ripgrep ends with) and exits with `returncode`. Returns the list each
+    call's (command, kwargs) is appended to."""
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        stdout = "".join(json.dumps(event) + "\n" for event in [*events, {"type": "summary", "data": {}}])
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+    monkeypatch.setattr(server.shutil, "which", lambda name: "/fake/rg")
+    monkeypatch.setattr(server.subprocess, "run", run)
+    return calls
+
+
+def test_find_in_notes_returns_each_matching_note_with_its_lines(tmp_path, monkeypatch):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.md").write_text("first todo\nnothing here\nAnother TODO\n")
+    (tmp_path / "sub" / "b.md").write_text("TODO in sub\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    # rg reports notes in whatever order its threads finish, so sub/b.md can come first.
+    _fake_rg(
+        monkeypatch,
+        _rg_match(tmp_path / "sub" / "b.md", 1, "TODO in sub", "TODO"),
+        _rg_match(tmp_path / "a.md", 1, "first todo", "todo"),
+        _rg_match(tmp_path / "a.md", 3, "Another TODO", "TODO"),
+    )
+
+    assert server.find_in_notes("todo") == {
+        "pattern": "todo",
+        "count": 2,
+        "matches": [
+            {"path": "a.md", "lines": [{"line": 1, "text": "first todo"}, {"line": 3, "text": "Another TODO"}]},
+            {"path": "sub/b.md", "lines": [{"line": 1, "text": "TODO in sub"}]},
+        ],
+    }
+
+
+def test_find_in_notes_returns_no_matches_and_a_retry_hint_when_not_found(tmp_path, monkeypatch):
+    (tmp_path / "Welcome.md").write_text("Hello World")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, returncode=1)  # rg exits 1 when nothing matched
+
+    result = server.find_in_notes("nonexistent")
+
+    assert result["matches"] == []
+    assert result["count"] == 0
+    assert "nonexistent" in result["hint"]
+    assert "search_notes" in result["hint"]
+
+
+def test_find_in_notes_only_reports_notes_the_other_tools_can_see(tmp_path, monkeypatch):
+    """The rules for what counts as a note come from _all_notes, not from
+    ripgrep flags, so they can't drift from the other tools'. Only the vault's
+    top-level Templates/ is placeholder text - Projects/Templates/ is real notes."""
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside.md"
+    outside.write_text("needle")
+    reported = [
+        "Real.md",
+        "Templates/01 Profile.md",
+        ".obsidian/plugin.md",
+        "archive/old.md",
+        "Projects/Templates/n.md",
+    ]
+    for rel in reported:
+        (vault / rel).parent.mkdir(parents=True, exist_ok=True)
+        (vault / rel).write_text("needle")
+    (vault / "leak.md").symlink_to(outside)
+    monkeypatch.setattr(server, "VAULT_PATH", vault)
+    _fake_rg(monkeypatch, *(_rg_match(vault / rel, 1, "needle", "needle") for rel in [*reported, "leak.md"]))
+
+    result = server.find_in_notes("needle")
+
+    assert _search_paths(result) == ["Projects/Templates/n.md", "Real.md", "archive/old.md"]
+    assert result["count"] == 3
+
+
+def test_find_in_notes_caps_notes_and_reports_the_true_count(tmp_path, monkeypatch):
+    events = []
+    for i in range(12):
+        (tmp_path / f"note{i:02}.md").write_text("A widget note")
+        events.append(_rg_match(tmp_path / f"note{i:02}.md", 1, "A widget note", "widget"))
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, *events)
+
+    result = server.find_in_notes("widget")
+
+    assert _search_paths(result) == [f"note{i:02}.md" for i in range(10)]
+    assert result["count"] == 12
+    assert "10 of 12" in result["hint"]
+
+
+@pytest.mark.parametrize(("matching_lines", "cut_off"), [(5, False), (6, True)])
+def test_find_in_notes_shows_five_lines_per_note_and_says_when_there_are_more(
+    tmp_path, monkeypatch, matching_lines, cut_off
+):
+    """rg is asked for one line more than is shown (--max-count 6), which is how
+    a note with six matching lines is told from one with exactly five."""
+    (tmp_path / "Busy.md").write_text("hit\n" * matching_lines)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(
+        monkeypatch, *(_rg_match(tmp_path / "Busy.md", n, "hit", "hit") for n in range(1, matching_lines + 1))
+    )
+
+    result = server.find_in_notes("hit")
+
+    command = calls[0][0]
+    assert command[command.index("--max-count") + 1] == "6"
+    assert [line["line"] for line in result["matches"][0]["lines"]] == [1, 2, 3, 4, 5]
+    assert ("hint" in result) is cut_off
+    if cut_off:
+        assert "first 5" in result["hint"]
+
+
+def test_find_in_notes_cuts_a_long_line_to_a_window_around_the_match(tmp_path, monkeypatch):
+    line = "x" * 300 + " NEEDLE " + "y" * 300
+    (tmp_path / "Long.md").write_text(line)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, _rg_match(tmp_path / "Long.md", 1, line, "NEEDLE"))
+
+    text = server.find_in_notes("needle")["matches"][0]["lines"][0]["text"]
+
+    assert "NEEDLE" in text
+    assert text.startswith("…") and text.endswith("…")
+    assert len(text) <= server._SNIPPET_CHARS + 2
+
+
+def test_find_in_notes_windows_by_characters_when_ripgreps_offset_is_in_bytes(tmp_path, monkeypatch):
+    """200 accented letters put the match 200 bytes further along than its
+    character position; cutting at the byte offset would miss it entirely."""
+    line = "é" * 200 + " NEEDLE " + "y" * 300
+    (tmp_path / "Long.md").write_text(line)
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, _rg_match(tmp_path / "Long.md", 1, line, "NEEDLE"))
+
+    text = server.find_in_notes("needle")["matches"][0]["lines"][0]["text"]
+
+    assert "NEEDLE" in text
+
+
+def test_find_in_notes_survives_a_line_that_is_not_utf8(tmp_path, monkeypatch):
+    """A note saved as Latin-1 arrives from ripgrep as base64 "bytes", not "text"."""
+    (tmp_path / "Old.md").write_bytes(b"caf\xe9 TODO\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    event = _rg_match(tmp_path / "Old.md", 1, "cafe TODO", "TODO")
+    event["data"]["lines"] = {"bytes": base64.b64encode(b"caf\xe9 TODO\n").decode()}
+    event["data"]["submatches"][0].update(start=5, end=9)
+    _fake_rg(monkeypatch, event)
+
+    assert server.find_in_notes("todo")["matches"] == [
+        {"path": "Old.md", "lines": [{"line": 1, "text": "caf� TODO"}]}
+    ]
+
+
+@pytest.mark.parametrize("pattern", ["", "   "])
+def test_find_in_notes_rejects_an_empty_pattern_without_running_ripgrep(tmp_path, monkeypatch, pattern):
+    """An empty regex matches every line of every note."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(monkeypatch)
+
+    with pytest.raises(ToolError, match="empty"):
+        server.find_in_notes(pattern)
+
+    assert calls == []
+
+
+def test_find_in_notes_passes_the_pattern_as_a_value_never_as_a_flag(tmp_path, monkeypatch):
+    """The pattern comes from a model. Read as an option, ripgrep's --pre would
+    run a program of its choosing on every note."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(monkeypatch, returncode=1)
+
+    server.find_in_notes("--pre=evil")
+
+    command = calls[0][0]
+    assert command[command.index("-e") + 1] == "--pre=evil"
+    assert command.count("--pre=evil") == 1
+
+
+def test_find_in_notes_runs_rg_without_stdin_and_with_an_explicit_search_root(tmp_path, monkeypatch):
+    """Given no path and a piped stdin, rg searches stdin - and in the server
+    that is the MCP transport."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(monkeypatch, returncode=1)
+
+    server.find_in_notes("todo")
+
+    command, kwargs = calls[0]
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert command[-1] == str(tmp_path)
+
+
+def test_find_in_notes_ignores_ignore_files_and_the_users_ripgrep_config(tmp_path, monkeypatch):
+    """A .gitignore in a vault kept under git would hide notes from the search,
+    and a RIPGREP_CONFIG_PATH file could change the output that is parsed."""
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(monkeypatch, returncode=1)
+
+    server.find_in_notes("todo")
+
+    assert {"--no-ignore", "--no-config"} <= set(calls[0][0])
+
+
+def test_find_in_notes_relays_ripgreps_message_for_a_bad_pattern(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, returncode=2, stderr="rg: regex parse error:\n    (\n    ^\nerror: unclosed group\n")
+
+    with pytest.raises(ToolError, match="ValueError") as exc_info:
+        server.find_in_notes("(")
+
+    assert "unclosed group" in str(exc_info.value)
+    assert "escape" in str(exc_info.value)
+
+
+def test_find_in_notes_says_how_to_recover_when_ripgrep_is_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server.shutil, "which", lambda name: None)
+
+    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
+        server.find_in_notes("todo")
+
+    assert "ripgrep" in str(exc_info.value)
+    assert "search_notes" in str(exc_info.value)
+
+
+def test_find_in_notes_times_out_instead_of_hanging(tmp_path, monkeypatch):
+    def run(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server.shutil, "which", lambda name: "/fake/rg")
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    with pytest.raises(ToolError, match="TimeoutError"):
+        server.find_in_notes("todo")
+
+
+requires_rg = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep (rg) is not installed")
+
+
+@requires_rg
+def test_find_in_notes_with_real_ripgrep_returns_paths_and_lines(tmp_path, monkeypatch):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.md").write_text("first todo\nnothing here\nAnother TODO: café ☕ done\n")
+    (tmp_path / "sub" / "b.md").write_text("TODO in sub\n")
+    (tmp_path / "plain.txt").write_text("TODO in a text file\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.find_in_notes("todo") == {
+        "pattern": "todo",
+        "count": 2,
+        "matches": [
+            {
+                "path": "a.md",
+                "lines": [{"line": 1, "text": "first todo"}, {"line": 3, "text": "Another TODO: café ☕ done"}],
+            },
+            {"path": "sub/b.md", "lines": [{"line": 1, "text": "TODO in sub"}]},
+        ],
+    }
+
+
+@requires_rg
+def test_find_in_notes_with_real_ripgrep_still_searches_what_an_ignore_file_lists(tmp_path, monkeypatch):
+    (tmp_path / ".ignore").write_text("drafts/\n")
+    (tmp_path / "drafts").mkdir()
+    (tmp_path / "drafts" / "Idea.md").write_text("a needle\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _search_paths(server.find_in_notes("needle")) == ["drafts/Idea.md"]
+
+
+@requires_rg
+def test_find_in_notes_with_real_ripgrep_finds_a_pattern_that_starts_with_a_dash(tmp_path, monkeypatch):
+    (tmp_path / "Dash.md").write_text("-foo starts with a dash\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _search_paths(server.find_in_notes("-foo")) == ["Dash.md"]
+
+
+@requires_rg
+def test_find_in_notes_with_real_ripgrep_rejects_an_invalid_regex_and_finds_it_once_escaped(tmp_path, monkeypatch):
+    (tmp_path / "A.md").write_text("call f(x) here\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="ValueError"):
+        server.find_in_notes("f(x")
+
+    assert _search_paths(server.find_in_notes(r"f\(x")) == ["A.md"]
+
+
+@requires_rg
+def test_find_in_notes_with_real_ripgrep_survives_a_note_that_is_not_utf8(tmp_path, monkeypatch):
+    (tmp_path / "Old.md").write_bytes(b"caf\xe9 TODO\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    line = server.find_in_notes("todo")["matches"][0]["lines"][0]
+
+    assert line["line"] == 1
+    assert "TODO" in line["text"]

@@ -179,7 +179,8 @@ def ensure_model_loaded(model: str) -> dict:
 
 
 def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = True, tools: list[dict] | None = None):
-    """Yields text chunks, then a dict with tool_calls (if the model made any), then a final usage dict.
+    """Yields text chunks, then a dict with tool_calls (if the model made any), then a dict with its
+    thinking (if it did any), then a final usage dict.
 
     `think` is ignored by models that don't support reasoning/thinking mode.
     """
@@ -201,6 +202,7 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = Tr
     )
     r.raise_for_status()
 
+    thinking = ""
     for line in r.iter_lines():
         if not line:
             continue
@@ -208,9 +210,13 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = Tr
         message = obj.get("message", {})
         if chunk := message.get("content"):
             yield chunk
+        if thought := message.get("thinking"):
+            thinking += thought
         if tool_calls := message.get("tool_calls"):
             yield {"tool_calls": tool_calls}
         if obj.get("done"):
+            if thinking:
+                yield {"thinking": thinking}
             yield {
                 "prompt_tokens": obj.get("prompt_eval_count", 0),
                 "completion_tokens": obj.get("eval_count", 0),

@@ -4,14 +4,17 @@ Vault location is read from the VAULT_PATH env var (see .env / .env.example).
 Run standalone via stdio with: uv run obsidian-mcp
 """
 
+import base64
 import concurrent.futures
 import contextlib
 import difflib
 import functools
+import json
 import os
 import re
 import shutil
 import sqlite3
+import subprocess
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
@@ -62,6 +65,9 @@ _SEARCH_LIMIT = 10
 _LIST_LIMIT = 25
 _BROWSE_MAX_LIMIT = 50
 _SNIPPET_CHARS = 120
+# find_in_notes shows this many matching lines of a note (of at most _SEARCH_LIMIT
+# notes), each cut to _SNIPPET_CHARS - the same bound, for the same reason.
+_FIND_LINES_PER_NOTE = 5
 
 # Inside one query word, a run of these matches any run of '-', '_' or
 # whitespace in a note: "PDP-drop" finds "PDP_drop" and "PDP drop", yet "09-17"
@@ -619,6 +625,133 @@ def search_notes(query: str) -> dict[str, Any]:
             f"Showing the top {_SEARCH_LIMIT} of {len(hits)} matches - add another word to narrow "
             "the search."
         )
+    return result
+
+
+def _rg_bytes(field: dict[str, str]) -> bytes:
+    """A path or line from ripgrep's --json output, as bytes: {"text": ...}, or
+    {"bytes": <base64>} when it isn't valid UTF-8 (a note saved as Latin-1, say)."""
+    return field["text"].encode() if "text" in field else base64.b64decode(field["bytes"])
+
+
+def _line_snippet(line: str, hit: int) -> str:
+    """A matching line, cut to about _SNIPPET_CHARS around character offset
+    `hit` if it is longer - a paragraph is one line in Markdown, and the match
+    can be anywhere in it."""
+    start = max(0, hit - _SNIPPET_CHARS // 3)
+    end = start + _SNIPPET_CHARS
+    return f"{'…' if start else ''}{line[start:end].strip()}{'…' if end < len(line) else ''}"
+
+
+@mcp.tool(
+    description="Find the lines in notes that match a regular expression, like grep - for an exact phrase, "
+    "number, id or code, where search_notes matches words. pattern: a regex (ripgrep syntax), ignoring "
+    "case; escape ( ) [ ] { } . * + ? ^ $ | \\ with a backslash to match them literally. Returns "
+    "{pattern, count, matches, hint}: up to 10 matches, each {path, lines: [{line, text}]} with up to 5 "
+    "matching lines per note; count is the total number of matching notes. Pass path to read_note. "
+    "Excludes Templates/."
+)
+@_tool
+def find_in_notes(pattern: str) -> dict[str, Any]:
+    """Find the lines of the vault's notes that match a regular expression, using ripgrep.
+
+    The line-level counterpart of search_notes: that ranks notes that contain
+    every word somewhere, this shows the exact lines a pattern hits - for an
+    id, a number, a phrase, a snippet of code.
+
+    Args:
+        pattern: A regular expression in ripgrep's syntax, matched against one
+            line at a time, ignoring case, frontmatter lines included. A
+            special character to be matched literally needs a backslash.
+
+    Returns {"pattern", "count", "matches"}. "matches" holds at most
+    _SEARCH_LIMIT notes, in path order, each {"path", "lines"}; "lines" holds
+    at most _FIND_LINES_PER_NOTE of {"line", "text"}: the 1-based line number,
+    and the line itself, cut to _SNIPPET_CHARS around the hit if it is longer.
+    "count" is the total number of matching notes, which can exceed
+    len(matches). A "hint" explains how to retry when nothing matches, or how
+    to narrow when results were cut off - a bare empty list would reach the
+    model as a blank tool result it can't interpret.
+
+    Only notes _all_notes() allows are reported, so Templates/, hidden folders
+    and symlinks out of the vault never show up; archive/ does, as in
+    search_notes. Needs the `rg` binary on PATH: without it this raises
+    FileNotFoundError saying so, and a pattern ripgrep rejects (an unclosed
+    parenthesis, say) raises ValueError with ripgrep's own explanation.
+    """
+    _check_accessible(VAULT_PATH)
+    if not pattern.strip():
+        raise ValueError("pattern is empty - give a regular expression to search for.")
+    rg = shutil.which("rg")
+    if rg is None:
+        raise FileNotFoundError(
+            "ripgrep ('rg') is not installed or not on PATH, and find_in_notes needs it. "
+            "Use search_notes instead."
+        )
+
+    # -e keeps a pattern that starts with '-' from being read as a flag. --no-ignore and
+    # --no-config: else a .gitignore in the vault would hide notes from the search, and a
+    # user's ripgreprc could change the output this parses. --max-count is one more than is
+    # shown, which tells a note with more matching lines than that from one with exactly that
+    # many. stdin is closed because rg searches it when it thinks it is being piped to - and
+    # here that is the MCP transport.
+    try:
+        done = subprocess.run(
+            [rg, "--json", "--no-config", "--no-ignore", "--ignore-case", "--glob", "*.md",
+             "--max-count", str(_FIND_LINES_PER_NOTE + 1), "-e", pattern, str(VAULT_PATH)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            # Same deadline as the writers: a stalled vault filesystem stalls a search too.
+            timeout=_IO_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise TimeoutError(
+            f"ripgrep did not finish within {_IO_TIMEOUT_SECONDS:.0f}s. "
+            "VAULT_PATH may be on a stalled or unavailable filesystem."
+        ) from e
+    # 0: matches, 1: none, 2: an error - usually a pattern that isn't a valid regex.
+    if done.returncode not in (0, 1):
+        raise ValueError(
+            f"ripgrep failed: {done.stderr.strip()} If the pattern is meant literally, escape "
+            "( ) [ ] { } . * + ? ^ $ | \\ with a backslash."
+        )
+
+    lines_by_note: dict[str, list[dict[str, Any]]] = {}
+    for event in map(json.loads, done.stdout.splitlines()):
+        if event["type"] != "match":
+            continue
+        data = event["data"]
+        raw = _rg_bytes(data["lines"])
+        line = raw.decode(errors="replace").rstrip("\r\n")
+        # A submatch's offset is in bytes; the window is cut in characters.
+        hit = len(raw[: data["submatches"][0]["start"]].decode(errors="replace"))
+        rel = _rel(VAULT_PATH / os.fsdecode(_rg_bytes(data["path"])))
+        lines_by_note.setdefault(rel, []).append({"line": data["line_number"], "text": _line_snippet(line, hit)})
+
+    searchable = {_rel(path) for path in _all_notes()}
+    notes = [(rel, lines) for rel, lines in sorted(lines_by_note.items()) if rel in searchable]
+    shown = notes[:_SEARCH_LIMIT]
+    result: dict[str, Any] = {
+        "pattern": pattern,
+        "count": len(notes),
+        "matches": [{"path": rel, "lines": lines[:_FIND_LINES_PER_NOTE]} for rel, lines in shown],
+    }
+    if not notes:
+        result["hint"] = (
+            f"No line in any note matches '{pattern}'. find_in_notes matches a regular expression "
+            "against one line at a time, ignoring case: retry with a shorter or looser pattern, or "
+            "use search_notes to find notes containing words in any order."
+        )
+    else:
+        hints: list[str] = []
+        if len(notes) > _SEARCH_LIMIT:
+            hints.append(f"Showing the first {_SEARCH_LIMIT} of {len(notes)} matching notes.")
+        if any(len(lines) > _FIND_LINES_PER_NOTE for _, lines in shown):
+            hints.append(f"A note shows only its first {_FIND_LINES_PER_NOTE} matching lines.")
+        if hints:
+            result["hint"] = " ".join([*hints, "Make the pattern more specific to narrow it down."])
     return result
 
 

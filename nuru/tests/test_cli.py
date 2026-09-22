@@ -4,7 +4,7 @@ import pytest
 
 from core import cli
 from core.conversation_store import ConversationStore
-from core.session import Failure, Text, ToolCall
+from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 class FakeSession:
@@ -162,6 +162,32 @@ def test_main_prints_tool_calls_between_stretches_of_the_reply(monkeypatch, caps
         "[nuru] Let me look.\n"
         "[tool] get_temperature({'city': 'Berlin'})\n"
         "[nuru] It's 17C\n"
+    ) in capsys.readouterr().out
+
+
+def test_main_says_when_a_silent_call_is_being_asked_again_with_thinking_off(monkeypatch, capsys, fake_session):
+    fake_session(turns=[[Thinking("the answer is 4"), RetryWithoutThinking(), Text("4")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["what is 2+2?"]))
+
+    cli.main()
+
+    assert (
+        "[thinking] the answer is 4\n"
+        "[retry] No reply was written - asking again with thinking off.\n"
+        "[nuru] 4\n"
+    ) in capsys.readouterr().out
+
+
+def test_main_prints_what_the_model_thought_on_its_own_line(monkeypatch, capsys, fake_session):
+    fake_session(turns=[[Text("Let me look."), Thinking("the vault should have it"), Text("Found it.")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["find x"]))
+
+    cli.main()
+
+    assert (
+        "[nuru] Let me look.\n"
+        "[thinking] the vault should have it\n"
+        "[nuru] Found it.\n"
     ) in capsys.readouterr().out
 
 

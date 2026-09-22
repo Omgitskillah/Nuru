@@ -10,13 +10,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6.QtWidgets", exc_type=ImportError)
 
 from PyQt6.QtCore import QUrl, Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication, QFrame, QLabel
 
 from core import ui
-from core.reply_markdown import BREAK, TOOL_MARK, Code, Prose
-from core.session import Failure, Text, ToolCall
+from core.reply_markdown import BREAK, Code, Prose
+from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 @pytest.fixture(scope="session")
@@ -143,6 +143,18 @@ def test_font_names_a_fallback_for_machines_without_the_families(qapp):
     assert f.styleHint() == QFont.StyleHint.Serif
 
 
+def test_the_app_icon_is_the_lantern_on_a_white_tile_shaped_the_way_macos_shapes_them(qapp):
+    image = ui.app_icon().pixmap(256, 256).toImage()
+    edge = round(256 * (1 - ui.ICON_SHAPE) / 2)  # where the tile starts, the canvas left clear around it
+
+    assert image.width() == image.height()  # the logo alone is taller than it is wide
+    assert image.pixelColor(0, 0).alpha() == 0
+    assert image.pixelColor(edge + 1, edge + 1).alpha() == 0  # the tile's corners curve away from it
+    assert image.pixelColor(128, edge + 1) == QColor("white")  # while the middle of its edge does not
+    sampled = [image.pixelColor(x, y) for x in range(0, 256, 4) for y in range(0, 256, 4)]
+    assert any(colour.lightness() < 100 for colour in sampled)  # and the lantern is on it
+
+
 class FakeDesktopServices:
     opened = []
 
@@ -223,38 +235,13 @@ def is_light_and_small(fmt):
     return fmt.foreground().color().name() == ui.MUTED and fmt.font().pixelSize() == 13
 
 
-def test_a_tool_line_is_shown_small_and_light_without_its_mark(qapp):
-    view = ui.MarkdownView()
-
-    view.set_content(Prose(f"The answer.\n\n---\n\n{TOOL_MARK}`search_notes({{'q': 1}})`\n\n---\n\nMore."))
-
-    assert TOOL_MARK not in view.toPlainText()
-    tool_runs = fragments_of(view, "search_notes")
-    assert "".join(text for text, _ in tool_runs) == "search_notes({'q': 1})"
-    assert all(is_light_and_small(fmt) for _, fmt in tool_runs)
-    for prose in ("The answer.", "More."):  # the answer around it is left as it was
-        assert not any(is_light_and_small(fmt) for _, fmt in fragments_of(view, prose))
-
-
-def test_inline_code_in_the_models_own_text_is_not_mistaken_for_a_tool_line(qapp):
+def test_the_models_own_text_is_left_as_it_was(qapp):
     view = ui.MarkdownView()
 
     view.set_content(Prose("Run `npm install` first.\n\n`just_code()`"))
 
     for text in ("npm install", "just_code"):
         assert not any(is_light_and_small(fmt) for _, fmt in fragments_of(view, text))
-
-
-def test_a_tool_call_in_a_reply_is_styled_as_working_not_answer(started):
-    window, _ = started([Text("Let me look."), ToolCall("search_notes", {"query": "x"}), Text("Found it.")])
-
-    type_and_send(window, "find x")
-    finish(window)
-
-    tool_views = [p for p in window.message.parts if isinstance(p, ui.MarkdownView) and "search_notes" in p.toPlainText()]
-    assert len(tool_views) == 1
-    assert all(is_light_and_small(fmt) for _, fmt in fragments_of(tool_views[0], "search_notes"))
-    assert not any(TOOL_MARK in p.toPlainText() for p in window.message.parts if isinstance(p, ui.MarkdownView))
 
 
 def test_code_block_shows_language_and_source(qapp):
@@ -360,6 +347,119 @@ def test_assistant_message_drops_parts_that_are_no_longer_there(qapp):
 
     assert [type(p) for p in message.parts] == [ui.MarkdownView]
     assert message.column.count() == 2  # the one part and the logo
+
+
+def test_assistant_message_has_a_header_card_above_the_reply(qapp):
+    message = ui.AssistantMessage()
+
+    body = message.findChild(QFrame, "reply")
+    assert message.header.toggle.text() == "Thinking…"
+    assert message.layout().indexOf(message.header) < message.layout().indexOf(body)
+
+
+def test_reply_header_keeps_the_calls_together_above_the_thinking(qapp):
+    header = ui.ReplyHeader()
+
+    # A turn that thought, called a tool, thought again and called another: the calls still group
+    header.add_thinking(Thinking("I should look this up"))
+    header.add_call(ToolCall("search_notes", {"query": "x"}))
+    header.add_thinking(Thinking("now read the one it found"))
+    header.add_call(ToolCall("read_note", {"path": "a.md"}))
+
+    assert header.toggle.text() == f"{ui.ReplyHeader.OPEN}  Thinking…"
+    assert header.rows_box.isVisibleTo(header)
+    assert [label.text() for label in header.rows] == [
+        "tool: search_notes({'query': 'x'})",
+        "tool: read_note({'path': 'a.md'})",
+        "thinking: I should look this up",
+        "thinking: now read the one it found",
+    ]
+    # and the widgets sit in that order too, not just the list
+    assert [header.rows_column.itemAt(i).widget() for i in range(header.rows_column.count())] == header.rows
+
+
+def test_reply_header_wraps_the_thinking_but_clips_a_long_call(qapp):
+    header = ui.ReplyHeader()
+
+    header.add_thinking(Thinking("a long stretch of reasoning " * 10))
+    header.add_call(ToolCall("create_note", {"content": "word " * 100}))
+
+    call, thinking = header.rows
+    assert thinking.wordWrap()
+    assert not call.wordWrap()
+    assert call.text().endswith("…")  # still cut off at the limit
+
+
+def test_reply_header_folds_shut_once_the_reply_lands_and_says_what_was_used(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("search_notes", {"query": "x"}))
+
+    header.finish()
+
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Used 1 tool"
+    assert not header.rows_box.isVisibleTo(header)
+
+    header.add_call(ToolCall("read_note", {"path": "a.md"}))  # a second call would read "2 tools"
+    header.finish()
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Used 2 tools"
+
+
+def test_reply_header_that_only_thought_says_so_rather_than_counting_no_tools(qapp):
+    header = ui.ReplyHeader()
+    header.add_thinking(Thinking("2+2 is 4"))
+
+    header.finish()
+
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Thought about it"
+    assert not header.isHidden()  # there is still working to open
+
+
+def test_reply_header_keeps_saying_a_retried_turn_was_retried_once_it_folds(qapp):
+    header = ui.ReplyHeader()
+    header.add_thinking(Thinking("2+2 is 4"))
+    header.add_retry(RetryWithoutThinking())
+
+    assert "retried with thinking off" in header.rows[-1].text()
+
+    header.finish()
+
+    # The line outlives the working it folds away, so this is where the retry has to be readable.
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Thought about it, retried with thinking off"
+
+
+def test_reply_header_says_both_the_tools_it_used_and_that_it_retried(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("search_notes", {"query": "x"}))
+    header.add_retry(RetryWithoutThinking())
+
+    header.finish()
+
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Used 1 tool, retried with thinking off"
+
+
+def test_reply_header_opens_and_shuts_again_when_the_line_is_clicked(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("search_notes", {"query": "x"}))
+    header.finish()
+
+    header.toggle.click()
+    assert header.rows_box.isVisibleTo(header)
+    assert header.toggle.text().startswith(ui.ReplyHeader.OPEN)
+
+    header.toggle.click()
+    assert not header.rows_box.isVisibleTo(header)
+    assert header.toggle.text().startswith(ui.ReplyHeader.SHUT)
+
+
+def test_reply_header_with_nothing_behind_it_has_no_chevron_and_goes_away_when_the_reply_lands(qapp):
+    header = ui.ReplyHeader()
+
+    assert header.toggle.text() == "Thinking…"  # nothing to open, so nothing says it opens
+    assert not header.rows_box.isVisibleTo(header)
+
+    header.finish()
+
+    assert header.isHidden()
 
 
 def test_assistant_message_logo_rocks_until_finished(qapp):
@@ -537,16 +637,52 @@ def test_a_sent_message_streams_the_reply_into_its_own_bubble(started):
     assert window.send.stopping is False
 
 
-def test_a_tool_call_shows_as_a_line_between_breaks_in_the_same_bubble(started):
-    window, _ = started([Text("Let me look."), ToolCall("search_notes", {"query": "x"}), Text("Found it.")])
+def test_a_tool_call_and_the_thinking_behind_it_show_in_the_header_not_in_the_bubble(started):
+    window, _ = started(
+        [
+            Text("Let me look."),
+            Thinking("the vault should have it"),
+            ToolCall("search_notes", {"query": "x"}),
+            Text("Found it."),
+        ]
+    )
 
     type_and_send(window, "find x")
     finish(window)
 
-    assert window.reply.markdown == "Let me look." + BREAK + TOOL_MARK + "`search_notes({'query': 'x'})`" + BREAK + "Found it."
+    assert window.reply.markdown == "Let me look." + BREAK + "Found it."
     assert len(window.messages.parentWidget().findChildren(ui.AssistantMessage)) == 1
+    assert [label.text() for label in window.message.header.rows] == [
+        "tool: search_notes({'query': 'x'})",
+        "thinking: the vault should have it",
+    ]
     text = bubble_text(window)
-    assert "search_notes" in text and "[tool]" not in text and "[nuru]" not in text
+    for working in ("search_notes", "the vault should have it", "[tool]", "[nuru]"):
+        assert working not in text
+
+
+def test_a_tool_call_is_shown_as_it_happens_then_folded_away_when_the_reply_lands(started):
+    release = threading.Event()
+
+    def calls_then_waits(cancel):
+        yield ToolCall("search_notes", {"query": "x"})
+        release.wait(5)
+        yield Text("Found it.")
+
+    window, _ = started(calls_then_waits)
+
+    type_and_send(window, "find x")
+    header = window.message.header
+    wait_until(lambda: header.rows)  # the call shows while the turn is still running
+
+    assert header.rows_box.isVisibleTo(header)
+    assert header.toggle.text().endswith("Thinking…")
+
+    release.set()
+    finish(window)
+
+    assert not header.rows_box.isVisibleTo(header)
+    assert header.toggle.text().endswith("Used 1 tool")
 
 
 def test_a_failure_shows_as_an_error_in_the_reply(started):

@@ -1,11 +1,12 @@
 import json
 import threading
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from core import session
 from core.conversation_store import ConversationStore
-from core.session import Failure, Session, Text, ToolCall
+from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ToolCall
 
 
 @pytest.fixture(autouse=True)
@@ -199,6 +200,101 @@ def test_ask_yields_the_reply_as_text_events_and_saves_it(monkeypatch):
     assert [(m["role"], m["content"], m["tokens_used"]) for m in saved] == [("user", "hello", 1), ("nuru", "Hi there", 2)]
 
 
+def test_ask_retries_with_thinking_off_when_the_model_only_thinks(monkeypatch):
+    think_per_call = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        think_per_call.append(think)
+        if think:  # the whole answer goes into the reasoning and the turn ends with no reply
+            yield {"thinking": "  The answer is 4.\n"}
+            yield {"prompt_tokens": 1, "completion_tokens": 2}
+        else:
+            yield "4"
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    s = start_session(monkeypatch, chat=chat)
+
+    events = list(s.ask("what is 2+2?"))
+
+    assert events == [Thinking("The answer is 4."), RetryWithoutThinking(), Text("4")]
+    assert think_per_call == [True, False]
+    saved = s.store.get_messages(s.conversation_id)  # what the retry wrote is the reply of record
+    assert [(m["role"], m["content"]) for m in saved] == [("user", "what is 2+2?"), ("nuru", "4")]
+
+
+def test_ask_says_no_reply_was_written_when_the_retry_stays_silent_too(monkeypatch):
+    # fake_chat ignores `think`, so the retry comes back just as silent as the first call.
+    s = start_session(
+        monkeypatch,
+        chat=fake_chat([{"thinking": "  The answer is 4.\n"}, {"prompt_tokens": 1, "completion_tokens": 2}]),
+    )
+
+    events = list(s.ask("what is 2+2?"))
+
+    assert events == [
+        Thinking("The answer is 4."),
+        RetryWithoutThinking(),  # and only the one: a turn is never retried twice
+        Thinking("The answer is 4."),
+        Text(session._NO_REPLY_NOTE),
+    ]
+    saved = s.store.get_messages(s.conversation_id)  # the reasoning is still what the model said
+    assert [(m["role"], m["content"]) for m in saved] == [("user", "what is 2+2?"), ("nuru", "The answer is 4.")]
+
+
+def test_ask_does_not_retry_when_thinking_was_off_to_begin_with(monkeypatch):
+    monkeypatch.setattr(session, "THINK", False)
+    think_per_call = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        think_per_call.append(think)
+        yield {"prompt_tokens": 1, "completion_tokens": 0}
+
+    s = start_session(monkeypatch, chat=chat)
+
+    assert list(s.ask("hello")) == []
+    assert think_per_call == [False]  # nothing was routed into reasoning, so there is nothing to retry
+
+
+def test_ask_shows_the_thinking_alongside_a_reply_the_model_did_write(monkeypatch):
+    s = start_session(
+        monkeypatch, chat=fake_chat(["4", {"thinking": "2+2"}, {"prompt_tokens": 1, "completion_tokens": 2}])
+    )
+
+    assert list(s.ask("what is 2+2?")) == [Text("4"), Thinking("2+2")]
+
+
+def test_ask_shows_the_thinking_that_comes_with_a_tool_call(monkeypatch):
+    responses = iter(
+        [
+            [
+                {"thinking": "I should look this up"},
+                {"tool_calls": [tool_call("get_temperature", {"city": "Berlin"})]},
+                {"prompt_tokens": 1, "completion_tokens": 1},
+            ],
+            ["It's 17C", {"prompt_tokens": 2, "completion_tokens": 2}],
+        ]
+    )
+    s = start_session(
+        monkeypatch,
+        chat=lambda *a, **k: next(responses),
+        tools=FakeMCPTools(tool_results={"get_temperature": "17C"}),
+    )
+
+    events = list(s.ask("what's the weather in Berlin?"))
+
+    assert events == [
+        Thinking("I should look this up"),
+        ToolCall("get_temperature", {"city": "Berlin"}),
+        Text("It's 17C"),
+    ]
+
+
+def test_ask_says_nothing_when_the_model_writes_neither_a_reply_nor_thinking(monkeypatch):
+    s = start_session(monkeypatch, chat=fake_chat([{"prompt_tokens": 1, "completion_tokens": 0}]))
+
+    assert list(s.ask("hello")) == []
+
+
 def test_ask_checks_the_server_and_the_model_before_each_send(monkeypatch):
     calls = []
     monkeypatch.setattr(session, "ensure_server_running", lambda: calls.append("server"))
@@ -213,6 +309,7 @@ def test_ask_checks_the_server_and_the_model_before_each_send(monkeypatch):
 
 
 def test_ask_includes_prior_turns_from_the_same_conversation_as_history(monkeypatch):
+    monkeypatch.setattr(session, "_timestamp_line", lambda now: "[NOW]")
     sent = []
 
     def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
@@ -223,12 +320,52 @@ def test_ask_includes_prior_turns_from_the_same_conversation_as_history(monkeypa
     list(s.ask("first"))
     list(s.ask("second"))
 
-    assert sent[0] == [{"role": "user", "content": "first"}]
+    assert sent[0] == [{"role": "user", "content": "[NOW]\n\nfirst"}]
     assert sent[1] == [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": ""},
-        {"role": "user", "content": "second"},
+        {"role": "user", "content": "[NOW]\n\nsecond"},
     ]
+
+
+def test_timestamp_line_gives_the_weekday_date_time_and_zone():
+    now = datetime(2026, 9, 21, 17, 52, tzinfo=timezone(timedelta(hours=2), "CEST"))
+
+    assert session._timestamp_line(now) == "[Current date and time: Monday 2026-09-21 17:52 CEST]"
+
+
+def test_ask_sends_the_current_date_and_time_ahead_of_the_message_but_saves_it_as_typed(monkeypatch):
+    monkeypatch.setattr(session, "_timestamp_line", lambda now: "[NOW]")
+    sent = []
+
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
+        sent.append([dict(m) for m in messages])
+        return iter([])
+
+    s = start_session(monkeypatch, chat=recording_chat)
+    list(s.ask("what day is it?"))
+
+    assert sent[0] == [{"role": "user", "content": "[NOW]\n\nwhat day is it?"}]
+    saved = s.store.get_messages(s.conversation_id)
+    assert [(m["role"], m["content"]) for m in saved] == [("user", "what day is it?"), ("nuru", "")]
+
+
+def test_ask_keeps_the_date_and_time_ahead_of_the_message_through_a_tool_round(monkeypatch):
+    monkeypatch.setattr(session, "_timestamp_line", lambda now: "[NOW]")
+    responses = iter([[{"tool_calls": [tool_call("get_temperature", {})]}], []])
+    sent = []
+
+    def recording_chat(model, messages, num_ctx=8192, think=True, tools=None):
+        sent.append([dict(m) for m in messages])
+        return iter(next(responses))
+
+    s = start_session(
+        monkeypatch, chat=recording_chat, tools=FakeMCPTools(tool_results={"get_temperature": "17C"})
+    )
+    list(s.ask("weather?"))
+
+    assert sent[0][0] == {"role": "user", "content": "[NOW]\n\nweather?"}
+    assert sent[1][0] == {"role": "user", "content": "[NOW]\n\nweather?"}
 
 
 def test_ask_passes_the_think_setting_to_chat(monkeypatch):

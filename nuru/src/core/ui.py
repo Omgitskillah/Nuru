@@ -18,8 +18,10 @@ from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QIcon,
     QKeyEvent,
     QPainter,
+    QPainterPath,
     QPalette,
     QPen,
     QPixmap,
@@ -46,8 +48,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.reply_markdown import TOOL_MARK, Code, Prose, Reply, split_fences
-from core.session import Event, Session
+from core.reply_markdown import Code, Prose, Reply, format_tool_call, split_fences
+from core.session import Event, RetryWithoutThinking, Session, Thinking, ToolCall
 
 # Monochrome palette taken from the lantern logo: its ink color (#242021), plus tints of it on white
 INK = "#242021"
@@ -64,6 +66,12 @@ COLUMN_WIDTH = 760
 BUBBLE_WIDTH = 600  # your messages wrap before the full column width so they read as bubbles
 SWING = 8  # degrees the lantern rocks to either side
 LOGO_PATH = Path(__file__).parent / "assets" / "lantern.png"  # transparent PNG
+ICON_PADDING = 0.1  # white kept clear around the lantern in the app icon, as a share of its height
+# How macOS shapes an app icon: a rounded square filling 824 of the 1024-point canvas, the rest of
+# it left clear, and corners that curve into the sides rather than meeting them at an arc. That
+# shape is a superellipse - |x|^n + |y|^n = r^n - with n around 5.
+ICON_SHAPE = 824 / 1024
+ICON_CURVE = 5
 
 # Where a link in the model's text may lead. Anything else (file:, custom app schemes) is ignored:
 # opening one would launch whatever it names.
@@ -77,6 +85,10 @@ QScrollBar::handle:vertical:hover {{ background: rgba(36, 32, 33, 82); }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QFrame#composer, QFrame#reply {{ background: white; border: 1px solid {BORDER}; border-radius: 20px; }}
+QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radius: 14px; }}
+QPushButton#replyToggle {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED}; font-size: 12px; }}
+QPushButton#replyToggle:hover {{ color: {TEXT}; }}
+QLabel#workRow {{ color: {MUTED}; }}
 QFrame#userBubble {{ background: {BUBBLE}; border-radius: 16px; }}
 QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 12px; }}
 QLabel#userText, QLabel#greeting, QLabel#codeText {{ color: {TEXT}; }}
@@ -164,15 +176,6 @@ def style_document(doc: QTextDocument) -> None:
             cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
             cursor.mergeCharFormat(quote)
 
-        # A tool call is Nuru's working, not part of its answer: small and light. The mark only said
-        # which line it was, so it goes before the line is styled.
-        if block.text().startswith(TOOL_MARK):
-            tool = QTextCharFormat()
-            tool.setForeground(QBrush(QColor(MUTED)))
-            tool.setFont(font(13, MONO, QFont.StyleHint.Monospace), QTextCharFormat.FontPropertiesInheritanceBehavior.FontPropertiesSpecifiedOnly)
-            cursor.deleteChar()
-            cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
-            cursor.mergeCharFormat(tool)
         block = block.next()
 
     for frame in doc.rootFrame().childFrames():
@@ -452,21 +455,120 @@ class CodeBlock(QFrame):
         self.copy.setText("Copy")
 
 
-class AssistantMessage(QFrame):
-    """Nuru's reply in a white card, styled like the composer: markdown text and code boxes,
-    with the logo at the bottom rocking until the reply is done."""
+class ReplyHeader(QFrame):
+    """The card above a reply: what Nuru is doing, with its working folded under it - the tool
+    calls it made, kept together at the top, and what it reasoned below them.
+
+    It stays open while the reply streams, so the working can be watched as it happens, and shuts
+    itself once the reply lands, leaving one line that says what was done. A reply with no working
+    behind it has nothing to fold away, so the card goes with it.
+    """
+
+    OPEN, SHUT = "▾", "▸"  # the chevron on the line, pointing down while the working is showing
 
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("reply")
+        self.setObjectName("replyHeader")
+        self.status = "Thinking…"
+        self.expanded = True
+        self.rows: list[QLabel] = []  # the calls, then the reasoning; each group in its own order
+        self.tools = 0  # how many of those rows are tool calls, and so where the reasoning starts
+        self.retried = False  # a silent call was asked again with thinking off
+
+        self.toggle = QPushButton()
+        self.toggle.setObjectName("replyToggle")
+        self.toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.toggle.clicked.connect(self.flip)
+
+        self.rows_box = QWidget()
+        self.rows_column = QVBoxLayout(self.rows_box)
+        self.rows_column.setContentsMargins(16, 0, 0, 2)
+        self.rows_column.setSpacing(4)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 10, 24, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self.toggle)
+        layout.addWidget(self.rows_box)
+        self.draw()
+
+    def add_call(self, call: ToolCall) -> None:
+        # Calls join the ones before them, whenever they arrive: what Nuru did is easier to take in
+        # at the top than scattered through reasoning that runs long.
+        self.add_row(f"tool: {format_tool_call(call.name, call.arguments)}", wrap=False, at=self.tools)
+        self.tools += 1
+
+    def add_thinking(self, thinking: Thinking) -> None:
+        # Reasoning is prose and runs long, so it wraps rather than being cut off like a call
+        self.add_row(f"thinking: {thinking.text}", wrap=True, at=len(self.rows))
+
+    def add_retry(self, _retry: RetryWithoutThinking) -> None:
+        # Where the reasoning got the answer but the reply didn't, so the turn was run again with
+        # thinking off. It goes in with the working, and on the line that outlives it (see finish).
+        self.retried = True
+        self.add_row("retried with thinking off", wrap=False, at=len(self.rows))
+
+    def add_row(self, text: str, wrap: bool, at: int) -> None:
+        label = QLabel(text)
+        label.setObjectName("workRow")
+        label.setFont(font(13, MONO, QFont.StyleHint.Monospace))
+        label.setMinimumWidth(1)  # an unwrapped row is clipped rather than widening the column
+        label.setWordWrap(wrap)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.rows.insert(at, label)
+        self.rows_column.insertWidget(at, label)
+        self.draw()
+
+    def flip(self) -> None:
+        self.expanded = not self.expanded
+        self.draw()
+
+    def finish(self) -> None:
+        """The reply has landed: say what was done, in the past, and fold it away."""
+        if self.tools:
+            self.status = f"Used {self.tools} tool" + ("" if self.tools == 1 else "s")
+        else:
+            self.status = "Thought about it"  # it reasoned its way there without calling anything
+        if self.retried:
+            # The reply came from a second call, so say so where it stays readable once this folds.
+            self.status += ", retried with thinking off"
+        self.expanded = False
+        self.setVisible(bool(self.rows))  # nothing was done: the card has nothing left to say
+        self.draw()
+
+    def draw(self) -> None:
+        """Redraw the line and the working under it. With nothing to show there is nothing to open,
+        so the chevron stays off and clicking the line does nothing."""
+        chevron = f"{self.OPEN if self.expanded else self.SHUT}  " if self.rows else ""
+        self.toggle.setText(chevron + self.status)
+        self.toggle.setCursor(Qt.CursorShape.PointingHandCursor if self.rows else Qt.CursorShape.ArrowCursor)
+        self.rows_box.setVisible(self.expanded and bool(self.rows))
+
+
+class AssistantMessage(QWidget):
+    """Nuru's reply in a white card, styled like the composer: markdown text and code boxes,
+    with the logo at the bottom rocking until the reply is done. Its header is a smaller card above it."""
+
+    def __init__(self) -> None:
+        super().__init__()
         self.parts: list[MarkdownView | CodeBlock] = []  # in order, ahead of the logo
         self.logo = Logo(28, swing=SWING)
         self.logo.start()
+        self.header = ReplyHeader()
 
-        self.column = QVBoxLayout(self)
+        body = QFrame()
+        body.setObjectName("reply")
+        self.column = QVBoxLayout(body)
         self.column.setContentsMargins(24, 20, 24, 18)
         self.column.setSpacing(14)
         self.column.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignLeft)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.header)
+        layout.addWidget(body)
 
     def set_markdown(self, text: str) -> None:
         parts = split_fences(text)
@@ -489,6 +591,7 @@ class AssistantMessage(QFrame):
 
     def finish(self) -> None:
         self.logo.stop()
+        self.header.finish()
 
 
 class ChatWindow(QWidget):
@@ -676,6 +779,12 @@ class ChatWindow(QWidget):
         self.update_send()
 
     def on_event(self, event: Event) -> None:
+        if isinstance(event, ToolCall):
+            self.message.header.add_call(event)
+        elif isinstance(event, Thinking):
+            self.message.header.add_thinking(event)
+        elif isinstance(event, RetryWithoutThinking):
+            self.message.header.add_retry(event)
         self.reply.add(event)
         if not self.flush_timer.isActive():
             self.flush_timer.start()
@@ -724,9 +833,47 @@ class ChatWindow(QWidget):
         super().closeEvent(event)
 
 
+def squircle(side: float) -> QPainterPath:
+    """The rounded square macOS gives app icons, `side` across, drawn as a ring of points close
+    enough together to curve."""
+    radius = side / 2
+    corners = []
+    for step in range(240):
+        angle = 2 * math.pi * step / 240
+        cos, sin = math.cos(angle), math.sin(angle)
+        corners.append(
+            QPointF(
+                radius + radius * math.copysign(abs(cos) ** (2 / ICON_CURVE), cos),
+                radius + radius * math.copysign(abs(sin) ** (2 / ICON_CURVE), sin),
+            )
+        )
+    path = QPainterPath()
+    path.addPolygon(QPolygonF(corners))
+    path.closeSubpath()
+    return path
+
+
+def app_icon() -> QIcon:
+    """The lantern on a white macOS-shaped tile. The logo is a transparent PNG and taller than it
+    is wide, so on its own it would hang in mid-air over a dark Dock, in the wrong shape for an icon."""
+    lantern = QPixmap(str(LOGO_PATH))
+    tile = round(max(lantern.width(), lantern.height()) * (1 + 2 * ICON_PADDING))
+    side = round(tile / ICON_SHAPE)  # the canvas the tile sits on, clear around its edges
+    canvas = QPixmap(side, side)
+    canvas.fill(QColor(Qt.GlobalColor.transparent))
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.translate((side - tile) / 2, (side - tile) / 2)
+    painter.fillPath(squircle(tile), QColor("white"))
+    painter.drawPixmap(QPointF((tile - lantern.width()) / 2, (tile - lantern.height()) / 2), lantern)
+    painter.end()  # the icon has to be taken from a pixmap nothing is still painting on
+    return QIcon(canvas)
+
+
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Nuru")
+    app.setWindowIcon(app_icon())  # the lantern in the Dock, and on the taskbar elsewhere
     window = ChatWindow(Session.start)
     window.show()
     window.start()

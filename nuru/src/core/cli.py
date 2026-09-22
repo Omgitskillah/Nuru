@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 
 from core.conversation_store import ConversationStore
-from core.session import Event, Session, Text, ToolCall
+from core.session import Event, RetryWithoutThinking, Session, Text, Thinking, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -18,7 +18,9 @@ Anything else you type is sent to the model as a prompt (this also loads the mod
 
 
 def print_turn(events: Iterator[Event]) -> None:
-    """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply and `[tool] ` for tool calls."""
+    """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply, `[thinking] ` for
+    what the model reasoned, `[tool] ` for tool calls, and `[retry] ` where a silent call is being
+    asked again with thinking off - everything printed after that line comes from the second call."""
     mid_line = False  # reply text is on screen and its line isn't finished yet
     for event in events:
         if isinstance(event, Text):
@@ -32,6 +34,10 @@ def print_turn(events: Iterator[Event]) -> None:
             mid_line = False
         if isinstance(event, ToolCall):
             print(f"[tool] {event.name}({event.arguments})")
+        elif isinstance(event, Thinking):
+            print(f"[thinking] {event.text}")
+        elif isinstance(event, RetryWithoutThinking):
+            print("[retry] No reply was written - asking again with thinking off.")
         else:
             print(f"[error] {event.message}")
     if mid_line:

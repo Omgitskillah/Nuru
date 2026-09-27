@@ -178,11 +178,12 @@ def ensure_model_loaded(model: str) -> dict:
     }
 
 
-def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool = True, tools: list[dict] | None = None):
+def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | str = True, tools: list[dict] | None = None):
     """Yields text chunks, then a dict with tool_calls (if the model made any), then a dict with its
     thinking (if it did any), then a final usage dict.
 
-    `think` is ignored by models that don't support reasoning/thinking mode.
+    `think` is True/False, or a reasoning level ("low", "medium", "high") for models that
+    take one. It is ignored by models that don't support reasoning/thinking mode.
     """
     payload = {
         "model": model,

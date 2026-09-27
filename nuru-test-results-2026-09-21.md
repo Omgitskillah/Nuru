@@ -371,3 +371,66 @@ obvious next change.
   Arm B's zero-call result for it is one draw, not a settled outcome.
 - Thinking costs about 5x the wall clock (test 4: 36 s → 171 s; test 6: 18 s → 197 s).
   The 600 s cap is now the binding limit on test 32 rather than any defect.
+
+## Medium reasoning, 2026-09-27: tests 22 and 25
+
+`THINK` previously parsed to a bool, so `chat()` could only send `true`/`false` - the
+Modelfile's own note ("Set it per request from Nuru: `think`: `low` ... `high`") described
+something the code could not express. `session._parse_think` now passes `low`/`medium`/`high`
+through and falls back to the old boolean for anything else. `nuru/.env` is `THINK=medium`,
+`NURU_MAX_NUM_CTX=16384`.
+
+Granite honours the levels rather than ignoring them - same prompt (17x23), thinking scales
+and so does correctness:
+
+| `think` | thinking chars | output tokens | answer |
+|---|---|---|---|
+| `false` | 0 | 27 | "I cannot compute 17*..." **wrong** |
+| `low` | 67 | 25 | 391 |
+| `medium` | 699 | 166 | 391 |
+| `high` | 1996 | 481 | 391 |
+| `true` | 3478 | 919 | 391 |
+
+### Results
+
+| # | 09-19 | 09-21 | 09-27 `false` | 09-27 `true` | **`medium`** |
+|---|---|---|---|---|---|
+| 22 | 0/5 | 0/5 | 0/5 | 1/5 | **3/5** |
+| 25 | 1/5 | 1/5 | 1/5 | 1/5 | **1/5** |
+
+**Test 22 - 0/5 to 3/5, the best this test has scored.** 4 calls, 110 s:
+`search_notes("task")` -> `search_notes("schedulable")` -> `read_note` on the daily note ->
+`read_note("nuru/Topics/freertos-task-management.md")`. It is the first run of any
+configuration to find the FreeRTOS note and answer the actual RTOS question, with the
+verdict right ("schedulable"), the Liu & Layland bound quoted and the path cited.
+
+Two points off, both real: it repeated the note's stated **U = 0.58**, which contradicts
+that same note's own WCET/period table (true U = **0.36**; the conclusion holds either way
+since both are under the 0.7435 bound, but the directive "if two notes disagree, say so"
+should extend to a note disagreeing with itself). It also padded the answer with an
+unrelated "Optimized task scheduling" line from the daily note.
+
+**Test 25 - 1/5, unchanged at every setting tried.** Zero tool calls, 20 s. The reply is a
+clarifying question. This is now the third independent run whose thinking shows the same
+mechanism - it evaluates the FIRST ACTION trigger and rules itself out:
+
+> "The request is just 'Draft a status message to my manager.' It doesn't mention any
+> specific notes. ... It doesn't mention status messages. So I'll ask a question. ...
+> I could search_notes for 'manager' or 'status'? Might return zero matches. Then I'd
+> have no options."
+
+Reasoning level is not the variable here. The trigger names *subjects* ("notes, projects,
+people, decisions or anything he has written or done") and a drafting request matches none
+of them by the model's reading. The qwen3.5 file names the *task types* as well - "a
+question, **or a task like drafting or summarizing**". Until that clause is added, no amount
+of thinking will make this test search.
+
+### Caveats
+
+- One sample per test.
+- `medium` costs about 5x the wall clock of `false` on test 22 (2.7 s -> 110 s) but is what
+  made the difference between no tool calls and the right note. Test 25 is unaffected
+  because it never gets as far as a tool.
+- Mid-session the external volume holding the Ollama models unmounted, which is what caused
+  the earlier Ollama 500s. Models were restored by pointing `OLLAMA_MODELS` back at
+  `/Volumes/Ra/Models`; these two runs are from after that, on a healthy server.

@@ -41,7 +41,20 @@ load_dotenv()
 # prompt baked in.
 BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3:8b")
 MODEL = os.environ.get("MODEL", "nuru")
-THINK = os.environ.get("THINK", "true").lower() != "false"
+
+
+def _parse_think(raw: str) -> bool | str:
+    """THINK is off, on, or one of Ollama's named reasoning levels.
+
+    A level is passed through to the API as-is; granite and other reasoning models take
+    "low"/"medium"/"high" in place of a bare true, trading latency for depth. Anything
+    else is the old boolean, so existing "true"/"false" settings keep working.
+    """
+    value = raw.strip().lower()
+    return value if value in ("low", "medium", "high") else value != "false"
+
+
+THINK = _parse_think(os.environ.get("THINK", "true"))
 
 MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
 

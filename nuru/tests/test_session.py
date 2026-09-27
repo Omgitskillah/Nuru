@@ -623,3 +623,44 @@ def test_the_store_can_be_used_from_another_thread(tmp_path):
     worker.join()
 
     assert errors == []
+
+
+# --- _parse_think ---
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("medium", "medium"),   # a level goes to the API as-is
+        ("low", "low"),
+        ("high", "high"),
+        ("MEDIUM", "medium"),
+        ("false", False),
+        ("true", True),
+        (" medium ", "medium"),
+        ("anything-else", True),
+    ],
+)
+def test_parse_think_accepts_levels_and_the_old_booleans(raw, expected):
+    assert session._parse_think(raw) == expected
+
+
+def test_a_reasoning_level_still_triggers_the_silent_turn_retry(monkeypatch):
+    """The retry checks `think` for truthiness, so a level must not bypass it."""
+    monkeypatch.setattr(session, "THINK", "medium")
+    seen = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        seen.append(think)
+        if think:  # silent turn: everything went into the reasoning
+            yield {"thinking": "the answer is 4"}
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+        else:
+            yield "4"
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    s = start_session(monkeypatch, chat=chat)
+    events = list(s.ask("what is 2+2?"))
+
+    assert seen == ["medium", False]
+    assert events == [Thinking("the answer is 4"), RetryWithoutThinking(), Text("4")]

@@ -16,6 +16,9 @@ def _isolate_log_dir(monkeypatch, tmp_path):
     # Building the custom Ollama model is a real `ollama create` subprocess
     # call - never let it run for real in a test.
     monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+    # THINK comes from the developer's own .env via load_dotenv, so without this the
+    # thinking-mode tests pass or fail depending on what the machine is set up to run.
+    monkeypatch.setattr(session, "THINK", True)
 
 
 def fake_chat(chunks):
@@ -76,7 +79,62 @@ def test_start_builds_the_custom_model_from_the_modelfile_before_loading(monkeyp
 
     start_session(monkeypatch)
 
-    assert calls == [(session.MODEL, session.BASE_MODEL, session.MODELFILE_PATH)]
+    assert calls == [(session.MODEL, session.BASE_MODEL, session._modelfile_for(session.BASE_MODEL))]
+
+
+# --- _modelfile_for ---
+
+
+def test_modelfile_for_picks_the_file_named_after_the_model_family(monkeypatch, tmp_path):
+    (tmp_path / "qwen3.5.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    monkeypatch.setattr(session, "MODELFILES_DIR", tmp_path)
+
+    assert session._modelfile_for("qwen3.5:9b") == tmp_path / "qwen3.5.Modelfile"
+
+
+def test_modelfile_for_strips_the_tag_and_any_registry_namespace(monkeypatch, tmp_path):
+    (tmp_path / "qwen3.5.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    monkeypatch.setattr(session, "MODELFILES_DIR", tmp_path)
+
+    expected = tmp_path / "qwen3.5.Modelfile"
+    assert session._modelfile_for("qwen3.5") == expected
+    assert session._modelfile_for("library/qwen3.5:latest") == expected
+
+
+def test_modelfile_for_distinguishes_families_that_share_a_prefix(monkeypatch, tmp_path):
+    (tmp_path / "qwen3.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    (tmp_path / "qwen3.5.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    monkeypatch.setattr(session, "MODELFILES_DIR", tmp_path)
+
+    assert session._modelfile_for("qwen3:8b") == tmp_path / "qwen3.Modelfile"
+    assert session._modelfile_for("qwen3.5:9b") == tmp_path / "qwen3.5.Modelfile"
+
+
+def test_modelfile_for_raises_naming_the_available_families(monkeypatch, tmp_path):
+    (tmp_path / "qwen3.5.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    (tmp_path / "llama3.1.Modelfile").write_text("FROM __BASE_MODEL__\n")
+    monkeypatch.setattr(session, "MODELFILES_DIR", tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="phi4"):
+        session._modelfile_for("phi4:14b")
+
+    with pytest.raises(FileNotFoundError, match="llama3.1, qwen3.5"):
+        session._modelfile_for("phi4:14b")
+
+
+def test_every_shipped_modelfile_has_the_base_model_placeholder():
+    """create_model() builds whatever FROM line it finds, so a copy-paste slip that
+    drops the placeholder would silently build every model from the same base."""
+    shipped = sorted(session.MODELFILES_DIR.glob("*.Modelfile"))
+
+    assert shipped, f"no Modelfiles in {session.MODELFILES_DIR}"
+    for path in shipped:
+        text = path.read_text()
+        assert text.startswith("FROM __BASE_MODEL__"), path.name
+        # A second FROM silently wins over the rendered one, so NURU_BASE_MODEL would be
+        # ignored and every base model would build from whatever that line names.
+        froms = [ln for ln in text.splitlines() if ln.startswith("FROM ")]
+        assert froms == ["FROM __BASE_MODEL__"], f"{path.name} has {len(froms)} FROM lines: {froms}"
 
 
 def test_start_connects_mcp_tools_and_passes_them_to_chat(monkeypatch):

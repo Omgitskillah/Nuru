@@ -23,14 +23,27 @@ THINK=true
 ```
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
-- `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
+- `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
 - `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. Any value other than `false` counts as enabled.
 
 ## The custom model and its system prompt
 
-[`Modelfile`](Modelfile) is a template (`FROM __BASE_MODEL__` plus a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
+[`modelfiles/`](modelfiles) holds one Modelfile per model family, each a template (`FROM __BASE_MODEL__`, a `PARAMETER` block, and a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
 
-`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit `Modelfile` and it takes effect on the next run, no manual `ollama create` needed.
+`session._modelfile_for(base_model)` picks the file by family - `NURU_BASE_MODEL` with any registry namespace and `:tag` stripped, so `qwen3.5:9b` builds from [`modelfiles/qwen3.5.Modelfile`](modelfiles/qwen3.5.Modelfile). A base model with no file of its own raises `FileNotFoundError` listing the families that do have one, rather than falling back: the `PARAMETER` blocks are tuned per model, so reusing another family's would sample the model wrongly and skew any bakeoff run against it. To run a new model, add `<family>.Modelfile`.
+
+| Family | `PARAMETER` block |
+| --- | --- |
+| [`qwen3.5`](modelfiles/qwen3.5.Modelfile) | Qwen's thinking-mode preset: `temperature 1.0`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `presence_penalty 1.5`, `repeat_penalty 1.0` |
+| [`qwen3`](modelfiles/qwen3.Modelfile) | Qwen3's thinking-mode preset: `temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `repeat_penalty 1.0` |
+| [`gemma4`](modelfiles/gemma4.Modelfile) | Gemma's shipped defaults: `temperature 1.0`, `top_p 0.95`, `top_k 64` |
+| [`granite4.2`](modelfiles/granite4.2.Modelfile) | Granite's shipped defaults: `temperature 1.0`, `top_p 0.95` |
+| [`llama3.1`](modelfiles/llama3.1.Modelfile) | Meta's reference values: `temperature 0.6`, `top_p 0.9` |
+| [`mistral-nemo`](modelfiles/mistral-nemo.Modelfile) | Mistral's low-temperature guidance for Nemo: `temperature 0.3`, `top_p 0.9` |
+
+Every file carries the same `SYSTEM` prompt; only the `PARAMETER` block differs. They are separate copies, so a prompt change has to be made in all six or they drift - which would confound a bakeoff comparing them.
+
+`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit the family's Modelfile and it takes effect on the next run, no manual `ollama create` needed.
 
 Install dependencies and run either front end:
 

@@ -128,3 +128,246 @@ Both are extra runs, not scores of record.
 - The Mac went to sleep during tests 7, 20 and 32, which stretched their wall-clock times and delayed the timeout. Times in the notes are active time from nuru's own logs. I kept the machine awake for everything after.
 - `rg` must be on `PATH` for the obsidian server. `/opt/homebrew/bin` was not on my shell's `PATH`, so I added it. If `nuru-ui` is started from Finder, `find_in_notes` will likely fail with "ripgrep not installed"; the error tells the model to use `search_notes`.
 - Raw material (per-test output, tool results, raw model streams, vault diffs) is in the session scratchpad, which is temporary: `/private/tmp/claude-501/-Users-aluchoayisi-Desktop-Nuru/32f816f2-ca4e-4903-8ef8-70ca5bbbbb3d/scratchpad/results*`. The harness is two small scripts; they can go into `nuru/evals/` if you want the run repeatable.
+
+---
+
+# Spot run, 2026-09-27: granite4.2:3b, THINK=false, five hardest tests
+
+A five-test spot check, not a suite run. The five were picked as the hardest in the
+table above: tests 4, 6, 22 and 25 scored 0/5 or 1/5 in *both* earlier runs, and 32 is the
+hardest of the added three. Scores here are not comparable to a full 34-test total.
+
+## How this was run
+
+- `nuru` built from `granite4.2:3b` via `modelfiles/granite4.2.Modelfile` (Clarence's
+  hand-tuned file: `temperature 0.2`, `top_p 0.9`, `top_k 40`, `min_p 0.05`,
+  `repeat_penalty 1.0`, `num_ctx 16384`, `num_predict 4096`), `THINK=false`.
+- One fresh `nuru-cli` process per test through the real `core.cli.main()`, prompt on
+  stdin, EOF to exit. A driver pointed the obsidian server at a scratch copy of
+  `dummyVault`, **reset before every test**, and wrapped `MCPTools.call_tool` to record
+  arguments and results (nuru's own JSONL records only status). `caffeinate -i`,
+  `/opt/homebrew/bin` on PATH for `rg`, 10-minute cap, whole descendant tree killed on
+  timeout.
+- "Today" is 2026-09-27 on the test machine.
+- One sample per test. No vault writes were attempted in any test, so nothing mutated.
+
+**The `THINK=false` setting contradicts this Modelfile's own note** (line 10: "Don't run
+tool loops with thinking off"). Every one of these five tests is a tool loop. That
+contradiction is part of what is being measured here, not a mistake in the setup.
+
+## Scores
+
+| # | Prompt | 09-19 | 09-21 | **09-27** | |
+|---|---|---|---|---|---|
+| 4 | What did I do on September 17? | 0/5 | 0/5 | **4/5** | ▲▲ |
+| 6 | Which wiki-links point to notes that don't exist? | 0/5 | 0/5 | **1/5** | ▲ |
+| 22 | Is my task set schedulable? | 0/5 | 0/5 | **0/5** | = |
+| 25 | Draft a status message to my manager. | 1/5 | 1/5 | **1/5** | = |
+| 32 | Line-by-line audit of battery / PSM / NAT. | 3/5 | 0/5 | **0/5** | = |
+| | **Total on these five** | **4/25** | **1/25** | **6/25** | |
+
+The 09-21 column is not a fair baseline: the silent-turn `think=False` retry landed on
+09-22, after that run, and it converts several of its 0s (undelivered answers) into real
+scores. Treat 09-19 as the honest comparison.
+
+## Per-test detail
+
+| # | Time | Tools | What happened |
+|---|---|---|---|
+| 4 | 42 s | 3 | Opened with `read_note("directives/daily")` — **an invented path**; the error hint listed the real notes, it pivoted to `browse_notes(type="daily")` → `read_note("user/daily-2026-09-17.md")` and answered from the real note. Every fact correct, nothing fabricated. But it reproduced the note nearly in full and **never cited the path**. First time this test has produced any answer at all. |
+| 6 | 19 s | 5 | `browse_notes` ×2 → `search_notes("wiki-links")` → read 2 notes. **Never called `find_in_notes`.** Found `[[Nonexistent Note Alpha]]` (correct, and the one link not pre-annotated in the vault), then **invented a false positive**: claimed `[[Battery Life Modeling Revised]]` is broken, though `nuru/battery-life-modeling-revised.md` exists. Missed all three links that `technical-knowledge-base.md` lines 58–60 annotate "(note does not exist)" — it never opened that note. 1 of 4 right, 1 wrong. |
+| 22 | 5 s | **0** | Zero tool calls. Asked which task he meant and where it was defined. `nuru/Topics/freertos-task-management.md` holds the whole answer. |
+| 25 | 5 s | **0** | Zero tool calls. Asked four clarifying questions. Never read `user/directives-for-local-model.md` (which mandates the "Clarence" sign-off) or the 1:1 note. No Priya leak — but vacuously, since it read nothing; this is not a confidentiality pass. Unlike 09-21 it did **not** wrongly write a vault note. |
+| 32 | 600 s **cap** | 21 | Best retrieval of the five: 9 varied `search_notes`/`read_note` calls found the revised battery model and the project note. Then **12 `ask_an_expert` calls, all byte-identical** — same message, same three `file_paths` — each failing `FileNotFoundError` on `nuru/battery-life-modeling-revised.md`. Never varied one parameter. Hit the cap with **no reply**. |
+
+Ground truth the run missed: true utilisation in test 22 is **U = 0.36** from the note's own
+WCET/period table, contradicting the 0.58 the note states in prose — the real find in that
+test. In 32, the revised model gives 237 days always-connected (fails 3 years ~5×), 13.6 years
+on periodic attach capped ~10 years by shelf life, and the biggest risk is the sensitivity
+line: 6 reports/hour drops life to **2.3 years**, under the requirement.
+
+## How well the Modelfile's instructions were followed
+
+This is the rating the run was for: not "is the model good" but "did this Modelfile's
+rules actually govern its behaviour".
+
+| Rule block | Verdict | Evidence |
+|---|---|---|
+| **1.** Never state what a note says unread | **Held** | No invented note *contents* anywhere in five tests. The single lapse is test 6 asserting a link target's absence without checking. |
+| **2.** Never invent a path, id, tag, title, tool | **Broken, twice** | Test 4 opened on `directives/daily`, a path no tool returned. Test 6's false positive. Both are exactly what the rule forbids. |
+| **3.** One step at a time | **Held** | Calls are sequential and reactive throughout 4, 6 and 32's retrieval phase. |
+| **4.** Retry differently once; stop after 2 failures | **Held, then catastrophically broken** | Excellent in test 4 (read the hint, changed tool) and 32's search phase (9 varied queries). Then 12 identical expert calls in 32 — not "retry differently", *no* difference at all, and 6× past the stated stop point. This rule failed at the one moment it existed for. |
+| **5.** Never claim an action without tool success | **Held** | No false success claims; zero writes attempted across all five. |
+| **6.** Ask one short question if unclear | **Followed, and harmful** | The direct cause of both 0-tool-call failures. Tests 22 and 25 are unambiguous requests with dedicated notes in the vault; the model took the rule as licence to ask instead of look. |
+| **7.** Keep answers short, quote lines, give paths | **Half held** | Test 6 cited paths properly. Test 4 did neither — near-full note dump, no path. |
+| **Picking a tool** | **Broken on the key case** | `find_in_notes` was called **0 times in five tests**. Test 6 ("exact phrase / regex") is the textbook case the rule describes, and the model reached for `browse_notes` instead. |
+| **Writing rules** | **Not exercised** | Zero write tools called. Test 25's non-write is an improvement on 09-21, but it wrote nothing at all. |
+| **Escalation** | **Judgment right once of three** | Test 32 correctly judged ">3 notes → escalate" and executed into a broken tool. Tests 22 and 25 both meet the stated escalation triggers (reasoning; drafting) and escalated neither. |
+
+**Overall: the Modelfile is about half-effective on this model.** The prohibitions it states
+as absolutes mostly hold — no fabricated note content, no false success claims, no
+unauthorised writes, and that is the part that matters most for trust. What does *not*
+hold is anything requiring the model to choose correctly among several allowed actions:
+tool selection, when to stop retrying, and when asking beats searching. A 3B follows "never
+do X" much better than "in situation Y prefer tool Z".
+
+Two changes the results point at directly:
+
+1. **The Modelfile has no "search first" rule, and CORE RULE 6 fills the vacuum.** The
+   qwen3.5 Modelfile opens with an explicit first-action rule — *"must START with a
+   `search_notes` call … Do not answer, apologize, or ask me anything first"*. This file has
+   no equivalent, and rule 6 invites the opposite. That single gap accounts for both 0/5s.
+   Tests 22 and 25 are 10 of the 25 available points, and neither model ever looked at the
+   vault.
+2. **Rule 4's stop condition is not enforceable by prose alone.** Twelve identical calls
+   went past a rule that says stop after two. This needs a call-repetition guard in
+   `session.py`, not a stronger sentence in the Modelfile.
+
+## Caveats
+
+- Five tests, one sample each, deliberately the hardest ones. Not a suite score and not a
+  model ranking.
+- `THINK=false` against a Modelfile that says not to run tool loops that way. Tests 22 and
+  25 — instant answers with no deliberation — are consistent with thinking being off, so
+  some of this is the setting, not the file. A `THINK=true` arm would separate them; it was
+  not run.
+- The `ask_an_expert` `file_paths` defect (vault-relative paths resolved against
+  deep-think's cwd) is unchanged from 09-21 finding 4 and dominates test 32. **0 calls
+  reached the Anthropic API** — all 12 failed locally, so this run cost nothing in tokens.
+- Test 32's 600 s is the cap, not a measurement; roughly 9 minutes of that was the retry loop.
+
+## Follow-up, same day: the three escalation defects, fixed
+
+The run above was scored with `ask_an_expert` broken. It has since been fixed, so test 32's
+0/5 is a record of the defect, not of what the stack does now.
+
+**Defect 1 — vault-relative `file_paths` never resolved.** `file_cache.resolve_file_id`
+resolved a relative path against deep-think's own working directory, so every
+vault-relative path the obsidian tools handed the model failed with `FileNotFoundError`.
+This is 09-21 finding 4, still present. Fixed by resolving relative paths against a new
+`DEEP_THINK_BASE_DIR` (`server.py:_resolve_attachment`), which nuru sets to the vault when
+spawning the server. The error message now names the directory it searched, so a caller
+that cannot see this filesystem has something to correct its next attempt with.
+
+**Defect 2 — every markdown attachment was rejected.** Fixing defect 1 immediately
+uncovered it: `mimetypes.guess_type` maps `.md` to `text/markdown`, and a document content
+block accepts only PDF and `text/plain`, so the API returned
+`400 Unsupported document file format: text/markdown` and the whole request failed. This
+had never been reached before, because the path error fired first. Fixed in
+`claude._upload_mime_type`: text formats upload as `text/plain`.
+
+**Defect 3 — the expert's whole budget went to thinking.** With attachments working, every
+non-trivial question still came back empty: `ask_an_expert` never passed `max_tokens`, so
+it took the contract's generic 1024 default, and the expert's reasoning alone consumed all
+1024 (`stop_reason: max_tokens`, one thinking block, no text). Fixed with an explicit
+`ASK_AN_EXPERT_MAX_TOKENS = 8192` on the escalation path only; the generic contract default
+is unchanged. A real escalation now costs ~6k output tokens of Opus 5, several thousand of
+which are thinking - materially more per call than before, when it returned nothing.
+
+Note for future runs: `file_cache.db` keys on content hash, not media type, so uploads
+cached before defect 2 was fixed still point at `text/markdown` file ids. Clear the table
+after upgrading or those attachments keep failing.
+
+### Test 32, re-run against the fixed stack
+
+| | 09-27 as scored | 09-27 re-run, fixed |
+|---|---|---|
+| Wall time | 600 s (hit the cap) | **143 s** |
+| `ask_an_expert` calls | 12, all `FileNotFoundError` | **2, both succeeded** |
+| Reply delivered | none | yes |
+| Score | 0/5 | **1/5** |
+
+The tooling defect is gone and the retry loop with it - there was nothing left to retry,
+so the CORE RULE 4 violation disappeared without the rule itself improving. What the fix
+exposes is that the *model* was never the binding constraint in the way the loop suggested:
+given working escalation, it still declined to answer, asking which note held the PSM timer
+decoding even though `shared/debugging-session-psm-not-engaging.md` was in the vault and its
+own searches had run. That is the same CORE RULE 6 over-application that produced the 0/5s
+on tests 22 and 25.
+
+So the corrected reading of this spot run is: **one defect in the harness was costing test
+32 about 8 minutes and a 12-call loop, and underneath it sits the same single Modelfile
+problem the other four tests show** - nothing makes this model search before it asks.
+
+## Re-run, 2026-09-27: FIRST ACTION rule adopted
+
+`modelfiles/granite4.2.Modelfile` now carries a `# FIRST ACTION` block above the numbered
+rules, and the new "ask only after searching" rule **replaces** CORE RULE 6 rather than
+being added as a second rule about asking - the old rule 6 said the opposite, and leaving
+both would have given a 3B two contradictory instructions side by side. Rule 7 (short
+answers, quoted lines, paths) is untouched. Only this file changed: the other five carry
+the qwen3.5 prompt, which already has an equivalent first-action rule.
+
+Both arms are the same Modelfile; only `THINK` differs.
+
+| # | 09-19 | 09-21 | 09-27 before | **A: `THINK=false`** | **B: `THINK=true`** |
+|---|---|---|---|---|---|
+| 4 | 0/5 | 0/5 | 4/5 | 4/5 | 4/5 |
+| 6 | 0/5 | 0/5 | 1/5 | 1/5 | **5/5** |
+| 22 | 0/5 | 0/5 | 0/5 | 0/5 | 1/5 |
+| 25 | 1/5 | 1/5 | 1/5 | 1/5 | 1/5 |
+| 32 | 3/5 | 0/5 | 0/5 | *invalid* | 0/5 |
+| | **4/25** | **1/25** | **6/25** | **6/25** | **11/25** |
+
+### Arm A - the rule is inert at `THINK=false`
+
+No score moved. Tests 22 and 25, the two the rule was written for, still make **zero tool
+calls**. This is the third and fourth wording-and-config combination tried against them
+(the proposed wording and a broader "if you are unsure whether this rule applies, it
+applies" variant, each at `THINK=false`); all four produced zero tool calls.
+
+One real gain that the score does not show: test 4 used to open on
+`read_note("directives/daily")`, a path no tool had returned - a CORE RULE 2 violation.
+It now opens `search_notes("September 17")`. The rule displaced the invented-path opener.
+
+Test 32 is unscorable in this arm: Ollama returned a 500 mid-turn after 11 tool calls.
+Not a context overflow - prompt tokens peaked at 9,186 against a 16,384 window.
+
+### Arm B - the rule works, and test 6 is solved
+
+Turning thinking on is what makes the rule fire, exactly as this Modelfile's own line 10
+warns ("Don't run tool loops with thinking off").
+
+**Test 6 went 0/5 → 5/5, its first correct answer in any run.** It opened with
+`find_in_notes` and the regex `\[\[.*\]\]` - the tool the PICKING A TOOL table prescribes
+and that was called zero times in the whole scored run - and named all four dangling
+links with paths and line numbers: the three annotated in `technical-knowledge-base.md`
+(lines 58-60) plus `[[Nonexistent Note Alpha]]` in `unicode-and-formatting-torture.md`
+line 56, which is the only one the vault does not flag. It also correctly reasoned that
+`[[Battery Life Modeling Revised]]` and `[[Area Monitor Device Redesign]]` do exist,
+dropping the false positive it asserted in the scored run.
+
+Test 22 went 0 → 3 tool calls but searched "task" and landed on the daily note and a
+preferences note, answering about MQTT and modem work rather than the RTOS analysis in
+`freertos-task-management.md`. Retrieval started; comprehension did not follow.
+
+Test 32 retrieved better than in any run - all three topics, including
+`debugging-session-psm-not-engaging.md` and `correction-the-47-minute-mystery.md` - and
+made **one** `ask_an_expert` call with seven vault-relative attachments, all of which
+resolved (the path fix holding at seven files). The call took 86 s and the turn then ran
+out the 600 s cap while writing its answer. Still 0/5, but from running out of clock after
+doing the right things, not from a 12-call loop on a broken tool.
+
+### Why test 25 still fails, in the model's own words
+
+Thinking mode made the cause legible. Asked to draft a status message, it reasoned:
+
+> "The request is just 'Draft a status message to my manager.' It doesn't mention any
+> specific notes or projects. ... This request does not mention any notes, projects, etc.
+> So I should respond asking for more details? ... Alternatively, I could search_notes for
+> 'manager' but that's not likely."
+
+It is not ignoring the rule. It evaluated the trigger - "mentions Clarence's notes,
+projects, people, decisions or anything he has written or done" - decided a drafting
+request does not match, and declined to search by the letter of the instruction. The
+qwen3.5 file's equivalent closes this by naming the task types as well as the subjects:
+"a question, **or a task like drafting or summarizing**". Adding that clause is the
+obvious next change.
+
+### Caveats
+
+- One sample per test, and there is real variance: an earlier `THINK=true` run with this
+  same prompt had test 25 searching "manager" and reading `one-on-one-with-manager.md`.
+  Arm B's zero-call result for it is one draw, not a settled outcome.
+- Thinking costs about 5x the wall clock (test 4: 36 s → 171 s; test 6: 18 s → 197 s).
+  The 600 s cap is now the binding limit on test 32 rather than any defect.

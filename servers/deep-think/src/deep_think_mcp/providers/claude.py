@@ -24,6 +24,21 @@ def _build_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
 
+def _upload_mime_type(path: Path) -> str:
+    """The media type to upload `path` under.
+
+    A document content block accepts only PDF and text/plain, so every other text
+    format - text/markdown for a vault note, text/x-python for a source file - has to
+    go up as plain text or the Messages API rejects the whole request with a 400.
+    """
+    guessed = mimetypes.guess_type(path.name)[0]
+    if guessed is None:
+        return "application/octet-stream"
+    if guessed.startswith("text/") and guessed != "text/plain":
+        return "text/plain"
+    return guessed
+
+
 def _page_to_dict(page) -> dict:
     """Flatten a paginated SDK response (models.list, files.list) to a plain dict.
 
@@ -94,7 +109,7 @@ class ClaudeProvider(Provider):
         if not path.is_file():
             raise FileNotFoundError(f"No such file: '{file_path}'")
 
-        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        mime_type = _upload_mime_type(path)
         with path.open("rb") as f:
             uploaded = self._client.files.upload(
                 file=(path.name, f, mime_type), expires_in_seconds=expires_in_seconds

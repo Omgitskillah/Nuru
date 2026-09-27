@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from deep_think_mcp.providers.claude import ClaudeProvider
+from pathlib import Path
+from deep_think_mcp.providers import claude
 
 
 def _fake_response(data: dict) -> MagicMock:
@@ -170,3 +172,21 @@ def test_list_files_flattens_the_paginated_response(provider, client):
     response = provider.list_files()
 
     assert response["data"] == [{"id": "file_abc"}]
+
+
+# --- _upload_mime_type ---
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("battery-life-modeling.md", "text/plain"),   # a document block rejects text/markdown
+        ("notes.txt", "text/plain"),
+        ("server.py", "text/plain"),
+        ("datasheet.pdf", "application/pdf"),
+        ("diagram.png", "image/png"),
+        ("mystery.bin", "application/octet-stream"),
+    ],
+)
+def test_upload_mime_type_sends_text_formats_as_plain_text(name, expected):
+    assert claude._upload_mime_type(Path(name)) == expected

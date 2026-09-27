@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from mcp import StdioServerParameters
+from mcp.client.stdio import get_default_environment
 
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
@@ -35,20 +36,51 @@ from core.providers.ollama import (
 load_dotenv()
 
 # BASE_MODEL is the plain Ollama model create_model() builds from; MODEL is
-# the derived, custom model - built fresh from Modelfile on every startup -
+# the derived, custom model - built fresh from its family's Modelfile on every startup -
 # that actually gets loaded and chatted with, carrying the tool-use SYSTEM
 # prompt baked in.
 BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3:8b")
 MODEL = os.environ.get("MODEL", "nuru")
 THINK = os.environ.get("THINK", "true").lower() != "false"
 
-MODELFILE_PATH = Path(__file__).resolve().parents[2] / "Modelfile"
+MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
+
+
+def _modelfile_for(base_model: str) -> Path:
+    """The Modelfile carrying `base_model`'s sampling parameters, picked by model
+    family - the name with any registry namespace and `:tag` stripped, so
+    `qwen3.5:9b`, `qwen3.5` and `library/qwen3.5:latest` all resolve to
+    modelfiles/qwen3.5.Modelfile.
+
+    A family without its own file is an error rather than a fallback: the
+    PARAMETER blocks are tuned per model, so quietly reusing another family's
+    would sample the model wrongly and skew any bakeoff run against it.
+    """
+    family = base_model.split("/")[-1].split(":")[0]
+    path = MODELFILES_DIR / f"{family}.Modelfile"
+    if not path.exists():
+        available = ", ".join(sorted(p.stem for p in MODELFILES_DIR.glob("*.Modelfile")))
+        raise FileNotFoundError(
+            f"No Modelfile for base model {base_model!r} (looked for {path}). "
+            f"Available families: {available}. Add {family}.Modelfile to run it."
+        )
+    return path
+
 
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
 OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
 
 DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
-DEEP_THINK_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR)
+# ask_an_expert's file_paths are the vault-relative ones the obsidian tools returned, but
+# deep-think runs in its own directory, so without a base to resolve them against every
+# attachment fails with FileNotFoundError. Added to the MCP client's usual restricted env
+# rather than replacing it; deep-think's own .env supplies the default when this is unset.
+_deep_think_env = get_default_environment()
+if _vault := (os.environ.get("DEEP_THINK_BASE_DIR") or os.environ.get("VAULT_PATH")):
+    _deep_think_env["DEEP_THINK_BASE_DIR"] = _vault
+DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
+    command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=_deep_think_env
+)
 
 # Tools the servers expose that the local model is never offered or allowed to
 # call. delete_file_or_directory is a recursive delete on a free-form path, the
@@ -170,7 +202,7 @@ class Session:
         """Build the custom model, connect the MCP servers, open the log and the database, load the
         model, and return the session that ties them together. Whatever was opened is closed
         again if a later step fails."""
-        create_model(MODEL, BASE_MODEL, MODELFILE_PATH)
+        create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
 
         with ExitStack() as opened:
             tools = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL)

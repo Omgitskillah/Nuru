@@ -104,7 +104,7 @@ By default `generate_templates()` does not overwrite a template file that alread
 
 **What's indexed.** Every note except `Templates/`, `archive/`, hidden folders and symlinks out of the vault - the same working set `browse_notes` shows, `user/` included. No other folder name is assumed, so the vault can be reorganised freely. A note's id is the one `create_note` gave it, else its frontmatter `id`, else `null`.
 
-**Building the index.** Nuru keeps it current on its own: while Nuru runs, a background thread (see [`vault_indexer.py`](../../nuru/src/core/vault_indexer.py)) looks over the vault every 30 seconds and embeds whatever changed, and the window title reads `Nuru ⠹ indexing 12 notes` while it works. The first time, that means the whole vault. To build or update it by hand - for another client such as Claude Desktop, or to get the first build out of the way:
+**Building the index.** Nuru keeps it current on its own: while Nuru runs, a background thread (see [`vault_indexer.py`](../../nuru/src/core/vault_indexer.py)) looks over the vault every 30 seconds and embeds whatever changed, and the window title reads `Nuru ⠹ indexing 12 notes` while it works - held for at least 1.5 s, then `Nuru · indexed 12 notes` for 3 s, since re-embedding one note takes ~0.1 s. Every pass that changes the index also prints a line to the terminal Nuru was started from (`Nuru: semantic index - indexed 1 note: user/daily-2026-09-17.md`) and adds an `index_pass` event to Nuru's session log under `nuru/logs/`. The first time, that means the whole vault. To build or update it by hand - for another client such as Claude Desktop, or to get the first build out of the way:
 
 ```bash
 ollama pull nomic-embed-text:v1.5   # once

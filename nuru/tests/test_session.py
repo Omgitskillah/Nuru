@@ -669,6 +669,9 @@ def test_a_reasoning_level_still_triggers_the_silent_turn_retry(monkeypatch):
 class FakeIndexer:
     def __init__(self):
         self.pending = 0
+        self.changes = 0
+        self.last_change = ""
+        self.on_change = None
         self.calls = []
 
     def start(self):
@@ -685,6 +688,7 @@ def test_start_runs_the_background_indexer_and_close_stops_it(monkeypatch):
 
     assert indexer.calls == ["start"]
     assert s.indexing == 0
+    assert callable(indexer.on_change)  # wired to the session log
     indexer.pending = 7
     assert s.indexing == 7
 
@@ -897,3 +901,31 @@ def test_start_connects_the_obsidian_deep_think_and_calc_servers(monkeypatch):
     Session.start()
 
     assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp"]
+
+
+def test_index_change_reports_the_indexers_passes(monkeypatch):
+    indexer = FakeIndexer()
+    monkeypatch.setattr(session, "VaultIndexer", type("V", (), {"from_env": staticmethod(lambda: indexer)}))
+    s = start_session(monkeypatch)
+    assert s.index_change == (0, "")
+
+    indexer.changes, indexer.last_change = 2, "indexed 1 note"
+
+    assert s.index_change == (2, "indexed 1 note")
+    s.close()
+
+
+def test_an_index_pass_is_written_to_the_session_log(monkeypatch, tmp_path):
+    indexer = FakeIndexer()
+    monkeypatch.setattr(session, "VaultIndexer", type("V", (), {"from_env": staticmethod(lambda: indexer)}))
+    s = start_session(monkeypatch)
+    from obsidian_mcp.semantic import RefreshResult
+
+    indexer.on_change(RefreshResult(embedded=["user/a.md"], moved=[("x.md", "y/x.md")], removed=["z.md"]))
+
+    (log_file,) = tmp_path.glob("*.jsonl")
+    events = [e for e in map(json.loads, log_file.read_text().splitlines()) if e["event"] == "index_pass"]
+    assert events == [
+        {**events[0], "embedded": ["user/a.md"], "moved": [{"from": "x.md", "to": "y/x.md"}], "removed": ["z.md"]}
+    ]
+    s.close()

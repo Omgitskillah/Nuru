@@ -298,6 +298,9 @@ class Session:
             session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
+                session.indexer.on_change = lambda result: logger.index_pass(
+                    result.embedded, result.moved, result.removed
+                )
                 session.indexer.start()
                 opened.callback(session.indexer.stop)
             opened.pop_all()  # it worked, so the session owns them now
@@ -307,6 +310,12 @@ class Session:
     def indexing(self) -> int:
         """How many notes the background indexer has left to embed; 0 while it's idle."""
         return self.indexer.pending if self.indexer else 0
+
+    @property
+    def index_change(self) -> tuple[int, str]:
+        """(how many indexing passes have changed the index, what the latest one did), for the
+        window to announce a pass too quick to catch while it ran; (0, "") without an indexer."""
+        return (self.indexer.changes, self.indexer.last_change) if self.indexer else (0, "")
 
     @property
     def context_window(self) -> int:

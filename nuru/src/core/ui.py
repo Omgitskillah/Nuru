@@ -7,6 +7,7 @@ and what comes back is folded into markdown by core.reply_markdown.
 import math
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
@@ -599,6 +600,10 @@ class ChatWindow(QWidget):
     TITLE = "Nuru"
     SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the title cycles through these while notes are being embedded
     SPIN_MS = 100
+    # Re-embedding one note takes ~0.1 s - less than a frame of the spinner. So the spinner stays at
+    # least this long once shown, and a finished pass is then named in the title for a while.
+    MIN_SPIN_SECONDS = 1.5
+    DONE_SECONDS = 3.0
     CLOSE_WAIT_SECONDS = 5  # how long closing waits for a reply in flight to save what it has
 
     def __init__(self, start_session: Callable[[], Session]) -> None:
@@ -627,6 +632,11 @@ class ChatWindow(QWidget):
         # The title bar is native, so it can't hold a widget: the background indexer's progress is
         # shown in the title text instead. Runs from on_started, once there's a session to ask.
         self.spin_frame = 0
+        self.spin_started: float | None = None  # when the spinner went up; None while it's down
+        self.spin_count = 0  # the most notes seen pending in the pass the spinner is showing
+        self.shown_changes = 0  # the index_change count the title has already announced
+        self.done_text = ""  # what the finished pass did, shown once the spinner comes down
+        self.done_until = 0.0
         self.title_timer = QTimer(self)
         self.title_timer.setInterval(self.SPIN_MS)
         self.title_timer.timeout.connect(self.update_title)
@@ -730,12 +740,41 @@ class ChatWindow(QWidget):
         self.prompt.setFocus()
 
     def update_title(self) -> None:
-        """"Nuru ⠹ indexing 12 notes" while the session's indexer is embedding, else just "Nuru"."""
-        pending = self.session.indexing if self.session is not None else 0
+        """"Nuru ⠹ indexing 12 notes" while the indexer embeds, then "Nuru · indexed 12 notes" for
+        DONE_SECONDS, else just "Nuru".
+
+        The spinner stays up at least MIN_SPIN_SECONDS once shown. A pass that finished between two
+        ticks - too quick ever to be seen pending - still gets the spinner and the summary.
+        """
+        now = time.monotonic()
+        session = self.session
+        pending = session.indexing if session is not None else 0
+        changes, summary = session.index_change if session is not None else (0, "")
+
         if pending:
+            if self.spin_started is None:
+                self.spin_started = now
+            self.spin_count = max(self.spin_count, pending)
+        if changes != self.shown_changes:
+            self.shown_changes = changes
+            self.done_text = summary
+            if self.spin_started is None:
+                self.spin_started = now  # over before a tick caught it: show the spinner anyway
+        if self.spin_started is not None and not pending and now - self.spin_started >= self.MIN_SPIN_SECONDS:
+            self.spin_started = None
+            self.spin_count = 0
+            if self.done_text:
+                self.done_until = now + self.DONE_SECONDS
+
+        if self.spin_started is not None:
             self.spin_frame = (self.spin_frame + 1) % len(self.SPINNER)
-            title = f"{self.TITLE} {self.SPINNER[self.spin_frame]} indexing {pending} note{'' if pending == 1 else 's'}"
+            left = pending or self.spin_count
+            count = f" {left} note{'' if left == 1 else 's'}" if left else ""
+            title = f"{self.TITLE} {self.SPINNER[self.spin_frame]} indexing{count}"
+        elif self.done_text and now < self.done_until:
+            title = f"{self.TITLE} · {self.done_text}"
         else:
+            self.done_text = ""
             title = self.TITLE
         if self.windowTitle() != title:
             self.setWindowTitle(title)

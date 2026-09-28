@@ -45,6 +45,7 @@ class FakeSession:
     function of the cancel event that returns the events (for turns that must wait or be stopped)."""
 
     indexing = 0  # notes the background indexer has left to embed
+    index_change = (0, "")  # (passes that changed the index, what the latest did)
 
     def __init__(self, turns=()):
         self._turns = iter(turns)
@@ -864,6 +865,7 @@ def test_closing_survives_a_failed_shutdown_and_still_releases_the_session(make_
 def test_the_title_spins_while_notes_are_being_indexed(make_window):
     session = FakeSession()
     window = make_window(session)
+    window.MIN_SPIN_SECONDS = 0.1
     window.start()
     settle(window.starting)
     assert window.windowTitle() == "Nuru"
@@ -877,4 +879,52 @@ def test_the_title_spins_while_notes_are_being_indexed(make_window):
     session.indexing = 1
     wait_until(lambda: window.windowTitle().endswith("indexing 1 note"))
     session.indexing = 0
+    wait_until(lambda: window.windowTitle() == "Nuru")
+
+
+def started_window(make_window, session, min_spin=0.3, done=0.4):
+    window = make_window(session)
+    window.MIN_SPIN_SECONDS = min_spin
+    window.DONE_SECONDS = done
+    window.start()
+    settle(window.starting)
+    return window
+
+
+def test_the_spinner_stays_up_for_a_minimum_time_even_if_the_pass_ends_at_once(make_window):
+    session = FakeSession()
+    window = started_window(make_window, session, min_spin=0.5)
+
+    session.indexing = 1
+    wait_until(lambda: window.windowTitle().endswith("indexing 1 note"))
+    session.indexing = 0
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:  # well inside the minimum: still spinning
+        QApplication.processEvents()
+        assert "indexing" in window.windowTitle()
+        time.sleep(0.01)
+    wait_until(lambda: window.windowTitle() == "Nuru")
+
+
+def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_window):
+    session = FakeSession()
+    window = started_window(make_window, session)
+
+    session.index_change = (1, "indexed 1 note")  # finished between two ticks: never seen pending
+
+    wait_until(lambda: "indexing" in window.windowTitle())
+    wait_until(lambda: window.windowTitle() == "Nuru · indexed 1 note")
+    wait_until(lambda: window.windowTitle() == "Nuru")
+
+
+def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
+    session = FakeSession()
+    window = started_window(make_window, session)
+
+    session.indexing = 3
+    wait_until(lambda: window.windowTitle().endswith("indexing 3 notes"))
+    session.indexing = 0
+    session.index_change = (1, "indexed 3 notes")
+
+    wait_until(lambda: window.windowTitle() == "Nuru · indexed 3 notes")
     wait_until(lambda: window.windowTitle() == "Nuru")

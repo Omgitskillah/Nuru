@@ -895,3 +895,65 @@ divisions and a sum away - and were not used.
    Modelfile was rewritten in the first person. One occurrence.
 
 **Caveats:** one sample per test. No Anthropic calls.
+
+## Math-tool examples in the Modelfile, then test 22 (3B, `medium`)
+
+A `# USING THE MATH TOOLS` block was added: every number not copied verbatim comes from the
+tools; when a note states a total, average, percentage or ratio and shows its parts, recompute
+it and report any difference; one call per step, results chained, steps shown. Worked examples:
+an average (`add` then `divide`), a percentage (`divide` then `multiply` by 100), and checking a
+stated total that is wrong ("3 boxes of 24 plus 10 loose = 92" → 82). A sum-of-ratios example
+was left out on purpose: it is test 22's own calculation, and would coach the test.
+
+**Test 22: 1/5** (217 s, 5 calls, no math calls). It misread the question as calendar scheduling:
+`search_notes("task")` and a later `semantic_search` both ranked the FreeRTOS note first, and it
+read neither - it read the daily note and the work-hours preferences instead, and answered that
+the pending tasks "fit into core hours" but blockers make the set "partially schedulable". The
+same misreading as the 09-27 `THINK=true` run (1/5); the three 3B runs before this one all went
+to the FreeRTOS note. One sample, so the math section's effect on test 22 is not yet measured.
+
+## Test 7 with the math-tool guidance (3B, `medium`): 2/5
+
+"Recompute the average current from the power budget table and the resulting battery life."
+546 s, 2 calls (`semantic_search` → `read_note` on the Area Monitor project note), **no math
+tool calls**. It quoted the battery line, the power-budget table and the note's own
+`I_avg ≈ 1.76 + 1.68 + 0.0026 + 1.90 + 0.0038 ≈ 5.35 mA` line, then wrote "Recomputed result:
+I_avg ≈ 5.35 mA. Battery life = 30.4 Ah / 5.35 mA ≈ 5682 h ≈ 236.8 days", path cited.
+
+The figures are correct (checked: each current × duty matches its contribution, the sum is
+5.346 mA, and 30.4 Ah / 5.35 mA = 5,682 h = 236.8 d), but nothing was recomputed: every number
+is already in the note, so "copy it and call it recomputed" satisfied the new rule's letter
+("every number you report that you did not copy word for word from a note comes from these
+tools"). That is the failure the 09-19 baseline was scored 2/5 for. It also left out the note's
+own doubt that the duty cycles overlap, which the best earlier answer (qwen3.5, 09-21 re-run)
+addressed. Previous scores: 09-19 2/5, 09-21 0/5 (runaway loop; re-run correct).
+
+One sample.
+
+## "Recompute means call the tools" rule, then tests 7 and 22 (3B, `medium`)
+
+Added to the math block: "When I ask you to recompute, check or verify a figure, call the tools
+on its parts even if the note already shows the result. Never present the note's own result as
+your recomputation."
+
+| # | before the rule | **with the rule** | math calls |
+|---|---|---|---|
+| 7 | 2/5 · 546 s | **3/5** · 295 s | `divide(30.4, 0.00535)` |
+| 22 | 1/5 · 217 s | **3/5** · 179 s | none |
+
+**Test 7:** the first math tool call Granite has made in any run. It found the table in the project
+note and divided capacity by current with the tool (5,682.24 h; mA → A handled correctly). But it
+summed the five contributions in its head and wrote **5.3454** mA - the true sum is **5.3464** -
+the exact kind of slip the tools exist to prevent. It then labels the life calculation
+"30.4 Ah / 5.3454 mA" though the call it made used 5.35. No per-row current × duty check, and
+the note's overlap doubt is still not raised. Final figures (≈ 5.35 mA, ≈ 236.8 days) are right.
+
+**Test 22:** back on the FreeRTOS note in one `semantic_search`; right verdict, bound quoted, path
+cited, no 14.2 ms. Still repeats U = 0.58 with no math calls: "Is my task set schedulable?"
+contains none of the rule's trigger words (recompute, check, verify), so the rule did not apply.
+The previous run's misreading (calendar scheduling) did not recur, consistent with it having
+been variance.
+
+**Reading:** naming the trigger words moved the behaviour where they appear (test 7) and nowhere
+else (test 22). Granite uses a tool for the step it finds hard (a unit-converting division) and
+still does "easy" additions itself, even against "not even easy sums". One sample each.

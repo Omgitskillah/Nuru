@@ -118,3 +118,46 @@ def test_a_failing_pass_is_reported_once_and_retried(vault, capsys):
     assert capsys.readouterr().err.count("Can't reach Ollama") == 1
     assert indexer.error == "ConnectionError: Can't reach Ollama"
     assert indexer.pending == 0
+
+
+def test_a_pass_that_changes_the_index_is_announced(vault, capsys):
+    indexer = indexer_for(vault)
+    seen = []
+    indexer.on_change = seen.append
+
+    indexer.run_once()
+
+    assert (indexer.changes, indexer.last_change) == (1, "indexed 2 notes")
+    assert seen[0].embedded == ["a.md", "b.md"]
+    assert "Nuru: semantic index - indexed 2 notes: a.md, b.md" in capsys.readouterr().err
+
+
+def test_a_pass_that_changes_nothing_is_not_announced(vault, capsys):
+    indexer = indexer_for(vault)
+    indexer.run_once()
+    capsys.readouterr()
+
+    indexer.run_once()
+
+    assert indexer.changes == 1
+    assert capsys.readouterr().err == ""
+
+
+def test_the_announcement_names_moves_and_removals_and_caps_a_long_list(tmp_path, capsys):
+    for n in range(7):
+        (tmp_path / f"n{n}.md").write_text(f"Note {n}.\n")
+    indexer = indexer_for(tmp_path)
+    indexer.run_once()
+    capsys.readouterr()
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "n0.md").rename(tmp_path / "sub" / "n0.md")
+    (tmp_path / "n1.md").unlink()
+
+    indexer.run_once()
+
+    assert indexer.last_change == "moved 1, removed 1"
+    assert "n0.md -> sub/n0.md, n1.md (removed)" in capsys.readouterr().err
+    assert vault_indexer.describe(semantic.RefreshResult(embedded=["x"] * 7)) == "indexed 7 notes"
+    assert vault_indexer._paths_line(semantic.RefreshResult(embedded=[f"p{n}" for n in range(7)])).endswith(
+        "p4 and 2 more"
+    )

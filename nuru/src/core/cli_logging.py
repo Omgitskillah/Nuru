@@ -147,6 +147,18 @@ class CLILogger:
             }
         )
 
+    def index_pass(self, embedded: list[str], moved: list[tuple[str, str]], removed: list[str]) -> None:
+        """A background indexing pass that changed the semantic index. Called from the indexer's
+        own thread; logging's handlers are thread-safe."""
+        self._log(
+            {
+                "event": "index_pass",
+                "embedded": embedded,
+                "moved": [{"from": a, "to": b} for a, b in moved],
+                "removed": removed,
+            }
+        )
+
     def session_end(self, reason: str, models_unloaded: bool, server_stopped: bool) -> None:
         self._log(
             {

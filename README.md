@@ -12,6 +12,7 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 | `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes | `NURU_LOG_DIR` |
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |
 | `servers/deep-think/.file_cache.db` | deep-think | Which files were already uploaded to the expert, by content hash | `DEEP_THINK_MCP_DB_PATH` |
+| `nuru/evals/**/.runs/` | the eval scripts | Raw eval results and scratch vault copies (see [decision-layer evals](nuru/evals/decision_layer/README.md)) | - |
 | `<vault>/.obsidian-mcp-index.sqlite3` | obsidian-mcp | Note id -> path for notes `create_note` made | - |
 | `<vault>/.obsidian-mcp-semantic.sqlite3` | obsidian-mcp and Nuru's indexer | Semantic-search chunks and their vectors | `OBSIDIAN_SEMANTIC_DB` |
 

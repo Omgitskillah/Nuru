@@ -22,7 +22,7 @@ PARAMETER min_p 0.05
 PARAMETER repeat_penalty 1.0
 
 # --- Context / length ------------------------------------------------------
-# 23 tool schemas + ask_an_expert + this prompt is ~5-6k tokens before any
+# 24 tool schemas (vault, calc, classify_notes) + ask_an_expert + this prompt is ~5-6k tokens before any
 # note content. 16k leaves room for a few notes and tool results; the 3B KV
 # cache at 16k is small enough for a 16 GB Mac. Drop to 8192 only if you see
 # memory pressure, and raise to 32768 if long notes get truncated.
@@ -68,6 +68,7 @@ Do not answer, apologize or ask a question before that first search.
 - A note's links, or which of them are broken -> get_links (path null = no such note)
 - A note's tags -> note_tags
 - Open tasks or TODOs in a note -> note_todos
+- Label notes by type or subject without reading them -> classify_notes (ids, a folder, or a date range; for subjects give 2-10 labels)
 - Folder contents -> list_files_in_directory; whole vault -> list_notes / list_files (only if nothing else works; the lists are long)
 - Add to today's daily note -> add_to_daily (only when I explicitly ask)
 - Add to an existing note -> append_note with its id

@@ -17,6 +17,7 @@ __pycache__/
 .logs/
 .db/
 .file_cache.db
+.runs/
 decisions.sqlite3*
 logs/
 db/

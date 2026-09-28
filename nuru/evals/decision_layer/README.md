@@ -1,0 +1,36 @@
+# Decision-layer evals
+
+Runnable evaluations for the Laya decision layer (see [servers/laya](../../../servers/laya)). Each writes its raw results to `.runs/` here - hidden and gitignored, like everything generated - and prints a summary.
+
+Run them one at a time, under `caffeinate -i` (the Mac sleeps mid-run otherwise, and timings balloon), and not while anything else uses the GPU: several measure latency. They ask the local model real questions, and the suite runs can call the cloud expert (`ask_an_expert`) - ask before running them.
+
+| # | Script | What it measures | Model runs |
+|---|---|---|---|
+| 1 | `think_modes.py` | Thinking tokens, latency and correctness per thinking level (off / low / medium / high) on argument-only steps, with `think` passed top-level and inside `options`. Temperature 0 and a fixed seed, so "two levels are the same" means byte-identical output. | 30 calls |
+| 2 | `format_enforcement.py` | Whether the output always matches the forced argument schema (`core.forced_schema`), in every tier the config maps, at Nuru's own sampling - thinking off above all. | 5 steps x 3 tiers x `--repeats` |
+| 3 | `run_suite.py` + `tier_labels.py` | Suite tests 28-31 (the constrained edits) at every local tier, three runs each, scored out of 5 by `score_edits.py`; a test's label is the cheapest tier that passes (4/5+) in two of three runs. | 36 turns |
+| 4 | `baseline_compare.py` | Always-`high` against the `assess_effort` policy, replayed from eval 3's batch: the candidate's score and latency are the measured ones at the tier Laya picked for the first step. | none (reuses 3) |
+| 5 | `run_suite.py` + `shadow_report.py` | The whole 34-prompt suite in shadow mode, then Laya's tool choice next to the model's at every step, disagreements included. | 34 turns |
+| 6 | `check_claim_set.py` | check_claim on planted false claims (a write claimed that failed, one never attempted, an invented note ID) mixed with honest replies: catches and false alarms. | Laya only |
+| 7 | `laya_latency.py` | Laya's per-call latency per question set, MPS against CPU. | Laya only |
+
+```bash
+cd nuru/evals/decision_layer
+caffeinate -i uv run python think_modes.py
+caffeinate -i uv run python format_enforcement.py
+caffeinate -i uv run python run_suite.py --tests 28-31 --tiers off,low,high --repeats 3 --label tiers
+uv run python tier_labels.py .runs/suite-tiers-<time>
+uv run python baseline_compare.py .runs/suite-tiers-<time>
+caffeinate -i uv run python run_suite.py --tests 1-34 --label shadow
+uv run python shadow_report.py .runs/suite-shadow-<time>
+uv run python check_claim_set.py
+uv run python laya_latency.py
+```
+
+## How the suite runs are isolated
+
+`run_suite.py` runs one fresh Nuru process per turn (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with the batch's own conversation history, session logs and decision log - the real vault, history and decision log are never touched. The semantic index is built once from the pristine copy and restored before every turn. A turn gets 10 minutes; past that its whole process tree is killed and it counts as a failure. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).
+
+## What these can't measure yet
+
+The **expert tier** and the **assess_effort policy actually steering a run** (tiers rising on failure signals, escalation to Claude) arrive with the enforcement paths in Phase 4. Until then, eval 3 labels a test `expert` when no local tier passes (untested), and eval 4 is a replay rather than a live A/B. Both should be re-run once Phase 4 lands.

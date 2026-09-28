@@ -27,7 +27,7 @@ from laya_mcp.vault import Vault
 
 load_dotenv()
 
-LOG_DIR = Path(os.environ.get("LAYA_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+LOG_DIR = Path(os.environ.get("LAYA_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
 HARNESS_TOOLS = frozenset({"assess_effort", "tool_gate", "gate_write", "check_claim", "rerank", "health"})
 MODEL_TOOLS = frozenset({"classify_notes"})

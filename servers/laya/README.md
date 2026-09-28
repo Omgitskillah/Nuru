@@ -15,6 +15,12 @@ uv run laya-mcp                   # stdio server; Nuru starts it itself
 
 The server runs with the Hugging Face hub offline (`laya.offline: true`), so after `laya-mcp-fetch` it never touches the network. The checkpoints are pinned to one commit (`laya.revision`).
 
+To try the tools by hand in the MCP Inspector, pass the vault with `-e` - the Inspector starts the server with its own environment, so a `VAULT_PATH` set in your shell never reaches it (and `classify_notes` fails with "no vault is configured"). `health` reports `"vault": true` once it has one, and `laya.state: "ready"` once the checkpoints have loaded (~10 s):
+
+```bash
+MCP_INSPECTOR_LOG_DIR=./.logs npx @modelcontextprotocol/inspector -e VAULT_PATH=/absolute/path/to/vault uv run laya-mcp
+```
+
 ## Tools
 
 Harness only - Nuru calls these and acts on the answer in code; they are never in the model's tool list:
@@ -73,11 +79,19 @@ Laya's probabilities mean nothing until calibrated on Nuru's own labelled decisi
 
 ## Decision log
 
-SQLite at `database` in the config (gitignored; it holds state text, which can include vault content, and never leaves this machine), WAL mode because the harness writes to it too:
+SQLite at `database` in the config - `nuru/.db/decisions.sqlite3` by default, next to Nuru's conversation history - in WAL mode because the harness writes to it too. It holds state text, which can include vault content, so it is hidden, gitignored (the root `.gitignore` also names `decisions.sqlite3*` as a safety net) and never leaves this machine.
 
 - `decisions` - every call: session/task/step, question set and version, checkpoint, state hash and text, questions, answers, status, the action the policy proposed, the action the harness took, shadow/enforce, latency, outcome, label and label source (`user` or `claude` only - never the local model).
 - `tool_calls` - what the harness actually executed. Note text in `content`/`body`/`text` arguments is stored as its length and hash; IDs and paths are kept.
 - `classify_cache` - see above.
+
+## Generated files
+
+All hidden and gitignored (the repo-wide list is in the [root README](../../README.md#generated-files)):
+
+- `nuru/.db/decisions.sqlite3`, with SQLite's `-wal` and `-shm` beside it - the decision log above.
+- `servers/laya/.logs/` - one MCP access log per client session (`LAYA_MCP_LOG_DIR`).
+- Laya's checkpoints live outside the repo, in the Hugging Face cache (`~/.cache/huggingface/`), put there by `laya-mcp-fetch`.
 
 ## Privacy
 

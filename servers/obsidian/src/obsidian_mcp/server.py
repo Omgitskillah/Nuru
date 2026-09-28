@@ -144,7 +144,7 @@ yaml.add_representer(_DoubleQuoted, _represent_double_quoted, Dumper=_Frontmatte
 
 # Every session's access is logged under here, independent of which client
 # connects (Inspector, Claude Desktop, or anything else) - see tools/logging.
-LOG_DIR = Path(os.environ.get("OBSIDIAN_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+LOG_DIR = Path(os.environ.get("OBSIDIAN_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
 mcp = MCPServer("obsidian-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
 

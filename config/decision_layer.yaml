@@ -5,9 +5,9 @@
 # its `calibration` is blank, and a decision point that uses it refuses to run in `enforce` mode
 # (the config fails to load). `shadow` only logs what Laya would have done.
 
-# SQLite decision log and labels. Relative paths are relative to the repo root. Gitignored
-# (every `db/` folder is), and it never leaves this machine.
-database: db/decisions.sqlite3
+# SQLite decision log and labels. Relative paths are relative to the repo root. Kept next to
+# Nuru's conversation history in the hidden, gitignored nuru/.db/; it never leaves this machine.
+database: nuru/.db/decisions.sqlite3
 
 laya:
   device: auto              # auto | mps | cpu

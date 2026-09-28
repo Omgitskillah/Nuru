@@ -106,8 +106,8 @@ CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"
 # every other client, where a person is choosing the path.
 HIDDEN_FROM_MODEL = frozenset({"delete_file_or_directory"})
 
-LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
-DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / "db" / "conversation.db"))
+LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
+DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / ".db" / "conversation.db"))
 
 DEFAULT_NUM_CTX = 8192
 # Ceiling on the context window nuru asks Ollama to allocate. Ollama sizes the KV

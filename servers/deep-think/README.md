@@ -71,7 +71,7 @@ Copy `.env.example` to `.env` and set:
 
 - `DEEP_THINK_PROVIDER` - which provider to dispatch to (`claude` is the default).
 - `CLAUDE_API_KEY` - a real `sk-ant-...` key, required for the `claude` provider to reach the live API.
-- `DEEP_THINK_MCP_DB_PATH` - path to the SQLite file-cache database used by `ask_an_expert` (defaults to `file_cache.db` next to this package).
+- `DEEP_THINK_MCP_DB_PATH` - path to the SQLite file-cache database used by `ask_an_expert` (defaults to the hidden `.file_cache.db` next to this package).
 
 ## Running
 

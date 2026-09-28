@@ -28,7 +28,7 @@ This starts the server over stdio and waits for a host (e.g. Claude Desktop) to 
 
 - **`mcp`** - The MCP server framework this package is built on (`MCPServer`, `@mcp.tool`, `@mcp.resource`); required to expose these tools/resources to a client at all.
 - **`python-dotenv`** - Loads `VAULT_PATH` (and `OBSIDIAN_MCP_LOG_DIR`) from `.env` at startup, so the vault location isn't hardcoded or passed as a CLI flag.
-- **`access-logging`** (workspace package, see [servers/tools/logging](../tools/logging)) - Provides `AccessLogMiddleware`, which logs every session's tool/resource access under `logs/` regardless of which client connects. Shared across servers in this repo rather than reimplemented here.
+- **`access-logging`** (workspace package, see [servers/tools/logging](../tools/logging)) - Provides `AccessLogMiddleware`, which logs every session's tool/resource access under `.logs/` regardless of which client connects. Shared across servers in this repo rather than reimplemented here.
 - **`python-ulid`** - Spec-correct ULID generation for note ids. Chosen over a hand-rolled implementation so the ID format (timestamp + randomness, base32 encoding) is backed by a maintained library instead of custom code.
 - **`pyyaml`** - Serializes `create_note`'s frontmatter, rather than string-templating it, so key ordering, block-style lists, and quoting (e.g. a value starting with `{` being read back as a flow mapping) are handled correctly.
 - **`unidecode`** - Transliterates a title to ASCII before slugifying it, so accented Latin letters and non-Latin scripts (CJK, etc.) survive into the filename as a readable approximation instead of being silently dropped.

@@ -26,14 +26,14 @@ To interactively call a server's tools without connecting a full host:
 
 ```bash
 cd servers/obsidian
-MCP_INSPECTOR_LOG_DIR=./logs npx @modelcontextprotocol/inspector uv run obsidian-mcp
+MCP_INSPECTOR_LOG_DIR=./.logs npx @modelcontextprotocol/inspector uv run obsidian-mcp
 ```
 
 This opens a browser UI listing the server's registered tools, where you can invoke them and inspect the request/response JSON.
 
 ## Access logging
 
-Every MCP server in this repo logs its access (tool calls, resource reads, etc.) to `servers/<name>/logs/`, regardless of which client connects (Inspector, Claude Desktop, or anything else) - the logging lives in the server process itself rather than in any one client. This directory is gitignored.
+Every MCP server in this repo logs its access (tool calls, resource reads, etc.) to `servers/<name>/.logs/` (hidden, like everything generated - see [Generated files](../README.md#generated-files)), regardless of which client connects (Inspector, Claude Desktop, or anything else) - the logging lives in the server process itself rather than in any one client. This directory is gitignored.
 
 Each session (starting at `initialize`) gets its own log file, named `<count_up_id>_<date_time>_<client_name>.log` (`client_name` falls back to `unknown` if the client doesn't report one). The logging mechanism itself is shared, standalone middleware in [tools/logging](tools/logging) (`access-logging`) - a server just points it at its own log directory, e.g. in the Obsidian server's [server.py](obsidian/src/obsidian_mcp/server.py).
 

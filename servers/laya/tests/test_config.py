@@ -71,5 +71,5 @@ def test_off_stays_a_string_not_a_yaml_boolean():
 
 def test_the_database_path_is_relative_to_the_repo_root():
     config = load_config()
-    assert config.database_path.parts[-2:] == ("db", "decisions.sqlite3")
+    assert config.database_path.parts[-3:] == ("nuru", ".db", "decisions.sqlite3")
     assert config.database_path.is_absolute()

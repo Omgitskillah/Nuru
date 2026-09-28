@@ -1,6 +1,6 @@
 # The cheapest thinking tier that gets THIS step right - not how hard the request is overall.
 name: assess_effort
-version: 1
+version: 2       # 2: no medium tier (it did nothing on granite4.2), folded into high
 checkpoint: english
 max_state_tokens: 380
 questions:
@@ -10,6 +10,5 @@ questions:
     criteria:
       "off": "No reasoning: copy or fill in something already known"
       low: "A little reasoning: one simple inference"
-      medium: "Some reasoning: a few connected steps"
-      high: "Careful reasoning: many steps, numbers, or conflicting information"
+      high: "Careful reasoning: several connected steps, numbers, or conflicting information"
       expert: "Beyond a small local model: needs a stronger planner"

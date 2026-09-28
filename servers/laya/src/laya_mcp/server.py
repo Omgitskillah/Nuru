@@ -73,7 +73,7 @@ def health() -> dict[str, Any]:
     }
 
 
-@mcp.tool(description="Harness only. Thinking tier for the next step: off, low, medium, high or expert.")
+@mcp.tool(description="Harness only. Thinking tier for the next step: off, low, high or expert.")
 @_tool
 def assess_effort(
     request: str,

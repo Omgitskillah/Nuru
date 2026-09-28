@@ -47,7 +47,7 @@ class _FakeClientSession:
 
     async def call_tool(self, name, arguments):
         CALLS.append((self._server_id, name, arguments))
-        return SimpleNamespace(content=[SimpleNamespace(text=f"{self._server_id}:{name}")])
+        return SimpleNamespace(content=[SimpleNamespace(text=f"{self._server_id}:{name}")], is_error=name == "failing_tool")
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +60,7 @@ def test_list_tools_merges_tools_from_every_server():
     TOOLS["server-a"] = [SimpleNamespace(name="tool_a", description="from a", input_schema={"type": "object"})]
     TOOLS["server-b"] = [SimpleNamespace(name="tool_b", description="from b", input_schema={"type": "object"})]
 
-    client = MCPTools(["server-a", "server-b"])
+    client = MCPTools(["server-a", "server-b"], model_tools=frozenset({"tool_a", "tool_b"}))
     client.connect()
     try:
         tools = client.list_tools()
@@ -77,7 +77,7 @@ def test_call_tool_routes_to_the_server_that_reported_it():
     TOOLS["server-a"] = [SimpleNamespace(name="tool_a", description="", input_schema={})]
     TOOLS["server-b"] = [SimpleNamespace(name="tool_b", description="", input_schema={})]
 
-    client = MCPTools(["server-a", "server-b"])
+    client = MCPTools(["server-a", "server-b"], model_tools=frozenset({"tool_a", "tool_b"}))
     client.connect()
     try:
         client.list_tools()
@@ -92,53 +92,56 @@ def test_call_tool_routes_to_the_server_that_reported_it():
 def test_close_stops_the_background_thread():
     TOOLS["server-a"] = [SimpleNamespace(name="tool_a", description="", input_schema={})]
 
-    client = MCPTools(["server-a"])
+    client = MCPTools(["server-a"], model_tools=frozenset())
     client.connect()
     client.close()
 
     assert not client._thread.is_alive()
 
 
-def test_hidden_tools_are_left_out_of_the_list_but_the_rest_of_the_server_stays():
+def test_only_allowlisted_tools_are_offered_to_the_model():
     TOOLS["server-a"] = [
         SimpleNamespace(name="safe_tool", description="ok", input_schema={}),
         SimpleNamespace(name="dangerous_tool", description="no", input_schema={}),
+        SimpleNamespace(name="tool_added_later", description="new", input_schema={}),
     ]
 
-    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client = MCPTools(["server-a"], model_tools=frozenset({"safe_tool"}))
     client.connect()
     try:
         names = [t["function"]["name"] for t in client.list_tools()]
+        everything = [t["function"]["name"] for t in client.all_tools()]
     finally:
         client.close()
 
     assert names == ["safe_tool"]
+    assert everything == ["safe_tool", "dangerous_tool", "tool_added_later"]
 
 
-def test_call_tool_refuses_a_hidden_tool_without_reaching_the_server():
+def test_call_tool_refuses_a_tool_off_the_allowlist_without_reaching_the_server():
     TOOLS["server-a"] = [
         SimpleNamespace(name="safe_tool", description="ok", input_schema={}),
         SimpleNamespace(name="dangerous_tool", description="no", input_schema={}),
     ]
 
-    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client = MCPTools(["server-a"], model_tools=frozenset({"safe_tool"}))
     client.connect()
     try:
         client.list_tools()
-        refused = client.call_tool("dangerous_tool", {"path": "x"})
+        refused = client.call_tool_result("dangerous_tool", {"path": "x"})
         allowed = client.call_tool("safe_tool", {})
     finally:
         client.close()
 
-    assert "not available" in refused
+    assert refused.is_error and "not available" in refused.text
     assert allowed == "server-a:safe_tool"
     assert CALLS == [("server-a", "safe_tool", {})]
 
 
-def test_call_tool_refuses_a_hidden_tool_even_before_list_tools_was_called():
+def test_call_tool_refuses_a_tool_off_the_allowlist_even_before_list_tools_was_called():
     TOOLS["server-a"] = [SimpleNamespace(name="dangerous_tool", description="no", input_schema={})]
 
-    client = MCPTools(["server-a"], hidden_tools=frozenset({"dangerous_tool"}))
+    client = MCPTools(["server-a"], model_tools=frozenset())
     client.connect()
     try:
         refused = client.call_tool("dangerous_tool", {})
@@ -147,3 +150,30 @@ def test_call_tool_refuses_a_hidden_tool_even_before_list_tools_was_called():
 
     assert "not available" in refused
     assert CALLS == []
+
+
+def test_the_harness_reaches_tools_the_model_cannot():
+    TOOLS["server-a"] = [SimpleNamespace(name="tool_gate", description="harness only", input_schema={})]
+
+    client = MCPTools(["server-a"], model_tools=frozenset())
+    client.connect()
+    try:
+        result = client.call_harness_tool("tool_gate", {"phase": "start"})
+    finally:
+        client.close()
+
+    assert result.text == "server-a:tool_gate" and not result.is_error
+    assert CALLS == [("server-a", "tool_gate", {"phase": "start"})]
+
+
+def test_a_tool_error_is_reported_as_one():
+    TOOLS["server-a"] = [SimpleNamespace(name="failing_tool", description="", input_schema={})]
+
+    client = MCPTools(["server-a"], model_tools=frozenset({"failing_tool"}))
+    client.connect()
+    try:
+        result = client.call_tool_result("failing_tool", {})
+    finally:
+        client.close()
+
+    assert result.is_error

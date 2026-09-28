@@ -16,12 +16,15 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
+from laya_mcp.config import load_config as load_decision_config
+from laya_mcp.decision_log import DecisionLog
 from mcp import StdioServerParameters
 from mcp.client.stdio import get_default_environment
 
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
+from core.decision_shadow import DecisionShadow
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -99,12 +102,36 @@ DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
 CALC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "calc")
 CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"], cwd=CALC_DIR)
 
-# Tools the servers expose that the local model is never offered or allowed to
-# call. delete_file_or_directory is a recursive delete on a free-form path, the
-# riskiest tool for a model that emits placeholder paths; archive_note does the
-# safe version of it (a reversible move). The obsidian server still offers it to
-# every other client, where a person is choosing the path.
-HIDDEN_FROM_MODEL = frozenset({"delete_file_or_directory"})
+LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
+# classify_notes reads the same vault the obsidian server serves: VAULT_PATH if this process has
+# one (an eval driver sets it), otherwise the one in the obsidian server's own .env.
+_laya_env = get_default_environment()
+if _vault := (os.environ.get("VAULT_PATH") or dotenv_values(os.path.join(OBSIDIAN_DIR, ".env")).get("VAULT_PATH")):
+    _laya_env["VAULT_PATH"] = _vault
+LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
+
+# The only tools the local model is offered or allowed to call - an allowlist, so a tool a server
+# adds later reaches the model only once it is added here. Left out on purpose:
+# - delete_file_or_directory: a recursive delete on a free-form path, the riskiest tool for a model
+#   that emits placeholder paths; archive_note is its reversible substitute. The obsidian server
+#   still offers it to every other client, where a person is choosing the path.
+# - the decision layer's harness tools (tool_gate, assess_effort, gate_write, check_claim, rerank,
+#   health): Nuru calls those itself; the model never does.
+MODEL_TOOLS = frozenset(
+    {
+        # obsidian, read
+        "all_tags", "browse_notes", "find_in_notes", "get_links", "list_files", "list_files_in_directory",
+        "list_notes", "note_tags", "note_todos", "notes_with_tag", "read_note", "search_notes", "semantic_search",
+        # obsidian, write
+        "add_to_daily", "append_note", "archive_note", "create_note", "generate_templates", "rename_or_move_file",
+        # calc
+        "add", "subtract", "multiply", "divide",
+        # deep-think
+        "ask_an_expert",
+        # laya
+        "classify_notes",
+    }
+)
 
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / ".db" / "conversation.db"))
@@ -264,12 +291,14 @@ class Session:
         logger: CLILogger,
         store: ConversationStore,
         conversation_id: int,
+        shadow: DecisionShadow | None = None,
     ) -> None:
         self.tools = tools
         self.tool_definitions = tool_definitions
         self.logger = logger
         self.store = store
         self.conversation_id = conversation_id
+        self.shadow = shadow  # logs what the decision layer would do; never changes a turn
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
 
@@ -280,21 +309,36 @@ class Session:
         again if a later step fails."""
         create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
 
+        decision_config = load_decision_config()
+        enforced = [point for point, mode in decision_config.decision_points.items() if mode == "enforce"]
+        if enforced:
+            raise RuntimeError(
+                f"{', '.join(enforced)} set to enforce in the decision-layer config, but Nuru only runs the "
+                "decision layer in shadow mode so far. Set them back to shadow."
+            )
+
         with ExitStack() as opened:
             tools = MCPTools(
-                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, CALC_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL
+                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, CALC_SERVER_PARAMS, LAYA_SERVER_PARAMS],
+                model_tools=MODEL_TOOLS,
             )
             tools.connect()
             opened.callback(tools.close)
             tool_definitions = _hide_injected_args(tools.list_tools())
 
             logger = CLILogger(
-                LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp; uv run calc-mcp"
+                LOG_DIR,
+                model=MODEL,
+                think=THINK,
+                server_command="uv run obsidian-mcp; uv run deep-think-mcp; uv run calc-mcp; uv run laya-mcp",
             )
             store = ConversationStore(DB_PATH)
             opened.callback(store.close)
+            decision_log = DecisionLog(decision_config.database_path)
+            opened.callback(decision_log.close)
+            shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id, tool_definitions)
 
-            session = cls(tools, tool_definitions, logger, store, store.create_conversation())
+            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow)
             session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
@@ -352,6 +396,8 @@ class Session:
 
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
+        if self.shadow:
+            self.shadow.begin(text, turn_id)
         messages = None
         prompt_tokens_recorded = False
         think = THINK
@@ -426,6 +472,10 @@ class Session:
                 tool_calls_requested=[call["function"]["name"] for call in tool_calls] if tool_calls else [],
                 output_text=output_text,
             )
+            if self.shadow:
+                self.shadow.model_called(
+                    [call["function"]["name"] for call in tool_calls] if tool_calls else [], not output_text.strip(), think
+                )
 
             if not tool_calls:
                 if thinking and not output_text.strip() and think:
@@ -444,6 +494,10 @@ class Session:
                     # reasoning as what the model said.
                     output_text = thinking or carried_thinking
                     yield Text(_NO_REPLY_NOTE)
+                    if self.shadow:
+                        self.shadow.end(_NO_REPLY_NOTE)
+                elif self.shadow:
+                    self.shadow.end(output_text)
                 self.store.add_message(self.conversation_id, "nuru", output_text, usage.get("completion_tokens"))
                 self.logger.turn_end(turn_id)
                 return
@@ -458,17 +512,27 @@ class Session:
                 yield ToolCall(fn["name"], args)
                 if fn["name"] == _EXPERT_TOOL:
                     args = {**args, _INJECTED_EXPERT_ARG: text}
+                gate_id = self.shadow.before_tool(fn["name"], args) if self.shadow else None
                 tool_start = time.monotonic()
                 if fn["name"] == _EXPERT_TOOL and expert_answered:
                     content = _EXPERT_ALREADY_ANSWERED
                     self.logger.tool_call(turn_id, fn["name"], args, "refused", "already answered this turn", 0.0)
+                    if self.shadow:
+                        self.shadow.after_tool(fn["name"], args, None, 0.0, gate_id, error="refused: already answered this turn")
                 else:
                     try:
-                        content = self.tools.call_tool(fn["name"], args)
+                        result = self.tools.call_tool_result(fn["name"], args)
                     except Exception as e:
-                        self.logger.tool_call(turn_id, fn["name"], args, "error", str(e), (time.monotonic() - tool_start) * 1000)
+                        duration_ms = (time.monotonic() - tool_start) * 1000
+                        self.logger.tool_call(turn_id, fn["name"], args, "error", str(e), duration_ms)
+                        if self.shadow:
+                            self.shadow.after_tool(fn["name"], args, None, duration_ms, gate_id, error=str(e))
                         raise
-                    self.logger.tool_call(turn_id, fn["name"], args, "ok", None, (time.monotonic() - tool_start) * 1000)
+                    content = result.text
+                    duration_ms = (time.monotonic() - tool_start) * 1000
+                    self.logger.tool_call(turn_id, fn["name"], args, "ok", None, duration_ms)
+                    if self.shadow:
+                        self.shadow.after_tool(fn["name"], args, result, duration_ms, gate_id)
                     if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
                         expert_answered = True
                 messages.append({"role": "tool", "content": content})
@@ -476,6 +540,8 @@ class Session:
                 if _cancelled(cancel):
                     self._end_cancelled(turn_id, output_text)
                     return
+            if self.shadow:
+                self.shadow.before_next_call()
 
     def _end_cancelled(self, turn_id: str, output_text: str) -> None:
         """Ends a turn the user stopped. What the model had said so far is kept as its reply so the
@@ -497,3 +563,5 @@ class Session:
             self.indexer.stop()
         self.tools.close()
         self.store.close()
+        if self.shadow:
+            self.shadow.close()

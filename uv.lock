@@ -308,6 +308,7 @@ name = "core"
 version = "0.1.0"
 source = { editable = "nuru" }
 dependencies = [
+    { name = "laya-mcp" },
     { name = "mcp" },
     { name = "obsidian-mcp" },
     { name = "pyqt6" },
@@ -322,6 +323,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "laya-mcp", editable = "servers/laya" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "obsidian-mcp", editable = "servers/obsidian" },
     { name = "pyqt6", specifier = ">=6.11.0" },

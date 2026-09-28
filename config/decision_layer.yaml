@@ -28,12 +28,13 @@ tool_gate:
   default_first_read: semantic_search   # used when Laya is unsure, or down
 
 tiers:
-  order: ["off", low, medium, high, expert]
+  order: ["off", low, high, expert]
   default: high             # matches Granite's own default
-  # Ollama `think` value per tier, per model. Measured 2026-09-28 on Ollama 0.34.0: granite4.2
-  # renders "medium" exactly like "high" (its template only knows "low"), so they are merged.
+  # Ollama `think` value per tier, per model. There is no medium tier: measured 2026-09-28 on
+  # Ollama 0.34.0, granite4.2 renders think="medium" byte-for-byte like "high" (its template only
+  # knows "low"), so medium was folded into high.
   models:
-    granite4.2:3b: {"off": false, low: low, medium: high, high: high}
+    granite4.2:3b: {"off": false, low: low, high: high}
 
 expert:
   model: claude-opus-5
@@ -60,7 +61,6 @@ thresholds:
     tier:
       "off": {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
       low: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-      medium: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
       high: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
       expert: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
   gate_write:

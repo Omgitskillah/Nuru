@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH = Path(os.environ.get("NURU_DECISION_CONFIG", REPO_ROOT / "config" / "decision_layer.yaml"))
 
 Mode = Literal["shadow", "enforce"]
-Tier = Literal["off", "low", "medium", "high", "expert"]
+Tier = Literal["off", "low", "high", "expert"]
 
 # Which question sets each decision point asks. Enforcing a point requires every threshold of
 # every set it asks to be calibrated.
@@ -67,7 +67,7 @@ class TierSettings(_Strict):
     order: tuple[Tier, ...]
     default: Tier
     # model name -> tier -> Ollama `think` value (false, or a level string)
-    models: dict[str, dict[Literal["off", "low", "medium", "high"], bool | str]]
+    models: dict[str, dict[Literal["off", "low", "high"], bool | str]]
 
 
 class ExpertSettings(_Strict):

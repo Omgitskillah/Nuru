@@ -6,6 +6,7 @@ import pytest
 
 from core import session
 from core.conversation_store import ConversationStore
+from core.providers.mcp_tools import ToolResult
 from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ToolCall
 
 
@@ -47,6 +48,13 @@ class FakeMCPTools:
     def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
         return self._tool_results.get(name, "")
+
+    def call_tool_result(self, name, arguments):
+        return ToolResult(self.call_tool(name, arguments))
+
+    def call_harness_tool(self, name, arguments):
+        # No decision layer here: the shadow's calls fail, which it must shrug off.
+        return ToolResult("no decision layer in this test", is_error=True)
 
     def close(self):
         self.closed = True
@@ -153,7 +161,7 @@ def test_start_connects_mcp_tools_and_passes_them_to_chat(monkeypatch):
     assert seen["tools"] == tools
 
 
-def test_start_hides_delete_file_or_directory_from_the_local_model(monkeypatch):
+def test_start_offers_the_model_only_its_allowlist(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -166,8 +174,10 @@ def test_start_hides_delete_file_or_directory_from_the_local_model(monkeypatch):
 
     Session.start()
 
-    assert "delete_file_or_directory" in seen["hidden_tools"]
-    assert "archive_note" not in seen["hidden_tools"]
+    assert "delete_file_or_directory" not in seen["model_tools"]
+    assert "archive_note" in seen["model_tools"] and "classify_notes" in seen["model_tools"]
+    for harness_only in ("tool_gate", "assess_effort", "gate_write", "check_claim", "rerank", "health"):
+        assert harness_only not in seen["model_tools"]
 
 
 def test_start_closes_what_it_opened_when_a_later_step_fails(monkeypatch):
@@ -887,7 +897,7 @@ def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
     assert [args["question"] for _, args in fake_tools.calls] == ["first", "second"]
 
 
-def test_start_connects_the_obsidian_deep_think_and_calc_servers(monkeypatch):
+def test_start_connects_the_obsidian_deep_think_calc_and_laya_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -900,7 +910,7 @@ def test_start_connects_the_obsidian_deep_think_and_calc_servers(monkeypatch):
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp"]
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp", "laya-mcp"]
 
 
 def test_index_change_reports_the_indexers_passes(monkeypatch):

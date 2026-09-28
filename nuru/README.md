@@ -60,9 +60,21 @@ uv run nuru-ui    # in a window
 1. **Server check** - if Ollama's server isn't already running on `localhost:11434`, it's started in the background (`ollama serve`).
 2. **Model check** - if the configured model isn't already loaded into memory, it's loaded, and its params (size, quantization, family, thinking support) are printed.
 3. **History loaded** - prior turns from the current conversation are read back from a local SQLite database (the hidden `.db/conversation.db` by default, via `core.conversation_store.ConversationStore`) and sent along with the new message, oldest first, keeping as many of the most recent turns as fit under a token budget (80% of the model's context window - the rest is reserved for the response). The new message goes to the model behind a line giving the current local date and time (`[Current date and time: Monday 2026-09-21 17:52 CEST]`); the saved copy stays as you typed it. A message that would already exceed that budget on its own is rejected with an error instead of being sent. The `[user: NN%]` prompt shows how much of the context window the last turn used.
-4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
+4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. The model is only offered the tools on an allowlist (`MODEL_TOOLS` in [`session.py`](src/core/session.py)): the vault, calc, `ask_an_expert` and `classify_notes` - never `delete_file_or_directory`, and never the decision layer's own tools. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
 
 History is scoped to one conversation per run of `nuru` - each launch starts a new conversation row in the database, but earlier conversations are kept, not deleted.
+
+5. **Decision layer, in shadow** - at every decision point the harness also asks [Laya](../servers/laya) what it would do - which tool first, how much thinking, whether a write should go ahead, whether the reply matches what actually ran - and logs that next to what Nuru actually did, in `.db/decisions.sqlite3`. It changes nothing about the turn: if the Laya server is down, or slow to load, the turn runs exactly the same. Every tool Nuru runs is logged there too, from what actually ran (note text in a write is kept as its length and hash, not the text).
+
+## Reviewing the decision layer
+
+```bash
+uv run nuru label                  # label logged decisions, disagreements with what Nuru did first
+uv run nuru label --point gate_write --limit 10
+uv run nuru export labels.jsonl    # the labelled decisions, for calibrating and fine-tuning later
+```
+
+`label` shows each decision - what Laya proposed, what Nuru did, the state Laya saw - and asks for the right answer to each of its questions (a number or a name; Enter skips one, `q` stops). Labels are recorded as coming from `user`, or `--source claude`; never from the local model.
 
 ## Commands
 
@@ -101,6 +113,10 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 - **`session.load_model()`** / **`loaded_model_info()`** - Load the model if needed; its static info, or `None` if it isn't in memory.
 - **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
+
+`core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
+
+`core.label_cli` - the `nuru label` / `nuru export` commands above.
 
 `core.reply_markdown` - Qt-free helpers for the UI: `Reply` folds a turn's events into one markdown document, and `split_fences` separates fenced code from the prose around it.
 

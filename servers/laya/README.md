@@ -29,7 +29,7 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 |---|---|
 | `tool_gate(phase="start", request, tools)` | `mode` (answer / read / write / ask_user) and `first_tool`. `answer` needs a high threshold; below it the default is `read`, with `tool_gate.default_first_read` first. |
 | `tool_gate(phase="next", request, tools, steps)` | `next`: a tool name, `answer`, `ask_user`, or `defer` (Laya unsure or down: the model keeps choosing). |
-| `assess_effort(request, step_type, steps, failures)` | `tier` (off / low / medium / high / expert): the predicted tier if its probability clears that tier's threshold, else `tiers.default`. The within-task rules (tiers only go up, failure signals, expert budget) are the harness's. |
+| `assess_effort(request, step_type, steps, failures)` | `tier` (off / low / high / expert - there is no medium: on Granite it was identical to high): the predicted tier if its probability clears that tier's threshold, else `tiers.default`. The within-task rules (tiers only go up, failure signals, expert budget) are the harness's. |
 | `gate_write(request, tool, arguments, known_ids)` | `verdict`: `block` (a code check failed - `reasons` says which), `proceed` (both Laya answers cleared their thresholds) or `ask`. |
 | `check_claim(reply, log, known_ids)` | `passed`, `verified` and `failures`. A note ID in the reply that isn't in the log or `known_ids` fails straight away, without Laya. |
 | `rerank(query, matches)` | `semantic_search` matches reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
@@ -38,6 +38,10 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 For the model: **`classify_notes(question_set, ids | folder | date_from/date_to, labels)`** returns `{count, labelled: [{id, label, p}], uncertain}` - confident labels only, plus how many weren't. It never returns note content. `id` is the note's frontmatter id, or its vault-relative path if it has none. At most 50 notes per call.
 
 Every answer carries `probabilities` and `source` (`laya`, `code` or `fallback`), and a `decision_id` the harness uses to record what it actually did.
+
+### How Nuru uses it
+
+Nuru starts this server with the others and, for now, only in **shadow** mode: it asks at every decision point, records what it actually did against each `decision_id` (`action_taken`, plus `outcome` - `empty_reply`, or `ok` / `error` for a write), and changes nothing. The hooks are in [`nuru/src/core/decision_shadow.py`](../../nuru/src/core/decision_shadow.py); Nuru refuses to start if the config sets any decision point to `enforce`, until the enforcement paths exist. Nuru passes the server the same `VAULT_PATH` the obsidian server uses.
 
 ### Fail safe
 

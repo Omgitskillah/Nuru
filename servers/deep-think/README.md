@@ -19,11 +19,27 @@ the `DEEP_THINK_PROVIDER` env var (see `providers/__init__.py`), defaulting
 to `claude`.
 
 `ask_an_expert` is built on top of the contract rather than being a direct
-passthrough: given a `message` and optional `file_paths`, it resolves each
+passthrough: given a `question`, an optional `best_guess` (the caller's own draft, for the
+expert to correct), optional `file_paths` and an optional `user_request` (the user's original
+message verbatim - Nuru fills this in itself rather than have its model copy it), it resolves each
 file to a `file_id` via `file_cache.py` (uploading it only if it's new,
 changed, or its previous upload expired - see below), attaches them as
 `document`/`image` content blocks, and calls the provider's `send_message`
 against a fixed model (`server.ASK_AN_EXPERT_MODEL`).
+
+The request is assembled from those parts under labelled headings - the user's request,
+the attached files, the best guess, the question - with the files placed ahead of the text,
+and a fixed system prompt (`server.EXPERT_SYSTEM_PROMPT`) tells the expert it is advising a
+small local assistant that will relay its answer, that it cannot see the vault, and to lead
+with an answer for the user in about 250 words. A small model writing the request freehand
+sent its finished answer with no question in it, or asked the expert for notes only the user
+could supply.
+
+It returns `{answer, stop_reason}`, not the provider's whole response: `answer` is the
+expert's text blocks joined, and a `hint` is added when the answer is empty or stopped at
+`max_tokens`. The full response carries the expert's thinking (with a long signature per
+block) and usage metadata; handed back whole it came to ~12k tokens on one escalation and
+pushed a 16k-context local model over its window.
 
 ### File cache
 

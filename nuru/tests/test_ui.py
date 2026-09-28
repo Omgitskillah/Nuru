@@ -44,6 +44,8 @@ class FakeSession:
     """Stand-in for Session. Each scripted turn is a list of events, an exception to raise, or a
     function of the cancel event that returns the events (for turns that must wait or be stopped)."""
 
+    indexing = 0  # notes the background indexer has left to embed
+
     def __init__(self, turns=()):
         self._turns = iter(turns)
         self.asked = []
@@ -857,3 +859,22 @@ def test_closing_survives_a_failed_shutdown_and_still_releases_the_session(make_
 
     assert session.calls == ["close"]
     assert "ollama went away" in capsys.readouterr().err
+
+
+def test_the_title_spins_while_notes_are_being_indexed(make_window):
+    session = FakeSession()
+    window = make_window(session)
+    window.start()
+    settle(window.starting)
+    assert window.windowTitle() == "Nuru"
+
+    session.indexing = 12
+    wait_until(lambda: window.windowTitle().endswith("indexing 12 notes"))
+    first = window.windowTitle()
+    wait_until(lambda: window.windowTitle() != first)  # the spinner moves on
+    assert window.windowTitle()[5] in ui.ChatWindow.SPINNER
+
+    session.indexing = 1
+    wait_until(lambda: window.windowTitle().endswith("indexing 1 note"))
+    session.indexing = 0
+    wait_until(lambda: window.windowTitle() == "Nuru")

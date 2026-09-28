@@ -87,22 +87,90 @@ def _file_content_block(provider: object, file_path: str) -> dict:
     return {"type": block_type, "source": {"type": "file", "file_id": file_id}}
 
 
+# Sent with every ask_an_expert call. The expert otherwise sees only a message from an
+# assistant it knows nothing about, and in practice answered at essay length (7k+ characters,
+# ~90 s) to an assistant with a 16k-token window that then had to relay it.
+EXPERT_SYSTEM_PROMPT = """You are advising a small local assistant that works in its user's \
+Obsidian vault. It will relay your answer to that user. You cannot see the vault or the \
+conversation: only the user's request, the attached files (the user's notes), the \
+assistant's best guess if it made one, and the assistant's question.
+
+Answer in this order:
+1. The answer for the user, in about 250 words or fewer, written so the assistant can pass \
+it on as it is.
+2. Only if a best guess was given: what in it is wrong or missing, as a short list.
+
+Keep the whole reply short. The assistant has a small context window."""
+
+
+def _expert_prompt(question: str, best_guess: str, file_paths: list[str], user_request: str) -> str:
+    """The labelled sections the expert reads, in the order it needs them."""
+    sections = []
+    if user_request.strip():
+        sections.append(f"## The user's request (verbatim)\n{user_request.strip()}")
+    if file_paths:
+        sections.append("## Attached files\n" + "\n".join(f"- {path}" for path in file_paths))
+    if best_guess.strip():
+        sections.append(f"## The assistant's best guess\n{best_guess.strip()}")
+    sections.append(f"## The assistant's question\n{question.strip()}")
+    return "\n\n".join(sections)
+
+
 @mcp.tool(
-    description=f"Ask the expert model ({ASK_AN_EXPERT_MODEL}) a question, optionally grounded in local "
-    "files. message: the question to ask. file_paths: optional list of local file paths to attach as "
-    "context - each is uploaded (or re-uploaded, if its content changed or its previous upload expired) "
-    "and cached by content hash so repeat calls with the same, unchanged file skip the re-upload."
+    description=f"Ask the expert model ({ASK_AN_EXPERT_MODEL}) for help, optionally grounded in local "
+    "files. question: what you need the expert to decide or check, ending with the question itself. "
+    "best_guess: optional - your own draft answer, for the expert to correct. file_paths: optional list "
+    "of local file paths to attach (the expert reads them whole, so attach rather than paste). "
+    "user_request: the user's original message, verbatim (a client may fill this in itself). "
+    "Returns {answer, stop_reason, hint}: answer is written to be passed on to the user; hint says "
+    "when it is empty or was cut off."
 )
 @_tool
-def ask_an_expert(message: str, file_paths: list[str] | None = None) -> dict:
+def ask_an_expert(
+    question: str,
+    best_guess: str = "",
+    file_paths: list[str] | None = None,
+    user_request: str = "",
+) -> dict:
+    """Ask the expert, and return only what it answered.
+
+    The request is assembled here rather than written freehand by the caller: a small model
+    left to write one sent its finished answer with no question in it, or asked the expert
+    for notes only the user could supply. So the parts are separate - the user's request
+    verbatim, the attached files, the caller's best guess, and the question - and
+    EXPERT_SYSTEM_PROMPT tells the expert who it is answering and how briefly. The files go
+    first, ahead of the text that refers to them.
+
+    The provider's full response carries the expert's reasoning (thinking blocks, with a long
+    signature each) and usage metadata. None of that is the answer, and handed back whole it
+    is often larger than the caller's own context window - a 3B local model with 16k tokens
+    had its next request rejected outright. So only the text blocks come back, joined, plus
+    stop_reason, and a hint when the answer is empty or stopped at max_tokens.
+    """
+    if not question.strip():
+        raise ValueError("question is empty - say what you need the expert to decide or check.")
     provider = get_provider()
-    content = [{"type": "text", "text": message}]
-    content += [_file_content_block(provider, path) for path in file_paths or []]
-    return provider.send_message(
+    content = [_file_content_block(provider, path) for path in file_paths or []]
+    content.append({"type": "text", "text": _expert_prompt(question, best_guess, file_paths or [], user_request)})
+    response = provider.send_message(
         model=ASK_AN_EXPERT_MODEL,
         messages=[{"role": "user", "content": content}],
+        system=EXPERT_SYSTEM_PROMPT,
         max_tokens=ASK_AN_EXPERT_MAX_TOKENS,
     )
+    answer = "\n\n".join(
+        block["text"] for block in response.get("content", []) if block.get("type") == "text" and block.get("text")
+    )
+    stop_reason = response.get("stop_reason")
+    result: dict = {"answer": answer, "stop_reason": stop_reason}
+    if not answer:
+        result["hint"] = (
+            "The expert returned no answer text. Do not repeat the same call; tell the user the expert "
+            "did not answer, or ask a narrower question."
+        )
+    elif stop_reason == "max_tokens":
+        result["hint"] = "The expert ran out of room before finishing, so the answer may be cut off."
+    return result
 
 
 def main() -> None:

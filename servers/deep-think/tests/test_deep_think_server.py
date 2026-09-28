@@ -35,19 +35,61 @@ def test_unknown_provider_raises(monkeypatch):
         get_provider()
 
 
-def test_ask_an_expert_sends_the_message_with_no_files(monkeypatch):
+def test_ask_an_expert_sends_the_question_with_no_files(monkeypatch):
     fake_provider = MagicMock(spec=Provider)
     fake_provider.send_message.return_value = {"role": "assistant", "content": []}
     monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
 
-    response = server.ask_an_expert(message="what is this?")
+    response = server.ask_an_expert(question="what is this?")
 
     fake_provider.send_message.assert_called_once_with(
         model=server.ASK_AN_EXPERT_MODEL,
-        messages=[{"role": "user", "content": [{"type": "text", "text": "what is this?"}]}],
+        messages=[{"role": "user", "content": [{"type": "text", "text": "## The assistant's question\nwhat is this?"}]}],
+        system=server.EXPERT_SYSTEM_PROMPT,
         max_tokens=server.ASK_AN_EXPERT_MAX_TOKENS,
     )
-    assert response == {"role": "assistant", "content": []}
+    assert response == {
+        "answer": "",
+        "stop_reason": None,
+        "hint": "The expert returned no answer text. Do not repeat the same call; tell the user the expert "
+        "did not answer, or ask a narrower question.",
+    }
+
+
+def test_ask_an_expert_returns_only_the_answer_text_not_the_thinking_or_metadata(monkeypatch):
+    """The whole response once came to ~12k tokens - mostly the expert's thinking and its
+    signature - and pushed a 16k-context caller over its window."""
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {
+        "id": "msg_1",
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "long reasoning " * 500, "signature": "x" * 20_000},
+            {"type": "text", "text": "Yes, it holds."},
+            {"type": "text", "text": "The biggest risk is PSM."},
+        ],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 9000, "output_tokens": 6000},
+    }
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+
+    response = server.ask_an_expert(question="audit this")
+
+    assert response == {"answer": "Yes, it holds.\n\nThe biggest risk is PSM.", "stop_reason": "end_turn"}
+
+
+def test_ask_an_expert_says_when_the_answer_was_cut_off(monkeypatch):
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {
+        "content": [{"type": "text", "text": "Partial answ"}],
+        "stop_reason": "max_tokens",
+    }
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+
+    response = server.ask_an_expert(question="q")
+
+    assert response["answer"] == "Partial answ"
+    assert "cut off" in response["hint"]
 
 
 def test_ask_an_expert_attaches_uploaded_files(monkeypatch, tmp_path):
@@ -65,19 +107,64 @@ def test_ask_an_expert_attaches_uploaded_files(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
     monkeypatch.setattr(server, "DB_PATH", tmp_path / "cache.db")
 
-    server.ask_an_expert(message="summarize these", file_paths=[str(doc), str(image)])
+    server.ask_an_expert(question="summarize these", file_paths=[str(doc), str(image)])
 
     _, kwargs = fake_provider.send_message.call_args
     assert kwargs["messages"][0]["content"] == [
-        {"type": "text", "text": "summarize these"},
         {"type": "document", "source": {"type": "file", "file_id": "file_doc"}},
         {"type": "image", "source": {"type": "file", "file_id": "file_img"}},
+        {"type": "text", "text": f"## Attached files\n- {doc}\n- {image}\n\n## The assistant's question\nsummarize these"},
     ]
+
+
+def test_ask_an_expert_labels_the_request_the_files_the_best_guess_and_the_question_in_that_order(monkeypatch):
+    monkeypatch.setattr(server, "_file_content_block", lambda provider, path: {"type": "document"})
+    provider = MagicMock(spec=Provider)
+    provider.send_message.return_value = {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+    monkeypatch.setattr(server, "get_provider", lambda: provider)
+
+    server.ask_an_expert(
+        question="Is my verdict right?",
+        best_guess="PSM is the biggest risk.",
+        file_paths=["nuru/battery.md"],
+        user_request="Audit my battery notes.",
+    )
+
+    text = provider.send_message.call_args.kwargs["messages"][0]["content"][-1]["text"]
+    assert text == (
+        "## The user's request (verbatim)\nAudit my battery notes.\n\n"
+        "## Attached files\n- nuru/battery.md\n\n"
+        "## The assistant's best guess\nPSM is the biggest risk.\n\n"
+        "## The assistant's question\nIs my verdict right?"
+    )
+
+
+def test_ask_an_expert_tells_the_expert_who_it_answers_and_to_keep_it_short(monkeypatch):
+    provider = MagicMock(spec=Provider)
+    provider.send_message.return_value = {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+    monkeypatch.setattr(server, "get_provider", lambda: provider)
+
+    server.ask_an_expert(question="q")
+
+    system = provider.send_message.call_args.kwargs["system"]
+    assert "relay your answer" in system
+    assert "cannot see the vault" in system
+    assert "250 words" in system
+
+
+@pytest.mark.parametrize("question", ["", "   "])
+def test_ask_an_expert_needs_a_question(monkeypatch, question):
+    provider = MagicMock(spec=Provider)
+    monkeypatch.setattr(server, "get_provider", lambda: provider)
+
+    with pytest.raises(ToolError, match="question is empty"):
+        server.ask_an_expert(question=question, best_guess="my draft")
+    provider.send_message.assert_not_called()
 
 
 def test_ask_an_expert_missing_file_becomes_tool_error(tmp_path):
     with pytest.raises(ToolError):
-        server.ask_an_expert(message="hi", file_paths=[str(tmp_path / "does-not-exist.txt")])
+        server.ask_an_expert(question="hi", file_paths=[str(tmp_path / "does-not-exist.txt")])
 
 
 # --- _resolve_attachment ---
@@ -132,7 +219,7 @@ def test_ask_an_expert_attaches_a_vault_relative_path(monkeypatch, tmp_path):
     provider.send_message.return_value = {"ok": True}
     monkeypatch.setattr(server, "get_provider", lambda: provider)
 
-    server.ask_an_expert(message="q", file_paths=["nuru/note.md"])
+    server.ask_an_expert(question="q", file_paths=["nuru/note.md"])
 
     assert seen["path"] == str(note)
 
@@ -145,7 +232,7 @@ def test_ask_an_expert_asks_for_more_than_the_contract_default_token_budget(monk
     provider.send_message.return_value = {"ok": True}
     monkeypatch.setattr(server, "get_provider", lambda: provider)
 
-    server.ask_an_expert(message="q")
+    server.ask_an_expert(question="q")
 
     assert provider.send_message.call_args.kwargs["max_tokens"] == server.ASK_AN_EXPERT_MAX_TOKENS
     assert server.ASK_AN_EXPERT_MAX_TOKENS > 1024

@@ -596,11 +596,14 @@ class AssistantMessage(QWidget):
 
 class ChatWindow(QWidget):
     FLUSH_MS = 25  # streamed text is redrawn at most this often, however fast it arrives
+    TITLE = "Nuru"
+    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the title cycles through these while notes are being embedded
+    SPIN_MS = 100
     CLOSE_WAIT_SECONDS = 5  # how long closing waits for a reply in flight to save what it has
 
     def __init__(self, start_session: Callable[[], Session]) -> None:
         super().__init__()
-        self.setWindowTitle("Nuru")
+        self.setWindowTitle(self.TITLE)
         self.resize(960, 720)
         self.setMinimumSize(480, 420)
         self.setObjectName("chat")
@@ -620,6 +623,13 @@ class ChatWindow(QWidget):
         self.flush_timer.setSingleShot(True)
         self.flush_timer.setInterval(self.FLUSH_MS)
         self.flush_timer.timeout.connect(self.render_reply)
+
+        # The title bar is native, so it can't hold a widget: the background indexer's progress is
+        # shown in the title text instead. Runs from on_started, once there's a session to ask.
+        self.spin_frame = 0
+        self.title_timer = QTimer(self)
+        self.title_timer.setInterval(self.SPIN_MS)
+        self.title_timer.timeout.connect(self.update_title)
 
         # Empty state: a greeting above the composer. Until the session is up it's a rocking lantern
         # beside "Starting Nuru…" instead, and the composer stays hidden.
@@ -712,11 +722,23 @@ class ChatWindow(QWidget):
         self.session = self.start_session()
 
     def on_started(self) -> None:
+        self.title_timer.start()
         self.greeting_title.setText(time_greeting(datetime.now().hour))
         self.greeting_logo.stop()
         self.dock.show()
         self.update_send()
         self.prompt.setFocus()
+
+    def update_title(self) -> None:
+        """"Nuru ⠹ indexing 12 notes" while the session's indexer is embedding, else just "Nuru"."""
+        pending = self.session.indexing if self.session is not None else 0
+        if pending:
+            self.spin_frame = (self.spin_frame + 1) % len(self.SPINNER)
+            title = f"{self.TITLE} {self.SPINNER[self.spin_frame]} indexing {pending} note{'' if pending == 1 else 's'}"
+        else:
+            title = self.TITLE
+        if self.windowTitle() != title:
+            self.setWindowTitle(title)
 
     def on_start_failed(self, message: str) -> None:
         reply = Reply()
@@ -817,6 +839,7 @@ class ChatWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Closing the window is /exit: put the model away and stop Ollama if it was started for us."""
+        self.title_timer.stop()
         self.cancel.set()
         if self.worker is not None:
             self.worker.wait(self.CLOSE_WAIT_SECONDS)  # lets a reply in flight save what it has

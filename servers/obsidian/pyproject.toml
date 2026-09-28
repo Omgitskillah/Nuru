@@ -14,10 +14,12 @@ dependencies = [
     "python-ulid>=4.0.1",
     "pyyaml>=6.0.3",
     "unidecode>=1.4.0",
+    "sqlite-vec>=0.1.9",
 ]
 
 [project.scripts]
 obsidian-mcp = "obsidian_mcp:main"
+obsidian-mcp-index = "obsidian_mcp.semantic:main"
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]

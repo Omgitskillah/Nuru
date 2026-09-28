@@ -30,6 +30,7 @@ from ulid import ULID
 
 from obsidian_mcp import frontmatter_template as template
 from obsidian_mcp import index as note_index
+from obsidian_mcp import semantic
 from obsidian_mcp import template_bodies
 
 load_dotenv()
@@ -179,19 +180,19 @@ def _run_with_timeout(fn: Callable[[], _T]) -> _T:
 
 # Every exception type a tool below deliberately raises for an anticipated
 # failure (bad input, not found, already exists, permission denied, a timed
-# -out write) - never a genuine bug. The MCP framework only forwards a raised
+# -out write, Ollama not reachable for semantic_search) - never a genuine bug. The MCP framework only forwards a raised
 # exception's own message to the client for `ToolError` (or a subclass); any
 # other exception is treated as a crash and replaced with a bare
 # "Error executing tool <name>", discarding the message and type. @_tool
 # converts exactly this set into ToolError, so callers can actually see what
 # went wrong; anything NOT in this set (a real bug) still crashes generically,
 # which is the right behavior for an unanticipated failure.
-_ANTICIPATED_ERRORS = (ValueError, FileNotFoundError, FileExistsError, PermissionError, TimeoutError)
+_ANTICIPATED_ERRORS = (ValueError, FileNotFoundError, FileExistsError, PermissionError, TimeoutError, ConnectionError)
 
 
 def _tool(fn: Callable[..., _T]) -> Callable[..., _T]:
     """Wrap a tool body so its own ValueError/FileNotFoundError/FileExistsError/
-    PermissionError/TimeoutError reach the caller with their message and type
+    PermissionError/TimeoutError/ConnectionError reach the caller with their message and type
     intact, instead of the framework's generic "Error executing tool <name>".
     """
 
@@ -752,6 +753,60 @@ def find_in_notes(pattern: str) -> dict[str, Any]:
             hints.append(f"A note shows only its first {_FIND_LINES_PER_NOTE} matching lines.")
         if hints:
             result["hint"] = " ".join([*hints, "Make the pattern more specific to narrow it down."])
+    return result
+
+
+@mcp.tool(
+    description="Find passages by meaning rather than exact words - for a question or an idea when you don't "
+    "know the words the note uses ('looking after my car' finds a note about servicing the automobile). "
+    "query: a question or description in plain language. top_k: how many passages (default 5, max 10). "
+    "Returns {query, matches, hint}: matches are {path, id, text, score}, best first - text is the passage, "
+    "headed by its note's title and section; score is similarity, 1 is closest. Pass path to read_note for "
+    "the whole note, id to append_note (id is null for notes without one). For an exact word, name, id or "
+    "number use search_notes or find_in_notes. Excludes Templates/ and archive/."
+)
+@_tool
+def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
+    """The passages of the vault's notes nearest in meaning to `query` (see semantic.py).
+
+    Only reads the semantic index - Nuru keeps it current in the background, and
+    `uv run obsidian-mcp-index` builds or updates it by hand - so a note changed in the
+    last few moments may still be found by its old text.
+
+    Args:
+        query: What to look for, in plain language. Embedded with the same model that
+            built the index; an index built with a different model (or chunk size) is
+            refused with ValueError, since its vectors can't be compared.
+        top_k: How many passages to return, at least 1; capped at _SEARCH_LIMIT to keep
+            a small model's context small.
+
+    Returns {"query", "matches"}: "matches" holds at most top_k of {"path", "id", "text",
+    "score"}, best first. A "hint" explains an empty result - a bare empty list would
+    reach the model as a blank tool result it can't interpret. Raises FileNotFoundError
+    if no index has been built yet, and ConnectionError if Ollama isn't running.
+    """
+    _check_accessible(VAULT_PATH)
+    if not query.strip():
+        raise ValueError("query is empty - describe what you're looking for.")
+    if top_k < 1:
+        raise ValueError(f"top_k must be at least 1, got {top_k}.")
+    top_k = min(top_k, _SEARCH_LIMIT)
+
+    config = semantic.load_config(VAULT_PATH, os.environ)
+    if not config.db_path.is_file():
+        raise FileNotFoundError(
+            "The semantic index hasn't been built yet: Nuru builds it in the background while it runs, or run "
+            "`uv run obsidian-mcp-index` in servers/obsidian. Use search_notes meanwhile."
+        )
+    with contextlib.closing(semantic.connect(config)) as conn:
+        matches = semantic.search(conn, config, semantic.ollama_embedder(config), query, top_k)
+
+    result: dict[str, Any] = {"query": query, "matches": matches}
+    if not matches:
+        result["hint"] = (
+            "The semantic index has no notes in it yet - it may still be building. Use search_notes to find "
+            "notes by their words meanwhile."
+        )
     return result
 
 

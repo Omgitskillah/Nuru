@@ -32,6 +32,7 @@ from core.providers.ollama import (
     stop_server,
     unload_all_models,
 )
+from core.vault_indexer import VaultIndexer
 
 load_dotenv()
 
@@ -127,6 +128,64 @@ _ROLE_TO_API = {"user": "user", "nuru": "assistant"}
 # out as a Thinking event of its own by then.
 _NO_REPLY_NOTE = "(No reply was written.)"
 
+# Put in place of a tool result that made the next request longer than the context window, so
+# the model hears what happened instead of the turn ending on Ollama's 400.
+_TOO_LONG_NOTE = (
+    "[The {name} result was about {tokens} tokens - too long for the context window, so it was left "
+    "out. Do not call {name} again the same way. Answer from what you already have, or ask for less.]"
+)
+
+
+# ask_an_expert's user_request is the user's message verbatim. The session has it, so it fills
+# the field in itself: a small model asked to copy it paraphrased it, errors included.
+_EXPERT_TOOL = "ask_an_expert"
+_INJECTED_EXPERT_ARG = "user_request"
+
+# Given instead of a second expert answer in the same turn. A small model otherwise sends its
+# summary of the first answer back for review, and asks again - two minutes and an Opus call
+# each - rather than give the answer it already has.
+_EXPERT_ALREADY_ANSWERED = (
+    "The expert already answered this request earlier in this turn. That answer is final - do not "
+    "call ask_an_expert again. Give the user the expert's answer now, and say it came from the expert."
+)
+
+
+def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
+    """The tool definitions without the arguments the session fills in itself, so the model
+    isn't asked for them."""
+    hidden = []
+    for tool in tool_definitions:
+        fn = tool["function"]
+        properties = fn.get("parameters", {}).get("properties", {})
+        if fn["name"] == _EXPERT_TOOL and _INJECTED_EXPERT_ARG in properties:
+            parameters = dict(fn["parameters"])
+            parameters["properties"] = {k: v for k, v in properties.items() if k != _INJECTED_EXPERT_ARG}
+            if "required" in parameters:
+                parameters["required"] = [r for r in parameters["required"] if r != _INJECTED_EXPERT_ARG]
+            tool = {**tool, "function": {**fn, "parameters": parameters}}
+        hidden.append(tool)
+    return hidden
+
+
+def _expert_answered(content: str) -> bool:
+    """Whether an ask_an_expert result carries an answer - not an error, and not an empty one."""
+    try:
+        result = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(result, dict) and bool(result.get("answer"))
+
+
+def _context_overflow(error: requests.exceptions.RequestException) -> bool:
+    """Ollama's 400 for a request longer than num_ctx: "request (N tokens) exceeds the available
+    context size (M tokens)"."""
+    response = getattr(error, "response", None)
+    return (
+        response is not None
+        and response.status_code == 400
+        and "exceeds the available context size" in response.text
+    )
+
 
 def _context_window(model_info: dict | None) -> int:
     """The window nuru actually requests: the model's own maximum, capped at MAX_NUM_CTX."""
@@ -208,6 +267,7 @@ class Session:
         self.logger = logger
         self.store = store
         self.conversation_id = conversation_id
+        self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
 
     @classmethod
@@ -221,7 +281,7 @@ class Session:
             tools = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL)
             tools.connect()
             opened.callback(tools.close)
-            tool_definitions = tools.list_tools()
+            tool_definitions = _hide_injected_args(tools.list_tools())
 
             logger = CLILogger(
                 LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp"
@@ -231,8 +291,17 @@ class Session:
 
             session = cls(tools, tool_definitions, logger, store, store.create_conversation())
             session.load_model()
+            session.indexer = VaultIndexer.from_env()
+            if session.indexer:
+                session.indexer.start()
+                opened.callback(session.indexer.stop)
             opened.pop_all()  # it worked, so the session owns them now
         return session
+
+    @property
+    def indexing(self) -> int:
+        """How many notes the background indexer has left to embed; 0 while it's idle."""
+        return self.indexer.pending if self.indexer else 0
 
     @property
     def context_window(self) -> int:
@@ -275,6 +344,11 @@ class Session:
         # Reasoning from a call that ended with no reply, kept in case the retry below writes
         # nothing either and it has to stand in as the reply after all.
         carried_thinking = ""
+        # (index in messages, tool name) of the last round's tool results, and whether one has
+        # already been cut for overflowing the context window - which happens at most once a turn.
+        last_results: list[tuple[int, str]] = []
+        cut_a_result = False
+        expert_answered = False  # one answered ask_an_expert call per turn
 
         while True:
             self.load_model()
@@ -309,6 +383,14 @@ class Session:
                     output_text += out
                     yield Text(out)
             except requests.exceptions.RequestException as e:
+                if last_results and not cut_a_result and _context_overflow(e):
+                    # A tool result made this request too long. Swap the largest one from that
+                    # round for a note saying so and ask again, rather than end the turn on a 400.
+                    index, name = max(last_results, key=lambda result: len(messages[result[0]]["content"]))
+                    tokens = _estimate_tokens(messages[index]["content"])
+                    messages[index]["content"] = _TOO_LONG_NOTE.format(name=name, tokens=tokens)
+                    cut_a_result = True
+                    continue
                 self.logger.turn_error(turn_id, str(e))
                 self.store.delete_message(user_message_id)
                 yield Failure(
@@ -353,20 +435,30 @@ class Session:
                 return
 
             messages.append({"role": "assistant", "tool_calls": tool_calls})
+            last_results = []
             for call in tool_calls:
                 fn = call["function"]
                 args = fn.get("arguments") or {}
                 if isinstance(args, str):
                     args = json.loads(args)
                 yield ToolCall(fn["name"], args)
+                if fn["name"] == _EXPERT_TOOL:
+                    args = {**args, _INJECTED_EXPERT_ARG: text}
                 tool_start = time.monotonic()
-                try:
-                    content = self.tools.call_tool(fn["name"], args)
-                except Exception as e:
-                    self.logger.tool_call(turn_id, fn["name"], args, "error", str(e), (time.monotonic() - tool_start) * 1000)
-                    raise
-                self.logger.tool_call(turn_id, fn["name"], args, "ok", None, (time.monotonic() - tool_start) * 1000)
+                if fn["name"] == _EXPERT_TOOL and expert_answered:
+                    content = _EXPERT_ALREADY_ANSWERED
+                    self.logger.tool_call(turn_id, fn["name"], args, "refused", "already answered this turn", 0.0)
+                else:
+                    try:
+                        content = self.tools.call_tool(fn["name"], args)
+                    except Exception as e:
+                        self.logger.tool_call(turn_id, fn["name"], args, "error", str(e), (time.monotonic() - tool_start) * 1000)
+                        raise
+                    self.logger.tool_call(turn_id, fn["name"], args, "ok", None, (time.monotonic() - tool_start) * 1000)
+                    if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
+                        expert_answered = True
                 messages.append({"role": "tool", "content": content})
+                last_results.append((len(messages) - 1, fn["name"]))
                 if _cancelled(cancel):
                     self._end_cancelled(turn_id, output_text)
                     return
@@ -385,6 +477,9 @@ class Session:
         self.logger.session_end(reason=reason, models_unloaded=True, server_stopped=True)
 
     def close(self) -> None:
-        """Release the MCP servers and the database. Leaves the model loaded and Ollama running."""
+        """Stop the indexer and release the MCP servers and the database. Leaves the model loaded and
+        Ollama running."""
+        if self.indexer:
+            self.indexer.stop()
         self.tools.close()
         self.store.close()

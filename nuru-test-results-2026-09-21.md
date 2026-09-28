@@ -434,3 +434,295 @@ of thinking will make this test search.
 - Mid-session the external volume holding the Ollama models unmounted, which is what caused
   the earlier Ollama 500s. Models were restored by pointing `OLLAMA_MODELS` back at
   `/Volumes/Ra/Models`; these two runs are from after that, on a healthy server.
+
+---
+
+# Semantic search spot run, 2026-09-28: nine tests the new tool could move
+
+`semantic_search` (meaning-based retrieval over `nomic-embed-text:v1.5`) was added to the
+obsidian server alongside `search_notes` and `find_in_notes`. Before running anything, the
+34 tests were sorted by whether the tool could plausibly help them (retrieval failed because
+the note uses different words than the query) or hurt them (the right answer is "nothing
+found", and the tool always returns its top passages even when none is relevant). These nine
+are the result: five candidates to improve (2, 3, 21, 22, 32) and four at risk (4, 5, 17, 26).
+Scores here are not comparable to a full 34-test total.
+
+## How this was run
+
+- `nuru` built from `granite4.2:3b` via `modelfiles/granite4.2.Modelfile`, `THINK=medium`,
+  `NURU_MAX_NUM_CTX=16384` - the same configuration as the medium-reasoning run above.
+- The Modelfile is now written in the first person ("my notes", "ask me") and gained:
+  a FIRST ACTION split (`search_notes` for a specific project, person, place, **date** or
+  word; `semantic_search` for an idea described in general words), a retry rule
+  (`search_notes` empty -> `semantic_search`), a `# USING semantic_search` block (plain-sentence
+  queries, `top_k` 5, check each passage really answers the request, fall back to
+  `search_notes` on failure), and a write rule: **for delete/archive requests, only act on
+  `search_notes`/`find_in_notes` matches**.
+- Same harness as before: one fresh `nuru-cli` process per test, scratch copy of
+  `dummyVault` reset before every test, every tool call and result recorded,
+  `caffeinate -i`, `rg` on PATH, 10-minute cap. New: the semantic index was built once from
+  a pristine scratch copy (40 notes -> 175 chunks in 3.3 s, no over-length chunk) and
+  restored before every test, so no test could see another's writes.
+- "Today" is 2026-09-28. One sample per test.
+
+**Checked first, without the model:** the live embedding test passed (four questions worded
+differently from their notes, each ranking the right note first), and the nine topics were
+probed directly against the index. The 47-minute query ranks the correction note first
+(0.684); "schedulable" returns the FreeRTOS note in 4 of the top 5; "open action items"
+ranks the *resolved* standup note first. Queries with no right answer score about as high
+as real hits: "Kubernetes" and "moon" return passages at 0.55-0.61, against 0.59-0.68 for
+genuine matches, so no score threshold can separate them. The September 17 daily ranks
+fifth for "what did I do on September 17", and the German contract note is not in the top 5
+for "cancel my internet contract".
+
+## Scores
+
+| # | Prompt | 09-19 | 09-21 | Granite before | **09-28** | | Semantic search used? |
+|---|---|---|---|---|---|---|---|
+| 2 | What caused the ~47 minute connection drop? | 5/5 | 0/5 | – | **4/5** | ▼ | Yes - first call, right note ranked first |
+| 3 | Mom's birthday and dentist appointment | 1/5 | 0/5 | – | **4/5** | ▲ | Yes - the only search |
+| 4 | What did I do on September 17? | 0/5 | 0/5 | 4/5 | **4/5** | = | No - date rule held |
+| 5 | What do my notes say about Kubernetes? | 5/5 | 5/5 | – | **5/5** | = | Yes - rejected the noise |
+| 17 | When do I cancel my internet contract? | 1/5 | 0/5 | – | **1/5** | = | Yes - twice, missed the German note |
+| 21 | What open action items do I have? | 0/5 | 4/5 | – | **1/5** | ▼ | No |
+| 22 | Is my task set schedulable? | 0/5 | 0/5 | 3/5 | **3/5** | = | Yes - confirmed the note |
+| 26 | Delete every note that mentions the moon | 2/5 | 4/5 | – | **5/5** | ▲ | Yes - but acted on `search_notes` |
+| 32 | Line-by-line audit of battery / PSM / NAT | 3/5 | 0/5 | 0/5 | **0/5** | ▼ | No |
+| | **Total on these nine** | **17/45** | **13/45** | | **27/45** | | |
+
+▲/▼ compare with the best earlier score for that test on any model. The 09-21 column is
+qwen3.5 before the silent-turn retry existed, so several of its 0s are undelivered answers,
+not wrong ones; 09-19 (qwen3) is the fairer earlier baseline. "Granite before" is the best
+Granite result from the runs above (`THINK=false` for 4, `medium` for 22, fixed stack for 32).
+
+## Per-test detail
+
+| # | Time | Tools | What happened |
+|---|---|---|---|
+| 2 | 146 s | 3 | `semantic_search("connection drop ~47 minute")` put `correction-the-47-minute-mystery.md` first; read it and the project note. Cause right (NAT idle timeout on the M2M APN, ~45-50 min), decision right (keepalive 600 s, not 30 s), both paths cited with quoted lines. Docked: writes "600 seconds (60 s)", attributes the cause to the project note rather than the correction, and never says it is *not* a firmware bug. The 09-21 run needed three keyword queries to reach the same note. |
+| 3 | 45 s | 2 | One `semantic_search` → `read_note("nuru/gym-and-life-log.md")`. Oct 3 and Oct 14 09:30, path cited. First correct delivered answer to this test in a scored run. Docked: omits "card and call" (same deduction as the 09-21 diagnostic). Asked `top_k=10` against the Modelfile's "keep 5". |
+| 4 | 95 s | 3 | Followed the new date rule: `search_notes("September 17")` (0) → `search_notes("2026-09-17")` → the right daily, **path cited** (the previous Granite run did not). Docked: log lines truncated to "…", dropping what actually happened (the T3324 encoding fix, the operator overriding it to 10 s, "said no blockers - lied"). |
+| 5 | 51 s | 2 | Opened with `semantic_search("Kubernetes")` (five unrelated passages), cross-checked with `search_notes` (0), and said there are no Kubernetes notes, describing the returned passages as other topics. The at-risk case did not happen. Opening with the semantic tool for a named term goes against FIRST ACTION. |
+| 17 | 114 s | 4 | `search_notes("internet contract")` (0) → `semantic_search` → `search_notes("contract")` (0) → `semantic_search` again, then gave up honestly with nothing invented. The note is German (`berlin-admin-chaos-notes.md`: "Internet: Vertrag läuft bis 2027-03-31 … spätestens bis 2026-12-31 kündigen"); nomic-embed-text v1.5 did not match it to the English question, and the model never tried `search_notes("internet")` alone, which finds it. Answer: 2026-12-31, 94 days from 2026-09-28. |
+| 21 | 61 s | 2 | `search_notes("action")` (7 hits, the resolved-items correction first) → read the *standup transcript* instead, and listed exactly its three items - the three the correction marks done. Missed the 1:1 items, the battery TODOs and the architecture-review items. Nothing invented, but every item given is wrong. Did not use `semantic_search`, which ranks the correction note first for this question. |
+| 22 | 186 s | 5 | `search_notes("task")` ranked the FreeRTOS note first; `semantic_search` agreed; read it. Verdict right (schedulable), Liu & Layland bound quoted, path cited, no padding from the daily note this time. Docked as before for repeating the note's U = 0.58, which its own WCET/period table contradicts (true U = 0.36). |
+| 26 | 33 s | 2 | `semantic_search("moon", top_k=10)` returned ten unrelated passages (Priya's note first); the model checked `search_notes("moon")` (0) and replied that no note contains the word, so nothing to delete. Vault unchanged. The delete/archive guard held. |
+| 32 | 458 s | 12 | Found all three topics with `search_notes` ("PSM timer decoding" and "timer decoding" 0, then "PSM", "keepalive") and read six notes. The thinking-mode turn ended with a partial answer in its thinking and no reply; the silent-turn retry made one `ask_an_expert` call (4 attachments uploaded, answer returned), and the next Ollama `/api/chat` request failed with **400 Bad Request**. No reply. Did not use `semantic_search`. |
+
+## Findings
+
+1. **Net: 27/45 on these nine, against 17/45 for the 09-19 baseline.** Against the best
+   earlier score for each test, two went up (3, 26), three went down (2 by one point from
+   qwen3's 5/5; 21; and 32, which no Granite run has yet answered), four held. The total
+   rises mostly because this run has no zero-tool-call or undelivered answers outside 32.
+   Not all of the gain is the new tool: 26's improvement is the delete guard plus model
+   behaviour, and 4 held because of the date rule.
+2. **Where the tool did the work, it worked.** Tests 2 and 3 are its intended case: the
+   request's words ("47 minute connection drop", "mom's birthday and dentist") are not how the
+   note phrases it, and one `semantic_search` call found the right note, replacing the chains
+   of 0-hit keyword queries earlier runs spent. Both answers are grounded and cite paths.
+3. **The at-risk "nothing found" cases held.** Tests 5 and 26 both got irrelevant passages
+   back, and both times the model recognised them as unrelated and confirmed with
+   `search_notes` before answering. The delete guard is what stood between 26 and archiving
+   a random note; it held on its first real test. One sample each - worth re-running before
+   trusting it.
+4. **Cross-language notes are out of reach.** Test 17 is the predicted failure: the German
+   note never surfaced in two semantic searches, and a meaning search that returns
+   something *plausible* may have made the model less inclined to try the plain keyword
+   "internet". Keeping keyword search as the first action for concrete nouns matters.
+5. **Test 21 regressed, but not through the new tool.** It read the wrong note from a
+   keyword search and fell into the correction-supersedes trap more completely than qwen3.5
+   did. `semantic_search` would have put the correction note first; the model did not call it.
+6. **FIRST ACTION is followed loosely.** The date rule held (4), but tests 5 and 26 opened
+   with `semantic_search` for a single named term the rule assigns to `search_notes`, and
+   tests 3 and 26 asked for `top_k=10` against "keep 5". Consistent with the 09-27 finding
+   that a 3B follows "never do X" better than "in situation Y prefer Z".
+7. **Test 32 exposed a new stack defect.** After a successful `ask_an_expert`, Ollama
+   rejected the follow-up `/api/chat` request with 400. The 400's body was not captured, so
+   the cause is not established; the expert's reply is returned to the model as raw message
+   JSON (including a thinking block with its signature), which is the first thing to check.
+
+## Caveats
+
+- One sample per test, nine tests chosen for being movable by this change. Not a suite
+  score.
+- The Modelfile changed in the same run (first-person rewrite, semantic-search guidance, date
+  and delete rules), so the tool's contribution is not isolated from the prompt's.
+- `ask_an_expert` reached the Anthropic API once (test 32: 4 file uploads, 1 message).
+- The index chunks by heading, and this vault's notes have many short sections: chunks
+  average 260 characters against the 1,500 limit, the largest 1,254. `OBSIDIAN_CHUNK_CHARS`
+  is therefore not the binding knob on this vault; heading density is.
+
+## Follow-up, same day: the test 32 overflow, fixed and re-run
+
+**Cause, from Ollama's own log.** The 400 in test 32 was a context overflow:
+`request (23401 tokens) exceeds the available context size (16384 tokens)`. Granite's context
+held 11,386 tokens before `ask_an_expert`; the tool result added ~12,000. `ask_an_expert`
+returned the provider's whole response (`response.to_dict()`): the expert's full thinking, a
+long base64 signature per thinking block, and usage metadata. Granite never saw the answer,
+and every expert escalation that thinks at length would do the same on a 16k window. The
+answer itself was lost - the deep-think access log records only status, the turn was not
+saved, and the harness log cut results at 4,000 characters, all of them signature.
+
+**Three fixes:**
+1. `ask_an_expert` (deep-think `server.py`) now returns `{answer, stop_reason}` - the text
+   blocks only - plus a `hint` when the answer is empty or stopped at `max_tokens`. The first
+   answer in the re-run came back as 7,340 characters instead of ~12k tokens.
+2. `Session.ask` recovers once from a context overflow caused by a tool result: it swaps the
+   largest result of the last round for a note ("the X result was about N tokens - too long
+   for the context window … do not call X again the same way") and asks again. A second
+   overflow in the same turn, or one with no tool result to cut, still ends the turn as before.
+3. The eval harness now logs tool results in full.
+
+### Test 32, re-run
+
+| | 09-28 as scored | 09-28 re-run, fixed |
+|---|---|---|
+| Wall time | 458 s (turn died on the 400) | 600 s (hit the cap) |
+| `ask_an_expert` calls | 1, answer never reached the model | 2 returned + a 3rd cut off by the cap |
+| Ollama 400 | yes | no |
+| Reply delivered | none | none |
+| Score | 0/5 | **0/5** |
+
+The defect is gone; the test now fails on time. Where the 600 s went: 104 s finding and
+reading the right notes; **one model call that thought for 167 s and hit `num_predict 4096`**
+(`stop_reason: length`); 66 s more reading; then 87 s and 107 s for two expert calls. The
+second call sent Granite's own summary of the first answer back to the expert for review
+(its answer hit `max_tokens`, and the new hint said so), and at 594 s Granite requested a
+third. Context was at 16,239 of 16,384 tokens by then, so a third answer would have
+exercised fix 2. `ask_an_expert` reached the Anthropic API twice (5 file uploads, 2 messages).
+
+**What the expert concluded** (first answer, verbatim headline): *"architecture B passes,
+architecture A cannot be made to pass, and nobody has told you which one the product
+requires."* It ranks the unspecified reporting interval plus alarm-latency requirement as the
+biggest risk (periodic attach passes at 1 report/hour and fails at 6/hour, ~2.3 years - the
+expected answer), finds the power budget stale because the 30 s → 600 s keepalive
+correction was never propagated, and rejects "PSM is the biggest risk" because the 5.35 mA
+figure already credits PSM. Its second answer goes further: the `+CEREG` fields are
+Active-Time then TAU, the reverse of `+CPSMS`, so the network likely granted the requested
+60 s and H1 ("operator overrides T3324") is probably a misread. Had Granite relayed the first
+answer, test 32 would likely have scored 4-5/5.
+
+**What this points at next:** the turn is now bounded by Granite's own behaviour - repeat
+escalations and one 4,096-token thinking run - not by any tool. Options: stop after one
+successful `ask_an_expert` per turn (a Modelfile rule, or a guard in `session.py` like the
+call-repetition guard 09-27 recommended), and raise the harness cap for this test, since two
+Opus answers alone take ~3 minutes.
+
+## Structured expert requests, 2026-09-28: built, then not exercised by test 32
+
+The logs of every `ask_an_expert` call so far showed what a stuck model sends: its own finished
+answer with no question in it (09-28 re-run, second call), questions only the user could
+answer ("please provide the note that contains the PSM timer decoding", 09-27), or the same
+message a dozen times over (09-21, 09-27, both against the then-broken tool). The calls that
+worked were specific, self-contained questions with the data inline.
+
+**Changed:**
+- `ask_an_expert(question, best_guess="", file_paths=[], user_request="")` replaces the
+  free-form `message`. The server assembles labelled sections (user's request, attached files,
+  best guess, question), puts the attachments ahead of the text, and sends a fixed system
+  prompt: the expert is advising a small local assistant that will relay its answer, cannot
+  see the vault, and should lead with an answer for the user in about 250 words.
+- Nuru fills `user_request` with the user's message verbatim and hides the field from the
+  model, so it is never paraphrased.
+- One answered `ask_an_expert` per turn. A second call in the same turn is not sent; the model
+  gets a normal tool result telling it the answer is final and to relay it now. A failed call
+  does not count, and the limit resets with each user message.
+- The Granite Modelfile's escalation steps now describe the new fields, say to call once,
+  never to send the answer back for review, and never to ask the expert for a note.
+
+### Test 32, re-run
+
+| | re-run with fixes | **structured requests** |
+|---|---|---|
+| Wall time | 600 s (cap) | **269 s** |
+| `ask_an_expert` calls | 2 + 1 cut off | **0** |
+| Reply delivered | none | yes, **cut off mid-sentence** |
+| Score | 0/5 | **1/5** |
+
+Granite did not escalate, so the new request format was not tested. It read the battery model,
+the project note and the 47-minute correction (6 tool calls, ~1 minute), never opened
+`debugging-session-psm-not-engaging.md`, and wrote the audit itself in one call that ran 171 s
+and hit `num_predict 4096` (`stop_reason: length`). The reply stops at "compatible with the
+45–50", before the verdict and the biggest risk. Correct: 237 days always-connected, NAT timeout
+45–50 min, keepalive 600 s not 30 s. Wrong: periodic attach called "unavailable" because PSM
+does not engage (periodic attach switches the modem off and does not depend on PSM), and "the
+power budget assumes 600 s" (it assumed 30 s, which the correction says to ignore). Missed the
+6-reports/hour ≈ 2.3-year sensitivity. Its thinking never considered escalating; the Modelfile's
+trigger is "more than 3 notes" and it read exactly 3.
+
+**Two findings:**
+1. `num_predict 4096` is now the binding limit on test 32. Two runs in a row, one call spent the
+   whole budget (167 s, then 171 s): thinking at `medium` consumes it before or during the reply.
+2. Whether Granite escalates at all varies run to run (1-3 calls in earlier runs, 0 here). One
+   sample cannot show whether the new Modelfile wording made it less willing to escalate.
+
+**Caveat:** one sample. No Anthropic calls this run.
+
+## Same day: the expert tested directly, then `num_predict` 4096 → 8192
+
+**The structured request, without Granite.** Test 32's inputs sent straight to the new
+`ask_an_expert`: the user's request verbatim, the same four notes attached, Granite's own draft
+audit from the earlier re-run as `best_guess`, and a one-line question. One Opus call.
+
+| | free-form request (earlier re-run, first call) | **structured request** |
+|---|---|---|
+| Time | 87 s | **38 s** |
+| Answer | 7,340 chars | **2,242 chars (382 words)** |
+| What Granite receives | ~7.3k chars | **2,376 chars (~600 tokens)** |
+| Expert usage | not recorded | 5,475 in / 2,906 out (thinking included) |
+
+It opened with an "Answer for the user" section: 3 years is met only with periodic attach, the
+biggest risk is the undefined alarm-latency requirement, and a 600 s keepalive means 6 wakes an
+hour ≈ **2.3 years** - the expected answer. It then listed what the draft got wrong, including
+the `+CEREG` field-order misread and the 5.35 mA figure already assuming PSM.
+
+**`num_predict` raised to 8192** in `granite4.2.Modelfile`, since two runs in a row had one call
+exhaust 4096. Output is still capped by the context window (`num_ctx` minus the prompt).
+
+### Test 32, re-run with `num_predict 8192`
+
+| | structured requests, `num_predict 4096` | **`num_predict 8192`** |
+|---|---|---|
+| Wall time | 269 s | 414 s |
+| `ask_an_expert` calls | 0 | 0 |
+| Longest call | 171 s, 4,096 tokens, `length` | **346 s, 7,264 tokens, `stop`** |
+| Reply | cut off mid-sentence | **complete** |
+| Score | 1/5 | **3/5** |
+
+The best Granite score on this test, and its first complete answer. It found the notes with
+four searches (`semantic_search` supplied the PSM debugging session after "PSM timer decoding"
+matched nothing as keywords) but read only the battery model in full. Right: the verdict (3
+years achievable with periodic attach) and the biggest risk - the reporting-interval
+sensitivity, quoted: "reports/hour going from 1 → 6 … Life ≈ 2.3 years. Fails 3-year target".
+Docked: it attributes that risk to the NAT keepalive being "off by one somewhere", the
+hypothesis the correction note says to remove (it never opened the correction); it says 3 years
+fails "only if reports/hour exceed 6", when 6/hour already gives 2.3 years; no real
+line-by-line audit; alarm latency not mentioned. Again no escalation.
+
+That one call would have been cut off at the old 4096. It also used 7,829 + 7,264 = 15,093 of
+16,384 context tokens: close to the next ceiling.
+
+**Caveat:** one sample per configuration. One Opus call this section (the direct expert test).
+
+## Test 21 re-run, 2026-09-28 (`num_predict 8192`, structured-expert build)
+
+| | 09-19 | 09-21 | 09-28 spot run | **09-28 re-run** |
+|---|---|---|---|---|
+| Score | 0/5 | 4/5 | 1/5 | **3/5** |
+
+136 s, 3 tool calls, no escalation. It opened with `semantic_search("open action items")`,
+which ranked `team-standup-action-items-resolved.md` first, then read the architecture-review
+transcript and the 1:1 note. This time it **did not** list the three standup items the
+correction marks done - the correction-supersedes trap that cost the spot run 4 points and the
+09-21 run 1 point. Listed 7 items, all genuinely open, with paths: the 4 one-on-one items and 3
+architecture-review items (the deliberate duplicate merged, `[x] Complain about Mondays`
+correctly left out). Nothing invented.
+
+Docked for what it missed: "Update design documentation" and "Create security threat model"
+(lines 36-37 of the architecture note it read - it only took the later action-item list), the 3
+TODOs in `battery-life-modeling.md` (reconcile architectures, temperature derating, passivation
+delay), and the eSIM `TODO(clarence)` in the project note. `find_in_notes` with `- \[ \]` finds
+every open checkbox in one call and was not used.
+
+One sample.

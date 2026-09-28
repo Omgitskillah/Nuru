@@ -9,11 +9,15 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "mcp>=2.2.0",
     "PyQt6>=6.11.0",
+    "obsidian-mcp",
 ]
 
 [project.scripts]
 nuru-cli = "core.cli:main"
 nuru-ui = "core.ui:main"
+
+[tool.uv.sources]
+obsidian-mcp = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]

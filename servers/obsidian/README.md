@@ -33,6 +33,8 @@ This starts the server over stdio and waits for a host (e.g. Claude Desktop) to 
 - **`pyyaml`** - Serializes `create_note`'s frontmatter, rather than string-templating it, so key ordering, block-style lists, and quoting (e.g. a value starting with `{` being read back as a flow mapping) are handled correctly.
 - **`unidecode`** - Transliterates a title to ASCII before slugifying it, so accented Latin letters and non-Latin scripts (CJK, etc.) survive into the filename as a readable approximation instead of being silently dropped.
 - **ripgrep (`rg`)** - Not a Python package: a binary that has to be on the `PATH` the server is launched with (`brew install ripgrep`; a GUI host such as Claude Desktop may not have Homebrew's `/opt/homebrew/bin` on its own `PATH`). `find_in_notes` runs it for the search and reads each match's line number and position from its `--json` output. Without it that one tool raises `FileNotFoundError` (naming `search_notes` as the fallback); every other tool is unaffected.
+- **`sqlite-vec`** - The vector store behind `semantic_search`: a SQLite extension loaded into the stdlib `sqlite3`, so the index is one file and there's no separate server process. A single wheel with no dependencies of its own; pre-1.0.
+- **Ollama with `nomic-embed-text:v1.5`** - Not a Python package: `semantic_search` and `obsidian-mcp-index` embed text through the local Ollama's HTTP API (stdlib `urllib`, no extra client). `ollama pull nomic-embed-text:v1.5` once. Every other tool works without it.
 
 ## Note model
 
@@ -94,6 +96,39 @@ A template file's frontmatter has the same shape and field order as a real note'
 
 By default `generate_templates()` does not overwrite a template file that already exists - a file already reflecting the current spec, or one a human has since hand-edited, isn't silently clobbered. Pass `overwrite=True` to force every template back to the generated form.
 
+## Semantic search
+
+`search_notes` and `find_in_notes` match words; `semantic_search` matches meaning, so a question about a "car" finds a note about servicing the "automobile". It sits alongside the keyword tools rather than replacing them - an exact id, name, date or number is still a job for those. The code is in [`semantic.py`](src/obsidian_mcp/semantic.py).
+
+**How it works.** Each note is split into passage-sized chunks, each chunk is embedded by `nomic-embed-text` v1.5 running in the local Ollama, and the vectors are stored with the chunk's text, the note's path and its id in `.obsidian-mcp-semantic.sqlite3` - a dotfile in the vault, like the note index, so the listing tools never show it. Nothing leaves the machine and nothing secret is stored: only note text and its vectors. v1.5 rather than v2 because v2's 512-token limit would force much smaller chunks. nomic's task prefixes are added for you (`search_document: ` for a chunk, `search_query: ` for a query) - retrieval is noticeably worse without them.
+
+**What's indexed.** Every note except `Templates/`, `archive/`, hidden folders and symlinks out of the vault - the same working set `browse_notes` shows, `user/` included. No other folder name is assumed, so the vault can be reorganised freely. A note's id is the one `create_note` gave it, else its frontmatter `id`, else `null`.
+
+**Building the index.** Nuru keeps it current on its own: while Nuru runs, a background thread (see [`vault_indexer.py`](../../nuru/src/core/vault_indexer.py)) looks over the vault every 30 seconds and embeds whatever changed, and the window title reads `Nuru ⠹ indexing 12 notes` while it works. The first time, that means the whole vault. To build or update it by hand - for another client such as Claude Desktop, or to get the first build out of the way:
+
+```bash
+ollama pull nomic-embed-text:v1.5   # once
+uv run obsidian-mcp-index            # embeds new and changed notes
+uv run obsidian-mcp-index --rebuild  # starts over - needed after changing either knob below
+```
+
+Updates are incremental. A note whose modified time hasn't changed isn't read; one whose content hash hasn't changed isn't re-embedded; a deleted or archived note is dropped. A note moved to another folder keeps its vectors under its new path, unless its title changed too (the title heads every chunk, so a renamed note is re-embedded). Each note's chunks are replaced in one transaction, so a search never sees half a note and an interrupted build resumes where it stopped. The database runs in WAL mode, so the server can search while Nuru writes.
+
+**The two knobs to tune** once a first index exists, both set in `.env`:
+
+| Variable | Default | |
+|---|---|---|
+| `OBSIDIAN_EMBED_MODEL` | `nomic-embed-text:v1.5` | The embedding model. The explicit `:v1.5` tag matters: plain `nomic-embed-text` means `:latest`. |
+| `OBSIDIAN_CHUNK_CHARS` | `1500` | The most characters of a note in one chunk, about 350-400 tokens - enough for a whole passage, small enough that five results fit in a small model's prompt. At least 200. |
+| `OBSIDIAN_SEMANTIC_DB` | `<vault>/.obsidian-mcp-semantic.sqlite3` | Where the index lives. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama's own variable. |
+
+The index records which model and chunk size built it and refuses to mix: vectors from different embedders aren't comparable, and a mix of chunk sizes skews scores. After changing either, `semantic_search` and the indexer raise `ValueError` until you run `--rebuild`.
+
+**Chunking.** Frontmatter is left out. Each heading starts a new chunk, so a chunk is (part of) one section; within a section, paragraphs are packed together up to `OBSIDIAN_CHUNK_CHARS`, a longer paragraph is split between sentences, and a single sentence longer than that is cut. A fenced code block stays together, and a `#` line inside it isn't a heading. Every chunk starts with a label line, `Title > Section`, so it still says what it's about when read on its own - by the embedder or by the model. Headings with nothing under them make no chunk.
+
+**Context length.** Ollama serves this model with `num_ctx 8192`, but `ollama show nomic-embed-text:v1.5` reports the GGUF's context length as 2048. With 1500-character chunks that doesn't matter. The indexer calls Ollama with `truncate: false`, so a chunk that ever did exceed the limit fails loudly instead of being indexed by only its first part.
+
 ## Security
 
 All path-taking tools (`list_files_in_directory`, `read_note`, `get_links`, `append_note`, `add_to_daily`, `archive_note`, `rename_or_move_file`, `delete_file_or_directory`, `generate_templates`) are confined to `VAULT_PATH`: `..`/absolute-path traversal is rejected, and a symlink stored inside the vault that points outside it is also rejected (checked against its resolved, real location, not just its name). `create_note`'s path is server-derived (`type` folder + slugified `title`), never caller-supplied, so it goes through the same containment check but can't be steered outside the vault by input.
@@ -116,7 +151,7 @@ Because of that, `create_note` uses an atomic exclusive-create (`open(path, "x")
 
 ## Error handling
 
-Every tool is wrapped (`@_tool` in `server.py`) so its own anticipated failures - bad input, not found, already exists, permission denied, a timed-out write (`ValueError`, `FileNotFoundError`, `FileExistsError`, `PermissionError`, `TimeoutError`) - reach the caller as `ToolError` with the original exception's type and message intact. Without this, the MCP framework only forwards a raised exception's message to the client for `ToolError` (or a subclass); anything else is treated as a crash and replaced with a bare `Error executing tool <name>`, discarding the message entirely - every failure this server raises looked identical from the outside. A genuinely unexpected exception (a real bug, not one of the five types above) still gets that generic treatment, which is the correct behavior for something truly unanticipated.
+Every tool is wrapped (`@_tool` in `server.py`) so its own anticipated failures - bad input, not found, already exists, permission denied, a timed-out write, Ollama not running (`ValueError`, `FileNotFoundError`, `FileExistsError`, `PermissionError`, `TimeoutError`, `ConnectionError`) - reach the caller as `ToolError` with the original exception's type and message intact. Without this, the MCP framework only forwards a raised exception's message to the client for `ToolError` (or a subclass); anything else is treated as a crash and replaced with a bare `Error executing tool <name>`, discarding the message entirely - every failure this server raises looked identical from the outside. A genuinely unexpected exception (a real bug, not one of the six types above) still gets that generic treatment, which is the correct behavior for something truly unanticipated.
 
 `read_note` raises `FileNotFoundError` for a missing note rather than returning an empty string, which was indistinguishable from a note that's genuinely empty. A note whose frontmatter isn't valid YAML (easy to produce by hand in Obsidian, including an impossible date like `2026-13-45`) is read as having none, rather than failing every tool that scans the vault.
 
@@ -130,6 +165,7 @@ Every tool is wrapped (`@_tool` in `server.py`) so its own anticipated failures 
 - **`list_files_in_directory(directory)`** - List all files recursively within a subdirectory of the vault. If `directory` isn't found directly under the vault root, the vault is searched recursively for a directory with that name, and the first match (alphabetically, by path) is used. Returns `{directory, count, files}`; when `files` is empty (no matching directory, or an empty one) a `hint` explains why.
 - **`search_notes(query)`** - Search notes by content, title and filename. `query` is one or more whitespace-separated words: every word must appear (in the note's content, title or filename, in any order, ignoring case). Inside a word, `-` and `_` also match each other and a space, and the parts must sit side by side: `PDP-drop` finds `PDP_drop` and `PDP drop`, and `09-17` finds `2026-09-17` but not a note that merely mentions 09 and 17 separately (written `09 17`, those are two words and may be anywhere) - so date and id searches stay as precise as a literal substring match. Returns `{query, count, matches}` with `matches` holding at most 10 hits, best first (a note with query words in its filename or title ranks above one that only matches in the body; ties are broken by path), each `{path, id, type, title, snippet}`. `count` is the total number of matches, which can exceed 10. `id`/`type`/`title` come from the index, so a note `create_note` didn't make has `null` `id` and `type` (and its filename as `title`) - `append_note` can't target it either. `snippet` is about 120 characters of the body, frontmatter skipped, around the first hit. A `hint` says how to retry when nothing matches, or how to narrow when results were cut off; a query with no words raises `ValueError`. Returns a dict rather than a bare list so an empty result still reaches the model as a readable message instead of a blank tool response. Only reads the index if it already exists, so searching never creates it.
 - **`find_in_notes(pattern)`** - Find the lines of notes matching a regular expression (ripgrep syntax, case-insensitive) - for an exact phrase, id, number or code, where `search_notes` matches words. Returns `{pattern, count, matches}`: at most 10 notes in path order, each `{path, lines: [{line, text}]}` with at most 5 lines (`line` is 1-based; `text` is cut to about 120 characters around the match). `count` is the total number of matching notes, and a `hint` explains an empty or cut-off result. Excludes `Templates/`, hidden folders and symlinks out of the vault; includes `archive/`. An empty pattern or one ripgrep rejects raises `ValueError`; `rg` not being installed raises `FileNotFoundError`. See *Line search* under *Finding, naming and following notes*.
+- **`semantic_search(query, top_k=5)`** - The passages nearest in meaning to `query`, for a question or an idea when you don't know the note's words. `top_k` is at least 1 and capped at 10. Returns `{query, matches}`, best first, each `{path, id, text, score}`: `text` is the chunk (headed `Title > Section`), `score` the cosine similarity (1 is closest), `id` `null` for a note without one. A `hint` explains an empty result. Only reads the index (see *Semantic search*), so a note edited in the last few seconds may still be found by its old text. Raises `FileNotFoundError` if no index has been built, `ValueError` for an empty query or an index built with another model or chunk size, `ConnectionError` if Ollama isn't running. Excludes `Templates/` and `archive/`.
 - **`read_note(name, section=None)`** - Return a note's contents by name: a path, a filename (with or without `.md`), or - forgivingly - a title, alias or id in any case (see *Finding, naming and following notes*). An exact path or filename is tried first, and the first match alphabetically wins if a filename appears in several folders. `section="Heading"` returns just that heading through to the next of the same or higher level; blank or omitted returns the whole note. Raises `FileNotFoundError`, naming the three closest notes, if none matches; `ValueError`, listing the note's headings, if `section` isn't one of them.
 - **`get_links(name)`** - A note's outgoing `[[wikilinks]]` resolved to paths (`null` where no note has that name) and its backlinks. Returns `{note, outgoing, backlinks}`, each list capped at 25.
 - **`create_note(type, title, author, body="", tags=None, supersedes=None, date=None, targets=None, session=None)`** - Create a new note with server-owned frontmatter (see Note model above). `date`/`targets`/`session` are only valid (and are each required) for the type they belong to - see Note model - and are validated, not just accepted: `date`/`session` must be well-formed with a real calendar date, and every id in `targets` must already exist in the index, the same as `supersedes`. `title` is transliterated to ASCII for the filename (`unidecode`) and falls back to the note's own id if nothing survives (an all-CJK or all-emoji title, say) - only a title with no real content at all (empty or all whitespace) is rejected. No tag in `tags` may contain whitespace. A `type` under `user/` (`directives`, `daily`, `correction`) requires `author="user"`. `date` (for `daily`) and `session` (for `transcript`/`session`) may be left out and default as described in Note model. Raises `ValueError` for any of the above, or `FileExistsError` if the derived path already exists. Returns `{"id": <ulid>, "path": <vault-relative path>}`.
@@ -153,6 +189,12 @@ The same tag data is also available as tools (`all_tags`, `notes_with_tag`), whi
 
 ```bash
 uv run pytest
+```
+
+The semantic search tests use a stand-in embedder, so they need neither Ollama nor the model. One test checks the real `nomic-embed-text:v1.5` against the same small fixture vault, and it's skipped unless you ask for it:
+
+```bash
+OBSIDIAN_SEMANTIC_LIVE=1 uv run pytest tests/test_semantic.py -k nomic
 ```
 
 See the [servers README](../README.md) for running the whole repo's tests together from the root.

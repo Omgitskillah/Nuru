@@ -664,3 +664,220 @@ def test_a_reasoning_level_still_triggers_the_silent_turn_retry(monkeypatch):
 
     assert seen == ["medium", False]
     assert events == [Thinking("the answer is 4"), RetryWithoutThinking(), Text("4")]
+
+
+class FakeIndexer:
+    def __init__(self):
+        self.pending = 0
+        self.calls = []
+
+    def start(self):
+        self.calls.append("start")
+
+    def stop(self):
+        self.calls.append("stop")
+
+
+def test_start_runs_the_background_indexer_and_close_stops_it(monkeypatch):
+    indexer = FakeIndexer()
+    monkeypatch.setattr(session, "VaultIndexer", type("V", (), {"from_env": staticmethod(lambda: indexer)}))
+    s = start_session(monkeypatch)
+
+    assert indexer.calls == ["start"]
+    assert s.indexing == 0
+    indexer.pending = 7
+    assert s.indexing == 7
+
+    s.close()
+
+    assert indexer.calls == ["start", "stop"]
+
+
+def test_a_session_without_a_vault_has_no_indexer(monkeypatch):
+    s = start_session(monkeypatch)
+
+    assert s.indexer is None
+    assert s.indexing == 0
+    s.close()
+
+
+def context_overflow_error():
+    """What chat() raises when Ollama rejects a request longer than num_ctx."""
+    response = session.requests.Response()
+    response.status_code = 400
+    response._content = (
+        b'{"error":"request (23401 tokens) exceeds the available context size (16384 tokens), try increasing it"}'
+    )
+    return session.requests.exceptions.HTTPError("400 Client Error: Bad Request", response=response)
+
+
+def test_a_tool_result_too_long_for_the_context_is_swapped_for_a_note_and_the_turn_goes_on(monkeypatch):
+    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 50_000})
+    seen = []
+    calls = iter(["tool", "overflow", "answer"])
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        seen.append([dict(m) for m in messages])
+        step = next(calls)
+        if step == "tool":
+            yield {"tool_calls": [tool_call("ask_an_expert", {"message": "audit"})]}
+        elif step == "overflow":
+            raise context_overflow_error()
+        else:
+            yield "Here is what I found."
+            yield {"prompt_tokens": 10, "completion_tokens": 5}
+
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("audit my notes"))
+
+    assert events == [ToolCall("ask_an_expert", {"message": "audit"}), Text("Here is what I found.")]
+    assert seen[1][-1]["content"] == "x" * 50_000  # the request Ollama refused
+    note = seen[2][-1]["content"]
+    assert note.startswith("[The ask_an_expert result was about")
+    assert "too long for the context window" in note
+    assert s.store.get_messages(s.conversation_id)[-1]["content"] == "Here is what I found."
+
+
+def test_a_second_overflow_in_the_same_turn_ends_it_as_before(monkeypatch):
+    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 50_000})
+    calls = iter(["tool", "overflow", "overflow"])
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        if next(calls) == "tool":
+            yield {"tool_calls": [tool_call("ask_an_expert", {"message": "audit"})]}
+        else:
+            raise context_overflow_error()
+
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("audit my notes"))
+
+    assert isinstance(events[-1], Failure)
+    assert "request to the model failed" in events[-1].message
+
+
+def test_an_overflow_with_no_tool_result_to_cut_ends_the_turn_as_before(monkeypatch):
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        raise context_overflow_error()
+        yield  # pragma: no cover - makes this a generator
+
+    s = start_session(monkeypatch, chat=chat)
+
+    events = list(s.ask("hello"))
+
+    assert len(events) == 1 and isinstance(events[0], Failure)
+    assert s.store.get_messages(s.conversation_id) == []
+
+
+EXPERT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ask_an_expert",
+        "description": "",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "best_guess": {"type": "string"},
+                "file_paths": {"type": "array"},
+                "user_request": {"type": "string"},
+            },
+            "required": ["question"],
+        },
+    },
+}
+EXPERT_ANSWER = json.dumps({"answer": "Architecture B passes.", "stop_reason": "end_turn"})
+
+
+def scripted_chat(steps, seen=None):
+    """A chat() that plays one step per call: a list of tool calls to make, or reply text."""
+    steps = iter(steps)
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        if seen is not None:
+            seen.append([dict(m) for m in messages])
+        step = next(steps)
+        if isinstance(step, list):
+            yield {"tool_calls": step}
+        else:
+            yield step
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    return chat
+
+
+def test_the_model_is_not_asked_for_the_user_request_the_session_fills_in(monkeypatch):
+    s = start_session(monkeypatch, tools=FakeMCPTools(tools=[EXPERT_TOOL]))
+
+    parameters = s.tool_definitions[0]["function"]["parameters"]
+    assert set(parameters["properties"]) == {"question", "best_guess", "file_paths"}
+    assert parameters["required"] == ["question"]
+
+
+def test_ask_an_expert_gets_the_users_message_verbatim(monkeypatch):
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    chat = scripted_chat([[tool_call("ask_an_expert", {"question": "Is B viable?"})], "B passes."])
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    list(s.ask("Audit my battery notes, line by line."))
+
+    assert fake_tools.calls == [
+        ("ask_an_expert", {"question": "Is B viable?", "user_request": "Audit my battery notes, line by line."})
+    ]
+
+
+def test_a_second_expert_call_in_the_same_turn_is_refused_and_steers_to_the_answer(monkeypatch):
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    seen = []
+    chat = scripted_chat(
+        [
+            [tool_call("ask_an_expert", {"question": "Is B viable?"})],
+            [tool_call("ask_an_expert", {"question": "Is my summary right?"})],
+            "The expert says architecture B passes.",
+        ],
+        seen,
+    )
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("Audit my battery notes."))
+
+    assert [name for name, _ in fake_tools.calls] == ["ask_an_expert"]  # the second never reached the server
+    assert seen[2][-1] == {"role": "tool", "content": session._EXPERT_ALREADY_ANSWERED}
+    assert events[-1] == Text("The expert says architecture B passes.")
+
+
+def test_a_failed_expert_call_does_not_use_up_the_turns_one_call(monkeypatch):
+    results = iter(["FileNotFoundError: No such file: 'nuru/x.md'", EXPERT_ANSWER])
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL])
+    fake_tools.call_tool = lambda name, arguments: (fake_tools.calls.append((name, arguments)), next(results))[1]
+    chat = scripted_chat(
+        [
+            [tool_call("ask_an_expert", {"question": "q", "file_paths": ["nuru/x.md"]})],
+            [tool_call("ask_an_expert", {"question": "q"})],
+            "done",
+        ]
+    )
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    list(s.ask("audit"))
+
+    assert len(fake_tools.calls) == 2
+
+
+def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    chat = scripted_chat(
+        [
+            [tool_call("ask_an_expert", {"question": "first"})],
+            "first answer",
+            [tool_call("ask_an_expert", {"question": "second"})],
+            "second answer",
+        ]
+    )
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    list(s.ask("first question"))
+    list(s.ask("second question"))
+
+    assert [args["question"] for _, args in fake_tools.calls] == ["first", "second"]

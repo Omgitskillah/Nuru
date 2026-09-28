@@ -85,8 +85,8 @@ def test_export_writes_jsonl(log, tmp_path, capsys):
     out = tmp_path / "labels.jsonl"
     label_cli.main(["--db", str(tmp_path / "d.sqlite3"), "export", str(out)])
     assert "Wrote 1 labelled decision" in capsys.readouterr().out
-    # Options are numbered as shown, in the logged (sorted) order: 1 is `block`.
-    assert json.loads(out.read_text())["label"] == json.dumps({"matches_request": "true", "verdict": "block"}, sort_keys=True)
+    # Options are numbered as shown - in the order Laya was given them: 1 is `proceed`.
+    assert json.loads(out.read_text())["label"] == json.dumps({"matches_request": "true", "verdict": "proceed"}, sort_keys=True)
 
 
 def test_no_log_yet_is_a_clear_message(tmp_path):

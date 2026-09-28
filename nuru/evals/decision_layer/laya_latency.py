@@ -38,7 +38,9 @@ def cases(sets):
         ("check_claim", {"reply": "Done - I added the line to Priya's note. " * 4,
                          "log": [{"tool": "append_note", "ok": False, "error": "TimeoutError"}]},
          sets["check_claim"].render(flags={"failed_writes"})),
-        ("rerank", {"query": "power budget", "passage": note.body[:1200]}, sets["rerank"].render()),
+        # 800 characters: a full 1,500-character chunk can exceed rerank's 440-token budget (then it
+        # is rejected, and rerank keeps the search's order) - measured here, not the failure path.
+        ("rerank", {"query": "power budget", "passage": note.body[:800]}, sets["rerank"].render()),
         ("classify_note_type", {"note": note.body}, sets["classify_note_type"].render({"note_types": [
             "correction", "daily", "directives", "index", "person", "preferences", "profile", "project", "session",
             "topic", "transcript"]})),

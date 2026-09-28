@@ -31,8 +31,9 @@ tiers:
   order: ["off", low, high, expert]
   default: high             # matches Granite's own default
   # Ollama `think` value per tier, per model. There is no medium tier: measured 2026-09-28 on
-  # Ollama 0.34.0, granite4.2 renders think="medium" byte-for-byte like "high" (its template only
-  # knows "low"), so medium was folded into high.
+  # Ollama 0.34.0 (nuru/evals/decision_layer, eval 1), granite4.2 given think="medium" sends the
+  # same prompt as "high" but answers differently - slower (107 s vs 65 s per argument step), one
+  # runaway to the token limit, and no more correct. So medium was folded into high.
   models:
     granite4.2:3b: {"off": false, low: low, high: high}
 

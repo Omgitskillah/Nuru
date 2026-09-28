@@ -81,3 +81,17 @@ def test_the_classify_cache_round_trips(log):
     assert log.cached_label(key) is None
     log.cache_label(key, "topic", 0.9)
     assert log.cached_label(key) == ("topic", 0.9)
+
+
+def test_state_and_questions_are_kept_in_the_order_laya_saw_them(log):
+    # Laya reads keys and options in order, and its answers change with it: a replay or a training
+    # example built from a re-sorted copy would not be the decision that was made.
+    state = {"request": "r", "steps": [], "failures": {}}
+    questions = {"tier": {"type": "choice", "instructions": "x", "criteria": {"off": "a", "low": "b", "high": "c"}}}
+    decision_id = record(log, state=state, questions=questions)
+    row = log._conn.execute("SELECT state_text, questions_json, state_hash FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    assert list(json.loads(row["state_text"])) == ["request", "steps", "failures"]
+    assert list(json.loads(row["questions_json"])["tier"]["criteria"]) == ["off", "low", "high"]
+    reordered = record(log, state={"failures": {}, "steps": [], "request": "r"}, questions=questions)
+    same = log._conn.execute("SELECT state_hash FROM decisions WHERE id = ?", (reordered,)).fetchone()
+    assert same["state_hash"] == row["state_hash"]  # the hash still identifies the state

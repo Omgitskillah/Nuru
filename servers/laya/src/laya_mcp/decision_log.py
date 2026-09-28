@@ -84,6 +84,13 @@ def canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
+def as_seen(value: Any) -> str:
+    """JSON in the order Laya was given it. Laya reads a state's keys and a question's options in
+    order and its answers change with it, so a replay or a training example must keep that order;
+    `canonical` (sorted) is only for hashing."""
+    return json.dumps(value, ensure_ascii=False)
+
+
 def redact_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return {
         key: {"chars": len(value), "sha256": sha256(value)} if key in _BODY_ARGUMENTS and isinstance(value, str) else value
@@ -129,7 +136,7 @@ class DecisionLog:
         latency_ms: float | None = None,
     ) -> int:
         context = context or {}
-        state_text = state if isinstance(state, str) else canonical(state)
+        state_text = state if isinstance(state, str) else as_seen(state)
         return self._insert(
             "decisions",
             {
@@ -141,9 +148,9 @@ class DecisionLog:
                 "question_set": question_set,
                 "question_set_version": question_set_version,
                 "checkpoint": checkpoint,
-                "state_hash": sha256(state_text),
+                "state_hash": sha256(state if isinstance(state, str) else canonical(state)),
                 "state_text": state_text,
-                "questions_json": canonical(questions),
+                "questions_json": as_seen(questions),
                 "answers_json": canonical(answers) if answers is not None else None,
                 "status": status,
                 "detail": detail,

@@ -27,6 +27,19 @@ uv run python check_claim_set.py
 uv run python laya_latency.py
 ```
 
+## Iterating quickly
+
+Most changes don't need the two-hour suite:
+
+- **A change on Laya's side** - question wording, thresholds, the checkpoint, calibration - is judged by **`replay.py`**, which re-asks Laya on the states earlier runs logged: about a minute for a full suite's worth, no model runs. It reports accuracy against your labels (`nuru label`) where there are any, how often Laya's tool choice matches the model's, and how many answers changed. `--questions <folder>` tries variant question sets without touching the real ones.
+- **A change to the model, its Modelfile or Nuru's loop** needs live runs: **`run_suite.py --tests quick`** runs eight tests, one per behaviour worth watching, each of which has failed in an earlier scored run (bar the no-tool control) - about 15 minutes.
+- **The full 34** stay the occasional regression check: before switching a decision point to `enforce`, or after changing models.
+
+```bash
+uv run python replay.py .runs/suite-shadow-<time> .runs/suite-tiers-<time>
+caffeinate -i uv run python run_suite.py --tests quick --label quick
+```
+
 ## How the suite runs are isolated
 
 `run_suite.py` runs one fresh Nuru process per turn (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with the batch's own conversation history, session logs and decision log - the real vault, history and decision log are never touched. The semantic index is built once from the pristine copy and restored before every turn. A turn gets 10 minutes; past that its whole process tree is killed and it counts as a failure. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).

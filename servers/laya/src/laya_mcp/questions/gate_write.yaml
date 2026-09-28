@@ -1,0 +1,17 @@
+# Asked only after the code checks (tool allowlist, vault permission rules, path rules, note ID
+# validity) have passed.
+name: gate_write
+version: 1
+checkpoint: english
+max_state_tokens: 420
+questions:
+  matches_request:
+    type: noul
+    instructions: "The proposed write (`tool` with `arguments`) does what the user's `request` asked for."
+  verdict:
+    type: choice
+    instructions: "What should happen with this proposed write?"
+    criteria:
+      proceed: "Clearly matches the request and is safe"
+      confirm: "Plausible, but the user should confirm it"
+      block: "Does not match the request or is unsafe"

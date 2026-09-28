@@ -1,0 +1,20 @@
+# Asked once, before the model runs on a request. `first_tool` options are the live MCP tool list
+# (each tool's first sentence as its description) plus `none`, filled in at request time.
+name: tool_gate_start
+version: 1
+checkpoint: english
+max_state_tokens: 240
+head_max_len: 256        # ~20 tool options; the default 192 cuts each description to ~7 tokens
+questions:
+  mode:
+    type: choice
+    instructions: "What must the assistant do first to handle the user's `request` correctly?"
+    criteria:
+      answer: "Reply directly; nothing in the user's notes is needed"
+      read: "Look something up in the user's notes first"
+      write: "Add to or change the user's notes"
+      ask_user: "The request is too unclear to act on; ask the user"
+  first_tool:
+    type: choice
+    instructions: "Which tool should run first for the user's `request`?"
+    criteria_from: first_tools

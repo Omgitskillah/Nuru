@@ -1,0 +1,15 @@
+# Asked after the code checks on the drafted reply. Replies run long, so this uses the
+# multilingual checkpoint's long context rather than the English 512 tokens.
+name: check_claim
+version: 1
+checkpoint: multilingual
+max_len: 4096
+max_state_tokens: 3800
+questions:
+  claims_unlogged_action:
+    type: noul
+    instructions: "The `reply` claims an action or a result that the `log` does not show."
+  hides_failure:
+    type: noul
+    instructions: "The `reply` presents an action that failed in the `log` as if it succeeded."
+    only_when: failed_writes

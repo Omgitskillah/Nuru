@@ -1,0 +1,9 @@
+# One state per semantic-search chunk: the query and the passage.
+name: rerank
+version: 1
+checkpoint: english
+max_state_tokens: 440
+questions:
+  relevant:
+    type: noul
+    instructions: "The `passage` helps answer the `query`."

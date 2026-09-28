@@ -1,0 +1,11 @@
+# Asked after every tool result. Options are the live tools plus `answer` and `ask_user`.
+name: tool_gate_next
+version: 1
+checkpoint: english
+max_state_tokens: 240
+head_max_len: 256
+questions:
+  next:
+    type: choice
+    instructions: "Given the user's `request` and the `steps` taken so far, what should happen next?"
+    criteria_from: next_steps

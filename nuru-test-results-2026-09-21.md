@@ -726,3 +726,172 @@ delay), and the eSIM `TODO(clarence)` in the project note. `find_in_notes` with 
 every open checkbox in one call and was not used.
 
 One sample.
+
+### Test 21, second re-run: 2/5
+
+128 s, 3 tool calls: `semantic_search("open action items")` → `read_note` on the resolved-standup
+correction → `read_note` on the architecture transcript. The 1:1 items came from the
+`semantic_search` passage, not a `read_note` (allowed: passages are real note text).
+
+Same content as the first re-run: the correction trap avoided again, the 4 one-on-one and 3
+architecture-review items listed, the same five items missed. One addition, defensible: "Hardware
+integration meeting results pending", which the correction note itself lists under "Outstanding
+Items". Docked one more point than the first re-run because **7 of 8 citations have mangled
+paths** - `nu.../Transcripts/architecture-review-meeting.md`, `nu.../one-on-one-with-manager.md`
+- which are not real paths (CORE RULE 7, "give their paths"; the same deduction test 4 took for
+a missing path).
+
+Across the two re-runs: the correction trap is avoided both times (both opened with
+`semantic_search`, which ranks the correction first), and the same five items are missed both
+times, so that miss looks systematic rather than chance. Neither used `find_in_notes`.
+
+---
+
+# Granite 8B vs 3B, 2026-09-29: the five hardest tests
+
+The five from the 09-27 spot run (4, 6, 22, 25, 32), run on `granite4.2:8b` (the new
+`NURU_BASE_MODEL`) and, for a like-for-like comparison, on `granite4.2:3b`. Everything else is
+identical: the current `granite4.2.Modelfile` (first-person, semantic-search guidance,
+`num_predict 8192`), `THINK=medium`, 16k context, the structured `ask_an_expert` with its
+once-per-turn limit, the same harness (fresh process per test, scratch vault and semantic index
+reset before each, 10-minute cap). Earlier 3B scores on these tests came from older Modelfiles,
+so the 3B column here, not those, is the comparison.
+
+## Scores
+
+| # | Prompt | **8B** | **3B** | Better | Earlier best (any model) |
+|---|---|---|---|---|---|
+| 4 | What did I do on September 17? | **5/5** · 154 s | 4/5 · 100 s | 8B | 4/5 |
+| 6 | Which wiki-links point to notes that don't exist? | 0/5 · cap | 0/5 · cap | = | 5/5 (3B, `THINK=true`, 09-27) |
+| 22 | Is my task set schedulable? | 2/5 · 298 s | **3/5** · 154 s | 3B | 3/5 |
+| 25 | Draft a status message to my manager. | **3/5** · 218 s | 1/5 · 19 s | 8B | 1/5 |
+| 32 | Line-by-line audit of battery / PSM / NAT | 0/5 · cap | **2/5** · 417 s | 3B | 3/5 (3B, earlier today) |
+| | **Total** | **10/25** | **10/25** | tie | |
+| | Wall time | 1,870 s | 1,290 s | | |
+
+No test escalated to the expert on either model; no Anthropic calls.
+
+## Per-test detail
+
+| # | 8B | 3B |
+|---|---|---|
+| 4 | `search_notes` "September 17" (0) → "2026-09-17" → the right daily. Quoted the full log accurately (T3324 fix, operator override, "said no blockers - lied"), path cited, and closed with a correct one-line summary. First 5/5 on this test. | Same route plus an extra "September" search. Reproduced the whole note correctly with the path, but as a dump with no summary, against "keep answers short". |
+| 6 | Note-by-note `get_links` (8 calls). Had already found `technical-knowledge-base.md`'s null links ("Certifications and Courses", "Power Management Strategies") but never reported them; ~9 tokens/s thinking meant 1-2 minutes per step. Cap. | `browse_notes` then `get_links` on 3 notes, then one call generated for the last 5.5 minutes. Cap. Neither model used `find_in_notes`, which solved this test in one call on 09-27. |
+| 22 | `search_notes` "task set" → the knowledge-base index → "schedulable" (0) → "task" → the FreeRTOS note. Right verdict, bound quoted, relevant priority-inversion warning added; but repeats both the note's wrong U = 0.58 and the 14.2 ms figure, and gives the note's title without its path. | `semantic_search("Is my task set schedulable?")` found the FreeRTOS note in one call. Right verdict, bound quoted, path cited; repeats U = 0.58. |
+| 25 | **Searched immediately** ("status"), read the Area Monitor and Memfault project notes and the directives. Casual, signed "— Clarence", flagged the Memfault "Planning" vs "Started" mismatch; no Priya leak. Never read the 1:1 note, so no battery range for Thursday and no NAT/PSM status. Best score this test has had. | Zero tool calls, a clarifying question. Its thinking again rules the FIRST ACTION trigger out ("doesn't mention any specific projects, people, or notes"). |
+| 32 | Best retrieval of either: 3 searches, 4 reads including the correction note, in under 2 minutes. Then one call ran the remaining 8 minutes without finishing. | Complete reply (one 311 s call, 5,503 tokens): a real line-by-line audit quoting all three notes, including the "reports/hour 1 → 6 … ≈ 2.3 years" line. Wrong conclusion: "not met", biggest risk PSM, on the false premise that without PSM the device must stay always-connected; keepalive reasoning backwards; never read the correction note. |
+
+## Findings
+
+1. **A tie in points, different strengths.** The 8B follows instructions better where the 3B
+   systematically fails - it searched on test 25, the first model in any run to do so, and wrote
+   a directive-compliant draft - and it synthesises better (test 4's summary). The 3B is faster
+   and, on these tests, finishes more often.
+2. **The 8B's speed is the binding constraint.** About 9 tokens/s while thinking at `medium`:
+   two of its five tests hit the 10-minute cap, both after good retrieval. On test 32 it had the
+   right four notes, including the correction the 3B never opens, and ran out of clock writing.
+3. **Test 6 regressed on both** relative to 09-27 (5/5 at `THINK=true`), and for the same reason:
+   neither reached for `find_in_notes`, walking notes one at a time with `get_links` instead.
+4. **Neither escalated anywhere**, including test 32, where the expert path now works well
+   (structured request: 38 s, a relayable answer with the expected risk).
+
+**Caveats:** one sample per test per model. The 10-minute cap is the harness's, not Nuru's; a
+user would have waited longer and the 8B might have answered tests 6 and 32.
+
+## Granite 8B at `THINK=low`, 5-minute cap (stopped after four tests)
+
+Same five tests and setup as above, with `THINK=low` and a 5-minute cap per test. Stopped by
+request during test 32 (11 tool calls in, no Anthropic calls), so 32 is unscored.
+
+| # | 8B `medium`, 10 min | **8B `low`, 5 min** | 3B `medium`, 10 min |
+|---|---|---|---|
+| 4 | 5/5 · 154 s | **5/5 · 90 s** | 4/5 · 100 s |
+| 6 | 0/5 · cap | **0/5 · cap** | 0/5 · cap |
+| 22 | 2/5 · 298 s | **3/5 · 100 s** | 3/5 · 154 s |
+| 25 | 3/5 · 218 s | **1/5 · 21 s** | 1/5 · 19 s |
+| 32 | 0/5 · cap | *stopped* | 2/5 · 417 s |
+| **4, 6, 22, 25** | **10/20** | **9/20** | **8/20** |
+
+- **4:** went straight to `find_in_notes("2026-09-17")` - one call to the right daily - and gave
+  a concise, accurate summary with the path.
+- **6:** the same note-by-note `get_links` walk as at `medium`; found the knowledge-base note's
+  null links, checked two with `search_notes`, read the note, and hit the cap before replying.
+- **22:** followed the retry rule exactly (`search_notes` 0 hits → `semantic_search`, straight to
+  the FreeRTOS note). Right verdict, bound quoted, path cited, priority-inversion warning; still
+  repeats U = 0.58, but no longer the 14.2 ms figure.
+- **25:** one `search_notes("status message manager")`, 0 hits, then a clarifying question - it
+  did not retry, where `medium` searched "status" and wrote a signed, directive-compliant draft.
+
+`low` roughly halves the 8B's time on the tests it finishes, and scores the same or better on
+retrieval-and-quote tests (4, 22). It loses the persistence that made `medium` the only
+configuration to handle test 25. One sample each.
+
+---
+
+# New tools, 2026-09-29: `note_tags`, `note_todos` and a calc server, on Granite 3B
+
+**Added:**
+- `note_tags(name)` and `note_todos(name)` in the obsidian server. `note_todos` returns a note's
+  unticked checkboxes (`- [ ]`, `* [ ]`, `1. [ ]`) and `TODO` lines with line numbers, skipping
+  ticked items, frontmatter and fenced code.
+- No new link tool: `get_links` already returns a note's outgoing links with `path: null` for a
+  missing target, so the Modelfile points at it instead of adding an overlapping schema.
+- A new `servers/calc` MCP server with `add(numbers)`, `subtract(a, b)`, `multiply(numbers)`,
+  `divide(a, b)`, one-line descriptions, started by Nuru as a third server.
+- Four brief lines in the Modelfile's PICKING A TOOL, including "Any arithmetic -> add,
+  subtract, multiply, divide. Never do sums in your head".
+
+**Context cost:** the six new schemas are 1,778 characters (~444 tokens), 12% of the tool
+text; Granite now sees 24 tools, ~3,500 tokens of definitions in all. Most of each new tool's
+cost is JSON-schema boilerplate, not its description.
+
+## Scores (3B, `THINK=medium`, 10-minute cap)
+
+| # | Prompt | 3B before (same day) | **3B with new tools** | Tools called |
+|---|---|---|---|---|
+| 4 | What did I do on September 17? | 4/5 | **4/5** · 59 s | search_notes ×2, read_note |
+| 6 | Which wiki-links point to notes that don't exist? | 0/5 · cap | **3/5** · 242 s | find_in_notes |
+| 22 | Is my task set schedulable? | 3/5 | **2/5** · 170 s | semantic_search, read_note |
+| 25 | Draft a status message to my manager. | 1/5 | **1/5** · 30 s | none |
+| 32 | Line-by-line audit of battery / PSM / NAT | 2/5 | **1/5** · 556 s | search_notes ×4, read_note ×2 |
+| | **Total** | **10/25** | **11/25** | |
+
+**None of the new tools was called in any of the five.** `note_tags`/`note_todos` had no natural
+use in these tests (test 21 is their case); the math tools did - test 22's true U = 0.36 is five
+divisions and a sum away - and were not used.
+
+## Per-test detail
+
+- **4:** keyword route to the right daily; a good condensed summary with the key events, but no
+  path (a "Paths & quoted lines" footer with none in it), and it wrote as the user: "I recorded
+  the following from my daily note".
+- **6:** one `find_in_notes` call with `\[\[.*\]\]` - the approach that solved this test on 09-27 -
+  and all four dangling links with line numbers. Docked: every path is written `nu-r/…` instead
+  of `nuru/…`, and the fourth is given as the whole of line 56 without saying which of its three
+  links is the broken one ("Sensor Calibration Data" exists; only "Nonexistent Note Alpha" does
+  not). Whether the new "which of them are broken -> get_links" line steered it here is unclear:
+  it chose `find_in_notes`, not `get_links`.
+- **22:** `semantic_search` → the FreeRTOS note → verdict and bound quoted, path cited; repeats
+  both the wrong U = 0.58 and the 14.2 ms figure. No `divide`/`add` calls.
+- **25:** zero tool calls, a clarifying question - the same self-exclusion from FIRST ACTION.
+- **32:** "PSM timer decoding" and "timer decoding" both 0 as keywords, and it did not take the
+  retry rule to `semantic_search`, so it never read the PSM debugging note. Verdict "met provided
+  the PSM timer decoding works", biggest risk "PSM timer decoding" - conflating periodic attach
+  with PSM, and missing the 2.3-year reporting-interval case.
+
+## Findings
+
+1. **The new tools cost ~444 tokens a turn and were not used.** The arithmetic instruction was
+   ignored on the one test (22) where it mattered. A 3B does not reach for a calculator on a
+   number the note already states; the Modelfile would need to name the case ("when a note gives
+   a total, recompute it from its parts") for this to change.
+2. **Test 6 flipped from 0 to 3** because the model chose `find_in_notes` this time. One sample;
+   on this morning's 3B run it walked `get_links` instead.
+3. **Path mangling is now recurrent, and always on `nuru/`:** `nuuru/` (expert message, 09-28),
+   `nu.../` (test 21 re-run), `nu-r/` (test 6 here). The folder shares its name with the
+   assistant (`nuru` is also the model's name), which is a plausible cause. Paths in other
+   folders (`user/`, `shared/`) have not been mangled in any run.
+4. **Speaking as the user** ("I recorded… my daily note") appeared for the first time, after the
+   Modelfile was rewritten in the first person. One occurrence.
+
+**Caveats:** one sample per test. No Anthropic calls.

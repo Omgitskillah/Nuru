@@ -1190,6 +1190,62 @@ def get_links(name: str) -> dict[str, Any]:
     return result
 
 
+# An open task: a Markdown checkbox not yet ticked ("- [ ]", "* [ ]", "1. [ ]"), or a TODO
+# marker anywhere in the line ("TODO:", "TODO(clarence):"). A ticked "[x]" is done and doesn't count.
+_OPEN_CHECKBOX = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[ \]")
+_TODO_MARKER = re.compile(r"\bTODO\b")
+
+
+@mcp.tool(description="A note's tags (frontmatter and inline #tags), lowercased. name: as for read_note.")
+@_tool
+def note_tags(name: str) -> dict[str, Any]:
+    """Every tag on one note, as _note_tags reads them: the frontmatter `tags` list and inline
+    #tags, lowercased and without the '#'. Returns {"note", "tags"}, tags sorted."""
+    _check_accessible(VAULT_PATH)
+    target = _resolve_note(name)
+    return {"note": _rel(target), "tags": sorted(_note_tags(target.read_text(errors="ignore")))}
+
+
+@mcp.tool(
+    description="A note's open tasks: unticked checkboxes (- [ ]) and lines containing TODO, with line "
+    "numbers. name: as for read_note."
+)
+@_tool
+def note_todos(name: str) -> dict[str, Any]:
+    """The open tasks in one note: every unticked Markdown checkbox, and every line with a
+    TODO marker. Ticked "[x]" items are done and left out.
+
+    Returns {"note", "count", "todos"}: "todos" holds at most _LIST_LIMIT of {"line", "text"}
+    (1-based line number, the line stripped), "count" is the total. Frontmatter is skipped (a
+    "todo" tag is not a task), and so are fenced code blocks (a TODO comment in a snippet is
+    not the user's). A "hint" explains an empty or cut-off result.
+    """
+    _check_accessible(VAULT_PATH)
+    target = _resolve_note(name)
+    text = target.read_text(errors="ignore")
+    frontmatter = _FRONTMATTER.match(text)
+    lines = text.splitlines()
+    todos: list[dict[str, Any]] = []
+    fence: str | None = None
+    for i in range(frontmatter.group(0).count("\n") if frontmatter else 0, len(lines)):
+        line = lines[i]
+        if opening := _CODE_FENCE.match(line):
+            if fence is None:
+                fence = opening.group(1)
+            elif opening.group(1) == fence:
+                fence = None
+            continue
+        if fence is None and (_OPEN_CHECKBOX.match(line) or _TODO_MARKER.search(line)):
+            todos.append({"line": i + 1, "text": line.strip()})
+
+    result: dict[str, Any] = {"note": _rel(target), "count": len(todos), "todos": todos[:_LIST_LIMIT]}
+    if not todos:
+        result["hint"] = "This note has no unticked checkboxes and no TODO lines."
+    elif len(todos) > _LIST_LIMIT:
+        result["hint"] = f"Showing the first {_LIST_LIMIT} of {len(todos)} open tasks."
+    return result
+
+
 def _resolve_target(path: str) -> Path:
     """Resolve a vault-relative path, rejecting anything that escapes the vault."""
     target = VAULT_PATH / path

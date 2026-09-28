@@ -22,7 +22,7 @@ PARAMETER min_p 0.05
 PARAMETER repeat_penalty 1.0
 
 # --- Context / length ------------------------------------------------------
-# 18 tool schemas + ask_an_expert + this prompt is ~5-6k tokens before any
+# 23 tool schemas + ask_an_expert + this prompt is ~5-6k tokens before any
 # note content. 16k leaves room for a few notes and tool results; the 3B KV
 # cache at 16k is small enough for a 16 GB Mac. Drop to 8192 only if you see
 # memory pressure, and raise to 32768 if long notes get truncated.
@@ -65,12 +65,16 @@ Do not answer, apologize or ask a question before that first search.
 - Notes with a tag -> all_tags to see real tags, then notes_with_tag
 - Read a note -> read_note (use section to read part of a long note)
 - Related notes -> get_links, then read_note on the paths it returns
+- A note's links, or which of them are broken -> get_links (path null = no such note)
+- A note's tags -> note_tags
+- Open tasks or TODOs in a note -> note_todos
 - Folder contents -> list_files_in_directory; whole vault -> list_notes / list_files (only if nothing else works; the lists are long)
 - Add to today's daily note -> add_to_daily (only when I explicitly ask)
 - Add to an existing note -> append_note with its id
 - New note -> create_note
 - Retire a note -> archive_note (reversible)
 - Rename or move -> rename_or_move_file
+- Any arithmetic -> add, subtract, multiply, divide. Never do sums in your head; one call per step, and show the steps.
 
 # USING semantic_search
 - query: one plain sentence describing what I want, in my words plus a few

@@ -3253,3 +3253,70 @@ def test_find_in_notes_with_real_ripgrep_survives_a_note_that_is_not_utf8(tmp_pa
 
     assert line["line"] == 1
     assert "TODO" in line["text"]
+
+
+# --- note_tags ---
+
+
+def test_note_tags_reads_frontmatter_and_inline_tags(tmp_path, monkeypatch):
+    (tmp_path / "Trip.md").write_text("---\ntags:\n  - Travel\n  - project/alpha\n---\n\n# Trip\n\nPacked. #Todo #travel\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.note_tags("Trip") == {"note": "Trip.md", "tags": ["project/alpha", "todo", "travel"]}
+
+
+def test_note_tags_of_a_missing_note_names_the_closest(tmp_path, monkeypatch):
+    (tmp_path / "Trip.md").write_text("x")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="FileNotFoundError.*Trip.md"):
+        server.note_tags("Tripp")
+
+
+# --- note_todos ---
+
+
+def test_note_todos_finds_unticked_boxes_and_todo_lines_with_line_numbers(tmp_path, monkeypatch):
+    (tmp_path / "Plan.md").write_text(
+        "---\ntags:\n  - todo\n---\n"  # a 'todo' tag in frontmatter is not a task
+        "# Plan\n"
+        "- [ ] Book time with Alice\n"
+        "- [x] Complain about Mondays\n"
+        "* [ ] Pin intermediate CA\n"
+        "1. [ ] Numbered task\n"
+        "- TODO(clarence): ask Dana about the APN\n"
+        "```c\n// TODO: not mine\n- [ ] not a task either\n```\n"
+        "Plain line with todo in lowercase.\n"
+    )
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert server.note_todos("Plan") == {
+        "note": "Plan.md",
+        "count": 4,
+        "todos": [
+            {"line": 6, "text": "- [ ] Book time with Alice"},
+            {"line": 8, "text": "* [ ] Pin intermediate CA"},
+            {"line": 9, "text": "1. [ ] Numbered task"},
+            {"line": 10, "text": "- TODO(clarence): ask Dana about the APN"},
+        ],
+    }
+
+
+def test_note_todos_hints_when_there_are_none(tmp_path, monkeypatch):
+    (tmp_path / "Done.md").write_text("# Done\n\n- [x] All finished\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.note_todos("Done")
+
+    assert (result["count"], result["todos"]) == (0, [])
+    assert "no unticked checkboxes" in result["hint"]
+
+
+def test_note_todos_caps_a_long_list(tmp_path, monkeypatch):
+    (tmp_path / "Big.md").write_text("\n".join(f"- [ ] task {n}" for n in range(30)))
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.note_todos("Big")
+
+    assert result["count"] == 30 and len(result["todos"]) == 25
+    assert "first 25 of 30" in result["hint"]

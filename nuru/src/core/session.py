@@ -96,6 +96,9 @@ DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
     command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=_deep_think_env
 )
 
+CALC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "calc")
+CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"], cwd=CALC_DIR)
+
 # Tools the servers expose that the local model is never offered or allowed to
 # call. delete_file_or_directory is a recursive delete on a free-form path, the
 # riskiest tool for a model that emits placeholder paths; archive_note does the
@@ -278,13 +281,15 @@ class Session:
         create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
 
         with ExitStack() as opened:
-            tools = MCPTools([OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL)
+            tools = MCPTools(
+                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, CALC_SERVER_PARAMS], hidden_tools=HIDDEN_FROM_MODEL
+            )
             tools.connect()
             opened.callback(tools.close)
             tool_definitions = _hide_injected_args(tools.list_tools())
 
             logger = CLILogger(
-                LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp"
+                LOG_DIR, model=MODEL, think=THINK, server_command="uv run obsidian-mcp; uv run deep-think-mcp; uv run calc-mcp"
             )
             store = ConversationStore(DB_PATH)
             opened.callback(store.close)

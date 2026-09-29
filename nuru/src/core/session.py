@@ -41,7 +41,10 @@ from core.providers.ollama import (
 from core.vault_indexer import VaultIndexer
 from core.write_args import ask_for_arguments, validate_arguments
 
-load_dotenv()
+# Every subsystem's settings live in the repo root, one file each (.env.nuru, .env.obsidian,
+# .env.deep-think, ...; the .example beside each is the template). Gitignored.
+ENV_DIR = Path(__file__).resolve().parents[3]
+load_dotenv(ENV_DIR / ".env.nuru")
 
 # BASE_MODEL is the plain Ollama model create_model() builds from; MODEL is
 # the derived, custom model - built fresh from its family's Modelfile on every startup -
@@ -100,7 +103,7 @@ DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "serv
 # ask_an_expert's file_paths are the vault-relative ones the obsidian tools returned, but
 # deep-think runs in its own directory, so without a base to resolve them against every
 # attachment fails with FileNotFoundError. Added to the MCP client's usual restricted env
-# rather than replacing it; deep-think's own .env supplies the default when this is unset.
+# rather than replacing it; .env.deep-think supplies the default when this is unset.
 _deep_think_env = get_default_environment()
 if _vault := (os.environ.get("DEEP_THINK_BASE_DIR") or os.environ.get("VAULT_PATH")):
     _deep_think_env["DEEP_THINK_BASE_DIR"] = _vault
@@ -110,11 +113,11 @@ DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
 
 def expert_api_key() -> str | None:
     """The expert's Anthropic API key: ANTHROPIC_API_KEY if this process has one, else the
-    CLAUDE_API_KEY that deep-think (the ask_an_expert tool) already reads from its own .env - one key
+    CLAUDE_API_KEY that deep-think (the ask_an_expert tool) already reads from .env.deep-think - one key
     for both, kept in one gitignored file and never copied into code, config or logs. A packaged Nuru
     (a standalone app, an Obsidian plugin) replaces this with its own settings or the system keychain,
     so the key can be added after installing."""
-    return os.environ.get("ANTHROPIC_API_KEY") or dotenv_values(os.path.join(DEEP_THINK_DIR, ".env")).get("CLAUDE_API_KEY")
+    return os.environ.get("ANTHROPIC_API_KEY") or dotenv_values(ENV_DIR / ".env.deep-think").get("CLAUDE_API_KEY")
 
 
 CALC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "calc")
@@ -122,9 +125,9 @@ CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"
 
 LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
 # classify_notes reads the same vault the obsidian server serves: VAULT_PATH if this process has
-# one (an eval driver sets it), otherwise the one in the obsidian server's own .env.
+# one (an eval driver sets it), otherwise the one in .env.obsidian.
 _laya_env = get_default_environment()
-if _vault := (os.environ.get("VAULT_PATH") or dotenv_values(os.path.join(OBSIDIAN_DIR, ".env")).get("VAULT_PATH")):
+if _vault := (os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH")):
     _laya_env["VAULT_PATH"] = _vault
 LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
 

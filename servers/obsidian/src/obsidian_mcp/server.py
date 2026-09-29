@@ -1,6 +1,6 @@
 """MCP server exposing tools to read an Obsidian vault.
 
-Vault location is read from the VAULT_PATH env var (see .env / .env.example).
+Vault location is read from the VAULT_PATH env var (see .env.obsidian / .env.obsidian.example in the repo root).
 Run standalone via stdio with: uv run obsidian-mcp
 """
 
@@ -33,7 +33,7 @@ from obsidian_mcp import index as note_index
 from obsidian_mcp import semantic
 from obsidian_mcp import template_bodies
 
-load_dotenv()
+load_dotenv(semantic.ENV_FILE)
 
 VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser().resolve()
 TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")

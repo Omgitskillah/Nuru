@@ -39,6 +39,9 @@ from dotenv import load_dotenv
 
 from obsidian_mcp import index as note_index
 
+# The obsidian server's settings (VAULT_PATH, ...) live in the repo root's .env.obsidian.
+ENV_FILE = Path(__file__).resolve().parents[4] / ".env.obsidian"
+
 # v1.5, not v2: v1.5 takes a whole passage (Ollama serves it with num_ctx 8192) where
 # v2's 512-token limit would force much smaller chunks. The tag is explicit because
 # plain "nomic-embed-text" means ":latest", which isn't necessarily v1.5.
@@ -484,9 +487,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    load_dotenv()
+    load_dotenv(ENV_FILE)
     if not os.environ.get("VAULT_PATH"):
-        sys.exit("obsidian-mcp-index: VAULT_PATH is not set (see .env.example).")
+        sys.exit("obsidian-mcp-index: VAULT_PATH is not set (see .env.obsidian.example in the repo root).")
     try:
         config = load_config(Path(os.environ["VAULT_PATH"]).expanduser().resolve(), os.environ)
         with contextlib.closing(connect(config)) as conn:

@@ -4,11 +4,11 @@ An MCP server exposing access to an Obsidian vault: browsing, searching, reading
 
 ## Setup
 
-Copy `.env.example` to `.env` and set `VAULT_PATH` to your vault's absolute path:
+The server's settings live in `.env.obsidian` in the repo root (see [Settings](../../README.md#settings)). From the root, copy the template and set `VAULT_PATH` to your vault's absolute path:
 
 ```bash
-cp .env.example .env
-# then edit .env
+cp .env.obsidian.example .env.obsidian
+# then edit .env.obsidian
 ```
 
 ```
@@ -27,7 +27,7 @@ This starts the server over stdio and waits for a host (e.g. Claude Desktop) to 
 ## Dependencies
 
 - **`mcp`** - The MCP server framework this package is built on (`MCPServer`, `@mcp.tool`, `@mcp.resource`); required to expose these tools/resources to a client at all.
-- **`python-dotenv`** - Loads `VAULT_PATH` (and `OBSIDIAN_MCP_LOG_DIR`) from `.env` at startup, so the vault location isn't hardcoded or passed as a CLI flag.
+- **`python-dotenv`** - Loads `VAULT_PATH` (and `OBSIDIAN_MCP_LOG_DIR`) from the root's `.env.obsidian` at startup, so the vault location isn't hardcoded or passed as a CLI flag.
 - **`access-logging`** (workspace package, see [servers/tools/logging](../tools/logging)) - Provides `AccessLogMiddleware`, which logs every session's tool/resource access under `.logs/` regardless of which client connects. Shared across servers in this repo rather than reimplemented here.
 - **`python-ulid`** - Spec-correct ULID generation for note ids. Chosen over a hand-rolled implementation so the ID format (timestamp + randomness, base32 encoding) is backed by a maintained library instead of custom code.
 - **`pyyaml`** - Serializes `create_note`'s frontmatter, rather than string-templating it, so key ordering, block-style lists, and quoting (e.g. a value starting with `{` being read back as a flow mapping) are handled correctly.
@@ -114,7 +114,7 @@ uv run obsidian-mcp-index --rebuild  # starts over - needed after changing eithe
 
 Updates are incremental. A note whose modified time hasn't changed isn't read; one whose content hash hasn't changed isn't re-embedded; a deleted or archived note is dropped. A note moved to another folder keeps its vectors under its new path, unless its title changed too (the title heads every chunk, so a renamed note is re-embedded). Each note's chunks are replaced in one transaction, so a search never sees half a note and an interrupted build resumes where it stopped. The database runs in WAL mode, so the server can search while Nuru writes.
 
-**The two knobs to tune** once a first index exists, both set in `.env`:
+**The two knobs to tune** once a first index exists, both set in `.env.obsidian`:
 
 | Variable | Default | |
 |---|---|---|

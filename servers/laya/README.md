@@ -7,7 +7,7 @@ The split of work: **Laya returns probabilities, the config and the code own the
 ## Setup
 
 ```bash
-cp .env.example .env              # VAULT_PATH, for classify_notes (read-only)
+cp ../../.env.laya.example ../../.env.laya   # VAULT_PATH, for classify_notes (read-only); Nuru passes its own
 uv sync
 uv run laya-mcp-fetch             # once: downloads the pinned checkpoints (~1.5 GB)
 uv run laya-mcp                   # stdio server; Nuru starts it itself

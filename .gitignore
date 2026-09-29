@@ -4,8 +4,11 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# Env / secrets
+# Env / secrets: one file per subsystem in the root (.env.nuru, .env.obsidian, ...); only the
+# .example templates are tracked
 .env
+.env.*
+!.env.*.example
 
 # OS
 .DS_Store

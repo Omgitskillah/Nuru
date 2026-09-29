@@ -25,7 +25,7 @@ from laya_mcp.predictor import LayaPredictor
 from laya_mcp.question_sets import load_question_sets
 from laya_mcp.vault import Vault
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[4] / ".env.laya")  # optional: VAULT_PATH for classify_notes
 
 LOG_DIR = Path(os.environ.get("LAYA_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 

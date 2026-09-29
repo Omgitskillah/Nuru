@@ -10,10 +10,10 @@ Requires [Ollama](https://ollama.com) installed (`ollama` on your `PATH`) and at
 ollama pull qwen3:8b
 ```
 
-Copy `.env.example` to `.env` and adjust if you want a different default model:
+Nuru's settings live in `.env.nuru` in the repo root (see [Settings](../README.md#settings)). From the root, copy the template and adjust if you want a different default model:
 
 ```bash
-cp .env.example .env
+cp .env.nuru.example .env.nuru
 ```
 
 ```

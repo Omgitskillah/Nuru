@@ -101,6 +101,9 @@ def main():
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--label", default="run")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--enforce", default="", help="decision points to enforce IN THIS BATCH ONLY (comma-separated, "
+                        "or 'all'); its config marks thresholds calibrated so it loads - a test of the enforce "
+                        "paths, not of calibrated thresholds")
     args = parser.parse_args()
 
     prompts = suite_prompts()
@@ -110,7 +113,18 @@ def main():
 
     config = yaml.safe_load((REPO / "config" / "decision_layer.yaml").read_text())
     config["database"] = str(batch / "decisions.sqlite3")
-    (batch / "decision_layer.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+    header = ""
+    if args.enforce:
+        points = list(config["decision_points"]) if args.enforce == "all" else args.enforce.split(",")
+        for point in points:
+            config["decision_points"][point] = "enforce"
+        for options in config["thresholds"].values():
+            for thresholds in options.values():
+                for threshold in thresholds.values():
+                    threshold["calibration"] = {"date": datetime.now().date(), "labels": 0, "held_out": 1}
+        header = ("# TEST ONLY - written by run_suite.py --enforce for one batch. The thresholds are NOT\n"
+                  "# calibrated; they are marked so only so that this config loads with enforce on.\n")
+    (batch / "decision_layer.yaml").write_text(header + yaml.safe_dump(config, sort_keys=False))
 
     env = {**os.environ, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": str(index),
            "NURU_DB_PATH": str(batch / "conversation.db"), "NURU_LOG_DIR": str(batch / "logs"),

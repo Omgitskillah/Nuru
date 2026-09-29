@@ -57,8 +57,18 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
     return min(100, round(latest_prompt_tokens / context_window * 100))
 
 
+def confirm_write(tool: str, arguments: dict) -> bool:
+    """Asked when an enforced gate_write wants your OK before a write runs; anything but yes is no."""
+    try:
+        reply = input(f"[confirm] Run {tool}({json.dumps(arguments, ensure_ascii=False)})? [y/N] ")
+    except EOFError:
+        return False
+    return reply.strip().lower() in ("y", "yes")
+
+
 def main() -> None:
     session = Session.start()
+    session.confirm_write = confirm_write
     try:
         while True:
             usage_pct = _context_usage_percent(session.store, session.conversation_id, session.context_window)

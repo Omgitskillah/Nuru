@@ -178,12 +178,22 @@ def ensure_model_loaded(model: str) -> dict:
     }
 
 
-def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | str = True, tools: list[dict] | None = None):
+def chat(
+    model: str,
+    messages: list[dict],
+    num_ctx: int = 8192,
+    think: bool | str = True,
+    tools: list[dict] | None = None,
+    fmt: dict | None = None,
+):
     """Yields text chunks, then a dict with tool_calls (if the model made any), then a dict with its
     thinking (if it did any), then a final usage dict.
 
     `think` is True/False, or a reasoning level ("low", "medium", "high") for models that
     take one. It is ignored by models that don't support reasoning/thinking mode.
+
+    `fmt` is a JSON schema the reply must match (Ollama's `format`): the model can then only emit
+    JSON that fits it. Thinking models think first; the schema applies to the reply.
     """
     payload = {
         "model": model,
@@ -194,6 +204,8 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | st
     }
     if tools:
         payload["tools"] = tools
+    if fmt is not None:
+        payload["format"] = fmt
 
     r = requests.post(
         f"{BASE}/api/chat",

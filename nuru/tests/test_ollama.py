@@ -456,6 +456,23 @@ def test_chat_omits_tools_key_when_not_given(monkeypatch):
     assert "tools" not in seen["json"]
 
 
+def test_chat_sends_a_format_schema_only_when_given(monkeypatch):
+    seen = []
+
+    def fake_post(url, json, stream, timeout):
+        seen.append(json)
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    schema = {"type": "object", "properties": {"text": {"type": "string"}}}
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}], fmt=schema))
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
+
+    assert seen[0]["format"] == schema
+    assert "format" not in seen[1]
+
+
 def test_chat_yields_tool_calls(monkeypatch):
     tool_call = {"function": {"name": "get_temperature", "arguments": {"city": "Berlin"}}}
     lines = _sse_lines(

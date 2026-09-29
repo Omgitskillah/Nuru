@@ -8,7 +8,7 @@ import pytest
 from ulid import ULID
 
 from core import session
-from core.decision_shadow import DecisionShadow, think_tier
+from core.decision_shadow import DecisionShadow, summarize_result, think_tier
 from core.providers.mcp_tools import ToolResult
 from core.session import Session, Text, ToolCall
 from laya_mcp import server as laya_server
@@ -133,9 +133,9 @@ def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decis
 
     decided = [(r["decision_point"], r["question_set"], r["action_taken"], r["mode"]) for r in rows(decision_log)]
     assert decided == [
-        ("tool_gate", "tool_gate_start", "read:search_notes", "shadow"),
+        ("tool_gate", "tool_gate_start", "write", "shadow"),  # the turn wrote, though it searched first
         ("assess_effort", "assess_effort", "high", "shadow"),
-        ("tool_gate", "tool_gate_next", "append_note", "shadow"),
+        ("tool_gate", "tool_gate_next", "continue", "shadow"),
         ("assess_effort", "assess_effort", "high", "shadow"),
         ("gate_write", "gate_write", "executed", "shadow"),
         ("tool_gate", "tool_gate_next", "answer", "shadow"),
@@ -223,22 +223,51 @@ def test_a_silent_call_is_marked_on_its_effort_decision(monkeypatch, decision_lo
     assert effort["action_taken"] == "high" and effort["outcome"] == "empty_reply"
 
 
-def test_the_tool_gate_is_offered_the_models_tools_by_first_sentence():
-    captured = {}
-    shadow = DecisionShadow(
-        lambda name, args: captured.setdefault(name, args) and ToolResult("{}", is_error=True),
-        None, "s", [definition("append_note", "Append to a note. Long detail follows."), definition("read_note")],
-    )
-    shadow.begin("hi", "t-1")
-    assert captured["tool_gate"]["tools"] == [
-        {"name": "append_note", "description": "Append to a note.", "kind": "write"},
-        {"name": "read_note", "description": "Does a thing.", "kind": "read"},
-    ]
-    assert (captured["tool_gate"]["session_id"], captured["tool_gate"]["task_id"]) == ("s", "t-1")
+def test_laya_sees_what_each_step_returned(monkeypatch, decision_log):
+    s = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, RESULTS))
+    list(s.ask("Add a line to Priya's note"))
+    s.close()
+
+    nexts = [json.loads(r["state_text"]) for r in rows(decision_log) if r["question_set"] == "tool_gate_next"]
+    assert nexts[0]["steps"] == [{"tool": "search_notes", "status": "ok", "result": f"1 found: Priya ({NOTE_ID})"}]
+    # check_claim: Laya reads the reply alone; the log it is checked against is the harness's own.
+    claim = next(json.loads(r["state_text"]) for r in rows(decision_log) if r["decision_point"] == "check_claim")
+    assert claim == {"reply": f"Done - added it to {NOTE_ID}."}
+
+
+def test_a_turn_without_tools_is_an_answer(monkeypatch, decision_log):
+    s = start(monkeypatch, [["128.4 mAh."]], ShadowedTools(TOOLS, {}))
+    list(s.ask("What's 5.35 mA times 24 hours?"))
+    s.close()
+    assert rows(decision_log)[0]["action_taken"] == "answer"
+
+
+@pytest.mark.parametrize("tool, text, ok, error, summary", [
+    ("search_notes", json.dumps({"query": "x", "count": 5, "matches": [
+        {"title": "A", "id": NOTE_ID}, {"title": "B", "id": None}, {"path": "c.md"}, {"title": "D"}]}), True, None,
+     f"5 found: A ({NOTE_ID}), B, c.md and 2 more"),
+    ("semantic_search", json.dumps({"query": "x", "matches": []}), True, None, "0 found"),
+    ("create_note", json.dumps({"id": NOTE_ID, "path": "nuru/x.md"}), True, None, f"done: nuru/x.md {NOTE_ID}"),
+    ("add_to_daily", json.dumps({"path": "user/daily.md", "id": None, "created": True}), True, None,
+     "done: user/daily.md (created)"),
+    ("archive_note", json.dumps({"from": "nuru/x.md", "to": "archive/nuru/x.md"}), True, None,
+     "moved nuru/x.md to archive/nuru/x.md"),
+    ("append_note", "", False, "TimeoutError: the write timed out", "failed: TimeoutError: the write timed out"),
+    ("read_note", "# Priya\nFirmware engineer.", True, None, "read 26 characters: # Priya Firmware engineer."),
+    ("append_note", "nuru/priya-raman.md", True, None, "done: nuru/priya-raman.md"),
+    ("multiply", "128.4", True, None, "128.4"),
+])
+def test_results_are_summarized_in_one_line(tool, text, ok, error, summary):
+    assert summarize_result(tool, text, ok, error) == summary
+
+
+def test_a_long_result_is_cut_to_one_short_line():
+    summary = summarize_result("read_note", "word " * 500, True)
+    assert len(summary) <= 160 and "\n" not in summary
 
 
 def test_a_long_turn_keeps_the_state_bounded():
-    shadow = DecisionShadow(lambda name, args: ToolResult("{}", is_error=True), None, "s", [])
+    shadow = DecisionShadow(lambda name, args: ToolResult("{}", is_error=True), None, "s")
     shadow._steps = [{"tool": f"t{i}", "status": "ok"} for i in range(10)]
     steps = shadow._recent_steps()
     assert steps[0] == {"earlier_steps": 4} and len(steps) == 7
@@ -247,15 +276,6 @@ def test_a_long_turn_keeps_the_state_bounded():
 @pytest.mark.parametrize("think, tier", [(False, "off"), (True, "high"), ("low", "low")])
 def test_think_values_map_to_tier_names(think, tier):
     assert think_tier(think) == tier
-
-
-def test_start_refuses_a_config_that_asks_for_enforcement(monkeypatch, tmp_path):
-    raw = load_config().model_dump(mode="json")
-    raw["decision_points"]["rerank"] = "enforce"  # rerank has no thresholds, so the config allows it
-    config = type(load_config()).model_validate(raw)
-    monkeypatch.setattr(session, "load_decision_config", lambda: config)
-    with pytest.raises(RuntimeError, match="only runs the decision layer in shadow mode"):
-        Session.start()
 
 
 def test_the_laya_server_gets_the_same_vault_as_obsidian():

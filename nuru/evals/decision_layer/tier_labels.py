@@ -5,7 +5,7 @@ Run each test at every tier, three times, then label it:
     caffeinate -i uv run python nuru/evals/decision_layer/run_suite.py --tests 28-31 --tiers off,low,high --repeats 3 --label tiers
     uv run python nuru/evals/decision_layer/tier_labels.py .runs/suite-tiers-<time>
 
-A test's label is the cheapest tier that passes (score_edits.PASS_MARK, 4/5) in at least two of
+A test's label is the cheapest tier that passes (score_runs.PASS_MARK, 4/5) in at least two of
 its three runs. Tiers are ordered as config/decision_layer.yaml orders them.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from common import save
 from laya_mcp.config import load_config
-from score_edits import PASS_MARK, score
+from score_runs import PASS_MARK, score
 
 
 def load(batch: Path) -> list[dict]:

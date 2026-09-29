@@ -45,8 +45,6 @@ def questions_now(qset, logged: dict) -> dict:
     """The set's current questions, with request-time options taken from the logged ones."""
     questions = {}
     for qid, q in qset.questions.items():
-        if q.only_when and qid not in logged:
-            continue
         body = {"type": q.type, "instructions": q.instructions}
         criteria = logged.get(qid, {}).get("criteria") if q.criteria_from else q.criteria
         if criteria is None and q.type == "choice":
@@ -66,13 +64,11 @@ def top(answer: dict | None) -> str | None:
 
 
 def model_did(row: dict) -> str | None:
-    """For a tool_gate row: the model's actual next move, in the terms of the question asked."""
+    """For a tool_gate row: what the model actually did, in the terms of the question asked - the
+    turn's mode (answer/read/write), or whether it went on (continue) or replied (answer)."""
     taken = row["action_taken"]
-    if not taken:
-        return None
-    if row["question_set"] == "tool_gate_start":
-        mode, _, tool = taken.partition(":")
-        return tool if mode != "answer" else "none"
+    if not taken or ":" in taken or row["question_set_version"] < 2:
+        return None  # v1 asked which tool; those rows can't be compared with v2's options
     return taken
 
 
@@ -116,7 +112,7 @@ def main():
                 s[f"{qid}: correct before"] += top(old.get(qid)) == label[qid]
                 s[f"{qid}: correct now"] += top(new.get(qid)) == label[qid]
         if row["decision_point"] == "tool_gate" and model_did(row):
-            qid = "first_tool" if row["question_set"] == "tool_gate_start" else "next"
+            qid = "mode" if row["question_set"] == "tool_gate_start" else "next"
             s["matches the model: before"] += top(old.get(qid)) == model_did(row)
             s["matches the model: now"] += top(new.get(qid)) == model_did(row)
             s["model moves"] += 1

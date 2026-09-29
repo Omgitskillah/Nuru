@@ -1,7 +1,6 @@
 """Eval 7 - Laya's per-call latency on this machine, MPS against CPU, per question set.
 
-Each question set with a representative state - tool_gate over Nuru's real 25 tools, a whole
-dummyVault note for classify_notes - timed through the same LayaPredictor the server uses (so the
+Each question set with a representative state - a whole dummyVault note for classify_notes - timed through the same LayaPredictor the server uses (so the
 lock, the token-budget check and routing are included). Three warm-up calls, then `--calls` timed.
 
     uv run python nuru/evals/decision_layer/laya_latency.py [--calls 20] [--devices mps,cpu]
@@ -13,31 +12,28 @@ import time
 
 from common import DUMMY_VAULT, PRIYA, save
 
-from core.session import MODEL_TOOLS
 from laya_mcp.config import load_config
 from laya_mcp.predictor import LayaPredictor
 from laya_mcp.question_sets import load_question_sets
 from laya_mcp.vault import Vault
 
 REQUEST = "Add a line to Priya's note saying she prefers async messages on Fridays."
-STEPS = [{"tool": "search_notes", "status": "ok"}, {"tool": "read_note", "status": "ok"}]
+STEPS = [{"tool": "search_notes", "status": "ok", "result": f"4 found: Priya Raman ({PRIYA}), Daily 2026-09-17 and 2 more"},
+         {"tool": "read_note", "status": "ok", "result": "read 1268 characters: # Priya Raman ## Role Firmware engineer"}]
 
 
 def cases(sets):
-    tools = {name: "A tool Nuru's model can call." for name in sorted(MODEL_TOOLS)}
     note = next(n for n in Vault(DUMMY_VAULT).notes("nuru") if n.path == "nuru/battery-life-modeling.md")
     return [
-        ("tool_gate_start", {"request": REQUEST}, sets["tool_gate_start"].render({"first_tools": {**tools, "none": "no tool"}})),
-        ("tool_gate_next", {"request": REQUEST, "steps": STEPS},
-         sets["tool_gate_next"].render({"next_steps": {**tools, "answer": "reply", "ask_user": "ask"}})),
+        ("tool_gate_start", {"request": REQUEST}, sets["tool_gate_start"].render()),
+        ("tool_gate_next", {"request": REQUEST, "steps": STEPS}, sets["tool_gate_next"].render()),
         ("assess_effort", {"request": REQUEST, "step_type": "arguments", "steps": STEPS, "failures": {}},
          sets["assess_effort"].render()),
         ("gate_write", {"request": REQUEST, "tool": "append_note",
                         "arguments": {"id": PRIYA, "content": "Prefers async messages on Fridays"}},
          sets["gate_write"].render()),
-        ("check_claim", {"reply": "Done - I added the line to Priya's note. " * 4,
-                         "log": [{"tool": "append_note", "ok": False, "error": "TimeoutError"}]},
-         sets["check_claim"].render(flags={"failed_writes"})),
+        ("check_claim", {"reply": "Done - I added the line to Priya's note, and linked it from the project note. " * 3},
+         sets["check_claim"].render()),
         # 800 characters: a full 1,500-character chunk can exceed rerank's 440-token budget (then it
         # is rejected, and rerank keeps the search's order) - measured here, not the failure path.
         ("rerank", {"query": "power budget", "passage": note.body[:800]}, sets["rerank"].render()),

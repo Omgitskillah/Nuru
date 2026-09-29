@@ -9,7 +9,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 from dotenv import dotenv_values, load_dotenv
 from laya_mcp.config import load_config as load_decision_config
+from laya_mcp.checks import WRITE_TOOLS
 from laya_mcp.decision_log import DecisionLog
 from mcp import StdioServerParameters
 from mcp.client.stdio import get_default_environment
@@ -25,6 +26,8 @@ from mcp.client.stdio import get_default_environment
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
 from core.decision_shadow import DecisionShadow
+from core.enforcement import REGENERATE, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
+from core.expert import ExpertPlanner
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -36,6 +39,7 @@ from core.providers.ollama import (
     unload_all_models,
 )
 from core.vault_indexer import VaultIndexer
+from core.write_args import ask_for_arguments, validate_arguments
 
 load_dotenv()
 
@@ -292,13 +296,18 @@ class Session:
         store: ConversationStore,
         conversation_id: int,
         shadow: DecisionShadow | None = None,
+        enforcement: Enforcement | None = None,
     ) -> None:
         self.tools = tools
         self.tool_definitions = tool_definitions
         self.logger = logger
         self.store = store
         self.conversation_id = conversation_id
-        self.shadow = shadow  # logs what the decision layer would do; never changes a turn
+        self.shadow = shadow  # asks the decision layer at every decision point and logs its answers
+        self.enforcement = enforcement  # acts on those answers, for the points set to enforce
+        # Asked when an enforced gate_write says a write needs the user's OK; None means nobody is
+        # there to ask (the UI, an eval run), and such a write is blocked.
+        self.confirm_write: Callable[[str, dict], bool] | None = None
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
 
@@ -309,13 +318,7 @@ class Session:
         again if a later step fails."""
         create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
 
-        decision_config = load_decision_config()
-        enforced = [point for point, mode in decision_config.decision_points.items() if mode == "enforce"]
-        if enforced:
-            raise RuntimeError(
-                f"{', '.join(enforced)} set to enforce in the decision-layer config, but Nuru only runs the "
-                "decision layer in shadow mode so far. Set them back to shadow."
-            )
+        decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
         with ExitStack() as opened:
             tools = MCPTools(
@@ -336,9 +339,10 @@ class Session:
             opened.callback(store.close)
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
-            shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id, tool_definitions)
+            shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id)
+            enforcement = Enforcement(decision_config, BASE_MODEL, ExpertPlanner(decision_config.expert, decision_log))
 
-            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow)
+            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement)
             session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
@@ -383,6 +387,9 @@ class Session:
 
         Setting `cancel` stops the turn at the next chunk (or once the running tool call
         returns); whatever the model had said by then is kept as its reply.
+
+        Decision points set to enforce in the decision-layer config change the turn as
+        core.enforcement describes; in shadow (the default) the decision layer only watches.
         """
         budget = _token_budget(self.context_window)
         estimated_tokens = _estimate_tokens(text)
@@ -396,8 +403,12 @@ class Session:
 
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
-        if self.shadow:
-            self.shadow.begin(text, turn_id)
+        decisions = self.shadow.begin(text, turn_id) if self.shadow else None
+        enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
+        policy = enforcing.new_task() if enforcing else None
+        first_read = enforcing.first_tool(decisions.gate) if enforcing and decisions else None
+        failure = False  # a failure signal since the last model call (enforced tiers move up on it)
+        tool_rounds = 0
         messages = None
         prompt_tokens_recorded = False
         think = THINK
@@ -420,13 +431,47 @@ class Session:
                 # Only what the model sees carries the timestamp; the saved message stays as typed.
                 messages[-1]["content"] = f"{_timestamp_line(datetime.now().astimezone())}\n\n{messages[-1]['content']}"
 
+            tools_offered = self.tool_definitions
+            hold_reply = False  # check_claim enforced: nothing is shown until the reply is checked
+            if enforcing:
+                if first_read:
+                    yield from self._run_first_read(first_read, text, messages, turn_id, enforcing)
+                    first_read = None
+                    tool_rounds += 1
+                    decisions = self.shadow.before_next_call()
+                capped = enforcing.on("tool_gate") and tool_rounds >= enforcing.step_cap
+                if capped:
+                    next_think, tier = enforcing.at_step_cap(policy, think)
+                else:
+                    next_think, tier = enforcing.think_for(policy, decisions.effort if decisions else None, failure, think)
+                failure = False
+                if tier == STOP:
+                    reason = (f"it reached the {enforcing.step_cap}-step limit" if capped else
+                              "the local model kept failing at the highest thinking level")
+                    if not enforcing.expert_available():
+                        reason += ", and the expert isn't available (no ANTHROPIC_API_KEY, or today's budget is used up)"
+                    yield from self._stop(turn_id, reason)
+                    return
+                if tier == "expert":
+                    try:
+                        plan = enforcing.expert_plan(text, self.tool_definitions, self.shadow.notes, self.shadow.steps)
+                    except ExpertUnavailable as e:
+                        yield from self._stop(turn_id, f"it needed the expert, and the expert couldn't help: {e}")
+                        return
+                    yield Thinking(f"Plan from the expert:\n{plan}")
+                    messages.append({"role": "user", "content": f"[Nuru] A plan from the expert. Carry it out with your tools, then reply:\n{plan}"})
+                think = next_think
+                if tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None):
+                    tools_offered = None
+                hold_reply = enforcing.on("check_claim")
+
             tool_calls = None
             usage: dict = {}
             thinking = ""
             output_text = ""
             start = time.monotonic()
             try:
-                for out in chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=self.tool_definitions):
+                for out in chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=tools_offered):
                     if _cancelled(cancel):
                         self._end_cancelled(turn_id, output_text)
                         return
@@ -441,7 +486,8 @@ class Session:
                             usage = out
                         continue
                     output_text += out
-                    yield Text(out)
+                    if not hold_reply:
+                        yield Text(out)
             except requests.exceptions.RequestException as e:
                 if last_results and not cut_a_result and _context_overflow(e):
                     # A tool result made this request too long. Swap the largest one from that
@@ -479,12 +525,16 @@ class Session:
 
             if not tool_calls:
                 if thinking and not output_text.strip() and think:
+                    carried_thinking = thinking
+                    if enforcing and enforcing.tiers_enforced:
+                        # Empty content is a failure signal: the tier policy moves up a tier.
+                        failure = True
+                        continue
                     # Some thinking models write the whole answer into their reasoning and end the
                     # turn there. That is a routing failure rather than a truncation - the call ends
                     # with done_reason "stop" - so asking again with thinking off puts the answer in
                     # the reply instead. `think` stays off for the rest of the turn, which is also
                     # what keeps this to a single retry.
-                    carried_thinking = thinking
                     think = False
                     yield RetryWithoutThinking()
                     continue
@@ -496,12 +546,18 @@ class Session:
                     yield Text(_NO_REPLY_NOTE)
                     if self.shadow:
                         self.shadow.end(_NO_REPLY_NOTE)
+                elif hold_reply:
+                    output_text = yield from self._checked_reply(output_text, messages, num_ctx, think, policy, enforcing)
+                    self.shadow.finish()
                 elif self.shadow:
                     self.shadow.end(output_text)
                 self.store.add_message(self.conversation_id, "nuru", output_text, usage.get("completion_tokens"))
                 self.logger.turn_end(turn_id)
                 return
 
+            if hold_reply and output_text:
+                yield Text(output_text)  # words ahead of a tool call aren't the reply being checked
+            tool_rounds += 1
             messages.append({"role": "assistant", "tool_calls": tool_calls})
             last_results = []
             for call in tool_calls:
@@ -512,7 +568,14 @@ class Session:
                 yield ToolCall(fn["name"], args)
                 if fn["name"] == _EXPERT_TOOL:
                     args = {**args, _INJECTED_EXPERT_ARG: text}
-                gate_id = self.shadow.before_tool(fn["name"], args) if self.shadow else None
+                if enforcing and enforcing.on("gate_write") and fn["name"] in WRITE_TOOLS:
+                    content, failed = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id)
+                    failure = failure or failed
+                    messages.append({"role": "tool", "content": content})
+                    last_results.append((len(messages) - 1, fn["name"]))
+                    continue
+                write_gate = self.shadow.before_tool(fn["name"], args) if self.shadow else None
+                gate_id = write_gate["decision_id"] if write_gate else None
                 tool_start = time.monotonic()
                 if fn["name"] == _EXPERT_TOOL and expert_answered:
                     content = _EXPERT_ALREADY_ANSWERED
@@ -532,7 +595,9 @@ class Session:
                     duration_ms = (time.monotonic() - tool_start) * 1000
                     self.logger.tool_call(turn_id, fn["name"], args, "ok", None, duration_ms)
                     if self.shadow:
-                        self.shadow.after_tool(fn["name"], args, result, duration_ms, gate_id)
+                        reranked = self.shadow.after_tool(fn["name"], args, result, duration_ms, gate_id)
+                        if reranked and enforcing and enforcing.on("rerank"):
+                            content = reranked
                     if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
                         expert_answered = True
                 messages.append({"role": "tool", "content": content})
@@ -541,7 +606,114 @@ class Session:
                     self._end_cancelled(turn_id, output_text)
                     return
             if self.shadow:
-                self.shadow.before_next_call()
+                decisions = self.shadow.before_next_call()
+
+    # ------------------------------------------------------------------ enforcement
+    def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
+        """tool_gate enforced: the harness runs the first search itself, as if the model had."""
+        args = {"query": query}
+        yield ToolCall(tool, args)
+        tool_start = time.monotonic()
+        result = self.tools.call_tool_result(tool, args)
+        duration_ms = (time.monotonic() - tool_start) * 1000
+        self.logger.tool_call(turn_id, tool, args, "error" if result.is_error else "ok", None, duration_ms)
+        reranked = self.shadow.after_tool(tool, args, result, duration_ms)
+        content = reranked if reranked and enforcing.on("rerank") else result.text
+        messages += [
+            {"role": "assistant", "tool_calls": [{"function": {"name": tool, "arguments": args}}]},
+            {"role": "tool", "content": content},
+        ]
+
+    def _forced_write(self, fn: dict, args: dict, context: list[dict], num_ctx: int, think, turn_id: str):
+        """gate_write enforced: the write's arguments come from a forced schema (IDs only from the
+        last search), are validated, and go through gate_write. Returns (tool result text, whether
+        this was a failure signal)."""
+        name = fn["name"]
+        schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
+
+        def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:
+            return "".join(out for out in chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt) if isinstance(out, str))
+
+        def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
+            self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
+            self.shadow.after_tool(name, args, None, 0.0, error=reason)
+            if action:
+                self.shadow.gate_action(gate, action)
+            return f"[Nuru] {name} was not run: {reason}.", failed
+
+        # The model's own arguments first, under the same rules; the forced schema only if they fail.
+        # Re-asking arguments that were already right made the model take the cannot_do way out
+        # (enforced quick suite, 2026-09-28) - validation alone is what keeps invented IDs out.
+        forced = validate_arguments(name, args, set(self.shadow.last_search_ids))
+        if forced.problems:
+            forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
+        if forced.problems:
+            forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
+        if forced.problems:
+            self.shadow.note_failure("schema_failures")
+            return not_run(f"no valid arguments ({'; '.join(forced.problems)})", True)
+        if forced.cannot_do is not None:
+            self.shadow.note_failure("cannot_do")
+            return not_run(f"the model couldn't do it ({forced.cannot_do})", True)
+        args = forced.arguments
+        fn["arguments"] = args  # the conversation shows the call that actually runs
+        gate = self.shadow.before_tool(name, args)
+        verdict = gate["verdict"] if gate else "ask"  # the decision layer down: ask
+        if verdict == "block":
+            return not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked")
+        if verdict == "ask":
+            if self.confirm_write is None:
+                return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
+            if not self.confirm_write(name, args):
+                return not_run("you declined it", False, gate, "declined")
+        yield ToolCall(name, args)
+        tool_start = time.monotonic()
+        result = self.tools.call_tool_result(name, args)
+        duration_ms = (time.monotonic() - tool_start) * 1000
+        self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok", None, duration_ms)
+        self.shadow.after_tool(name, args, result, duration_ms, gate["decision_id"] if gate else None)
+        return result.text, False
+
+    def _checked_reply(self, draft: str, messages: list[dict], num_ctx: int, think, policy, enforcing: Enforcement):
+        """check_claim enforced: show the reply only once it's checked. A failed one is written again
+        once, with the log in view; if that fails too, it is shown with a warning and the log."""
+        claim = self.shadow.check_reply(draft, "shown")
+        if claim is None:
+            yield Text(draft + UNVERIFIED)
+            return draft + UNVERIFIED
+        if claim["passed"]:
+            final = draft + ("" if claim["verified"] else UNVERIFIED)
+            yield Text(final)
+            return final
+        self.shadow.record_claim_action(claim, "regenerated")
+        self.shadow.note_failure("claim_failures")
+        log = log_lines(self.shadow.executed)
+        if enforcing.tiers_enforced:  # a failure signal: one tier up for the rewrite, but no further
+            up, tier = enforcing.think_for(policy, None, True, think)
+            think = up if tier not in (STOP, "expert") else think
+        retry = [*messages, {"role": "assistant", "content": draft},
+                 {"role": "user", "content": REGENERATE.format(failures="; ".join(claim["failures"]), log=log)}]
+        try:
+            second = "".join(out for out in chat(MODEL, retry, num_ctx=num_ctx, think=think) if isinstance(out, str))
+        except requests.exceptions.RequestException:
+            second = ""
+        second_claim = self.shadow.check_reply(second, "shown") if second.strip() else None
+        if second_claim and second_claim["passed"]:
+            final = second + ("" if second_claim["verified"] else UNVERIFIED)
+        else:
+            self.shadow.record_claim_action(second_claim, "shown_with_warning")
+            failures = (second_claim or claim)["failures"]
+            final = (second.strip() or draft) + WARNING.format(failures="; ".join(failures), log=log)
+        yield Text(final)
+        return final
+
+    def _stop(self, turn_id: str, reason: str):
+        """End the turn plainly, saying why and what had happened by then."""
+        text = STOPPED.format(reason=reason, log=log_lines(self.shadow.executed))
+        yield Text(text)
+        self.store.add_message(self.conversation_id, "nuru", text)
+        self.logger.turn_end(turn_id)
+        self.shadow.finish()
 
     def _end_cancelled(self, turn_id: str, output_text: str) -> None:
         """Ends a turn the user stopped. What the model had said so far is kept as its reply so the

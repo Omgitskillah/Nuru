@@ -4,8 +4,9 @@
     uv run python nuru/evals/decision_layer/shadow_report.py .runs/suite-shadow-<time>
 
 For tool_gate, "Laya's choice" is its raw top answer (argmax) as well as what the policy would have
-done with the config's (uncalibrated) thresholds; the model's is the tool it actually called first
-at that step, or `answer`. Written to `.runs/shadow_report-<time>.md` and printed.
+done with the config's (uncalibrated) thresholds. The model's is, at the start, the turn's mode as it
+turned out (answer / read / write) and, after a tool result, whether it went on (continue) or replied
+(answer). Written to `.runs/shadow_report-<time>.md` and printed.
 """
 
 import json
@@ -41,26 +42,20 @@ def main():
         if r["decision_point"] != "tool_gate" or r["status"] != "ok" or r["action_taken"] is None:
             continue
         answers = json.loads(r["answers_json"])
-        if r["question_set"] == "tool_gate_start":
-            laya_mode, laya_tool = argmax(answers, "mode"), argmax(answers, "first_tool")
-            model_mode, _, model_tool = r["action_taken"].partition(":")
-            laya = laya_tool if laya_mode != "answer" and laya_tool != "none" else "answer"
-            model = "answer" if model_mode == "answer" else model_tool
-            policy = r["proposed_action"].split(":")[1] if r["proposed_action"].split(":")[0] != "answer" else "answer"
-        else:
-            laya, model, policy = argmax(answers, "next"), r["action_taken"], r["proposed_action"]
+        qid = "mode" if r["question_set"] == "tool_gate_start" else "next"
+        if qid not in answers:
+            continue  # a v1 row (which tool), not comparable
         record = records.get(r["session_id"], {})
+        laya, model = argmax(answers, qid), r["action_taken"]
         step = {"test": record.get("test"), "step": r["step"], "phase": r["question_set"].rsplit("_", 1)[1],
-                "laya": laya, "policy": policy, "model": model, "agree": laya == model}
+                "laya": laya, "policy": r["proposed_action"], "model": model, "agree": laya == model}
         steps.append(step)
         if not step["agree"]:
-            p = answers.get("mode" if step["phase"] == "start" else "next", {}).get("probabilities", {})
-            step["laya_p"] = round(p.get(laya, 0.0) if laya != "answer" or step["phase"] != "start"
-                                   else p.get("answer", 0.0), 3)
+            step["laya_p"] = round(answers[qid]["probabilities"].get(laya, 0.0), 3)
             disagreements.append(step)
 
     agree = sum(s["agree"] for s in steps)
-    lines += ["", "## Tool choices", "",
+    lines += ["", "## tool_gate", "",
               f"Laya's top choice matched the model's at **{agree} of {len(steps)}** steps "
               f"({100 * agree / max(1, len(steps)):.0f}%).", ""]
     by_phase = Counter((s["phase"], s["agree"]) for s in steps)

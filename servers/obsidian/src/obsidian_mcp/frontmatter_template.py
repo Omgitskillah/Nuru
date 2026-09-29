@@ -16,7 +16,7 @@ actually current when that note was written, so a future reader can branch on
 shape applies everywhere.
 """
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # The authoritative definition of what each VERSION means: the exact field
 # list, order, and semantics that version's frontmatter has. A note's
@@ -25,7 +25,13 @@ VERSION = "0.1.0"
 # looks its note's version up here to know how to parse it, rather than
 # assuming the current shape applies to every note in the vault.
 #
-# 0.1.0 (current):
+# 0.2.0 (current): the same fields as 0.1.0. What changed is where one type
+#   lives: a correction is no longer only the user's - it lives in nuru/, any
+#   author may make one, and create_note opens its body with a line linking
+#   every note it corrects ("Corrects: [[<id>]], ..."), so the corrected
+#   notes' backlinks show it.
+#
+# 0.1.0:
 #   Field order: id, version, type, created, author, supersedes,
 #   [<type-specific field>], tags, aliases.
 #     - id: ULID, minted once by create_note. Immutable - append_note never
@@ -49,7 +55,7 @@ VERSION = "0.1.0"
 TYPE_FOLDER = {
     "directives": "user",
     "daily": "user",
-    "correction": "user",
+    "correction": "nuru",
     "profile": "nuru",
     "preferences": "nuru",
     "person": "nuru",

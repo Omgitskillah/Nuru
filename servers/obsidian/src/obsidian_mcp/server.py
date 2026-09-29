@@ -1288,13 +1288,38 @@ def _reject_hidden(target: Path, rel_path: str) -> None:
         raise PermissionError(f"'{rel_path}' is inside a hidden/config folder (e.g. .obsidian) and is protected.")
 
 
-# The user/ folder (directives, daily, correction) is meant to be read-only
+# The user/ folder (directives, daily) is meant to be read-only
 # to everything except the tools that already gate what goes there by type:
 # create_note and append_note. This enforces that for the two structural/
 # destructive tools; it is a narrow slice of a real permission model, not one
 # - there's no notion here of who's calling, so it can't distinguish a
 # human-directed action from an autonomous one.
 _PROTECTED_FOLDER = "user"
+
+
+# Notes the user wrote - `author: user` in their frontmatter - outside user/ are the user's alone
+# when this server runs for Nuru, which turns this on (OBSIDIAN_PROTECT_USER_AUTHORED=1) for its own
+# server process: append_note, rename/move, archive and delete refuse them, and a change becomes a
+# new note instead (a correction can point at the original). Other clients - Claude Desktop, the
+# Inspector - leave it off: there a person is choosing what to change. Inside user/ the folder
+# rules above apply as before (add_to_daily still appends to today's daily).
+_PROTECT_USER_AUTHORED = os.environ.get("OBSIDIAN_PROTECT_USER_AUTHORED") == "1"
+
+
+def _reject_user_authored(target: Path, rel_path: str) -> None:
+    if not _PROTECT_USER_AUTHORED or not target.is_relative_to(VAULT_PATH):
+        return
+    rel = target.relative_to(VAULT_PATH)
+    if rel.parts[:1] == (_PROTECTED_FOLDER,):
+        return
+    notes = [target] if target.is_file() else sorted(target.rglob("*.md")) if target.is_dir() else []
+    for note in notes:
+        if note.suffix == ".md" and _read_frontmatter(note.read_text(errors="ignore")).get("author") == "user":
+            shown = rel_path if note == target else str(note.relative_to(VAULT_PATH))
+            raise PermissionError(
+                f"'{shown}' was written by the user (author: user), so Nuru may not change it. "
+                "Write a new note instead - a correction can point at it."
+            )
 
 
 def _reject_protected_folder(target: Path, rel_path: str) -> None:
@@ -1385,10 +1410,11 @@ def _find_daily(day: str) -> Path | None:
     description=(
         "Create a new note in the vault. type: one of directives, daily, correction, profile, "
         "preferences, person, topic, index, transcript, project, session. title: human-readable "
-        "title (becomes the filename). author: one of user, nuru, both (directives/daily/correction "
+        "title (becomes the filename). author: one of user, nuru, both (directives/daily "
         "require author=user). body: Markdown content. tags: extra tags, no whitespace. supersedes: "
         "id of a note this replaces, must already exist. date: for type=daily, YYYY-MM-DD, defaults "
-        "to today. targets: required for type=correction, list of existing note ids. session: for "
+        "to today. targets: required for type=correction, list of existing note ids - the notes it "
+        "corrects, linked from its first line. session: for "
         "type=transcript or type=session, YYYY-MM-DD-NN, defaults to today's next unused number. To "
         "add to today's daily use add_to_daily; to add to any other note use append_note (not this "
         "again). Returns {id, path}."
@@ -1418,7 +1444,7 @@ def create_note(
         title: Human-readable title. Slugified to become the filename, and
             used verbatim as the first alias.
         author: One of: user, nuru, both. Types under user/ (directives,
-            daily, correction) require author="user".
+            daily) require author="user".
         body: Markdown content, placed under the title heading.
         tags: Extra tags, beyond the type itself (which is always a tag).
             No tag may contain whitespace.
@@ -1507,6 +1533,10 @@ def create_note(
         tags=[type, *(tags or [])],
         aliases=[title, note_id],
     )
+    if type == "correction":
+        # A correction links the notes it corrects, so each one's backlinks lead here. By id: the
+        # id is in every note's aliases, and it survives the note being renamed or archived.
+        body = f"Corrects: {', '.join(f'[[{t}]]' for t in targets)}\n\n{body}"
     file_content = f"---\n{frontmatter}---\n\n# {title}\n\n{body}"
 
     def _create() -> None:
@@ -1614,6 +1644,7 @@ def append_note(id: str, content: str) -> str:
     target = _resolve_target(rel_path)
     if not target.is_file():
         raise FileNotFoundError(f"Note '{id}' is indexed at '{rel_path}', but that file no longer exists.")
+    _reject_user_authored(target, rel_path)
 
     _append_text(target, content)
     return rel_path
@@ -1773,6 +1804,7 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     _reject_hidden(destination, destination_path)
     _reject_protected_folder(source, source_path)
     _reject_protected_folder(destination, destination_path)
+    _reject_user_authored(source, source_path)
 
     if not source.is_file():
         raise FileNotFoundError(f"No file found at '{source_path}'.")
@@ -1808,7 +1840,7 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     "which takes it out of browse_notes and the tag lists. Reversible - nothing is deleted - so prefer this "
     "to deleting. name: a path, filename, title or id, as for read_note; a name that matches several notes "
     "is refused, so pass the path. Returns {from, to}; move it back with rename_or_move_file(to, from). "
-    "Notes under user/ (directives, daily, correction) can't be archived."
+    "Notes under user/ (directives, daily) can't be archived."
 )
 @_tool
 def archive_note(name: str) -> dict[str, str]:
@@ -1873,6 +1905,7 @@ def delete_file_or_directory(path: str) -> list[str]:
         raise ValueError("Refusing to delete the vault root.")
     _reject_hidden(target, path)
     _reject_protected_folder(target, path)
+    _reject_user_authored(target, path)
 
     def _delete() -> list[str]:
         if target.is_dir():

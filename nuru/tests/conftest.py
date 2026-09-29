@@ -19,6 +19,12 @@ def decision_log_in_tmp(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_real_expert_key(monkeypatch):
+    """The real key lives in deep-think's .env; no test may reach it, or the API with it."""
+    monkeypatch.setattr(session, "expert_api_key", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def no_background_indexer(monkeypatch):
     """Session.start() would otherwise start embedding the real vault through the real Ollama."""
     monkeypatch.setattr(session, "VaultIndexer", _NoIndexer)

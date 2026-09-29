@@ -120,9 +120,24 @@ def test_an_api_error_is_unavailable(log):
         planner.plan("brief")
 
 
-def test_without_a_key_there_is_no_expert(log, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_without_a_key_there_is_no_expert(log):
     planner = ExpertPlanner(ExpertSettings(model="m", daily_cap=5), log)
     assert planner.available() is False
-    with pytest.raises(ExpertUnavailable, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(ExpertUnavailable, match="no API key"):
         planner.plan("brief")
+
+
+def test_a_key_handed_in_makes_the_expert_available(log):
+    assert ExpertPlanner(ExpertSettings(model="m", daily_cap=5), log, api_key="sk-test").available() is True
+
+
+def test_the_key_comes_from_the_environment_first_then_deep_thinks_env(monkeypatch, tmp_path):
+    from core import session
+
+    monkeypatch.undo()  # the autouse fixture stubs expert_api_key; this test is about the real one
+    (tmp_path / ".env").write_text("CLAUDE_API_KEY=from-deep-think\n")
+    monkeypatch.setattr(session, "DEEP_THINK_DIR", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert session.expert_api_key() == "from-deep-think"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "from-env")
+    assert session.expert_api_key() == "from-env"

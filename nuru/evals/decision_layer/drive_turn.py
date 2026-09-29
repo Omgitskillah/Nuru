@@ -34,6 +34,7 @@ def main():
 
     env = get_default_environment()
     env.update({k: os.environ[k] for k in ("VAULT_PATH", "OBSIDIAN_SEMANTIC_DB", "PATH")})
+    env.update(session.OBSIDIAN_ENV)
     session.OBSIDIAN_SERVER_PARAMS = StdioServerParameters(
         command="uv", args=["run", "obsidian-mcp"], cwd=session.OBSIDIAN_DIR, env=env
     )

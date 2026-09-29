@@ -7,12 +7,12 @@ read. `build_brief` takes structured search results and pulls titles and IDs out
 nothing it is handed can smuggle note text in; a test checks that no note text seen in a session
 appears in the brief.
 
-The API key comes only from ANTHROPIC_API_KEY and is never logged. Calls are counted per local day
-in the decision log, against the config's `expert.daily_cap`.
+The API key is handed in by whoever builds the planner (Nuru's session: `expert_api_key()`), held in
+memory only, and never logged. Calls are counted per local day in the decision log, against the
+config's `expert.daily_cap`.
 """
 
 import json
-import os
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -81,16 +81,17 @@ def build_brief(request: str, tools: list[dict], notes: list[FoundNote], steps: 
 
 
 class ExpertPlanner:
-    def __init__(self, settings: ExpertSettings, log: DecisionLog, client: Any = None):
+    def __init__(self, settings: ExpertSettings, log: DecisionLog, client: Any = None, api_key: str | None = None):
         self._settings = settings
         self._log = log
         self._client = client
+        self._api_key = api_key
 
     def calls_today(self) -> int:
         return self._log.expert_calls_on(date.today().isoformat())
 
     def available(self) -> bool:
-        has_key = self._client is not None or bool(os.environ.get("ANTHROPIC_API_KEY"))
+        has_key = self._client is not None or bool(self._api_key)
         return has_key and self.calls_today() < self._settings.daily_cap
 
     def plan(self, brief: str) -> str:
@@ -120,11 +121,9 @@ class ExpertPlanner:
             raise ExpertUnavailable(f"the expert returned no plan (stop reason {response.stop_reason})")
         return text
 
-    @staticmethod
-    def _build_client():
+    def _build_client(self):
         import anthropic
 
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise ExpertUnavailable("ANTHROPIC_API_KEY is not set")
-        return anthropic.Anthropic(api_key=key)
+        if not self._api_key:
+            raise ExpertUnavailable("no API key is configured for the expert")
+        return anthropic.Anthropic(api_key=self._api_key)

@@ -130,7 +130,7 @@ def setup(monkeypatch, tmp_path):
         monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: tools)
         if expert_client is not None:
             monkeypatch.setattr(session, "ExpertPlanner",
-                                lambda settings, log: ExpertPlanner(settings, log, expert_client))
+                                lambda settings, log, **kwargs: ExpertPlanner(settings, log, expert_client))
         s = Session.start()
         return s, seen, tools
 
@@ -165,8 +165,7 @@ def test_a_confident_answer_gets_no_tools(setup):
     assert seen[0]["tools"] is False and tools.calls == []
 
 
-def test_the_step_cap_stops_the_turn_when_there_is_no_expert(setup, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_the_step_cap_stops_the_turn_when_there_is_no_expert(setup):
     s, seen, tools = setup(["tool_gate"], [[call("semantic_search", {"query": "a"})]] * 3,
                            script={**DEFAULT_SCRIPT, "mode": {"read": 0.9}}, tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))

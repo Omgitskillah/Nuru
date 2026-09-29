@@ -72,17 +72,19 @@ def score_29(record, changes, today):
 
 
 def score_30(record, changes, today):
-    """A correction: SARA-R510S lead time is 20 weeks, not 26."""
-    corrections = _new_notes(changes, "user/", "correction")
+    """A correction: SARA-R510S lead time is 20 weeks, not 26 - filed as Nuru's own correction note in
+    nuru/, linked to the notes it corrects, leaving those notes as they were (decided 2026-09-29;
+    before that, corrections were the user's alone and lived in user/)."""
+    corrections = _new_notes(changes, "nuru/", "correction")
     meta, body = corrections[0] if corrections else ({}, "")
     targets = set(meta.get("targets") or [])
     return [
-        ("a correction note was created, author user", len(corrections) == 1 and meta.get("author") == "user"),
+        ("a correction note was created in nuru/", len(corrections) == 1),
         ("it targets the vendor email note", VENDOR_EMAIL in targets),
         ("it targets the Area Monitor project", AREA_MONITOR in targets),
         ("it says 20 weeks", "20" in body),
-        ("nothing else changed, and the reply confirms it",
-         _replied(record) and _only(changes, lambda c: c["before"] is None and c["path"].startswith("user/"))),
+        ("no existing note was changed, and the reply confirms it",
+         _replied(record) and _only(changes, lambda c: c["before"] is None and c["path"].startswith("nuru/"))),
     ]
 
 

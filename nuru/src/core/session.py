@@ -89,7 +89,12 @@ def _modelfile_for(base_model: str) -> Path:
 
 
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
-OBSIDIAN_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR)
+# Nuru's own obsidian server refuses to change notes the user wrote outside user/ (author: user) -
+# see _reject_user_authored in the server. Other clients of the same server aren't affected.
+OBSIDIAN_ENV = {"OBSIDIAN_PROTECT_USER_AUTHORED": "1"}
+OBSIDIAN_SERVER_PARAMS = StdioServerParameters(
+    command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR, env={**get_default_environment(), **OBSIDIAN_ENV}
+)
 
 DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
 # ask_an_expert's file_paths are the vault-relative ones the obsidian tools returned, but
@@ -102,6 +107,15 @@ if _vault := (os.environ.get("DEEP_THINK_BASE_DIR") or os.environ.get("VAULT_PAT
 DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
     command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=_deep_think_env
 )
+
+def expert_api_key() -> str | None:
+    """The expert's Anthropic API key: ANTHROPIC_API_KEY if this process has one, else the
+    CLAUDE_API_KEY that deep-think (the ask_an_expert tool) already reads from its own .env - one key
+    for both, kept in one gitignored file and never copied into code, config or logs. A packaged Nuru
+    (a standalone app, an Obsidian plugin) replaces this with its own settings or the system keychain,
+    so the key can be added after installing."""
+    return os.environ.get("ANTHROPIC_API_KEY") or dotenv_values(os.path.join(DEEP_THINK_DIR, ".env")).get("CLAUDE_API_KEY")
+
 
 CALC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "calc")
 CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"], cwd=CALC_DIR)
@@ -340,7 +354,8 @@ class Session:
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
             shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id)
-            enforcement = Enforcement(decision_config, BASE_MODEL, ExpertPlanner(decision_config.expert, decision_log))
+            planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
+            enforcement = Enforcement(decision_config, BASE_MODEL, planner)
 
             session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement)
             session.load_model()
@@ -449,7 +464,7 @@ class Session:
                     reason = (f"it reached the {enforcing.step_cap}-step limit" if capped else
                               "the local model kept failing at the highest thinking level")
                     if not enforcing.expert_available():
-                        reason += ", and the expert isn't available (no ANTHROPIC_API_KEY, or today's budget is used up)"
+                        reason += ", and the expert isn't available (no API key, or today's budget is used up)"
                     yield from self._stop(turn_id, reason)
                     return
                 if tier == "expert":

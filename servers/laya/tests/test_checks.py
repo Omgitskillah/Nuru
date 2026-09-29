@@ -27,9 +27,14 @@ def test_structural_tools_stay_out_of_the_users_folder(tool, arguments):
 
 
 def test_a_users_note_type_needs_the_user_as_author():
-    reasons = check_write("create_note", {"type": "correction", "title": "x", "author": "nuru", "targets": [KNOWN]}, {KNOWN})
-    assert reasons == ["a correction note is the user's own and needs author 'user'"]
-    assert check_write("create_note", {"type": "correction", "title": "x", "author": "user", "targets": [KNOWN]}, {KNOWN}) == []
+    reasons = check_write("create_note", {"type": "directives", "title": "x", "author": "nuru"}, set())
+    assert reasons == ["a directives note is the user's own and needs author 'user'"]
+    assert check_write("create_note", {"type": "directives", "title": "x", "author": "user"}, set()) == []
+
+
+def test_nuru_may_file_a_correction_pointing_at_known_notes():
+    args = {"type": "correction", "title": "x", "author": "nuru", "targets": [KNOWN]}
+    assert check_write("create_note", args, {KNOWN}) == []
 
 
 def test_an_unknown_note_type_is_blocked():

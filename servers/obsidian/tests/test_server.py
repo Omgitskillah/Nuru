@@ -3320,3 +3320,72 @@ def test_note_todos_caps_a_long_list(tmp_path, monkeypatch):
 
     assert result["count"] == 30 and len(result["todos"]) == 25
     assert "first 25 of 30" in result["hint"]
+
+
+
+# --- corrections are Nuru's too (template 0.2.0) ---
+
+
+def test_a_correction_lives_in_nuru_and_links_what_it_corrects(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    first = server.create_note(type="project", title="Area Monitor", author="both")
+    second = server.create_note(type="topic", title="Vendor email", author="user")
+
+    result = server.create_note(type="correction", title="SARA lead time", author="nuru",
+                                targets=[first["id"], second["id"]], body="Lead time is 20 weeks, not 26.")
+
+    assert result["path"] == "nuru/sara-lead-time.md"
+    text = (tmp_path / result["path"]).read_text()
+    assert f"Corrects: [[{first['id']}]], [[{second['id']}]]\n\nLead time is 20 weeks, not 26." in text
+    assert "version: 0.2.0\n" in text and "author: nuru\n" in text
+    backlinks = server.get_links(first["id"])["backlinks"]
+    assert result["path"] in backlinks
+
+
+# --- notes the user wrote, outside user/, when the server runs for Nuru ---
+
+
+@pytest.fixture
+def protected(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", True)
+    return tmp_path
+
+
+def test_a_user_authored_note_outside_user_cannot_be_appended_to(protected):
+    note = server.create_note(type="topic", title="Vendor email", author="user", body="original")
+    with pytest.raises(ToolError, match="written by the user"):
+        server.append_note(note["id"], "more")
+    assert (protected / note["path"]).read_text().endswith("original")
+
+
+@pytest.mark.parametrize("change", [
+    lambda path: server.archive_note(path),
+    lambda path: server.rename_or_move_file(path, "nuru/elsewhere.md"),
+    lambda path: server.delete_file_or_directory(path),
+    lambda path: server.delete_file_or_directory("nuru"),  # a folder holding one
+])
+def test_a_user_authored_note_outside_user_cannot_be_moved_archived_or_deleted(protected, change):
+    note = server.create_note(type="topic", title="Vendor email", author="user")
+    with pytest.raises(ToolError, match="written by the user"):
+        change(note["path"])
+    assert (protected / note["path"]).is_file()
+
+
+def test_nuru_and_shared_notes_stay_writable(protected):
+    mine = server.create_note(type="topic", title="Mine", author="nuru")
+    ours = server.create_note(type="project", title="Ours", author="both")
+    server.append_note(mine["id"], "more")
+    server.append_note(ours["id"], "more")
+    assert server.archive_note(mine["path"])["to"] == "archive/nuru/mine.md"
+
+
+def test_todays_daily_still_takes_additions(protected):
+    assert server.add_to_daily("gym at six")["path"].startswith("user/")
+
+
+def test_without_the_flag_other_clients_can_still_change_user_authored_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", False)
+    note = server.create_note(type="topic", title="Vendor email", author="user")
+    server.append_note(note["id"], "more")

@@ -8,7 +8,7 @@ Run them one at a time, under `caffeinate -i` (the Mac sleeps mid-run otherwise,
 |---|---|---|---|
 | 1 | `think_modes.py` | Thinking tokens, latency and correctness per thinking level (off / low / medium / high) on argument-only steps, with `think` passed top-level and inside `options`. Temperature 0 and a fixed seed, so "two levels are the same" means byte-identical output. | 30 calls |
 | 2 | `format_enforcement.py` | Whether the output always matches the forced argument schema (`core.forced_schema`), in every tier the config maps, at Nuru's own sampling - thinking off above all. | 5 steps x 3 tiers x `--repeats` |
-| 3 | `run_suite.py` + `tier_labels.py` | Suite tests 28-31 (the constrained edits) at every local tier, three runs each, scored out of 5 by `score_edits.py`; a test's label is the cheapest tier that passes (4/5+) in two of three runs. | 36 turns |
+| 3 | `run_suite.py` + `tier_labels.py` | Suite tests 28-31 (the constrained edits) at every local tier, three runs each, scored out of 5 by `score_runs.py`; a test's label is the cheapest tier that passes (4/5+) in two of three runs. | 36 turns |
 | 4 | `baseline_compare.py` | Always-`high` against the `assess_effort` policy, replayed from eval 3's batch: the candidate's score and latency are the measured ones at the tier Laya picked for the first step. | none (reuses 3) |
 | 5 | `run_suite.py` + `shadow_report.py` | The whole 34-prompt suite in shadow mode, then Laya's tool choice next to the model's at every step, disagreements included. | 34 turns |
 | 6 | `check_claim_set.py` | check_claim on planted false claims (a write claimed that failed, one never attempted, an invented note ID) mixed with honest replies: catches and false alarms. | Laya only |
@@ -35,10 +35,16 @@ Most changes don't need the two-hour suite:
 - **A change to the model, its Modelfile or Nuru's loop** needs live runs: **`run_suite.py --tests quick`** runs eight tests, one per behaviour worth watching, each of which has failed in an earlier scored run (bar the no-tool control) - about 15 minutes.
 - **The full 34** stay the occasional regression check: before switching a decision point to `enforce`, or after changing models.
 
+**Collecting labelled data**: run the quick suite at every tier, then `autolabel.py` labels the decisions whose right answer the outcome settles (source `claude`: the rules are the test rubrics in `score_runs.py` plus each test's intent) and leaves the rest for `nuru label --db .runs/<batch>/decisions.sqlite3`.
+
 ```bash
+caffeinate -i uv run python run_suite.py --tests quick --tiers off,low,high --repeats 3 --label data
+uv run python autolabel.py .runs/suite-data-<time>
 uv run python replay.py .runs/suite-shadow-<time> .runs/suite-tiers-<time>
 caffeinate -i uv run python run_suite.py --tests quick --label quick
 ```
+
+**Testing the enforce paths**: `run_suite.py --enforce all` (or a comma-separated list of decision points) enforces them in that batch only. Its config - written into the batch folder, headed TEST ONLY - marks the thresholds calibrated so that it loads; they aren't, so such a run tests the machinery, not how a calibrated Nuru would do. The real `config/decision_layer.yaml` is never touched.
 
 ## How the suite runs are isolated
 

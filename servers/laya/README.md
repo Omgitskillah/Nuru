@@ -27,11 +27,11 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 
 | Tool | Returns |
 |---|---|
-| `tool_gate(phase="start", request, tools)` | `mode` (answer / read / write / ask_user) and `first_tool`. `answer` needs a high threshold; below it the default is `read`, with `tool_gate.default_first_read` first. |
-| `tool_gate(phase="next", request, tools, steps)` | `next`: a tool name, `answer`, `ask_user`, or `defer` (Laya unsure or down: the model keeps choosing). |
+| `tool_gate(phase="start", request)` | `mode` (answer / read / write / ask_user). `answer` needs a high threshold; below it the default is `read`. `first_tool` is code's, not Laya's: for a read or a write, `tool_gate.default_first_read` - search first. |
+| `tool_gate(phase="next", request, steps)` | `next`: `continue` (use another tool - which one stays the model's choice), `answer`, `ask_user`, or `defer` (Laya unsure or down: the model decides). Each step is `{tool, status, result}`, the result a one-line summary of what it returned. |
 | `assess_effort(request, step_type, steps, failures)` | `tier` (off / low / high / expert - there is no medium: on Granite it was identical to high): the predicted tier if its probability clears that tier's threshold, else `tiers.default`. The within-task rules (tiers only go up, failure signals, expert budget) are the harness's. |
 | `gate_write(request, tool, arguments, known_ids)` | `verdict`: `block` (a code check failed - `reasons` says which), `proceed` (both Laya answers cleared their thresholds) or `ask`. |
-| `check_claim(reply, log, known_ids)` | `passed`, `verified` and `failures`. A note ID in the reply that isn't in the log or `known_ids` fails straight away, without Laya. |
+| `check_claim(reply, log, known_ids)` | `passed`, `verified` and `failures`. A note ID in the reply that isn't in the log or `known_ids` fails straight away, without Laya. Otherwise Laya reads the reply alone and says what it claims (`made_change` / `reports_failure` / `no_change`), and code checks that against the log: a claimed change with no successful write behind it fails. |
 | `rerank(query, matches)` | `semantic_search` matches reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
 | `health()` | Laya's load state, device, loaded checkpoints, question-set versions, decision-point modes. |
 
@@ -41,7 +41,7 @@ Every answer carries `probabilities` and `source` (`laya`, `code` or `fallback`)
 
 ### How Nuru uses it
 
-Nuru starts this server with the others and, for now, only in **shadow** mode: it asks at every decision point, records what it actually did against each `decision_id` (`action_taken`, plus `outcome` - `empty_reply`, or `ok` / `error` for a write), and changes nothing. The hooks are in [`nuru/src/core/decision_shadow.py`](../../nuru/src/core/decision_shadow.py); Nuru refuses to start if the config sets any decision point to `enforce`, until the enforcement paths exist. Nuru passes the server the same `VAULT_PATH` the obsidian server uses.
+Nuru starts this server with the others, asks at every decision point, and records what it actually did against each `decision_id` (`action_taken`, plus `outcome` - `empty_reply`, or `ok` / `error` for a write). A point in **shadow** (all of them, by default) changes nothing; a point the config sets to **enforce** is acted on, as [Nuru's README](../../nuru/README.md) describes. The hooks are in [`nuru/src/core/decision_shadow.py`](../../nuru/src/core/decision_shadow.py), the enforce paths in [`enforcement.py`](../../nuru/src/core/enforcement.py). Nuru passes the server the same `VAULT_PATH` the obsidian server uses.
 
 ### Fail safe
 
@@ -51,8 +51,8 @@ If Laya is still loading, failed to load, raises, or an input is over its token 
 
 One YAML file per decision point in [`src/laya_mcp/questions/`](src/laya_mcp/questions), in the `POST /v1/systemone` question shape (kept so the backend could be swapped for Jev) plus `name`, `version`, `checkpoint`, `max_state_tokens` and optionally `max_len` / `head_max_len`. All are validated at startup.
 
-- **Options known only at request time** are named with `criteria_from`: the live tool list for `tool_gate`, the note types and the caller's labels for `classify_notes`.
-- **`only_when`** asks a question only when the caller sets a flag: `hides_failure` is only asked when a write failed.
+- **Options known only at request time** are named with `criteria_from`: the note types and the caller's labels for `classify_notes`.
+- **Small option sets, narrow questions.** Version 1 asked `tool_gate` to pick among Nuru's 26 tools and `check_claim` to compare a reply with a log; zero-shot, the first matched the model 10% of the time and the second flagged 88% of honest replies (2026-09-28 evals, [results](../../nuru/evals/decision_layer/results-2026-09-28.md)). Version 2 keeps every choice to a few options and asks Laya only what it can judge from the text in front of it; code does the rest.
 - **Bump `version`** whenever a question's wording or options change. It is logged with every decision and exported with every label, so fine-tuning data never mixes wordings.
 
 ### classify_notes: note_type and subject
@@ -75,7 +75,7 @@ English question sets still go through Laya's Router, which sends non-English te
 
 ## Calibration
 
-Laya's probabilities mean nothing until calibrated on Nuru's own labelled decisions. The multilingual checkpoint ships no fitted calibration at all, and the English one ships a 0.10 temperature for choices with 11+ options, which Laya itself flags as uncalibrated - `tool_gate`'s tool choice is one of those. So:
+Laya's probabilities mean nothing until calibrated on Nuru's own labelled decisions. The multilingual checkpoint ships no fitted calibration at all, and the English one ships a 0.10 temperature for choices with 11+ options, which Laya itself flags as uncalibrated - why no question set asks for more than a handful of options. So:
 
 - every threshold in the config records its calibration (date, labels, held-out labels);
 - **the config refuses to load** with a decision point in `enforce` while any threshold it uses is uncalibrated;

@@ -64,7 +64,12 @@ uv run nuru-ui    # in a window
 
 History is scoped to one conversation per run of `nuru` - each launch starts a new conversation row in the database, but earlier conversations are kept, not deleted.
 
-5. **Decision layer, in shadow** - at every decision point the harness also asks [Laya](../servers/laya) what it would do - which tool first, how much thinking, whether a write should go ahead, whether the reply matches what actually ran - and logs that next to what Nuru actually did, in `.db/decisions.sqlite3`. It changes nothing about the turn: if the Laya server is down, or slow to load, the turn runs exactly the same. Every tool Nuru runs is logged there too, from what actually ran (note text in a write is kept as its length and hash, not the text).
+5. **Decision layer** - at every decision point the harness also asks [Laya](../servers/laya) what it would do - what kind of request this is, whether to go on after a tool result, how much thinking the next step needs, whether a write should go ahead, whether the reply matches what actually ran - and logs that next to what Nuru actually did, in `.db/decisions.sqlite3`. Every tool Nuru runs is logged there too, from what actually ran (note text in a write is kept as its length and hash, not the text).
+
+   Each decision point is `shadow` (the default: logged, changes nothing - if the Laya server is down or still loading, the turn runs exactly the same) or `enforce`, set per point in [`config/decision_layer.yaml`](../config/decision_layer.yaml), which refuses `enforce` until that point's thresholds are calibrated on held-out labelled data. Enforced ([`enforcement.py`](src/core/enforcement.py)):
+   - **tool_gate** - a read or write request starts with the harness running the search itself (the request as its query); `answer` / `ask_user` get no tools; a turn stops at the step cap (config), after one expert attempt if the budget allows.
+   - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
+   - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
 
 ## Reviewing the decision layer
 
@@ -73,6 +78,8 @@ uv run nuru label                  # label logged decisions, disagreements with 
 uv run nuru label --point gate_write --limit 10
 uv run nuru export labels.jsonl    # the labelled decisions, for calibrating and fine-tuning later
 ```
+
+In the CLI, an enforced gate_write that wants your OK asks before the write runs.
 
 `label` shows each decision - what Laya proposed, what Nuru did, the state Laya saw - and asks for the right answer to each of its questions (a number or a name; Enter skips one, `q` stops). Labels are recorded as coming from `user`, or `--source claude`; never from the local model.
 
@@ -115,6 +122,8 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
 
 `core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
+
+`core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
 

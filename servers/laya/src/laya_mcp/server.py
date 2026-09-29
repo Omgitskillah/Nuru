@@ -88,14 +88,13 @@ def assess_effort(
 
 
 @mcp.tool(
-    description="Harness only. phase=start: mode and first tool for a request. phase=next: the next step "
-    "after a tool result. tools: [{name, description, kind: read|write}]."
+    description="Harness only. phase=start: the request's mode and first tool. phase=next: continue, "
+    "answer or ask_user after a tool result. steps: [{tool, status, result}]."
 )
 @_tool
 def tool_gate(
     phase: Literal["start", "next"],
     request: str,
-    tools: list[dict[str, str]],
     steps: list[dict[str, Any]] | None = None,
     session_id: str | None = None,
     task_id: str | None = None,
@@ -103,16 +102,9 @@ def tool_gate(
 ) -> dict[str, Any]:
     layer = _get_layer()
     context = _context(session_id, task_id, step)
-    described = {t["name"]: t.get("description", "") for t in tools}
     if phase == "start":
-        read = {name: d for name, d in described.items() if _kind(tools, name) == "read"}
-        write = {name: d for name, d in described.items() if _kind(tools, name) == "write"}
-        return layer.tool_gate_start(request, read, write, context)
-    return layer.tool_gate_next(request, steps or [], described, context)
-
-
-def _kind(tools: list[dict[str, str]], name: str) -> str:
-    return next(t.get("kind", "read") for t in tools if t["name"] == name)
+        return layer.tool_gate_start(request, context)
+    return layer.tool_gate_next(request, steps or [], context)
 
 
 @mcp.tool(description="Harness only. proceed, ask or block for a proposed vault write, before it runs.")

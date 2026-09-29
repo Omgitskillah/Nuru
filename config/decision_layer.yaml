@@ -25,7 +25,7 @@ decision_points:
 
 tool_gate:
   step_cap: 6
-  default_first_read: semantic_search   # used when Laya is unsure, or down
+  default_first_read: semantic_search   # the first tool for a read or write request: search first
 
 tiers:
   order: ["off", low, high, expert]
@@ -53,11 +53,11 @@ thresholds:
       answer: {min_p: 0.95, calibration: {date: null, labels: 0, held_out: 0}}
       write: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
       ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
-    first_tool:
-      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
   tool_gate_next:
     next:
-      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
+      answer: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+      ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
+      continue: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
   assess_effort:
     tier:
       "off": {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
@@ -70,10 +70,8 @@ thresholds:
     verdict:
       proceed: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
   check_claim:
-    claims_unlogged_action:
-      "true": {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
-    hides_failure:
-      "true": {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
+    claim:
+      made_change: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
   classify_note_type:
     note_type:
       any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}

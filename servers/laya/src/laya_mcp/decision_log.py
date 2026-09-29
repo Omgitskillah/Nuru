@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     error TEXT,
     duration_ms REAL
 );
+CREATE TABLE IF NOT EXISTS expert_calls (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    day TEXT NOT NULL,              -- local date, for the daily cap
+    model TEXT NOT NULL,
+    stop_reason TEXT,
+    ok INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS classify_cache (
     note_key TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -238,6 +246,16 @@ class DecisionLog:
                     + "\n"
                 )
         return len(rows)
+
+    def record_expert_call(self, model: str, stop_reason: str, ok: bool) -> None:
+        """One call to the cloud expert - counted whether or not it produced a plan."""
+        from datetime import date
+
+        self._insert("expert_calls", {"ts": _now(), "day": date.today().isoformat(), "model": model,
+                                      "stop_reason": stop_reason, "ok": int(ok)})
+
+    def expert_calls_on(self, day: str) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM expert_calls WHERE day = ?", (day,)).fetchone()[0]
 
     def cached_label(self, key: tuple) -> tuple[str, float] | None:
         row = self._conn.execute(

@@ -28,8 +28,6 @@ class Question(BaseModel):
     criteria: dict[str, str] | list[str] | None = None
     # Name of the request-time option set that replaces `criteria` (choice questions only).
     criteria_from: str | None = None
-    # Name of a request flag; the question is only asked when the caller sets it.
-    only_when: str | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "Question":
@@ -80,17 +78,14 @@ class QuestionSet(BaseModel):
     def injected(self) -> set[str]:
         return {q.criteria_from for q in self.questions.values() if q.criteria_from}
 
-    def render(self, options: dict[str, dict[str, str] | list[str]] | None = None, flags: set[str] = frozenset()) -> dict:
-        """The questions in `/v1/systemone` shape, with request-time options filled in and
-        `only_when` questions dropped unless their flag is set."""
+    def render(self, options: dict[str, dict[str, str] | list[str]] | None = None) -> dict:
+        """The questions in `/v1/systemone` shape, with request-time options filled in."""
         options = options or {}
         missing = self.injected - set(options)
         if missing:
             raise ValueError(f"{self.name} needs request-time options for {sorted(missing)}")
         rendered = {}
         for qid, q in self.questions.items():
-            if q.only_when and q.only_when not in flags:
-                continue
             body: dict = {"type": q.type, "instructions": q.instructions}
             criteria = options[q.criteria_from] if q.criteria_from else q.criteria
             if not criteria and q.type == "choice":

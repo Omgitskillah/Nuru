@@ -25,12 +25,8 @@ def test_harness_tools_say_so_and_descriptions_are_one_line():
         assert tool.description.startswith("Harness only.") == (tool.name in server.HARNESS_TOOLS)
 
 
-def test_tool_gate_through_the_protocol_splits_read_and_write_tools(layer):
-    tools = [
-        {"name": "semantic_search", "description": "Passages", "kind": "read"},
-        {"name": "append_note", "description": "Append", "kind": "write"},
-    ]
-    result = asyncio.run(server.mcp.call_tool("tool_gate", {"phase": "start", "request": "hi", "tools": tools}))
+def test_tool_gate_through_the_protocol(layer):
+    result = asyncio.run(server.mcp.call_tool("tool_gate", {"phase": "start", "request": "hi"}))
     assert '"mode": "answer"' in str(result) or "'mode': 'answer'" in str(result)
 
 

@@ -68,9 +68,3 @@ def test_render_refuses_missing_or_empty_request_time_options():
         s.render()
     with pytest.raises(ValueError, match="no options"):
         s.render({"tools": {}})
-
-
-def test_only_when_questions_are_asked_only_with_their_flag():
-    s = qset(a={"type": "noul", "instructions": "x"}, b={"type": "noul", "instructions": "y", "only_when": "failed"})
-    assert set(s.render()) == {"a"}
-    assert set(s.render(flags={"failed"})) == {"a", "b"}

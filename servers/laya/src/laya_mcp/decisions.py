@@ -48,10 +48,10 @@ class DecisionLayer:
         self.vault = vault
 
     # ------------------------------------------------------------------ plumbing
-    def _ask(self, qset_name: str, state: Any, options: dict | None = None, flags: frozenset[str] = frozenset()):
+    def _ask(self, qset_name: str, state: Any, options: dict | None = None):
         """(questions, prediction or None, status, detail). Never raises for a Laya failure."""
         qset = self.sets[qset_name]
-        questions = qset.render(options, flags)
+        questions = qset.render(options)
         try:
             return questions, self.predictor.predict(qset, state, questions), "ok", None
         except Unavailable as e:
@@ -104,33 +104,23 @@ class DecisionLayer:
         return prediction.answers[qid]["noul"]
 
     # ------------------------------------------------------------------ tool_gate
-    def tool_gate_start(
-        self, request: str, read_tools: dict[str, str], write_tools: dict[str, str], context: Context | None = None
-    ) -> dict[str, Any]:
-        """Mode (answer/read/write/ask_user) and first tool, before the model runs. Skipping tools
-        is the expensive mistake, so `answer` needs its (high) threshold and the default is `read`."""
+    def tool_gate_start(self, request: str, context: Context | None = None) -> dict[str, Any]:
+        """The request's mode (answer/read/write/ask_user), before the model runs, and the first tool
+        for it. Skipping tools is the expensive mistake, so `answer` needs its (high) threshold and
+        the default is `read`. The first tool is not Laya's to pick: for a read or a write it is the
+        configured search (`tool_gate.default_first_read`) - search first."""
         qset = "tool_gate_start"
         state = {"request": request}
-        tools = {**read_tools, **write_tools, "none": "No tool is needed"}
-        questions, prediction, status, detail = self._ask(qset, state, {"first_tools": tools})
-        default_read = self.config.tool_gate.default_first_read
-        mode, first_tool, probabilities = "read", (default_read if default_read in read_tools else None), {}
+        questions, prediction, status, detail = self._ask(qset, state)
+        mode, probabilities = "read", {}
         if prediction:
-            _, _, mode_p = self._choice(prediction, "mode")
+            _, _, probabilities = self._choice(prediction, "mode")
             for option in ("answer", "write", "ask_user"):
-                if self._clears(qset, "mode", option, mode_p[option]):
+                if self._clears(qset, "mode", option, probabilities[option]):
                     mode = option
                     break
-            tool, tool_p, _ = self._choice(prediction, "first_tool")
-            if mode == "answer":
-                first_tool = None
-            elif self._clears(qset, "first_tool", tool, tool_p) and tool != "none":
-                first_tool = tool
-            elif mode != "read":
-                first_tool = None
-            probabilities = {"mode": mode_p, "first_tool": prediction.answers["first_tool"]["probabilities"]}
-        action = f"{mode}:{first_tool or 'none'}"
-        decision_id = self._record("tool_gate", qset, state, questions, prediction, status, detail, action, context)
+        first_tool = self.config.tool_gate.default_first_read if mode in ("read", "write") else None
+        decision_id = self._record("tool_gate", qset, state, questions, prediction, status, detail, mode, context)
         return {
             "decision_id": decision_id,
             "mode": mode,
@@ -140,15 +130,12 @@ class DecisionLayer:
             "probabilities": probabilities,
         }
 
-    def tool_gate_next(
-        self, request: str, steps: list[dict], tools: dict[str, str], context: Context | None = None
-    ) -> dict[str, Any]:
-        """After a tool result: a tool, `answer` or `ask_user` - or `defer` (let the model choose)
-        when Laya is unsure or down."""
+    def tool_gate_next(self, request: str, steps: list[dict], context: Context | None = None) -> dict[str, Any]:
+        """After a tool result: `continue` (another tool - which one is the model's choice), `answer`
+        or `ask_user` - or `defer` (the model decides) when Laya is unsure or down."""
         qset = "tool_gate_next"
         state = {"request": request, "steps": steps}
-        options = {**tools, "answer": "Write the final reply now", "ask_user": "Ask the user a question"}
-        questions, prediction, status, detail = self._ask(qset, state, {"next_steps": options})
+        questions, prediction, status, detail = self._ask(qset, state)
         action, probabilities = "defer", {}
         if prediction:
             choice, p, probabilities = self._choice(prediction, "next")
@@ -228,28 +215,34 @@ class DecisionLayer:
         self, reply: str, log: list[dict], known_ids: list[str], context: Context | None = None
     ) -> dict[str, Any]:
         """Does the reply match what actually happened? `log` is the harness's own execution log
-        (tool, ok, error); `known_ids` every note ID a tool call or search result contained."""
+        (tool, ok, ...); `known_ids` every note ID a tool call or search result contained.
+
+        Code first: a note ID nobody returned fails at once. Then Laya says what the reply claims -
+        a change made, a failure reported, or no change - and code compares that with the log: a
+        claimed change with no successful write behind it fails (and says so more pointedly when
+        the log shows the write failing)."""
         qset = "check_claim"
         known = set(known_ids) | {i for call in log for i in checks.find_note_ids(canonical(call.get("arguments", {})))}
         invented = checks.invented_ids(reply, known)
-        failed_writes = [call for call in log if call.get("tool") in checks.WRITE_TOOLS and not call.get("ok")]
-        state = {"reply": reply, "log": log}
+        writes = [call for call in log if call.get("tool") in checks.WRITE_TOOLS]
+        succeeded = any(call.get("ok") for call in writes)
+        failed = [call for call in writes if not call.get("ok")]
         if invented:
             failures = [f"invented note ID {i}" for i in invented]
             decision_id = self._record(
-                "check_claim", qset, state, {}, None, "code_failed", "; ".join(failures), "fail", context
+                "check_claim", qset, {"reply": reply}, {}, None, "code_failed", "; ".join(failures), "fail", context
             )
             return {"decision_id": decision_id, "passed": False, "verified": True, "failures": failures,
                     "source": "code", "status": "code_failed", "probabilities": {}}
-        flags = frozenset({"failed_writes"}) if failed_writes else frozenset()
-        questions, prediction, status, detail = self._ask(qset, state, flags=flags)
+        state = {"reply": reply}
+        questions, prediction, status, detail = self._ask(qset, state)
         failures, probabilities = [], {}
         if prediction:
-            probabilities = {qid: self._noul(prediction, qid) for qid in prediction.answers}
-            if self._clears(qset, "claims_unlogged_action", "true", probabilities["claims_unlogged_action"]):
-                failures.append("claims an action or result the log does not show")
-            if "hides_failure" in probabilities and self._clears(qset, "hides_failure", "true", probabilities["hides_failure"]):
-                failures.append("presents a failed write as successful")
+            _, _, probabilities = self._choice(prediction, "claim")
+            claims_change = self._clears(qset, "claim", "made_change", probabilities["made_change"])
+            if claims_change and not succeeded:
+                failures.append("presents a failed write as successful" if failed
+                                else "claims a change the log does not show")
         action = "fail" if failures else "pass"
         decision_id = self._record("check_claim", qset, state, questions, prediction, status, detail, action, context)
         return {
@@ -257,7 +250,7 @@ class DecisionLayer:
             "passed": not failures,
             "verified": prediction is not None,  # code-only when Laya couldn't answer
             "failures": failures,
-            "failed_writes": len(failed_writes),
+            "failed_writes": len(failed),
             "source": "laya" if prediction else "code",
             "status": status,
             "probabilities": probabilities,

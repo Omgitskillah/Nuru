@@ -1,10 +1,10 @@
-# Asked once, before the model runs on a request. `first_tool` options are the live MCP tool list
-# (each tool's first sentence as its description) plus `none`, filled in at request time.
+# Asked once, before the model runs on a request: what kind of request is it? Which tool comes
+# first is not asked - as a 26-way choice it sat in the English checkpoint's uncalibrated 11+
+# bucket and matched the model 2 times in 34 (eval 5, 2026-09-28). Code picks it: search first.
 name: tool_gate_start
-version: 1
+version: 2       # 2: mode only; the first tool is code's default (tool_gate.default_first_read)
 checkpoint: english
-max_state_tokens: 240
-head_max_len: 256        # ~20 tool options; the default 192 cuts each description to ~7 tokens
+max_state_tokens: 400
 questions:
   mode:
     type: choice
@@ -14,7 +14,3 @@ questions:
       read: "Look something up in the user's notes first"
       write: "Add to or change the user's notes"
       ask_user: "The request is too unclear to act on; ask the user"
-  first_tool:
-    type: choice
-    instructions: "Which tool should run first for the user's `request`?"
-    criteria_from: first_tools

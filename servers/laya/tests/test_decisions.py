@@ -14,31 +14,36 @@ ID = str(ULID())
 
 # ---------------------------------------------------------------- tool_gate
 def test_answer_needs_its_high_threshold_or_the_default_is_a_read(make_layer, log):
-    layer, _ = make_layer({"mode": {"answer": 0.9, "read": 0.1}, "first_tool": {"none": 0.9}})
-    result = layer.tool_gate_start("What do my notes say about Kubernetes?", READ, WRITE, CTX)
+    layer, _ = make_layer({"mode": {"answer": 0.9, "read": 0.1}})
+    result = layer.tool_gate_start("What do my notes say about Kubernetes?", CTX)
     assert (result["mode"], result["first_tool"], result["source"]) == ("read", "semantic_search", "laya")
     [row] = rows(log)
-    assert row["proposed_action"] == "read:semantic_search" and row["decision_point"] == "tool_gate"
+    assert row["proposed_action"] == "read" and row["decision_point"] == "tool_gate"
     assert row["session_id"] == "s1"
 
 
 def test_a_confident_answer_skips_tools(make_layer):
-    layer, _ = make_layer({"mode": {"answer": 0.97}, "first_tool": {"none": 1.0}})
-    result = layer.tool_gate_start("What's 5.35 mA times 24 hours?", READ, WRITE)
+    layer, _ = make_layer({"mode": {"answer": 0.97}})
+    result = layer.tool_gate_start("What's 5.35 mA times 24 hours?")
     assert (result["mode"], result["first_tool"]) == ("answer", None)
 
 
-def test_a_confident_write_with_a_confident_first_tool(make_layer):
-    layer, predictor = make_layer({"mode": {"write": 0.9}, "first_tool": {"search_notes": 0.8}})
-    result = layer.tool_gate_start("Add a line to Priya's note", READ, WRITE)
-    assert (result["mode"], result["first_tool"]) == ("write", "search_notes")
+def test_the_first_tool_is_codes_search_first_not_a_choice_laya_makes(make_layer):
+    layer, predictor = make_layer({"mode": {"write": 0.9}})
+    result = layer.tool_gate_start("Add a line to Priya's note")
+    assert (result["mode"], result["first_tool"]) == ("write", "semantic_search")
     _, _, questions = predictor.calls[0]
-    assert set(questions["first_tool"]["criteria"]) == set(READ) | set(WRITE) | {"none"}
+    assert set(questions) == {"mode"}
+
+
+def test_asking_the_user_needs_no_tool(make_layer):
+    layer, _ = make_layer({"mode": {"ask_user": 0.95}})
+    assert layer.tool_gate_start("Do the thing")["first_tool"] is None
 
 
 def test_tool_gate_falls_back_to_a_read_when_laya_is_down(make_layer, log):
     layer, _ = make_layer(available=False)
-    result = layer.tool_gate_start("anything", READ, WRITE)
+    result = layer.tool_gate_start("anything")
     assert (result["mode"], result["first_tool"], result["source"], result["status"]) == (
         "read", "semantic_search", "fallback", "unavailable")
     assert rows(log)[0]["status"] == "unavailable"
@@ -46,18 +51,19 @@ def test_tool_gate_falls_back_to_a_read_when_laya_is_down(make_layer, log):
 
 def test_an_over_budget_request_is_rejected_not_truncated(make_layer, log):
     layer, predictor = make_layer()
-    result = layer.tool_gate_start("x" * 5000, READ, WRITE)
+    result = layer.tool_gate_start("x" * 5000)
     assert result["status"] == "over_budget" and result["source"] == "fallback"
     assert predictor.calls == []
-    assert "over the 240-token budget" in rows(log)[0]["detail"]
+    assert "over the 400-token budget" in rows(log)[0]["detail"]
 
 
-def test_next_step_defers_to_the_model_when_laya_is_unsure(make_layer):
-    layer, _ = make_layer({"next": {"read_note": 0.5, "answer": 0.5}})
-    steps = [{"tool": "search_notes", "status": "ok"}]
-    assert layer.tool_gate_next("r", steps, READ)["next"] == "defer"
-    layer, _ = make_layer({"next": {"answer": 0.9}})
-    assert layer.tool_gate_next("r", steps, READ)["next"] == "answer"
+def test_next_step_is_continue_answer_or_ask_and_defers_when_unsure(make_layer):
+    steps = [{"tool": "search_notes", "status": "ok", "result": "1 found: Priya Raman"}]
+    layer, _ = make_layer({"next": {"continue": 0.5, "answer": 0.5}})
+    assert layer.tool_gate_next("r", steps)["next"] == "defer"
+    layer, predictor = make_layer({"next": {"answer": 0.9}})
+    assert layer.tool_gate_next("r", steps)["next"] == "answer"
+    assert list(predictor.calls[0][2]["next"]["criteria"]) == ["continue", "answer", "ask_user"]
 
 
 # ---------------------------------------------------------------- assess_effort
@@ -114,27 +120,39 @@ def test_an_invented_note_id_fails_without_asking_laya(make_layer):
 
 
 def test_an_id_the_harness_passed_to_a_tool_counts_as_known(make_layer):
-    layer, _ = make_layer({"claims_unlogged_action": 0.1})
+    layer, _ = make_layer({"claim": {"made_change": 0.9}})
     log = [{"tool": "append_note", "arguments": {"id": ID}, "ok": True}]
     assert layer.check_claim(f"Appended to {ID}.", log, [])["passed"] is True
 
 
-def test_hides_failure_is_only_asked_when_a_write_failed(make_layer):
-    layer, predictor = make_layer({"claims_unlogged_action": 0.1, "hides_failure": 0.9})
-    ok_log = [{"tool": "append_note", "arguments": {"id": ID}, "ok": True}]
-    assert layer.check_claim("Done.", ok_log, [ID])["passed"] is True
-    assert "hides_failure" not in predictor.calls[-1][2]
-
-    failed_log = [{"tool": "append_note", "arguments": {"id": ID}, "ok": False, "error": "TimeoutError"}]
-    result = layer.check_claim("Done, the line is added.", failed_log, [ID])
-    assert result["passed"] is False and result["failures"] == ["presents a failed write as successful"]
-    assert "hides_failure" in predictor.calls[-1][2]
+def test_laya_sees_only_the_reply_and_code_checks_it_against_the_log(make_layer):
+    layer, predictor = make_layer({"claim": {"made_change": 0.9}})
+    layer.check_claim("I added it.", [{"tool": "append_note", "ok": True}], [])
+    _, state, questions = predictor.calls[0]
+    assert state == {"reply": "I added it."} and list(questions) == ["claim"]
 
 
-def test_an_unlogged_claim_fails(make_layer):
-    layer, _ = make_layer({"claims_unlogged_action": 0.8})
-    result = layer.check_claim("I created a new project note for you.", [], [])
-    assert result["failures"] == ["claims an action or result the log does not show"]
+def test_a_claimed_change_with_no_write_behind_it_fails(make_layer):
+    layer, _ = make_layer({"claim": {"made_change": 0.9}})
+    result = layer.check_claim("I created a new project note for you.", [{"tool": "search_notes", "ok": True}], [])
+    assert result["failures"] == ["claims a change the log does not show"]
+
+
+def test_a_claimed_change_whose_write_failed_says_so(make_layer):
+    layer, _ = make_layer({"claim": {"made_change": 0.9}})
+    result = layer.check_claim("Done, the line is added.", [{"tool": "append_note", "ok": False}], [])
+    assert result["failures"] == ["presents a failed write as successful"] and result["failed_writes"] == 1
+
+
+@pytest.mark.parametrize("claim, executed", [
+    ({"reports_failure": 0.9}, [{"tool": "append_note", "ok": False}]),  # an admitted failure
+    ({"no_change": 0.9}, [{"tool": "read_note", "ok": True}]),  # a plain answer
+    ({"made_change": 0.9}, [{"tool": "append_note", "ok": True}]),  # a change that happened
+    ({"made_change": 0.4, "no_change": 0.6}, []),  # not confident it claims a change
+])
+def test_honest_replies_pass(make_layer, claim, executed):
+    layer, _ = make_layer({"claim": claim})
+    assert layer.check_claim("reply", executed, [])["passed"] is True
 
 
 def test_check_claim_runs_code_only_and_marks_unverified_when_laya_is_down(make_layer):

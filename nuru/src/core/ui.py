@@ -86,7 +86,7 @@ OK_DOT, WARN_DOT, BAD_DOT, OFF_DOT = "#3A9D5D", "#C9962B", "#C0453A", "#B5B3B4" 
 STATE_DOTS = {"ready": OK_DOT, "loaded": OK_DOT, "loading": WARN_DOT, "not started": WARN_DOT,
               "embedding": WARN_DOT, "idle": OFF_DOT, "off": OFF_DOT, "no vault": OFF_DOT}
 
-COLUMN_WIDTH = 760
+COLUMN_WIDTH = 880
 BUBBLE_WIDTH = 600  # your messages wrap before the full column width so they read as bubbles
 SWING = 8  # degrees the lantern rocks to either side
 LOGO_PATH = Path(__file__).parent / "assets" / "lantern.png"  # transparent PNG
@@ -222,7 +222,7 @@ def centered(widget: QWidget) -> QHBoxLayout:
     """A row that centers `widget` and caps its width at COLUMN_WIDTH."""
     widget.setMaximumWidth(COLUMN_WIDTH)
     row = QHBoxLayout()
-    row.setContentsMargins(16, 0, 16, 0)
+    row.setContentsMargins(8, 0, 8, 0)
     row.addStretch(1)
     row.addWidget(widget, 100)
     row.addStretch(1)
@@ -970,7 +970,7 @@ class ChatWindow(QWidget):
 
         self.dock = QWidget()
         self.dock_layout = QVBoxLayout(self.dock)
-        self.dock_layout.setContentsMargins(0, 6, 0, 12)
+        self.dock_layout.setContentsMargins(0, 4, 0, 6)
         self.dock_layout.addLayout(centered(composer))
         # Hidden until the session is up, but its space stays reserved so the greeting doesn't jump
         # when the composer appears.

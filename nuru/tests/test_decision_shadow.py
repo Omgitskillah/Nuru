@@ -18,6 +18,13 @@ from laya_mcp.decisions import DecisionLayer
 from laya_mcp.predictor import Prediction
 from laya_mcp.question_sets import load_question_sets
 
+
+def said(events):
+    """A turn's events without the status ones (ToolResult, Progress, LayaDecision) - what it says."""
+    from core.session import STATUS_EVENTS
+
+    return [e for e in events if not isinstance(e, STATUS_EVENTS)]
+
 NOTE_ID = str(ULID())
 
 
@@ -130,7 +137,7 @@ RESULTS = {"search_notes": json.dumps({"matches": [{"id": NOTE_ID, "title": "Pri
 def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decision_log):
     tools = ShadowedTools(TOOLS, RESULTS)
     s = start(monkeypatch, A_WRITE_TURN, tools)
-    list(s.ask("Add a line to Priya's note saying she prefers async messages on Fridays."))
+    said(s.ask("Add a line to Priya's note saying she prefers async messages on Fridays."))
     s.close()
 
     decided = [(r["decision_point"], r["question_set"], r["action_taken"], r["mode"]) for r in rows(decision_log)]
@@ -151,7 +158,7 @@ def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decis
 
 def test_the_gate_saw_the_id_the_search_returned(monkeypatch, decision_log):
     s = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, RESULTS))
-    list(s.ask("Add a line to Priya's note"))
+    said(s.ask("Add a line to Priya's note"))
     s.close()
 
     gate = next(r for r in rows(decision_log) if r["decision_point"] == "gate_write")
@@ -164,7 +171,7 @@ def test_the_gate_saw_the_id_the_search_returned(monkeypatch, decision_log):
 def test_the_execution_log_is_what_ran_with_note_text_left_out(monkeypatch, decision_log):
     results = {**RESULTS, "append_note": ToolResult("FileNotFoundError: no note", is_error=True)}
     s = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, results))
-    list(s.ask("Add a line to Priya's note"))
+    said(s.ask("Add a line to Priya's note"))
     s.close()
 
     calls = rows(decision_log, "tool_calls")
@@ -176,12 +183,12 @@ def test_the_execution_log_is_what_ran_with_note_text_left_out(monkeypatch, deci
 
 def test_the_turn_is_identical_with_or_without_the_shadow(monkeypatch, decision_log):
     with_shadow = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, RESULTS))
-    events_with = list(with_shadow.ask("Add a line to Priya's note"))
+    events_with = said(with_shadow.ask("Add a line to Priya's note"))  # what Laya said is only shown, not said
     with_shadow.close()
 
     without = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, RESULTS))
     without.shadow = None
-    events_without = list(without.ask("Add a line to Priya's note"))
+    events_without = said(without.ask("Add a line to Priya's note"))
     without.close()
 
     assert events_with == events_without
@@ -192,7 +199,7 @@ def test_the_turn_is_identical_with_or_without_the_shadow(monkeypatch, decision_
 def test_a_dead_decision_layer_changes_nothing_and_the_execution_log_still_runs(monkeypatch, decision_log):
     tools = ShadowedTools(TOOLS, RESULTS, laya_down=True)
     s = start(monkeypatch, A_WRITE_TURN, tools)
-    events = list(s.ask("Add a line to Priya's note"))
+    events = said(s.ask("Add a line to Priya's note"))
     s.close()
 
     assert events[-1] == Text(f"{NOTE_ID}.")
@@ -207,7 +214,7 @@ def test_semantic_search_results_are_reranked_in_shadow(monkeypatch, decision_lo
                                                   {"path": "b.md", "id": None, "text": "budget", "score": 0.7}]}
     turn = [[{"tool_calls": [call("semantic_search", {"query": "power budget"})]}], ["The budget is 5 mA."]]
     s = start(monkeypatch, turn, ShadowedTools(TOOLS, {"semantic_search": json.dumps(found)}))
-    list(s.ask("What's my power budget?"))
+    said(s.ask("What's my power budget?"))
     s.close()
 
     reranked = [r for r in rows(decision_log) if r["decision_point"] == "rerank"]
@@ -218,7 +225,7 @@ def test_semantic_search_results_are_reranked_in_shadow(monkeypatch, decision_lo
 def test_a_silent_call_is_marked_on_its_effort_decision(monkeypatch, decision_log):
     turn = [[{"thinking": "the answer is 42"}], ["42"]]
     s = start(monkeypatch, turn, ShadowedTools(TOOLS, {}))
-    list(s.ask("What is six times seven?"))
+    said(s.ask("What is six times seven?"))
     s.close()
 
     effort = next(r for r in rows(decision_log) if r["decision_point"] == "assess_effort")
@@ -227,7 +234,7 @@ def test_a_silent_call_is_marked_on_its_effort_decision(monkeypatch, decision_lo
 
 def test_laya_sees_what_each_step_returned(monkeypatch, decision_log):
     s = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, RESULTS))
-    list(s.ask("Add a line to Priya's note"))
+    said(s.ask("Add a line to Priya's note"))
     s.close()
 
     nexts = [json.loads(r["state_text"]) for r in rows(decision_log) if r["question_set"] == "tool_gate_next"]
@@ -239,7 +246,7 @@ def test_laya_sees_what_each_step_returned(monkeypatch, decision_log):
 
 def test_a_turn_without_tools_is_an_answer(monkeypatch, decision_log):
     s = start(monkeypatch, [["128.4 mAh."]], ShadowedTools(TOOLS, {}))
-    list(s.ask("What's 5.35 mA times 24 hours?"))
+    said(s.ask("What's 5.35 mA times 24 hours?"))
     s.close()
     assert rows(decision_log)[0]["action_taken"] == "answer"
 

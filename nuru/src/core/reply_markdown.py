@@ -6,7 +6,7 @@ Kept free of Qt so it can be tested without a display.
 import re
 from dataclasses import dataclass
 
-from core.session import Event, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Event, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 # A thematic break. The blank lines around it matter: directly under a line of text, `---`
 # would turn that line into a heading instead.
@@ -55,8 +55,9 @@ class Reply:
             # shown above the reply, not in it. Ending the piece here still sets what the model said
             # before them apart from what it says after.
             self._growing = False
-        else:
+        elif isinstance(event, Failure):
             self.add_error(event.message)
+        # ToolResult, Progress and LayaDecision are for the card above the reply, not the reply.
 
     def add_error(self, message: str) -> None:
         self._add_piece("**Error:** " + escape_md(message).replace("\n", "\n\n"))

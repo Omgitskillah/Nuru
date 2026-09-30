@@ -50,7 +50,18 @@ from PyQt6.QtWidgets import (
 )
 
 from core.reply_markdown import Code, Prose, Reply, format_tool_call, split_fences
-from core.session import Event, RetryWithoutThinking, Session, Thinking, ToolCall
+from core.session import (
+    Event,
+    LayaDecision,
+    Progress,
+    RetryWithoutThinking,
+    Session,
+    Steered,
+    Stopped,
+    Thinking,
+    ToolCall,
+    ToolResult,
+)
 
 # Monochrome palette taken from the lantern logo: its ink color (#242021), plus tints of it on white
 INK = "#242021"
@@ -62,6 +73,11 @@ MUTED = "#878586"
 QUOTE = "#615E5F"
 SEND = INK
 SEND_HOVER = "#3D393A"
+LAYA = "#5B6B8C"  # the developer view's rows: set apart from the model's own working
+NOTICE_BG = "#FFFAF0"  # a turn Nuru ended itself: warm, not an error's red
+NOTICE_BORDER = "#E9D8B4"
+NOTICE_TEXT = "#8A6D2F"
+OK_DOT, WARN_DOT, BAD_DOT, OFF_DOT = "#3A9D5D", "#C9962B", "#C0453A", "#B5B3B4"  # the status bar's dots
 
 COLUMN_WIDTH = 760
 BUBBLE_WIDTH = 600  # your messages wrap before the full column width so they read as bubbles
@@ -90,6 +106,13 @@ QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radi
 QPushButton#replyToggle {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED}; font-size: 12px; }}
 QPushButton#replyToggle:hover {{ color: {TEXT}; }}
 QLabel#workRow {{ color: {MUTED}; }}
+QLabel#layaRow {{ color: {LAYA}; }}
+QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 20px; }}
+QLabel#noticeTitle {{ color: {NOTICE_TEXT}; font-size: 12px; }}
+QFrame#statusBar {{ background: {BG}; border-top: 1px solid {BORDER}; }}
+QLabel#statusItem {{ color: {MUTED}; font-size: 12px; }}
+QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 6px; color: {MUTED}; font-size: 12px; padding: 1px 8px; }}
+QPushButton#devToggle:checked {{ background: {INK}; color: white; border-color: {INK}; }}
 QFrame#userBubble {{ background: {BUBBLE}; border-radius: 16px; }}
 QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 12px; }}
 QLabel#userText, QLabel#greeting, QLabel#codeText {{ color: {TEXT}; }}
@@ -228,6 +251,75 @@ class Worker(QObject):
             self.failed.emit(f"{type(e).__name__}: {e}")
         else:
             self.succeeded.emit()
+
+
+class StatusPoller(QObject):
+    """Asks the session for its status (Laya, the embedding model, the expert) on a thread of its
+    own - it talks to the Laya server and Ollama - and hands the answer back on the GUI thread.
+    One ask at a time; a tick that comes while one is out is skipped."""
+
+    ready = pyqtSignal(dict)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.busy = False
+
+    def poll(self, session: Session | None) -> None:
+        if session is None or self.busy or not hasattr(session, "status"):
+            return
+        self.busy = True
+
+        def run() -> None:
+            try:
+                status = session.status()
+            except Exception as e:  # the bar says so; nothing here may take the window down
+                status = {"error": str(e)}
+            self.busy = False
+            self.ready.emit(status)
+
+        threading.Thread(target=run, name="nuru-status", daemon=True).start()
+
+
+def dot(color: str) -> str:
+    return f'<span style="color:{color}">●</span>'
+
+
+def status_html(status: dict) -> dict[str, tuple[str, str]]:
+    """The status bar's items as (rich text, tooltip), from Session.status()."""
+    items: dict[str, tuple[str, str]] = {}
+    laya = status.get("laya") or {}
+    state = laya.get("state", "unknown")
+    color = {"ready": OK_DOT, "loading": WARN_DOT, "not started": WARN_DOT, "off": OFF_DOT}.get(state, BAD_DOT)
+    items["laya"] = (f"{dot(color)} Laya {state}", laya.get("error") or "The decision layer (Laya)")
+
+    embedding = status.get("embedding") or {}
+    state, model = embedding.get("state", "unknown"), embedding.get("model", "")
+    color = {"loaded": OK_DOT, "idle": OFF_DOT, "embedding": WARN_DOT, "no vault": OFF_DOT}.get(state, BAD_DOT)
+    label = {"embedding": f"embedding {embedding.get('pending', 0)}"}.get(state, state)
+    tip = embedding.get("error") or (f"{model} - " if model else "") + {
+        "idle": "not in memory; loads when a search or the indexer needs it",
+        "loaded": "in memory (Ollama unloads it after 5 minutes unused)"}.get(state, "")
+    items["embedding"] = (f"{dot(color)} Embeddings {label}", tip or "No vault index")
+
+    expert = status.get("expert") or {}
+    if expert.get("key"):
+        left = expert.get("turn_limit", 0) - expert.get("turn_used", 0)
+        text = f"{dot(OK_DOT)} Expert {left}/{expert.get('turn_limit')} this turn"
+        tip = f"{left} of {expert.get('turn_limit')} ask_an_expert answers left this turn"
+        if expert.get("planner_cap") is not None:
+            planner_left = expert["planner_cap"] - (expert.get("planner_used_today") or 0)
+            text += f" · planner {planner_left}/{expert['planner_cap']}"
+            tip += f"; the planner (called at the step cap) has {planner_left} of {expert['planner_cap']} left today"
+        items["expert"] = (text, tip)
+    else:
+        items["expert"] = (f"{dot(OFF_DOT)} Expert: no API key", "Set ANTHROPIC_API_KEY in .env.deep-think")
+
+    think = status.get("think")
+    enforced = ", ".join(status.get("enforced") or []) or "nothing"
+    items["think"] = (f"Thinking: {think if isinstance(think, str) else ('on' if think else 'off')}", f"Enforced: {enforced}")
+    if "error" in status and len(status) == 1:
+        items = {"laya": (f"{dot(BAD_DOT)} Status unavailable", status["error"])}
+    return items
 
 
 class Logo(QWidget):
@@ -463,18 +555,32 @@ class ReplyHeader(QFrame):
     It stays open while the reply streams, so the working can be watched as it happens, and shuts
     itself once the reply lands, leaving one line that says what was done. A reply with no working
     behind it has nothing to fold away, so the card goes with it.
+
+    Each call is marked as it ends - ✓ ran, ✗ the tool reported an error, ⊘ not run (a check or a
+    limit stopped it) - with the reason after it. A watch stop is its own row, not a retry. While
+    the turn runs, the line counts the thinking against the watch's budget and the steps against
+    the step cap. What Laya said at each point is kept in rows shown only in the developer view.
     """
 
     OPEN, SHUT = "▾", "▸"  # the chevron on the line, pointing down while the working is showing
+    MARKS = {"ok": "✓", "error": "✗", "blocked": "⊘"}
+    PENDING = "·"  # a call still running
 
-    def __init__(self) -> None:
+    def __init__(self, developer: bool = False) -> None:
         super().__init__()
         self.setObjectName("replyHeader")
         self.status = "Thinking…"
         self.expanded = True
+        self.finished = False
+        self.developer = developer  # show what Laya said at each point
         self.rows: list[QLabel] = []  # the calls, then the reasoning; each group in its own order
         self.tools = 0  # how many of those rows are tool calls, and so where the reasoning starts
+        self.calls: list[tuple[str, QLabel, str]] = []  # (tool, its row, the row's text) - to mark on the result
+        self.results: dict[str, int] = {"ok": 0, "error": 0, "blocked": 0}
+        self.expert_answers = 0
+        self.steers = 0  # calls the thinking watch stopped
         self.retried = False  # a silent call was asked again with thinking off
+        self.laya_rows: list[QLabel] = []
 
         self.toggle = QPushButton()
         self.toggle.setObjectName("replyToggle")
@@ -496,12 +602,33 @@ class ReplyHeader(QFrame):
     def add_call(self, call: ToolCall) -> None:
         # Calls join the ones before them, whenever they arrive: what Nuru did is easier to take in
         # at the top than scattered through reasoning that runs long.
-        self.add_row(f"tool: {format_tool_call(call.name, call.arguments)}", wrap=False, at=self.tools)
+        text = f"tool: {format_tool_call(call.name, call.arguments)}"
+        label = self.add_row(f"{self.PENDING} {text}", wrap=False, at=self.tools)
+        self.calls.append((call.name, label, text))
         self.tools += 1
+
+    def add_result(self, result: ToolResult) -> None:
+        """Mark the latest unmarked call to that tool with how it ended."""
+        for i in range(len(self.calls) - 1, -1, -1):
+            name, label, text = self.calls[i]
+            if name == result.name and label.text().startswith(self.PENDING):
+                mark = self.MARKS.get(result.status, "?")
+                label.setText(f"{mark} {text}" + (f"  — {result.detail}" if result.detail else ""))
+                label.setToolTip(result.detail)
+                break
+        self.results[result.status] = self.results.get(result.status, 0) + 1
+        if result.name == "ask_an_expert" and result.status == "ok" and result.detail.startswith("answer "):
+            self.expert_answers += 1
 
     def add_thinking(self, thinking: Thinking) -> None:
         # Reasoning is prose and runs long, so it wraps rather than being cut off like a call
         self.add_row(f"thinking: {thinking.text}", wrap=True, at=len(self.rows))
+
+    def add_steer(self, steered: Steered) -> None:
+        # The thinking watch stopped the reasoning - not a silent call - so it says so in its own words.
+        self.steers += 1
+        self.add_row(f"reasoning stopped ({steered.reason}) - asked to act, thinking off for one call", wrap=False,
+                     at=len(self.rows))
 
     def add_retry(self, _retry: RetryWithoutThinking) -> None:
         # Where the reasoning got the answer but the reply didn't, so the turn was run again with
@@ -509,7 +636,31 @@ class ReplyHeader(QFrame):
         self.retried = True
         self.add_row("retried with thinking off", wrap=False, at=len(self.rows))
 
-    def add_row(self, text: str, wrap: bool, at: int) -> None:
+    def add_laya(self, decision: LayaDecision) -> None:
+        label = QLabel(f"laya · {decision.point}: {decision.summary}")
+        label.setObjectName("layaRow")
+        label.setFont(font(12, MONO, QFont.StyleHint.Monospace))
+        label.setMinimumWidth(1)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.laya_rows.append(label)
+        self.rows_column.addWidget(label)  # after everything: in the order it was said
+        self.draw()
+
+    def show_progress(self, progress: Progress) -> None:
+        """While the turn runs: "Thinking… ~600 / 1,200 tokens · step 3 of 10"."""
+        if self.finished:
+            return
+        parts = []
+        if progress.thinking_tokens:
+            budget = f" / {progress.budget:,}" if progress.budget else ""
+            parts.append(f"~{progress.thinking_tokens:,}{budget} tokens")
+        parts.append(f"step {progress.step}" + (f" of {progress.step_cap}" if progress.step_cap else ""))
+        self.status = "Thinking… " + " · ".join(parts)
+        self.draw()
+
+    def add_row(self, text: str, wrap: bool, at: int) -> QLabel:
         label = QLabel(text)
         label.setObjectName("workRow")
         label.setFont(font(13, MONO, QFont.StyleHint.Monospace))
@@ -520,6 +671,17 @@ class ReplyHeader(QFrame):
         self.rows.insert(at, label)
         self.rows_column.insertWidget(at, label)
         self.draw()
+        return label
+
+    def set_developer(self, on: bool) -> None:
+        self.developer = on
+        if self.finished:
+            self.setVisible(self.has_rows)
+        self.draw()
+
+    @property
+    def has_rows(self) -> bool:
+        return bool(self.rows) or (self.developer and bool(self.laya_rows))
 
     def flip(self) -> None:
         self.expanded = not self.expanded
@@ -527,38 +689,50 @@ class ReplyHeader(QFrame):
 
     def finish(self) -> None:
         """The reply has landed: say what was done, in the past, and fold it away."""
+        self.finished = True
         if self.tools:
             self.status = f"Used {self.tools} tool" + ("" if self.tools == 1 else "s")
+            problems = [f"{n} {word}" for n, word in ((self.results.get("blocked", 0), "blocked"),
+                                                      (self.results.get("error", 0), "failed")) if n]
+            if problems:
+                self.status += f" ({', '.join(problems)})"
         else:
             self.status = "Thought about it"  # it reasoned its way there without calling anything
+        if self.expert_answers:
+            self.status += ", asked the expert" + ("" if self.expert_answers == 1 else f" {self.expert_answers} times")
+        if self.steers:
+            self.status += ", reasoning stopped " + {1: "once", 2: "twice"}.get(self.steers, f"{self.steers} times")
         if self.retried:
             # The reply came from a second call, so say so where it stays readable once this folds.
             self.status += ", retried with thinking off"
         self.expanded = False
-        self.setVisible(bool(self.rows))  # nothing was done: the card has nothing left to say
+        self.setVisible(self.has_rows)  # nothing was done: the card has nothing left to say
         self.draw()
 
     def draw(self) -> None:
         """Redraw the line and the working under it. With nothing to show there is nothing to open,
         so the chevron stays off and clicking the line does nothing."""
-        chevron = f"{self.OPEN if self.expanded else self.SHUT}  " if self.rows else ""
+        chevron = f"{self.OPEN if self.expanded else self.SHUT}  " if self.has_rows else ""
         self.toggle.setText(chevron + self.status)
-        self.toggle.setCursor(Qt.CursorShape.PointingHandCursor if self.rows else Qt.CursorShape.ArrowCursor)
-        self.rows_box.setVisible(self.expanded and bool(self.rows))
+        self.toggle.setCursor(Qt.CursorShape.PointingHandCursor if self.has_rows else Qt.CursorShape.ArrowCursor)
+        self.rows_box.setVisible(self.expanded and self.has_rows)
+        for label in self.laya_rows:
+            label.setVisible(self.developer)
 
 
 class AssistantMessage(QWidget):
     """Nuru's reply in a white card, styled like the composer: markdown text and code boxes,
     with the logo at the bottom rocking until the reply is done. Its header is a smaller card above it."""
 
-    def __init__(self) -> None:
+    def __init__(self, developer: bool = False) -> None:
         super().__init__()
         self.parts: list[MarkdownView | CodeBlock] = []  # in order, ahead of the logo
         self.logo = Logo(28, swing=SWING)
         self.logo.start()
-        self.header = ReplyHeader()
+        self.header = ReplyHeader(developer)
+        self.notice_title: QLabel | None = None  # set when Nuru ended the turn itself
 
-        body = QFrame()
+        body = self.body = QFrame()
         body.setObjectName("reply")
         self.column = QVBoxLayout(body)
         self.column.setContentsMargins(24, 20, 24, 18)
@@ -579,7 +753,7 @@ class AssistantMessage(QWidget):
                 if i < len(self.parts):  # a half-typed fence just became real code: swap the widget
                     self.discard(self.parts.pop(i))
                 self.parts.insert(i, cls())
-                self.column.insertWidget(i, self.parts[i])
+                self.column.insertWidget(i + (self.notice_title is not None), self.parts[i])  # below the notice line
             self.parts[i].set_content(part)
         for stale in self.parts[len(parts) :]:
             self.discard(stale)
@@ -590,6 +764,18 @@ class AssistantMessage(QWidget):
         widget.setParent(None)
         widget.deleteLater()
 
+    def set_notice(self, clarify: bool) -> None:
+        """Nuru ended this turn itself: the card turns warm, and a line above the text says so -
+        or, when it ends with a question, that it's waiting for the user."""
+        if self.notice_title is not None:
+            return
+        self.body.setObjectName("notice")
+        self.body.style().unpolish(self.body)
+        self.body.style().polish(self.body)
+        self.notice_title = QLabel("Nuru stopped - waiting for your answer" if clarify else "Nuru stopped this turn")
+        self.notice_title.setObjectName("noticeTitle")
+        self.column.insertWidget(0, self.notice_title)
+
     def finish(self) -> None:
         self.logo.stop()
         self.header.finish()
@@ -598,7 +784,8 @@ class AssistantMessage(QWidget):
 class ChatWindow(QWidget):
     FLUSH_MS = 25  # streamed text is redrawn at most this often, however fast it arrives
     TITLE = "Nuru"
-    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the title cycles through these while notes are being embedded
+    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the status bar cycles through these while notes are being embedded
+    STATUS_MS = 3000  # how often the status bar asks after Laya, the embedding model and the expert
     SPIN_MS = 100
     # Re-embedding one note takes ~0.1 s - less than a frame of the spinner. So the spinner stays at
     # least this long once shown, and a finished pass is then named in the title for a while.
@@ -629,17 +816,25 @@ class ChatWindow(QWidget):
         self.flush_timer.setInterval(self.FLUSH_MS)
         self.flush_timer.timeout.connect(self.render_reply)
 
-        # The title bar is native, so it can't hold a widget: the background indexer's progress is
-        # shown in the title text instead. Runs from on_started, once there's a session to ask.
+        # The background indexer's progress, in the status bar at the bottom. Runs from on_started,
+        # once there's a session to ask.
         self.spin_frame = 0
         self.spin_started: float | None = None  # when the spinner went up; None while it's down
         self.spin_count = 0  # the most notes seen pending in the pass the spinner is showing
         self.shown_changes = 0  # the index_change count the title has already announced
         self.done_text = ""  # what the finished pass did, shown once the spinner comes down
         self.done_until = 0.0
-        self.title_timer = QTimer(self)
-        self.title_timer.setInterval(self.SPIN_MS)
-        self.title_timer.timeout.connect(self.update_title)
+        self.index_timer = QTimer(self)
+        self.index_timer.setInterval(self.SPIN_MS)
+        self.index_timer.timeout.connect(self.update_index)
+
+        self.developer = False  # the developer view: what Laya said at each point, in each reply's card
+        self.replies: list[AssistantMessage] = []
+        self.poller = StatusPoller()
+        self.poller.ready.connect(self.show_status)
+        self.status_timer = QTimer(self)
+        self.status_timer.setInterval(self.STATUS_MS)
+        self.status_timer.timeout.connect(lambda: self.poller.poll(self.session))
 
         # Empty state: a greeting above the composer. Until the session is up it's a rocking lantern
         # beside "Starting Nuru…" instead, and the composer stays hidden.
@@ -703,6 +898,31 @@ class ChatWindow(QWidget):
         self.dock.setSizePolicy(keep_space)
         self.dock.hide()
 
+        # Status bar along the bottom, like an editor's: indexing, Laya, embeddings, the expert, the
+        # thinking level, and the developer-view switch.
+        self.tray = QFrame()
+        self.tray.setObjectName("statusBar")
+        tray_row = QHBoxLayout(self.tray)
+        tray_row.setContentsMargins(14, 4, 10, 4)
+        tray_row.setSpacing(18)
+        self.tray_items: dict[str, QLabel] = {}
+        for key, text in (("index", "Index: starting…"), ("laya", "Laya …"), ("embedding", "Embeddings …"),
+                          ("expert", "Expert …"), ("think", "")):
+            label = QLabel(text)
+            label.setObjectName("statusItem")
+            label.setTextFormat(Qt.TextFormat.RichText if key != "index" else Qt.TextFormat.PlainText)
+            self.tray_items[key] = label
+            tray_row.addWidget(label)
+        self.tray_index = self.tray_items["index"]
+        tray_row.addStretch(1)
+        self.dev_toggle = QPushButton("Laya view")
+        self.dev_toggle.setObjectName("devToggle")
+        self.dev_toggle.setCheckable(True)
+        self.dev_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.dev_toggle.setToolTip("Show what the decision layer said at each step (in shadow it changes nothing)")
+        self.dev_toggle.toggled.connect(self.set_developer)
+        tray_row.addWidget(self.dev_toggle)
+
         # Empty state centers the greeting + composer; chat state gives all the room to the scroll area
         self.root = QVBoxLayout(self)
         self.root.setContentsMargins(0, 0, 0, 0)
@@ -712,6 +932,7 @@ class ChatWindow(QWidget):
         self.root.addWidget(self.scroll, 1)
         self.root.addWidget(self.dock)
         self.root.addStretch(3)
+        self.root.addWidget(self.tray)
 
         self.prompt.submitted.connect(self.submit)
         self.prompt.textChanged.connect(self.update_send)
@@ -732,16 +953,18 @@ class ChatWindow(QWidget):
         self.session = self.start_session()
 
     def on_started(self) -> None:
-        self.title_timer.start()
+        self.index_timer.start()
+        self.status_timer.start()
+        self.poller.poll(self.session)
         self.greeting_title.setText(time_greeting(datetime.now().hour))
         self.greeting_logo.stop()
         self.dock.show()
         self.update_send()
         self.prompt.setFocus()
 
-    def update_title(self) -> None:
-        """"Nuru ⠹ indexing 12 notes" while the indexer embeds, then "Nuru · indexed 12 notes" for
-        DONE_SECONDS, else just "Nuru".
+    def update_index(self) -> None:
+        """The status bar's first item: "⠹ indexing 12 notes" while the indexer embeds, then
+        "✓ indexed 12 notes" for DONE_SECONDS, else "✓ index up to date".
 
         The spinner stays up at least MIN_SPIN_SECONDS once shown. A pass that finished between two
         ticks - too quick ever to be seen pending - still gets the spinner and the summary.
@@ -770,14 +993,24 @@ class ChatWindow(QWidget):
             self.spin_frame = (self.spin_frame + 1) % len(self.SPINNER)
             left = pending or self.spin_count
             count = f" {left} note{'' if left == 1 else 's'}" if left else ""
-            title = f"{self.TITLE} {self.SPINNER[self.spin_frame]} indexing{count}"
+            text = f"{self.SPINNER[self.spin_frame]} indexing{count}"
         elif self.done_text and now < self.done_until:
-            title = f"{self.TITLE} · {self.done_text}"
+            text = f"✓ {self.done_text}"
         else:
             self.done_text = ""
-            title = self.TITLE
-        if self.windowTitle() != title:
-            self.setWindowTitle(title)
+            text = "✓ index up to date"
+        if self.tray_index.text() != text:
+            self.tray_index.setText(text)
+
+    def show_status(self, status: dict) -> None:
+        for key, (html, tip) in status_html(status).items():
+            self.tray_items[key].setText(html)
+            self.tray_items[key].setToolTip(tip)
+
+    def set_developer(self, on: bool) -> None:
+        self.developer = on
+        for reply in self.replies:
+            reply.header.set_developer(on)
 
     def on_start_failed(self, message: str) -> None:
         reply = Reply()
@@ -827,7 +1060,9 @@ class ChatWindow(QWidget):
         self.show_chat()
         self.following = True
         self.add_message(UserMessage(text))
-        self.message = AssistantMessage()
+        self.prompt.setPlaceholderText("Reply to Nuru…")  # a question Nuru asked has been answered
+        self.message = AssistantMessage(self.developer)
+        self.replies.append(self.message)
         self.add_message(self.message)
         self.reply = Reply()
 
@@ -840,12 +1075,25 @@ class ChatWindow(QWidget):
         self.update_send()
 
     def on_event(self, event: Event) -> None:
+        header = self.message.header
         if isinstance(event, ToolCall):
-            self.message.header.add_call(event)
+            header.add_call(event)
+        elif isinstance(event, ToolResult):
+            header.add_result(event)
         elif isinstance(event, Thinking):
-            self.message.header.add_thinking(event)
+            header.add_thinking(event)
+        elif isinstance(event, Steered):  # before RetryWithoutThinking: a watch stop is one too
+            header.add_steer(event)
         elif isinstance(event, RetryWithoutThinking):
-            self.message.header.add_retry(event)
+            header.add_retry(event)
+        elif isinstance(event, Progress):
+            header.show_progress(event)
+        elif isinstance(event, LayaDecision):
+            header.add_laya(event)
+        elif isinstance(event, Stopped):
+            self.message.set_notice(event.clarify)
+            if event.clarify:
+                self.prompt.setPlaceholderText("Reply to clarify for Nuru…")
         self.reply.add(event)
         if not self.flush_timer.isActive():
             self.flush_timer.start()
@@ -863,6 +1111,7 @@ class ChatWindow(QWidget):
         self.message.finish()
         self.worker = None
         self.update_send()
+        self.poller.poll(self.session)  # the expert's answers left, and anything else a turn changed
 
     def on_range_changed(self, _low: int, high: int) -> None:
         bar = self.scroll.verticalScrollBar()
@@ -878,7 +1127,8 @@ class ChatWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Closing the window is /exit: put the model away and stop Ollama if it was started for us."""
-        self.title_timer.stop()
+        self.index_timer.stop()
+        self.status_timer.stop()
         self.cancel.set()
         if self.worker is not None:
             self.worker.wait(self.CLOSE_WAIT_SECONDS)  # lets a reply in flight save what it has

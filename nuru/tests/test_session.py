@@ -10,6 +10,13 @@ from core.providers.mcp_tools import ToolResult
 from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ToolCall
 
 
+def said(events):
+    """A turn's events without the status ones (ToolResult, Progress, LayaDecision) - what it says."""
+    from core.session import STATUS_EVENTS
+
+    return [e for e in events if not isinstance(e, STATUS_EVENTS)]
+
+
 @pytest.fixture(autouse=True)
 def _isolate_log_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(session, "LOG_DIR", tmp_path)
@@ -155,7 +162,7 @@ def test_start_connects_mcp_tools_and_passes_them_to_chat(monkeypatch):
         return iter([])
 
     s = start_session(monkeypatch, chat=recording_chat, tools=fake_tools)
-    list(s.ask("hi"))
+    said(s.ask("hi"))
 
     assert fake_tools.connected is True
     assert seen["tools"] == tools
@@ -261,7 +268,7 @@ def test_ask_yields_the_reply_as_text_events_and_saves_it(monkeypatch):
         monkeypatch, chat=fake_chat(["Hi", " there", {"prompt_tokens": 1, "completion_tokens": 2}])
     )
 
-    events = list(s.ask("hello"))
+    events = said(s.ask("hello"))
 
     assert events == [Text("Hi"), Text(" there")]
     saved = s.store.get_messages(s.conversation_id)
@@ -282,7 +289,7 @@ def test_ask_retries_with_thinking_off_when_the_model_only_thinks(monkeypatch):
 
     s = start_session(monkeypatch, chat=chat)
 
-    events = list(s.ask("what is 2+2?"))
+    events = said(s.ask("what is 2+2?"))
 
     assert events == [Thinking("The answer is 4."), RetryWithoutThinking(), Text("4")]
     assert think_per_call == [True, False]
@@ -297,7 +304,7 @@ def test_ask_says_no_reply_was_written_when_the_retry_stays_silent_too(monkeypat
         chat=fake_chat([{"thinking": "  The answer is 4.\n"}, {"prompt_tokens": 1, "completion_tokens": 2}]),
     )
 
-    events = list(s.ask("what is 2+2?"))
+    events = said(s.ask("what is 2+2?"))
 
     assert events == [
         Thinking("The answer is 4."),
@@ -319,7 +326,7 @@ def test_ask_does_not_retry_when_thinking_was_off_to_begin_with(monkeypatch):
 
     s = start_session(monkeypatch, chat=chat)
 
-    assert list(s.ask("hello")) == []
+    assert said(s.ask("hello")) == []
     assert think_per_call == [False]  # nothing was routed into reasoning, so there is nothing to retry
 
 
@@ -328,7 +335,7 @@ def test_ask_shows_the_thinking_alongside_a_reply_the_model_did_write(monkeypatc
         monkeypatch, chat=fake_chat(["4", {"thinking": "2+2"}, {"prompt_tokens": 1, "completion_tokens": 2}])
     )
 
-    assert list(s.ask("what is 2+2?")) == [Text("4"), Thinking("2+2")]
+    assert said(s.ask("what is 2+2?")) == [Text("4"), Thinking("2+2")]
 
 
 def test_ask_shows_the_thinking_that_comes_with_a_tool_call(monkeypatch):
@@ -348,7 +355,7 @@ def test_ask_shows_the_thinking_that_comes_with_a_tool_call(monkeypatch):
         tools=FakeMCPTools(tool_results={"get_temperature": "17C"}),
     )
 
-    events = list(s.ask("what's the weather in Berlin?"))
+    events = said(s.ask("what's the weather in Berlin?"))
 
     assert events == [
         Thinking("I should look this up"),
@@ -360,7 +367,7 @@ def test_ask_shows_the_thinking_that_comes_with_a_tool_call(monkeypatch):
 def test_ask_says_nothing_when_the_model_writes_neither_a_reply_nor_thinking(monkeypatch):
     s = start_session(monkeypatch, chat=fake_chat([{"prompt_tokens": 1, "completion_tokens": 0}]))
 
-    assert list(s.ask("hello")) == []
+    assert said(s.ask("hello")) == []
 
 
 def test_ask_checks_the_server_and_the_model_before_each_send(monkeypatch):
@@ -371,7 +378,7 @@ def test_ask_checks_the_server_and_the_model_before_each_send(monkeypatch):
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: FakeMCPTools())
 
     s = Session.start()
-    list(s.ask("hi"))
+    said(s.ask("hi"))
 
     assert calls == ["server", ("model", session.MODEL), "server", ("model", session.MODEL)]
 
@@ -385,8 +392,8 @@ def test_ask_includes_prior_turns_from_the_same_conversation_as_history(monkeypa
         return iter([])
 
     s = start_session(monkeypatch, chat=recording_chat)
-    list(s.ask("first"))
-    list(s.ask("second"))
+    said(s.ask("first"))
+    said(s.ask("second"))
 
     assert sent[0] == [{"role": "user", "content": "[NOW]\n\nfirst"}]
     assert sent[1] == [
@@ -411,7 +418,7 @@ def test_ask_sends_the_current_date_and_time_ahead_of_the_message_but_saves_it_a
         return iter([])
 
     s = start_session(monkeypatch, chat=recording_chat)
-    list(s.ask("what day is it?"))
+    said(s.ask("what day is it?"))
 
     assert sent[0] == [{"role": "user", "content": "[NOW]\n\nwhat day is it?"}]
     saved = s.store.get_messages(s.conversation_id)
@@ -430,7 +437,7 @@ def test_ask_keeps_the_date_and_time_ahead_of_the_message_through_a_tool_round(m
     s = start_session(
         monkeypatch, chat=recording_chat, tools=FakeMCPTools(tool_results={"get_temperature": "17C"})
     )
-    list(s.ask("weather?"))
+    said(s.ask("weather?"))
 
     assert sent[0][0] == {"role": "user", "content": "[NOW]\n\nweather?"}
     assert sent[1][0] == {"role": "user", "content": "[NOW]\n\nweather?"}
@@ -477,7 +484,7 @@ def test_ask_runs_a_tool_call_and_sends_the_result_back_to_the_model(monkeypatch
 
     s = start_session(monkeypatch, chat=recording_chat, tools=fake_tools)
 
-    events = list(s.ask("what's the weather in Berlin?"))
+    events = said(s.ask("what's the weather in Berlin?"))
 
     assert events == [ToolCall("get_temperature", {"city": "Berlin"}), Text("It's 17C")]
     assert fake_tools.calls == [("get_temperature", {"city": "Berlin"})]
@@ -490,7 +497,7 @@ def test_ask_yields_the_tool_call_before_running_it(monkeypatch):
     s = start_session(monkeypatch, chat=lambda *a, **k: iter(next(responses)), tools=fake_tools)
 
     turn = s.ask("go")
-    event = next(turn)
+    event = next(e for e in turn if not isinstance(e, session.STATUS_EVENTS))
 
     assert event == ToolCall("slow_tool", {})
     assert fake_tools.calls == []  # a UI gets to show the call while the tool is still running
@@ -503,7 +510,7 @@ def test_ask_accepts_tool_arguments_sent_as_a_json_string(monkeypatch):
     responses = iter([[{"tool_calls": [tool_call("get_temperature", '{"city": "Berlin"}')]}], []])
     s = start_session(monkeypatch, chat=lambda *a, **k: iter(next(responses)), tools=fake_tools)
 
-    events = list(s.ask("weather?"))
+    events = said(s.ask("weather?"))
 
     assert events == [ToolCall("get_temperature", {"city": "Berlin"})]
     assert fake_tools.calls == [("get_temperature", {"city": "Berlin"})]
@@ -516,8 +523,8 @@ def test_ask_fails_and_forgets_the_message_when_the_request_fails(monkeypatch):
 
     s = start_session(monkeypatch, chat=failing_chat)
 
-    first = list(s.ask("hello"))
-    second = list(s.ask("still here?"))  # the session keeps working after a failure
+    first = said(s.ask("hello"))
+    second = said(s.ask("still here?"))  # the session keeps working after a failure
 
     for events in (first, second):
         assert len(events) == 1
@@ -533,7 +540,7 @@ def test_ask_rejects_a_message_that_would_exceed_the_token_budget(monkeypatch):
 
     s = start_session(monkeypatch, chat=unexpected_chat, model_info={"context_window": 1000})
 
-    events = list(s.ask("x" * 100_000))
+    events = said(s.ask("x" * 100_000))
 
     assert len(events) == 1
     assert isinstance(events[0], Failure)
@@ -548,7 +555,7 @@ def test_ask_accepts_a_message_within_the_token_budget(monkeypatch):
         model_info={"context_window": 1000},
     )
 
-    assert list(s.ask("hi")) == [Text("ok")]
+    assert said(s.ask("hi")) == [Text("ok")]
 
 
 def test_ask_stops_when_cancelled_and_keeps_what_was_said_so_far(monkeypatch, tmp_path):
@@ -562,7 +569,7 @@ def test_ask_stops_when_cancelled_and_keeps_what_was_said_so_far(monkeypatch, tm
 
     s = start_session(monkeypatch, chat=chat_that_gets_stopped)
 
-    events = list(s.ask("hi", cancel))
+    events = said(s.ask("hi", cancel))
 
     assert events == [Text("Hel")]
     saved = s.store.get_messages(s.conversation_id)
@@ -588,7 +595,7 @@ def test_ask_runs_no_more_tools_once_cancelled(monkeypatch):
 
     s = start_session(monkeypatch, chat=recording_chat, tools=fake_tools)
 
-    events = list(s.ask("go", cancel))
+    events = said(s.ask("go", cancel))
 
     assert [e.name for e in events if isinstance(e, ToolCall)] == ["first"]
     assert fake_tools.calls == [("first", {})]
@@ -670,7 +677,7 @@ def test_a_reasoning_level_still_triggers_the_silent_turn_retry(monkeypatch):
             yield {"prompt_tokens": 1, "completion_tokens": 1}
 
     s = start_session(monkeypatch, chat=chat)
-    events = list(s.ask("what is 2+2?"))
+    events = said(s.ask("what is 2+2?"))
 
     assert seen == ["medium", False]
     assert events == [Thinking("the answer is 4"), RetryWithoutThinking(), Text("4")]
@@ -743,7 +750,7 @@ def test_a_tool_result_too_long_for_the_context_is_swapped_for_a_note_and_the_tu
 
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    events = list(s.ask("audit my notes"))
+    events = said(s.ask("audit my notes"))
 
     assert events == [ToolCall("ask_an_expert", {"message": "audit"}), Text("Here is what I found.")]
     assert seen[1][-1]["content"] == "x" * 50_000  # the request Ollama refused
@@ -765,7 +772,7 @@ def test_a_second_overflow_in_the_same_turn_ends_it_as_before(monkeypatch):
 
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    events = list(s.ask("audit my notes"))
+    events = said(s.ask("audit my notes"))
 
     assert isinstance(events[-1], Failure)
     assert "request to the model failed" in events[-1].message
@@ -778,7 +785,7 @@ def test_an_overflow_with_no_tool_result_to_cut_ends_the_turn_as_before(monkeypa
 
     s = start_session(monkeypatch, chat=chat)
 
-    events = list(s.ask("hello"))
+    events = said(s.ask("hello"))
 
     assert len(events) == 1 and isinstance(events[0], Failure)
     assert s.store.get_messages(s.conversation_id) == []
@@ -834,7 +841,7 @@ def test_ask_an_expert_gets_the_users_message_verbatim(monkeypatch):
     chat = scripted_chat([[tool_call("ask_an_expert", {"question": "Is B viable?"})], "B passes."])
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    list(s.ask("Audit my battery notes, line by line."))
+    said(s.ask("Audit my battery notes, line by line."))
 
     assert fake_tools.calls == [
         ("ask_an_expert", {"question": "Is B viable?", "user_request": "Audit my battery notes, line by line."})
@@ -859,7 +866,7 @@ def test_after_two_expert_answers_the_tool_is_withdrawn_and_the_model_told_to_as
     offered_messages = []
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    events = list(s.ask("Audit my battery notes."))
+    events = said(s.ask("Audit my battery notes."))
 
     assert len(fake_tools.calls) == 2
     assert offered == [["ask_an_expert"], ["ask_an_expert"], []]  # gone after the second answer
@@ -872,7 +879,7 @@ def test_an_expert_call_past_the_limit_ends_the_turn_asking_the_user(monkeypatch
     chat = scripted_chat([[tool_call("ask_an_expert", {"question": q})] for q in ("a", "b", "c")] + ["never reached"])
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    events = list(s.ask("Audit my battery notes."))
+    events = said(s.ask("Audit my battery notes."))
 
     assert len(fake_tools.calls) == 2  # the third never reached the server
     assert events[-1].text.startswith("I stopped here: the expert has already answered 2 times")
@@ -891,7 +898,7 @@ def test_a_failed_expert_call_does_not_use_up_the_turns_one_call(monkeypatch):
     )
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    list(s.ask("audit"))
+    said(s.ask("audit"))
 
     assert len(fake_tools.calls) == 2
 
@@ -907,7 +914,7 @@ def test_expert_attachments_named_by_title_are_resolved_to_vault_paths(monkeypat
     chat = scripted_chat([[tool_call("ask_an_expert", {"question": "q", "file_paths": ["Area Monitor Device Redesign", "x.pdf"]})], "done"])
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    list(s.ask("audit"))
+    said(s.ask("audit"))
 
     # the title became its path; a name the vault can't resolve goes on as given
     assert fake_tools.calls[0][1]["file_paths"] == ["shared/Projects/area-monitor-device-redesign.md", "x.pdf"]
@@ -919,7 +926,7 @@ def test_a_tool_that_returns_an_error_is_logged_as_an_error(monkeypatch, tmp_pat
     chat = scripted_chat([[tool_call("read_note", {"name": "x"})], "No such note."])
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    list(s.ask("read x"))
+    said(s.ask("read x"))
 
     (log_file,) = tmp_path.glob("*.jsonl")
     (call,) = [e for e in map(json.loads, log_file.read_text().splitlines()) if e["event"] == "tool_call"]
@@ -938,8 +945,8 @@ def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
     )
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
-    list(s.ask("first question"))
-    list(s.ask("second question"))
+    said(s.ask("first question"))
+    said(s.ask("second question"))
 
     assert [args["question"] for _, args in fake_tools.calls] == ["first", "second"]
 
@@ -986,3 +993,29 @@ def test_an_index_pass_is_written_to_the_session_log(monkeypatch, tmp_path):
         {**events[0], "embedded": ["user/a.md"], "moved": [{"from": "x.md", "to": "y/x.md"}], "removed": ["z.md"]}
     ]
     s.close()
+
+
+
+def test_expert_results_say_which_answer_and_a_call_past_the_limit_is_a_clarifying_stop(monkeypatch):
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    chat = scripted_chat([[tool_call("ask_an_expert", {"question": q})] for q in ("a", "b", "c")])
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("audit"))
+
+    results = [e for e in events if isinstance(e, session.ToolResult)]
+    assert [r.detail for r in results[:2]] == ["answer 1 of 2 this turn", "answer 2 of 2 this turn"]
+    assert results[2].status == "blocked"
+    assert isinstance(events[-1], session.Stopped) and events[-1].clarify
+    assert s.expert_answers_used == 2
+
+
+def test_status_reports_each_part_without_raising(monkeypatch):
+    s = start_session(monkeypatch)
+
+    status = s.status()
+
+    assert set(status) == {"laya", "embedding", "expert", "think", "enforced"}
+    assert status["laya"]["state"] in ("unknown", "down", "off")  # the fake has no Laya server
+    assert status["embedding"]["state"] == "no vault"
+    assert status["expert"]["key"] is False and status["expert"]["turn_limit"] == 2

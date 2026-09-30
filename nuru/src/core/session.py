@@ -11,6 +11,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
+from typing import Any
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,6 +37,7 @@ from core.providers.ollama import (
     ensure_model_loaded,
     ensure_server_running,
     is_model_loaded,
+    loaded_models,
     stop_server,
     unload_all_models,
 )
@@ -229,6 +231,53 @@ def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
     return hidden
 
 
+# A Progress event goes out every this many thinking tokens: often enough for a live count, not a
+# redraw per chunk.
+_PROGRESS_EVERY_TOKENS = 50
+
+
+def _first_line(text: str, limit: int = 160) -> str:
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def _top_option(probabilities: dict) -> str:
+    """ " (top: answer 0.37)" - Laya's most likely option, which a threshold may still have refused."""
+    if not probabilities:
+        return ""
+    option, p = max(probabilities.items(), key=lambda item: item[1])
+    return f" (top: {option} {p:.2f})"
+
+
+def _laya_events(decisions) -> Iterator["LayaDecision"]:
+    """tool_gate's and assess_effort's answers before a model call, one line each."""
+    if decisions is None:
+        return
+    if gate := decisions.gate:
+        phase = "start" if "mode" in gate else "next"
+        choice = gate.get("mode") or gate.get("next")
+        fallback = "" if gate.get("source") == "laya" else f" - Laya {gate.get('status', 'unavailable')}, fallback"
+        yield LayaDecision(f"tool_gate ({phase})", f"{choice}{_top_option(gate.get('probabilities') or {})}{fallback}")
+    if effort := decisions.effort:
+        yield LayaDecision("assess_effort", f"tier {effort.get('tier')}{_top_option(effort.get('probabilities') or {})}")
+
+
+def _gate_write_summary(gate: dict) -> str:
+    if gate.get("source") == "code":
+        return "block (code): " + "; ".join(gate.get("reasons") or [])
+    return f"{gate.get('verdict')}" + ("" if gate.get("source") == "laya" else " - Laya unavailable, fallback")
+
+
+def _claim_event(claim: dict | None) -> Iterator["LayaDecision"]:
+    """check_claim's verdict on the reply just shown."""
+    if claim is None:
+        return
+    if claim.get("passed"):
+        yield LayaDecision("check_claim", "the reply matches what ran" + ("" if claim.get("verified") else " (code checks only)"))
+    else:
+        yield LayaDecision("check_claim", "may claim something that didn't happen: " + "; ".join(claim.get("failures") or []))
+
+
 def _expert_answered(content: str) -> bool:
     """Whether an ask_an_expert result carries an answer - not an error, and not an empty one."""
     try:
@@ -315,7 +364,50 @@ class Failure:
     message: str
 
 
-Event = Text | ToolCall | Thinking | RetryWithoutThinking | Steered | Failure
+@dataclass(frozen=True)
+class ToolResult:
+    """How a tool call ended, right after it: `ok`, `error` (the tool reported one) or `blocked`
+    (not run - a check or a limit stopped it). `detail` is the reason, or for an expert answer
+    which of the turn's answers it was."""
+
+    name: str
+    status: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class Stopped(Text):
+    """Nuru ended the turn itself - the step cap, a loop, the expert's limit - and says why.
+    Shown as the reply; `clarify` when it ends by asking the user something."""
+
+    clarify: bool = False
+
+
+@dataclass(frozen=True)
+class Progress:
+    """Where the turn is: model call `step` of at most `step_cap` rounds of tool calls (None: no
+    cap enforced), and the thinking so far in that call against the watch's `budget` (None: no
+    budget). Tokens are the watch's estimate (four characters a token)."""
+
+    step: int
+    step_cap: int | None
+    thinking_tokens: int = 0
+    budget: int | None = None
+
+
+@dataclass(frozen=True)
+class LayaDecision:
+    """What the decision layer said at one decision point, in one line - for the developer view.
+    In shadow it changes nothing; it is what Laya would have done."""
+
+    point: str
+    summary: str
+
+
+Event = Text | ToolCall | Thinking | RetryWithoutThinking | Steered | Failure | ToolResult | Progress | LayaDecision
+# Events that describe the turn for the window (how calls ended, where it is, what Laya said), as
+# opposed to what the turn says. The CLI prints only failed ToolResults of these.
+STATUS_EVENTS = (ToolResult, Progress, LayaDecision)
 
 
 class Session:
@@ -403,6 +495,48 @@ class Session:
         window to announce a pass too quick to catch while it ran; (0, "") without an indexer."""
         return (self.indexer.changes, self.indexer.last_change) if self.indexer else (0, "")
 
+    def status(self) -> dict[str, Any]:
+        """What the window's status bar shows: Laya, the embedding model, the expert and the
+        thinking level. Each part is found out on its own, and one that can't be is reported as
+        unknown - this never raises. Asks the Laya server and Ollama, so call it off the GUI thread."""
+        laya: dict[str, Any] = {"state": "off"}
+        if self.shadow is not None:
+            try:
+                result = self.tools.call_harness_tool("health", {})
+                health = json.loads(result.text) if not result.is_error else {}
+                laya = {"state": health.get("laya", {}).get("state", "unknown"), "error": health.get("laya", {}).get("error")}
+            except Exception as e:
+                laya = {"state": "down", "error": str(e)}
+
+        embedding: dict[str, Any] = {"state": "no vault"}
+        if self.indexer is not None:
+            model = self.indexer.config.model
+            try:
+                loaded = any(m.get("name", "").split(":")[0] == model.split(":")[0] for m in loaded_models())
+            except Exception:
+                loaded = None
+            state = ("error" if self.indexer.error else "embedding" if self.indexer.pending
+                     else "loaded" if loaded else "idle" if loaded is False else "unknown")
+            embedding = {"state": state, "model": model, "error": self.indexer.error, "pending": self.indexer.pending}
+
+        planner = self.enforcement.planner if self.enforcement else None
+        expert = {
+            "key": bool(expert_api_key()),
+            "turn_used": getattr(self, "expert_answers_used", 0),
+            "turn_limit": _EXPERT_ANSWERS_PER_TURN,
+            "planner_used_today": None,
+            "planner_cap": None,
+        }
+        if planner is not None:
+            try:
+                expert["planner_used_today"] = planner.calls_today()
+                expert["planner_cap"] = self.enforcement.config.expert.daily_cap
+            except Exception:
+                pass
+
+        enforced = [p for p in self.enforcement.config.decision_points if self.enforcement.on(p)] if self.enforcement else []
+        return {"laya": laya, "embedding": embedding, "expert": expert, "think": THINK, "enforced": enforced}
+
     @property
     def context_window(self) -> int:
         return _context_window(self.model_info)
@@ -442,7 +576,9 @@ class Session:
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         decisions = self.shadow.begin(text, turn_id) if self.shadow else None
+        yield from _laya_events(decisions)
         enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
+        step_cap = enforcing.step_cap if enforcing and enforcing.on("step_cap") else None
         policy = enforcing.new_task() if enforcing else None
         first_read = enforcing.first_tool(decisions.gate) if enforcing and decisions else None
         failure = False  # a failure signal since the last model call (enforced tiers move up on it)
@@ -458,6 +594,7 @@ class Session:
         last_results: list[tuple[int, str]] = []
         cut_a_result = False
         expert_answers = 0  # answered ask_an_expert calls this turn, up to _EXPERT_ANSWERS_PER_TURN
+        self.expert_answers_used = 0  # the same, for the status bar
         # watch_thinking stopped a call: the next call runs with thinking off, then `resume_think` is
         # back. Off for the rest of the turn, Granite looped on tool calls instead (test 6, 2026-09-29).
         steered, resume_think = False, think
@@ -483,6 +620,7 @@ class Session:
                     first_read = None
                     tool_rounds += 1
                     decisions = self.shadow.before_next_call()
+                    yield from _laya_events(decisions)
                 capped = enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap
                 if capped:
                     next_think, tier = enforcing.at_step_cap(policy, think)
@@ -517,6 +655,8 @@ class Session:
             if self.shadow and self.enforcement and think:
                 watch = ThinkingWatch(self.enforcement.config.watch_thinking, think_tier(think), self.shadow.watch)
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
+            yield Progress(tool_rounds + 1, step_cap, 0, watch.budget if watch else None)
+            shown_tokens = 0  # the thinking count last reported in a Progress
             start = time.monotonic()
             try:
                 stream = chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=tools_offered)
@@ -526,7 +666,11 @@ class Session:
                         return
                     if isinstance(out, dict):
                         if "thinking_chunk" in out:
-                            if watch and (signal := watch.feed(out["thinking_chunk"])):
+                            signal = watch.feed(out["thinking_chunk"]) if watch else None
+                            if watch and watch.tokens >= shown_tokens + _PROGRESS_EVERY_TOKENS:
+                                shown_tokens = watch.tokens
+                                yield Progress(tool_rounds + 1, step_cap, shown_tokens, watch.budget)
+                            if signal:
                                 if signal.source == "code":
                                     self.shadow.watch_signal(signal.kind, signal.tokens, signal.detail)
                                 # Code signals act when the watch is enforced; Laya's only when watch_laya is too.
@@ -620,12 +764,12 @@ class Session:
                     output_text = thinking or carried_thinking
                     yield Text(_NO_REPLY_NOTE)
                     if self.shadow:
-                        self.shadow.end(_NO_REPLY_NOTE)
+                        yield from _claim_event(self.shadow.end(_NO_REPLY_NOTE))
                 elif hold_reply:
                     output_text = yield from self._checked_reply(output_text, messages, num_ctx, think, policy, enforcing)
                     self.shadow.finish()
                 elif self.shadow:
-                    self.shadow.end(output_text)
+                    yield from _claim_event(self.shadow.end(output_text))
                 self.store.add_message(self.conversation_id, "nuru", output_text, usage.get("completion_tokens"))
                 self.logger.turn_end(turn_id)
                 return
@@ -642,6 +786,7 @@ class Session:
                     args = json.loads(args)
                 yield ToolCall(fn["name"], args)
                 if (stop := self._repeated_call(fn["name"], args, calls_seen)) is not None:
+                    yield ToolResult(fn["name"], "blocked", "the same call again - a loop")
                     yield from self._stop(turn_id, stop)
                     return
                 if fn["name"] == _EXPERT_TOOL:
@@ -654,6 +799,8 @@ class Session:
                     continue
                 write_gate = self.shadow.before_tool(fn["name"], args) if self.shadow else None
                 gate_id = write_gate["decision_id"] if write_gate else None
+                if write_gate:
+                    yield LayaDecision("gate_write", _gate_write_summary(write_gate))
                 tool_start = time.monotonic()
                 if write_gate and write_gate.get("source") == "code" and self.enforcement and self.enforcement.on("write_checks"):
                     # Code found a hard problem (an invented note ID, a blocked tool, a protected path):
@@ -663,10 +810,12 @@ class Session:
                     self.logger.tool_call(turn_id, fn["name"], args, "refused", reason, 0.0)
                     self.shadow.after_tool(fn["name"], args, None, 0.0, gate_id, error=f"blocked: {reason}")
                     self.shadow.gate_action(write_gate, "blocked")
+                    yield ToolResult(fn["name"], "blocked", reason)
                 elif fn["name"] == _EXPERT_TOOL and expert_answers >= _EXPERT_ANSWERS_PER_TURN:
                     # Called although it's no longer offered: ask the user rather than loop.
                     self.logger.tool_call(turn_id, fn["name"], args, "refused", "expert limit reached", 0.0)
                     self.shadow.after_tool(fn["name"], args, None, 0.0, gate_id, error="refused: expert limit reached")
+                    yield ToolResult(fn["name"], "blocked", f"the expert's {_EXPERT_ANSWERS_PER_TURN} answers this turn are used")
                     yield from self._stop(turn_id, _EXPERT_CLARIFY)
                     return
                 else:
@@ -684,12 +833,22 @@ class Session:
                                           result.text[:300] if result.is_error else None, duration_ms)
                     if self.shadow:
                         reranked = self.shadow.after_tool(fn["name"], args, result, duration_ms, gate_id)
+                        if reranked:
+                            yield LayaDecision("rerank", "reordered the search results" + (
+                                "" if enforcing and enforcing.on("rerank") else " (not applied: shadow)"))
                         if reranked and enforcing and enforcing.on("rerank"):
                             content = reranked
-                    if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
-                        expert_answers += 1
-                        if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                            content += _EXPERT_LAST_ANSWER
+                    detail = _first_line(result.text) if result.is_error else ""
+                    if fn["name"] == _EXPERT_TOOL and not result.is_error:
+                        if _expert_answered(content):
+                            expert_answers += 1
+                            self.expert_answers_used = expert_answers
+                            detail = f"answer {expert_answers} of {_EXPERT_ANSWERS_PER_TURN} this turn"
+                            if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
+                                content += _EXPERT_LAST_ANSWER
+                        else:
+                            detail = "no answer came back"
+                    yield ToolResult(fn["name"], "error" if result.is_error else "ok", detail)
                 messages.append({"role": "tool", "content": content})
                 last_results.append((len(messages) - 1, fn["name"]))
                 if _cancelled(cancel):
@@ -697,6 +856,7 @@ class Session:
                     return
             if self.shadow:
                 decisions = self.shadow.before_next_call()
+                yield from _laya_events(decisions)
 
     # ------------------------------------------------------------------ enforcement
     def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
@@ -707,6 +867,7 @@ class Session:
         result = self.tools.call_tool_result(tool, args)
         duration_ms = (time.monotonic() - tool_start) * 1000
         self.logger.tool_call(turn_id, tool, args, "error" if result.is_error else "ok", None, duration_ms)
+        yield ToolResult(tool, "error" if result.is_error else "ok", _first_line(result.text) if result.is_error else "")
         reranked = self.shadow.after_tool(tool, args, result, duration_ms)
         content = reranked if reranked and enforcing.on("rerank") else result.text
         messages += [
@@ -729,6 +890,7 @@ class Session:
             self.shadow.after_tool(name, args, None, 0.0, error=reason)
             if action:
                 self.shadow.gate_action(gate, action)
+            yield ToolResult(name, "blocked", reason)
             return f"[Nuru] {name} was not run: {reason}.", failed
 
         # The model's own arguments first, under the same rules; the forced schema only if they fail.
@@ -741,27 +903,28 @@ class Session:
             forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
         if forced.problems:
             self.shadow.note_failure("schema_failures")
-            return not_run(f"no valid arguments ({'; '.join(forced.problems)})", True)
+            return (yield from not_run(f"no valid arguments ({'; '.join(forced.problems)})", True))
         if forced.cannot_do is not None:
             self.shadow.note_failure("cannot_do")
-            return not_run(f"the model couldn't do it ({forced.cannot_do})", True)
+            return (yield from not_run(f"the model couldn't do it ({forced.cannot_do})", True))
         args = forced.arguments
         fn["arguments"] = args  # the conversation shows the call that actually runs
         gate = self.shadow.before_tool(name, args)
         verdict = gate["verdict"] if gate else "ask"  # the decision layer down: ask
         if verdict == "block":
-            return not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked")
+            return (yield from not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked"))
         if verdict == "ask":
             if self.confirm_write is None:
-                return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
+                return (yield from not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended"))
             if not self.confirm_write(name, args):
-                return not_run("you declined it", False, gate, "declined")
+                return (yield from not_run("you declined it", False, gate, "declined"))
         yield ToolCall(name, args)
         tool_start = time.monotonic()
         result = self.tools.call_tool_result(name, args)
         duration_ms = (time.monotonic() - tool_start) * 1000
         self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok", None, duration_ms)
         self.shadow.after_tool(name, args, result, duration_ms, gate["decision_id"] if gate else None)
+        yield ToolResult(name, "error" if result.is_error else "ok", _first_line(result.text) if result.is_error else "")
         return result.text, False
 
     def _checked_reply(self, draft: str, messages: list[dict], num_ctx: int, think, policy, enforcing: Enforcement):
@@ -833,7 +996,7 @@ class Session:
     def _stop(self, turn_id: str, reason: str):
         """End the turn plainly, saying why and what had happened by then."""
         text = STOPPED.format(reason=reason, log=log_lines(self.shadow.executed))
-        yield Text(text)
+        yield Stopped(text, clarify=reason == _EXPERT_CLARIFY)
         self.store.add_message(self.conversation_id, "nuru", text)
         self.logger.turn_end(turn_id)
         self.shadow.finish()

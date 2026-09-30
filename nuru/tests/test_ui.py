@@ -16,7 +16,18 @@ from PyQt6.QtWidgets import QApplication, QFrame, QLabel
 
 from core import ui
 from core.reply_markdown import BREAK, Code, Prose
-from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import (
+    Failure,
+    LayaDecision,
+    Progress,
+    RetryWithoutThinking,
+    Steered,
+    Stopped,
+    Text,
+    Thinking,
+    ToolCall,
+    ToolResult,
+)
 
 
 @pytest.fixture(scope="session")
@@ -372,8 +383,8 @@ def test_reply_header_keeps_the_calls_together_above_the_thinking(qapp):
     assert header.toggle.text() == f"{ui.ReplyHeader.OPEN}  Thinking…"
     assert header.rows_box.isVisibleTo(header)
     assert [label.text() for label in header.rows] == [
-        "tool: search_notes({'query': 'x'})",
-        "tool: read_note({'path': 'a.md'})",
+        "· tool: search_notes({'query': 'x'})",
+        "· tool: read_note({'path': 'a.md'})",
         "thinking: I should look this up",
         "thinking: now read the one it found",
     ]
@@ -656,7 +667,7 @@ def test_a_tool_call_and_the_thinking_behind_it_show_in_the_header_not_in_the_bu
     assert window.reply.markdown == "Let me look." + BREAK + "Found it."
     assert len(window.messages.parentWidget().findChildren(ui.AssistantMessage)) == 1
     assert [label.text() for label in window.message.header.rows] == [
-        "tool: search_notes({'query': 'x'})",
+        "· tool: search_notes({'query': 'x'})",
         "thinking: the vault should have it",
     ]
     text = bubble_text(window)
@@ -862,24 +873,25 @@ def test_closing_survives_a_failed_shutdown_and_still_releases_the_session(make_
     assert "ollama went away" in capsys.readouterr().err
 
 
-def test_the_title_spins_while_notes_are_being_indexed(make_window):
+def test_the_status_bar_spins_while_notes_are_being_indexed(make_window):
     session = FakeSession()
     window = make_window(session)
     window.MIN_SPIN_SECONDS = 0.1
     window.start()
     settle(window.starting)
-    assert window.windowTitle() == "Nuru"
+    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    assert window.windowTitle() == "Nuru"  # the title stays put
 
     session.indexing = 12
-    wait_until(lambda: window.windowTitle().endswith("indexing 12 notes"))
-    first = window.windowTitle()
-    wait_until(lambda: window.windowTitle() != first)  # the spinner moves on
-    assert window.windowTitle()[5] in ui.ChatWindow.SPINNER
+    wait_until(lambda: window.tray_index.text().endswith("indexing 12 notes"))
+    first = window.tray_index.text()
+    wait_until(lambda: window.tray_index.text() != first)  # the spinner moves on
+    assert window.tray_index.text()[0] in ui.ChatWindow.SPINNER
 
     session.indexing = 1
-    wait_until(lambda: window.windowTitle().endswith("indexing 1 note"))
+    wait_until(lambda: window.tray_index.text().endswith("indexing 1 note"))
     session.indexing = 0
-    wait_until(lambda: window.windowTitle() == "Nuru")
+    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
 
 
 def started_window(make_window, session, min_spin=0.3, done=0.4):
@@ -896,14 +908,14 @@ def test_the_spinner_stays_up_for_a_minimum_time_even_if_the_pass_ends_at_once(m
     window = started_window(make_window, session, min_spin=0.5)
 
     session.indexing = 1
-    wait_until(lambda: window.windowTitle().endswith("indexing 1 note"))
+    wait_until(lambda: window.tray_index.text().endswith("indexing 1 note"))
     session.indexing = 0
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:  # well inside the minimum: still spinning
         QApplication.processEvents()
-        assert "indexing" in window.windowTitle()
+        assert "indexing" in window.tray_index.text()
         time.sleep(0.01)
-    wait_until(lambda: window.windowTitle() == "Nuru")
+    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
 
 
 def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_window):
@@ -912,9 +924,9 @@ def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_w
 
     session.index_change = (1, "indexed 1 note")  # finished between two ticks: never seen pending
 
-    wait_until(lambda: "indexing" in window.windowTitle())
-    wait_until(lambda: window.windowTitle() == "Nuru · indexed 1 note")
-    wait_until(lambda: window.windowTitle() == "Nuru")
+    wait_until(lambda: "indexing" in window.tray_index.text())
+    wait_until(lambda: window.tray_index.text() == "✓ indexed 1 note")
+    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
 
 
 def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
@@ -922,9 +934,135 @@ def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
     window = started_window(make_window, session)
 
     session.indexing = 3
-    wait_until(lambda: window.windowTitle().endswith("indexing 3 notes"))
+    wait_until(lambda: window.tray_index.text().endswith("indexing 3 notes"))
     session.indexing = 0
     session.index_change = (1, "indexed 3 notes")
 
-    wait_until(lambda: window.windowTitle() == "Nuru · indexed 3 notes")
-    wait_until(lambda: window.windowTitle() == "Nuru")
+    wait_until(lambda: window.tray_index.text() == "✓ indexed 3 notes")
+    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+
+
+
+# ---------------------------------------------------------------- what really happened, in the card
+def test_each_call_is_marked_with_how_it_ended_and_the_summary_counts_the_problems(qapp):
+    header = ui.ReplyHeader()
+    for name in ("search_notes", "read_note", "append_note"):
+        header.add_call(ToolCall(name, {}))
+    header.add_result(ToolResult("search_notes", "ok"))
+    header.add_result(ToolResult("read_note", "error", "FileNotFoundError: no note 'x'"))
+    header.add_result(ToolResult("append_note", "blocked", "id 01ZZ was not returned by any search"))
+
+    texts = [label.text() for label in header.rows]
+    assert texts[0].startswith("✓ tool: search_notes")
+    assert texts[1].startswith("✗ tool: read_note") and texts[1].endswith("— FileNotFoundError: no note 'x'")
+    assert texts[2].startswith("⊘ tool: append_note") and "not returned by any search" in texts[2]
+    header.finish()
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Used 3 tools (1 blocked, 1 failed)"
+
+
+def test_a_result_marks_the_latest_open_call_to_that_tool(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("search_notes", {"query": "a"}))
+    header.add_result(ToolResult("search_notes", "ok"))
+    header.add_call(ToolCall("search_notes", {"query": "b"}))
+    header.add_result(ToolResult("search_notes", "error", "boom"))
+
+    assert header.rows[0].text().startswith("✓") and header.rows[1].text().startswith("✗")
+
+
+def test_a_watch_stop_says_so_and_is_not_called_a_retry(qapp):
+    header = ui.ReplyHeader()
+    header.add_thinking(Thinking("summing the loads..."))
+    header.add_steer(Steered("budget"))
+    header.add_steer(Steered("repeating"))
+
+    assert header.rows[-1].text().startswith("reasoning stopped (repeating)")
+    header.finish()
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Thought about it, reasoning stopped twice"
+
+
+def test_expert_answers_show_their_count_and_in_the_summary(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("ask_an_expert", {"question": "q"}))
+    header.add_result(ToolResult("ask_an_expert", "ok", "answer 1 of 2 this turn"))
+
+    assert header.rows[0].text().endswith("— answer 1 of 2 this turn")
+    header.finish()
+    assert header.toggle.text() == f"{ui.ReplyHeader.SHUT}  Used 1 tool, asked the expert"
+
+
+def test_the_line_counts_thinking_and_steps_while_the_turn_runs(qapp):
+    header = ui.ReplyHeader()
+    header.show_progress(Progress(3, 10, 600, 1200))
+    assert header.toggle.text().endswith("Thinking… ~600 / 1,200 tokens · step 3 of 10")
+    header.show_progress(Progress(1, None))
+    assert header.toggle.text().endswith("Thinking… step 1")
+    header.finish()
+    header.show_progress(Progress(4, 10, 50, 1200))  # too late: the card has said what was done
+    assert "step" not in header.toggle.text()
+
+
+def test_laya_rows_show_only_in_the_developer_view(qapp):
+    header = ui.ReplyHeader()
+    header.add_laya(LayaDecision("tool_gate (start)", "read (top: read 0.62)"))
+    header.finish()
+    assert header.isHidden()  # only Laya rows, and the developer view is off: nothing to show
+
+    header.set_developer(True)
+    assert not header.isHidden() and not header.laya_rows[0].isHidden()
+    header.set_developer(False)
+    assert header.laya_rows[0].isHidden()
+
+
+def test_a_turn_nuru_ended_is_a_notice_and_a_question_waits_for_the_user(started):
+    stop = Stopped("I stopped here: the expert has already answered 2 times this turn. What's still unclear?", clarify=True)
+    window, _ = started([stop])
+
+    type_and_send(window, "audit my notes")
+    finish(window)
+
+    assert window.message.body.objectName() == "notice"
+    assert window.message.notice_title.text() == "Nuru stopped - waiting for your answer"
+    assert "What's still unclear?" in bubble_text(window)
+    assert window.prompt.placeholderText() == "Reply to clarify for Nuru…"
+
+
+def test_the_status_bar_shows_laya_the_embedding_model_and_the_experts_budget(make_window):
+    session = FakeSession()
+    session.status = lambda: {
+        "laya": {"state": "ready"},
+        "embedding": {"state": "idle", "model": "nomic-embed-text:v1.5", "pending": 0},
+        "expert": {"key": True, "turn_used": 1, "turn_limit": 2, "planner_used_today": 3, "planner_cap": 10},
+        "think": "low",
+        "enforced": ["step_cap", "write_checks", "watch_thinking"],
+    }
+    window = make_window(session)
+    window.start()
+    settle(window.starting)
+
+    wait_until(lambda: "Laya ready" in window.tray_items["laya"].text())
+    assert "Embeddings idle" in window.tray_items["embedding"].text()
+    assert "Expert 1/2 this turn" in window.tray_items["expert"].text()
+    assert "planner 7/10" in window.tray_items["expert"].text()
+    assert "7 of 10 left today" in window.tray_items["expert"].toolTip()
+    assert window.tray_items["think"].text() == "Thinking: low"
+    assert "watch_thinking" in window.tray_items["think"].toolTip()
+
+
+def test_the_status_bar_says_so_when_there_is_no_expert_key_or_laya_is_down(qapp):
+    items = ui.status_html({"laya": {"state": "failed", "error": "no weights"}, "expert": {"key": False}})
+    assert "Laya failed" in items["laya"][0] and items["laya"][1] == "no weights"
+    assert "no API key" in items["expert"][0]
+
+
+def test_the_developer_view_switch_shows_laya_rows_in_every_reply(started):
+    window, _ = started([LayaDecision("tool_gate (start)", "answer"), Text("Hi.")], [Text("Again.")])
+    type_and_send(window, "hi")
+    finish(window)
+    first = window.message
+
+    window.dev_toggle.setChecked(True)
+    assert first.header.developer and first.header.isVisibleTo(first)
+    type_and_send(window, "again")
+    finish(window)
+    assert window.message.header.developer  # a new reply starts in the view that's on

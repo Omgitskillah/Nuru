@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 
 from core.conversation_store import ConversationStore
-from core.session import Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall
+from core.session import Event, Failure, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall, ToolResult
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -40,8 +40,12 @@ def print_turn(events: Iterator[Event]) -> None:
             print(f"[steer] Reasoning stopped ({event.reason}) - asking again with thinking off.")
         elif isinstance(event, RetryWithoutThinking):
             print("[retry] No reply was written - asking again with thinking off.")
-        else:
+        elif isinstance(event, ToolResult):
+            if event.status != "ok":
+                print(f"[{event.status}] {event.name}: {event.detail}")
+        elif isinstance(event, Failure):
             print(f"[error] {event.message}")
+        # Progress and LayaDecision are for the window's live view; the CLI doesn't print them.
     if mid_line:
         print()
 

@@ -4,7 +4,9 @@ The window only draws. Talking to the model happens in core.session, on a backgr
 and what comes back is folded into markdown by core.reply_markdown.
 """
 
+import functools
 import math
+import re
 import sys
 import threading
 import time
@@ -12,7 +14,8 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QByteArray, QObject, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtGui import (
     QBrush,
     QCloseEvent,
@@ -87,6 +90,10 @@ COLUMN_WIDTH = 760
 BUBBLE_WIDTH = 600  # your messages wrap before the full column width so they read as bubbles
 SWING = 8  # degrees the lantern rocks to either side
 LOGO_PATH = Path(__file__).parent / "assets" / "lantern.png"  # transparent PNG
+# The status bar's icons: Lucide (lucide.dev, v0.469.0, ISC licence - assets/icons/LICENSE-lucide.txt).
+# Line icons drawn in `currentColor`, so each is tinted with its item's state color.
+ICONS_DIR = Path(__file__).parent / "assets" / "icons"
+ICON_PX = 14
 ICON_PADDING = 0.1  # white kept clear around the lantern in the app icon, as a share of its height
 # How macOS shapes an app icon: a rounded square filling 824 of the 1024-point canvas, the rest of
 # it left clear, and corners that curve into the sides rather than meeting them at an arc. That
@@ -284,53 +291,115 @@ class StatusPoller(QObject):
         threading.Thread(target=run, name="nuru-status", daemon=True).start()
 
 
-def dot(color: str) -> str:
-    return f'<span style="color:{color}">●</span>'
+def _pixel_ratio() -> float:
+    app = QApplication.instance()
+    screen = app.primaryScreen() if app is not None else None
+    return max(2.0, screen.devicePixelRatio()) if screen is not None else 2.0
 
 
-def status_html(status: dict) -> dict[str, tuple[str, str]]:
-    """The status bar's items as (rich text, tooltip), from Session.status(). The dot's color is
-    the state (see STATE_DOTS; the README has the key), so the text is just the name; the state
-    in words is in the tooltip."""
-    items: dict[str, tuple[str, str]] = {}
+@functools.lru_cache(maxsize=256)
+def icon_pixmap(name: str, color: str, px: int = ICON_PX, angle: int = 0) -> QPixmap:
+    """A status-bar icon `px` points square, drawn in `color` and turned `angle` degrees - sharp on
+    a Retina screen. `lantern` is Nuru's own logo, tinted; anything else is a Lucide SVG."""
+    ratio = _pixel_ratio()
+    side = round(px * ratio)
+    canvas = QPixmap(side, side)
+    canvas.fill(QColor(Qt.GlobalColor.transparent))
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if angle:
+        painter.translate(side / 2, side / 2)
+        painter.rotate(angle)
+        painter.translate(-side / 2, -side / 2)
+    if name == "lantern":
+        lantern = QPixmap(str(LOGO_PATH)).scaledToHeight(side, Qt.TransformationMode.SmoothTransformation)
+        painter.drawPixmap(QPointF((side - lantern.width()) / 2, 0), lantern)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)  # the logo's shape, in color
+        painter.fillRect(canvas.rect(), QColor(color))
+    else:
+        svg = (ICONS_DIR / f"{name}.svg").read_text().replace("currentColor", color)
+        QSvgRenderer(QByteArray(svg.encode())).render(painter, QRectF(0, 0, side, side))
+    painter.end()
+    canvas.setDevicePixelRatio(ratio)
+    return canvas
+
+
+class TrayItem(QWidget):
+    """One item of the status bar: an icon in its state's color, and at most a few characters
+    beside it (a name or a count). What it means in words is its tooltip."""
+
+    def __init__(self, icon: str, color: str = OFF_DOT, text: str = "", tip: str = "") -> None:
+        super().__init__()
+        self.icon = QLabel()
+        self.label = QLabel()
+        self.label.setObjectName("statusItem")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(self.icon)
+        row.addWidget(self.label)
+        self.icon_name, self.color, self.angle = "", "", 0
+        self.set(icon, color, text, tip)
+
+    def set(self, icon: str, color: str, text: str = "", tip: str = "", angle: int = 0) -> None:
+        if (icon, color, angle) != (self.icon_name, self.color, self.angle):
+            self.icon_name, self.color, self.angle = icon, color, angle
+            self.icon.setPixmap(icon_pixmap(icon, color, ICON_PX, angle))
+        if self.label.text() != text:
+            self.label.setText(text)
+        self.label.setVisible(bool(text))
+        self.setToolTip(tip)
+
+    def text(self) -> str:
+        return self.label.text()
+
+
+def status_items(status: dict) -> dict[str, tuple[str, str, str, str]]:
+    """The status bar's items as (icon, color, text, tooltip), from Session.status(). The icon says
+    what it is and its color how it is (STATE_DOTS; the README has the key); text only where it
+    carries a name or a number."""
+    items: dict[str, tuple[str, str, str, str]] = {}
 
     model = status.get("model") or {}
     if model:
         state = model.get("state", "unknown")
         tip = {"loaded": "loaded in Ollama", "idle": "not loaded - loads with the next message"}.get(state, state)
-        items["model"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} {model.get('name', 'model')}",
-                          f"Nuru's model: {model.get('error') or tip}")
+        items["model"] = ("lantern", STATE_DOTS.get(state, BAD_DOT), model.get("name", ""),
+                          f"Nuru's model, {model.get('name', '')}: {model.get('error') or tip}")
 
     laya = status.get("laya") or {}
     state = laya.get("state", "unknown")
-    items["laya"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} Laya", f"Laya (the decision layer): {laya.get('error') or state}")
+    items["laya"] = ("signpost", STATE_DOTS.get(state, BAD_DOT), "", f"Laya, the decision layer: {laya.get('error') or state}")
 
     embedding = status.get("embedding") or {}
     state, model_name = embedding.get("state", "unknown"), embedding.get("model", "")
     words = {"idle": "not loaded - loads when a search or the indexer needs it",
              "loaded": "loaded (Ollama unloads it after 5 minutes unused)",
              "embedding": f"embedding {embedding.get('pending', 0)} notes", "no vault": "no vault index"}.get(state, state)
-    items["embedding"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} Embeddings",
-                          f"{model_name + ': ' if model_name else ''}{embedding.get('error') or words}")
+    items["embedding"] = ("waypoints", STATE_DOTS.get(state, BAD_DOT), "",
+                          f"Embeddings{' (' + model_name + ')' if model_name else ''}: {embedding.get('error') or words}")
 
     expert = status.get("expert") or {}
     if expert.get("key"):
         left, limit = expert.get("turn_limit", 0) - expert.get("turn_used", 0), expert.get("turn_limit", 0)
-        text = f"{dot(OK_DOT if left else WARN_DOT)} Expert {left}/{limit}"
-        tip = f"{left} of {limit} ask_an_expert answers left this turn"
+        items["expert"] = ("graduation-cap", OK_DOT if left else WARN_DOT, f"{left}/{limit}",
+                           f"The expert: {left} of {limit} answers left this turn")
         if expert.get("planner_cap") is not None:
             planner_left = expert["planner_cap"] - (expert.get("planner_used_today") or 0)
-            text += f" · {planner_left}/{expert['planner_cap']}"
-            tip += f"; the planner (called at the step cap) has {planner_left} of {expert['planner_cap']} left today"
-        items["expert"] = (text, tip)
+            items["planner"] = ("calendar", OK_DOT if planner_left else WARN_DOT, str(planner_left),
+                                f"The expert planner (called at the step cap): {planner_left} of {expert['planner_cap']} left today")
     else:
-        items["expert"] = (f"{dot(OFF_DOT)} Expert", "No API key: set ANTHROPIC_API_KEY in .env.deep-think")
+        items["expert"] = ("graduation-cap", OFF_DOT, "", "The expert: no API key - set ANTHROPIC_API_KEY in .env.deep-think")
 
     think = status.get("think")
-    enforced = ", ".join(status.get("enforced") or []) or "nothing"
-    items["think"] = (f"Thinking {think if isinstance(think, str) else ('on' if think else 'off')}", f"Enforced: {enforced}")
+    level = think if isinstance(think, str) else ("on" if think else "off")
+    items["think"] = ("brain", {"off": OFF_DOT, "low": MUTED}.get(level, INK), "", f"Thinking: {level}")
+
+    enforced = status.get("enforced") or []
+    items["shield"] = ("shield-check" if enforced else "shield", OK_DOT if enforced else OFF_DOT, "",
+                       "Enforced: " + (", ".join(enforced) if enforced else "nothing - every check is in shadow"))
     if "error" in status and len(status) == 1:
-        items = {"laya": (f"{dot(BAD_DOT)} Status", f"Status unavailable: {status['error']}")}
+        items = {"laya": ("signpost", BAD_DOT, "", f"Status unavailable: {status['error']}")}
     return items
 
 
@@ -796,7 +865,7 @@ class AssistantMessage(QWidget):
 class ChatWindow(QWidget):
     FLUSH_MS = 25  # streamed text is redrawn at most this often, however fast it arrives
     TITLE = "Nuru"
-    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the status bar cycles through these while notes are being embedded
+    SPIN_STEPS = 12  # the index icon turns through these while notes are being embedded
     STATUS_MS = 3000  # how often the status bar asks after Laya, the embedding model and the expert
     SPIN_MS = 100
     # Re-embedding one note takes ~0.1 s - less than a frame of the spinner. So the spinner stays at
@@ -916,22 +985,23 @@ class ChatWindow(QWidget):
         self.tray.setObjectName("statusBar")
         tray_row = QHBoxLayout(self.tray)
         tray_row.setContentsMargins(14, 4, 10, 4)
-        tray_row.setSpacing(18)
-        self.tray_items: dict[str, QLabel] = {}
-        for key, text in (("model", ""), ("index", "Index…"), ("laya", "Laya"), ("embedding", "Embeddings"),
-                          ("expert", "Expert"), ("think", "")):
-            label = QLabel(text)
-            label.setObjectName("statusItem")
-            label.setTextFormat(Qt.TextFormat.RichText if key != "index" else Qt.TextFormat.PlainText)
-            self.tray_items[key] = label
-            tray_row.addWidget(label)
+        tray_row.setSpacing(14)
+        self.tray_items: dict[str, TrayItem] = {}
+        for key, icon in (("model", "lantern"), ("index", "book-open"), ("laya", "signpost"), ("embedding", "waypoints"),
+                          ("expert", "graduation-cap"), ("planner", "calendar"), ("think", "brain"), ("shield", "shield")):
+            item = TrayItem(icon, OFF_DOT)
+            item.setVisible(key != "planner")  # shown once a status says there is a planner
+            self.tray_items[key] = item
+            tray_row.addWidget(item)
         self.tray_index = self.tray_items["index"]
         tray_row.addStretch(1)
-        self.dev_toggle = QPushButton("Laya view")
+        self.dev_toggle = QPushButton()
         self.dev_toggle.setObjectName("devToggle")
         self.dev_toggle.setCheckable(True)
         self.dev_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.dev_toggle.setToolTip("Show what the decision layer said at each step (in shadow it changes nothing)")
+        self.dev_toggle.setToolTip("Laya view: show what the decision layer said at each step (in shadow it changes nothing)")
+        self.dev_toggle.setIconSize(QSize(ICON_PX, ICON_PX))
+        self.dev_toggle.setIcon(QIcon(icon_pixmap("bug", MUTED)))
         self.dev_toggle.toggled.connect(self.set_developer)
         tray_row.addWidget(self.dev_toggle)
 
@@ -975,8 +1045,8 @@ class ChatWindow(QWidget):
         self.prompt.setFocus()
 
     def update_index(self) -> None:
-        """The status bar's index item: "⠹ Indexing 12 notes" while the indexer embeds, then
-        "✓ Indexed 12 notes" for DONE_SECONDS, else "✓ Index".
+        """The status bar's index item: turning arrows and the count ("12") while the indexer
+        embeds, then the book and "+12" for DONE_SECONDS, else the book alone.
 
         The spinner stays up at least MIN_SPIN_SECONDS once shown. A pass that finished between two
         ticks - too quick ever to be seen pending - still gets the spinner and the summary.
@@ -1002,25 +1072,26 @@ class ChatWindow(QWidget):
                 self.done_until = now + self.DONE_SECONDS
 
         if self.spin_started is not None:
-            self.spin_frame = (self.spin_frame + 1) % len(self.SPINNER)
+            self.spin_frame = (self.spin_frame + 1) % self.SPIN_STEPS
             left = pending or self.spin_count
-            count = f" {left} note{'' if left == 1 else 's'}" if left else ""
-            text = f"{self.SPINNER[self.spin_frame]} Indexing{count}"
+            self.tray_index.set("refresh-cw", WARN_DOT, str(left) if left else "",
+                                f"Indexing {left} note{'' if left == 1 else 's'}" if left else "Indexing",
+                                angle=self.spin_frame * 360 // self.SPIN_STEPS)
         elif self.done_text and now < self.done_until:
-            text = f"✓ {self.done_text[:1].upper()}{self.done_text[1:]}"
+            count = re.search(r"\d+", self.done_text)
+            self.tray_index.set("book-open", OK_DOT, f"+{count.group()}" if count else "", f"Vault index: {self.done_text}")
         else:
             self.done_text = ""
-            text = "✓ Index"
-        if self.tray_index.text() != text:
-            self.tray_index.setText(text)
+            self.tray_index.set("book-open", OK_DOT, "", "Vault index: up to date")
 
     def show_status(self, status: dict) -> None:
-        for key, (html, tip) in status_html(status).items():
-            self.tray_items[key].setText(html)
-            self.tray_items[key].setToolTip(tip)
+        for key, (icon, color, text, tip) in status_items(status).items():
+            self.tray_items[key].set(icon, color, text, tip)
+            self.tray_items[key].setVisible(True)
 
     def set_developer(self, on: bool) -> None:
         self.developer = on
+        self.dev_toggle.setIcon(QIcon(icon_pixmap("bug", "white" if on else MUTED)))
         for reply in self.replies:
             reply.header.set_developer(on)
 

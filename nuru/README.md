@@ -115,15 +115,30 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
   - **While the turn runs** the line counts: "Thinking… ~600 / 1,200 tokens · step 3 of 10" - the thinking so far against the watch's budget (estimated at four characters a token), and the step against the step cap.
   - **The summary** adds what else happened: "Used 3 tools (1 blocked), asked the expert, reasoning stopped once".
 - **When Nuru ends a turn itself** - the step cap, a loop, the expert's limit - the reply is a warm notice card headed "Nuru stopped this turn", with what had run. When it ends by asking you something (the expert has answered twice and more was needed), the heading is "Nuru stopped - waiting for your answer" and the input box asks for your clarification.
-- **The status bar** along the bottom, left to right: Nuru's model (by its base model's name), the vault index (`⠹ Indexing 12 notes` while notes are embedded, then `✓ Indexed 12 notes`, else `✓ Index`), Laya, the embedding model, the expert (`Expert 1/2 · 10/10`: ask_an_expert answers left this turn, and the planner's calls left today), and the thinking level. Hover over an item for its state in words. It refreshes every 3 seconds and after each reply. The dots:
+- **The status bar** along the bottom is icons, each drawn in the color of its state - hover over one for its name and state in words. Left to right:
 
-  | Dot | Means |
+  | Icon | What it shows |
+  |---|---|
+  | lantern + model name | Nuru's model (by its base model's name, e.g. `granite4.2:3b`) |
+  | open book | the vault index - it turns into rotating arrows with a count (`12`) while notes are embedded, then shows `+12` for a few seconds |
+  | signpost | Laya, the decision layer |
+  | connected points | the embedding model (semantic search) |
+  | graduation cap + `1/2` | the expert: ask_an_expert answers left this turn |
+  | calendar + `10` | the expert planner's calls left today (a countdown; shown when a planner is set up) |
+  | brain | the thinking level: grey off, light low, dark high |
+  | shield | enforced checks: a check-mark shield when any are enforced (the tooltip lists them), a plain grey one when all are in shadow |
+
+  It refreshes every 3 seconds and after each reply. The colors:
+
+  | Color | Means |
   |---|---|
   | green | ready, or loaded in memory |
   | amber | starting, loading or working (Laya loading, notes being embedded, the expert's answers for this turn used up) |
   | grey | idle or off: not loaded now (it loads when needed), no vault, no expert API key |
   | red | down or failed - the tooltip says why |
-- **Laya view.** The switch at the right of the status bar shows, in every reply's card, what the decision layer said at each step (`laya · tool_gate (start): read (top: read 0.62)`, `laya · check_claim: …`). In shadow mode that changes nothing - it's what Laya would have done. Off by default.
+
+  The icons are [Lucide](https://lucide.dev) (v0.469.0, ISC licence, in `src/core/assets/icons/` with the licence text); the lantern is Nuru's own.
+- **Laya view.** The ladybug switch at the right of the status bar (filled when on) shows, in every reply's card, what the decision layer said at each step (`laya · tool_gate (start): read (top: read 0.62)`, `laya · check_claim: …`). In shadow mode that changes nothing - it's what Laya would have done. Off by default.
 - **Starting up.** The window opens straight away with the lantern rocking beside "Starting Nuru…" and no input box. Building the model, connecting the MCP servers and loading the model happen in the background; when they finish, the lantern settles, the greeting replaces the loading text, and the input box appears. If that fails, the reason is shown in the window and the input stays off.
 - **Stop.** The send button becomes a stop button while a reply streams. Stopping keeps what had been said so far as the reply, both in the window and in the saved history.
 - **Closing the window** is `/exit`: it unloads all models and stops the Ollama server if the UI started it.

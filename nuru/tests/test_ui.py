@@ -879,19 +879,18 @@ def test_the_status_bar_spins_while_notes_are_being_indexed(make_window):
     window.MIN_SPIN_SECONDS = 0.1
     window.start()
     settle(window.starting)
-    wait_until(lambda: window.tray_index.text() == "✓ Index")
+    wait_until(lambda: window.tray_index.icon_name == "book-open" and window.tray_index.text() == "")
     assert window.windowTitle() == "Nuru"  # the title stays put
 
     session.indexing = 12
-    wait_until(lambda: window.tray_index.text().endswith("Indexing 12 notes"))
-    first = window.tray_index.text()
-    wait_until(lambda: window.tray_index.text() != first)  # the spinner moves on
-    assert window.tray_index.text()[0] in ui.ChatWindow.SPINNER
+    wait_until(lambda: window.tray_index.icon_name == "refresh-cw" and window.tray_index.text() == "12")
+    first = window.tray_index.angle
+    wait_until(lambda: window.tray_index.angle != first)  # the arrows turn
 
     session.indexing = 1
-    wait_until(lambda: window.tray_index.text().endswith("Indexing 1 note"))
+    wait_until(lambda: window.tray_index.icon_name == "refresh-cw" and window.tray_index.text() == "1")
     session.indexing = 0
-    wait_until(lambda: window.tray_index.text() == "✓ Index")
+    wait_until(lambda: window.tray_index.icon_name == "book-open" and window.tray_index.text() == "")
 
 
 def started_window(make_window, session, min_spin=0.3, done=0.4):
@@ -908,14 +907,14 @@ def test_the_spinner_stays_up_for_a_minimum_time_even_if_the_pass_ends_at_once(m
     window = started_window(make_window, session, min_spin=0.5)
 
     session.indexing = 1
-    wait_until(lambda: window.tray_index.text().endswith("Indexing 1 note"))
+    wait_until(lambda: window.tray_index.icon_name == "refresh-cw" and window.tray_index.text() == "1")
     session.indexing = 0
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:  # well inside the minimum: still spinning
         QApplication.processEvents()
-        assert "Indexing" in window.tray_index.text()
+        assert window.tray_index.icon_name == "refresh-cw"
         time.sleep(0.01)
-    wait_until(lambda: window.tray_index.text() == "✓ Index")
+    wait_until(lambda: window.tray_index.icon_name == "book-open" and window.tray_index.text() == "")
 
 
 def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_window):
@@ -924,9 +923,9 @@ def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_w
 
     session.index_change = (1, "indexed 1 note")  # finished between two ticks: never seen pending
 
-    wait_until(lambda: "Indexing" in window.tray_index.text())
-    wait_until(lambda: window.tray_index.text() == "✓ Indexed 1 note")
-    wait_until(lambda: window.tray_index.text() == "✓ Index")
+    wait_until(lambda: window.tray_index.icon_name == "refresh-cw")
+    wait_until(lambda: window.tray_index.text() == "+1" and "indexed 1 note" in window.tray_index.toolTip())
+    wait_until(lambda: window.tray_index.icon_name == "book-open" and window.tray_index.text() == "")
 
 
 def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
@@ -934,12 +933,12 @@ def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
     window = started_window(make_window, session)
 
     session.indexing = 3
-    wait_until(lambda: window.tray_index.text().endswith("Indexing 3 notes"))
+    wait_until(lambda: window.tray_index.icon_name == "refresh-cw" and window.tray_index.text() == "3")
     session.indexing = 0
     session.index_change = (1, "indexed 3 notes")
 
-    wait_until(lambda: window.tray_index.text() == "✓ Indexed 3 notes")
-    wait_until(lambda: window.tray_index.text() == "✓ Index")
+    wait_until(lambda: window.tray_index.text() == "+3")
+    wait_until(lambda: window.tray_index.icon_name == "book-open" and window.tray_index.text() == "")
 
 
 
@@ -1041,20 +1040,25 @@ def test_the_status_bar_shows_laya_the_embedding_model_and_the_experts_budget(ma
     window.start()
     settle(window.starting)
 
-    wait_until(lambda: ui.OK_DOT in window.tray_items["laya"].text())  # the first poll has come back
-    assert ui.OK_DOT in window.tray_items["laya"].text() and "ready" in window.tray_items["laya"].toolTip()
-    assert window.tray_items["model"].text().endswith("granite4.2:3b") and ui.OK_DOT in window.tray_items["model"].text()
-    assert ui.OFF_DOT in window.tray_items["embedding"].text() and "not loaded" in window.tray_items["embedding"].toolTip()
-    assert window.tray_items["expert"].text().endswith("Expert 1/2 · 7/10")
-    assert "7 of 10 left today" in window.tray_items["expert"].toolTip()
-    assert window.tray_items["think"].text() == "Thinking low"
-    assert "watch_thinking" in window.tray_items["think"].toolTip()
+    items = window.tray_items
+    wait_until(lambda: items["laya"].color == ui.OK_DOT)  # the first poll has come back
+    assert items["laya"].icon_name == "signpost" and "ready" in items["laya"].toolTip()
+    assert (items["model"].icon_name, items["model"].color, items["model"].text()) == ("lantern", ui.OK_DOT, "granite4.2:3b")
+    assert items["embedding"].icon_name == "waypoints" and items["embedding"].color == ui.OFF_DOT
+    assert "not loaded" in items["embedding"].toolTip()
+    assert (items["expert"].icon_name, items["expert"].text()) == ("graduation-cap", "1/2")
+    assert (items["planner"].icon_name, items["planner"].text()) == ("calendar", "7") and items["planner"].isVisibleTo(window)
+    assert "7 of 10 left today" in items["planner"].toolTip()
+    assert items["think"].icon_name == "brain" and items["think"].toolTip() == "Thinking: low"
+    assert items["shield"].icon_name == "shield-check" and "watch_thinking" in items["shield"].toolTip()
 
 
 def test_the_status_bar_says_so_when_there_is_no_expert_key_or_laya_is_down(qapp):
-    items = ui.status_html({"laya": {"state": "failed", "error": "no weights"}, "expert": {"key": False}})
-    assert ui.BAD_DOT in items["laya"][0] and "no weights" in items["laya"][1]
-    assert ui.OFF_DOT in items["expert"][0] and "No API key" in items["expert"][1]
+    items = ui.status_items({"laya": {"state": "failed", "error": "no weights"}, "expert": {"key": False}})
+    assert items["laya"][1] == ui.BAD_DOT and "no weights" in items["laya"][3]
+    assert items["expert"][1] == ui.OFF_DOT and "no API key" in items["expert"][3]
+    assert "planner" not in items
+    assert items["shield"][:2] == ("shield", ui.OFF_DOT)  # nothing enforced
 
 
 def test_the_developer_view_switch_shows_laya_rows_in_every_reply(started):
@@ -1068,3 +1072,22 @@ def test_the_developer_view_switch_shows_laya_rows_in_every_reply(started):
     type_and_send(window, "again")
     finish(window)
     assert window.message.header.developer  # a new reply starts in the view that's on
+
+
+
+def test_every_status_bar_icon_draws_in_its_color(qapp):
+    for name in ("lantern", "book-open", "refresh-cw", "signpost", "waypoints", "graduation-cap", "calendar",
+                 "brain", "shield", "shield-check", "bug"):
+        image = ui.icon_pixmap(name, ui.OK_DOT).toImage()
+        colors = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height())
+                  if image.pixelColor(x, y).alpha() > 200}
+        assert colors, f"{name} drew nothing"
+        assert ui.OK_DOT.lower() in colors, f"{name} isn't in its color"
+
+
+def test_the_laya_view_switch_is_a_bug_that_fills_in_when_on(started):
+    window, _ = started()
+    off = window.dev_toggle.icon().pixmap(ui.ICON_PX, ui.ICON_PX).toImage()
+    window.dev_toggle.setChecked(True)
+    on = window.dev_toggle.icon().pixmap(ui.ICON_PX, ui.ICON_PX).toImage()
+    assert off != on

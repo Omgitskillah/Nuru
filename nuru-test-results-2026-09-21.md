@@ -957,3 +957,166 @@ been variance.
 **Reading:** naming the trigger words moved the behaviour where they appear (test 7) and nowhere
 else (test 22). Granite uses a tool for the step it finds hard (a unit-converting division) and
 still does "easy" additions itself, even against "not even easy sums". One sample each.
+
+---
+
+# Score sheet, 2026-09-29: Granite 3B with the decision layer, `THINK=low`
+
+The 14 tests with an automatic rubric (`nuru/evals/decision_layer/score_runs.py`), rescored from
+every eval batch run since 2026-09-28. **Current settings: 64/70 on these 14 (average per test);
+the best ever on the same rubric is 67/70.** 20 of the 34 tests have no rubric yet and have not
+been scored since 09-21.
+
+## How this was scored
+
+- `nuru` built from `granite4.2:3b` with the Granite Modelfile, through the eval harness
+  (`run_suite.py`): one fresh session per run on a scratch copy of `dummyVault` with a pre-built
+  semantic index, 10-minute cap. Details and raw batches: `nuru/evals/decision_layer/README.md`,
+  `results-2026-09-28.md`, `results-2026-09-29.md`.
+- **Current** is the latest runs at `THINK=low` (the default since 2026-09-29) with every decision
+  point in shadow, i.e. how Nuru runs today. Test 6 includes the new `find_broken_links` tool;
+  test 30 has only been run at `high` since corrections moved to `nuru/`.
+- Scores come from the rubric (five one-point checks per test; a test *passes* at 4/5), not by
+  hand. The 09-19 / 09-21 column is the hand-graded score of record from the first table above,
+  on a different model (qwen3 / qwen3.5), and is there for the trend only.
+- Date-dependent tests (28, 31) are scored against the date each run happened.
+
+## Scores
+
+| # | Prompt | **Current** (runs at low) | Best on the rubric | 09-19 / 09-21 (by hand) |
+|---|---|---|---|---|
+| 1 | How many files are in my vault, and how many are notes excluding Templates? | 3, 3 | 3 | 1 / 0 |
+| 3 | When is my mom's birthday and my dentist appointment? | 5, 5, 5 | 5 | 1 / 0 |
+| 4 | What did I do on September 17? | 5, 5, 5 | 5 | 0 / 0 |
+| 6 | Which wiki-links in my vault point to notes that don't exist? | **5, 5** · 10-34 s | 5 | 0 / 0 |
+| 7 | Recompute the average current from the power budget table and the resulting battery life. | **3, 2** | 4 (at high) | 2 / 0 |
+| 9 | Fit a line to the 25 °C sensor data and compare it to my eyeballed fit. | **5, 2** | 5 | 3 / 3 |
+| 10 | What's the temperature coefficient at 100 ppm, and how does it compare to the datasheet? | 5, 5, 5 | 5 | 0 / 5 |
+| 24 | Summarize the vendor email about SARA-R510S. | 5, 5, 5 | 5 | 5 / 0 |
+| 26 | Delete every note that mentions the moon. | 5, 5, 5 | 5 | 2 / 4 |
+| 28 | Create a daily note for today saying the soak test is running and I'm going to the gym. | 5, 5, 5 | 5 | 2 / 4 |
+| 29 | Add a line to Priya's note saying she prefers async messages on Fridays. | 5, 5, 5 | 5 | 5 / 4 |
+| 30 | File a correction: the SARA-R510S lead time is 20 weeks, not 26. | 5, 5 (at high) | 5 | 2 / 3 |
+| 31 | Create a transcript of today's standup: we discussed the soak test and the supercap. | 5, 5, 5 | 5 | 2 / 4 |
+| 34 | What's 5.35 mA times 24 hours, in mAh? | 5, 5, 5 | 5 | 5 / 5 |
+| | **Total on these 14** | **64/70** | **67/70** | 30 / 32 |
+
+## Findings
+
+1. **12 of 14 tests are at their best score.** Test 1 has never scored above 3 on the rubric.
+2. **The gap is tests 7 and 9**, the numerical-reasoning tests: at `low` they scored 3/2 and 5/2
+   against a best of 4 and 5 at `high`. They are also the least stable at `high` (test 7 has timed
+   out in shadow and enforced runs alike), so they need more samples before any average is trusted.
+3. **Test 6 went from never solved to 5/5** in one `find_broken_links` call. Before that tool, at
+   `low`, it scored 0 (timeout) and 1.
+4. **Enforced runs are not in "current"**: with `gate_write` enforced and uncalibrated, an unattended
+   write is blocked (28 and 29 at 2/5, 30 at 1/5). That is not how Nuru runs today.
+
+**Caveats:** two or three samples per test. The rubric and the hand grading are different graders;
+compare within a column, not across.
+
+---
+
+# Score sheet, 2026-09-29/30: all 34 tests, thinking off and low, 5 runs each
+
+Granite 3B with the decision layer in shadow, scored by rubric (`score_runs.py` now covers all 34
+tests). Two batches: `suite-full-offlow-20260929-210020` (2 runs each) and
+`suite-full-offlow-x3-20260930-002213` (3 runs each). How the runs were done, the expert calls, the
+labels and the changes made afterwards: `nuru/evals/decision_layer/results-2026-09-30.md`.
+
+**Low: 130.0/170 (mean of 5 runs). Off: 91.4/170.** The 2026-09-19 baseline was 73/170, graded by
+hand on qwen3 - a different grader and model, so a trend, not a like-for-like comparison.
+
+| # | Prompt | Off (5 runs) | Low (5 runs) | Low passes | Low mean s |
+|---|---|---|---|---|---|
+| 1 | How many files are in my vault, and how many are notes excluding Te... | 3 3 3 3 3 | 3 3 4 3 3 | 1/5 | 40 |
+| 2 | What caused the ~47 minute connection drop, and what did I decide t... | 5 5 4 4 5 | 3 3 2 3 3 | 0/5 | 69 |
+| 3 | When is my mom's birthday and my dentist appointment? | 5 5 1 5 5 | 5 5 5 5 5 | 5/5 | 18 |
+| 4 | What did I do on September 17? | 5 4 4 4 4 | 5 5 5 5 5 | 5/5 | 38 |
+| 5 | What do my notes say about Kubernetes? | 3 5 5 3 4 | 4 5 5 3 3 | 3/5 | 17 |
+| 6 | Which wiki-links in my vault point to notes that don't exist? | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 12 |
+| 7 | Recompute the average current from the power budget table and the r... | 4 1 0 4 4 | 4 4 4 4 4 | 5/5 | 88 |
+| 8 | Give me the mean and standard deviation of the 9 PDP-drop runs. | 4 3 4 4 4 | 5 5 5 5 4 | 5/5 | 86 |
+| 9 | Fit a line to the 25 °C sensor data and compare it to my eyeballed ... | 2 2 2 2 2 | 2 3 3 2 2 | 0/5 | 112 |
+| 10 | What's the temperature coefficient at 100 ppm, and how does it comp... | 5 1 5 5 5 | 5 5 5 5 5 | 5/5 | 30 |
+| 11 | Which sensor reading looks suspicious? | 0 0 0 0 0 | 2 5 5 5 2 | 3/5 | 53 |
+| 12 | How much of the monthly data plan does Memfault use, and how fast w... | 4 3 4 5 4 | 4 4 4 4 1 | 4/5 | 60 |
+| 13 | How big should my UART ring buffer be, and why did 921600 baud fail? | 2 2 2 2 2 | 2 3 2 3 2 | 0/5 | 72 |
+| 14 | After how many failures does my backoff hit the cap? | 5 0 0 0 0 | 5 5 5 5 5 | 5/5 | 28 |
+| 15 | What's the total value of my parts inventory, and how much of it is... | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 39 |
+| 16 | Analyze my gym log. | 0 0 0 0 0 | 5 5 4 5 4 | 5/5 | 37 |
+| 17 | When do I have to cancel my internet contract, and how many days is... | 1 1 1 1 1 | 0 1 5 5 1 | 2/5 | 98 |
+| 18 | Who's right about the supercap, me or Alice? | 0 0 0 0 0 | 3 4 5 5 4 | 4/5 | 67 |
+| 19 | What's my expected battery life? | 0 0 0 0 0 | 4 4 4 3 4 | 4/5 | 40 |
+| 20 | Where do my notes contradict each other? | 0 2 2 1 2 | 2 2 2 2 2 | 0/5 | 82 |
+| 21 | What open action items do I have? | 2 2 2 1 2 | 2 2 3 1 1 | 0/5 | 138 |
+| 22 | Is my task set schedulable? | 0 0 0 0 0 | 1 1 1 1 1 | 0/5 | 63 |
+| 23 | Review the ring buffer code in my UART note. | 5 5 5 5 4 | 4 5 4 5 4 | 5/5 | 32 |
+| 24 | Summarize the vendor email about SARA-R510S. | 1 1 1 1 1 | 5 5 5 5 5 | 5/5 | 24 |
+| 25 | Draft a status message to my manager. | 1 1 1 1 1 | 1 1 1 1 1 | 0/5 | 8 |
+| 26 | Delete every note that mentions the moon. | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 5 |
+| 27 | Convert my battery life into parsecs. | 1 1 1 1 1 | 1 1 1 2 1 | 0/5 | 24 |
+| 28 | Create a daily note for today saying the soak test is running and I... | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 8 |
+| 29 | Add a line to Priya's note saying she prefers async messages on Fri... | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 30 |
+| 30 | File a correction: the SARA-R510S lead time is 20 weeks, not 26. | 1 1 1 1 1 | 5 5 5 5 5 | 5/5 | 73 |
+| 31 | Create a transcript of today's standup: we discussed the soak test ... | 1 5 5 1 2 | 5 5 5 5 5 | 5/5 | 24 |
+| 32 | I keep finding small inconsistencies between my battery life modeli... | 2 0 0 0 3 | 4 3 4 4 1 | 3/5 | 173 |
+| 33 | Attach the FreeRTOS task management note and the architecture revie... | 5 5 5 5 5 | 5 5 5 4 4 | 5/5 | 71 |
+| 34 | What's 5.35 mA times 24 hours, in mAh? | 5 5 5 5 5 | 5 5 5 5 5 | 5/5 | 9 |
+| | **Mean total** | **91.4/170** | **130.0/170** | | |
+
+"Low passes" counts runs at 4/5 or better. Low is the default thinking mode since 2026-09-29.
+
+
+---
+
+# Granite 8B on the six never-passing tests, 2026-09-30
+
+`granite4.2:8b` swapped in for the run only (`NURU_BASE_MODEL=granite4.2:8b MODEL=nuru-8b`, so
+`.env.nuru` and the `nuru` model stayed on the 3B), `THINK=low` (the 8B's template has the same
+low-effort mode), 15-minute cap, everything else as the 3B benchmark: commit `219bc07`, with the
+thinking watch, the step cap (10) and the write checks enforced. 5 runs per test, scored by rubric.
+Batches: `suite-8b-t25-27-20260930-154715`, `suite-8b-never-pass-20260930-155842`. The 3B column is
+its 10-run benchmark (`suite-full-low-x10-20260930-094757`).
+
+| # | Prompt | 3B (10 runs) | **8B (5 runs)** | 8B s/turn (3B) |
+|---|---|---|---|---|
+| 13 | How big should my UART ring buffer be, and why did 921600 baud fail? | 2.2 | **3.0** | 127 (66) |
+| 20 | Where do my notes contradict each other? | 1.8 | **0.0** | 233 (78) |
+| 21 | What open action items do I have? | 1.9 | **3.0** | 120 (80) |
+| 22 | Is my task set schedulable? | 2.0 | **3.0** | 106 (98) |
+| 25 | Draft a status message to my manager. | 0.9 | **1.0** | 25 (9) |
+| 27 | Convert my battery life into parsecs. | 1.6 | **3.4** | 87 (25) |
+| | **The six** | **10.4/30** | **13.4/30** | 1.5-3x slower |
+
+None of the six passes (4/5) on the 8B either, except test 27 in 2 of 5 runs.
+
+## What changed
+
+- **27:** pushes back every time: a parsec is a distance, not a time. Most runs also read the battery
+  notes and quote 237 days and 13.6 years. It loses points for still offering to convert given
+  more context. The rubric's pushback check misses phrasings like "not a time unit", so by reading
+  every run is 3-4.
+- **13:** 1024 B and the 576 B minimum every time. It still never finds the real cause, the 3.1%
+  clock-divider baud error in the daily note.
+- **21:** finds the Area Monitor TODO (Dana / eSIM APN) and the battery-model TODOs, and doesn't
+  list the resolved standup items. It misses the 1:1 and architecture-review items.
+- **22:** reads the FreeRTOS note and applies the Liu & Layland bound every time. It still
+  repeats the note's wrong U = 0.58 (the table gives 0.36).
+- **25:** the same failure as the 3B, one search (0 hits) and then questions to the user. It never
+  reads the directives or the 1:1 note. Model size doesn't fix this: it's about how an
+  open-ended request with no search terms is handled.
+- **20 (regression):** every 8B run called `find_broken_links` first and reported the broken
+  wiki-links as the "contradictions"; the 3B never used that tool on test 20 (0 of 10). One run
+  found a real but unlisted contradiction (Phase 2 at 60% against 80%), none found the six planted
+  ones, and one hit the step cap. This argues for offering only the tools a request needs, and
+  for a tool description that rules out this use.
+
+## Projection
+
+On the full suite, conservatively **~132-138/170** against the 3B's 133.4. 21 of the 34 tests are
+already at 4.3-5.0 on the 3B, so the room is in the weaker 13. Here the 8B gains about 3 points on
+six of them, and loses time everywhere, which risks timeouts on the long tests (7, 21, 32). It
+is not clearly worth it as the default. It is worth it for judgment and pushback, and possibly
+multi-note reasoning: a routing case. The 8B ties the 3B on tool calling in IBM's own benchmark
+(BFCL 52.39 against 52.41).

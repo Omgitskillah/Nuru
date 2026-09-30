@@ -125,7 +125,7 @@ def _stub_rg(monkeypatch, stdout="", returncode=0, stderr=""):
     )
 
 
-def test_find_in_notes_takes_only_a_pattern_and_returns_its_matches_through_call_tool(tmp_path, monkeypatch):
+def test_find_in_notes_takes_a_pattern_and_returns_its_matches_through_call_tool(tmp_path, monkeypatch):
     (tmp_path / "Plan.md").write_text("Ship it - café\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     event = {
@@ -144,7 +144,7 @@ def test_find_in_notes_takes_only_a_pattern_and_returns_its_matches_through_call
     result = _run(server.mcp.call_tool("find_in_notes", {"pattern": "ship"}))
 
     assert schema["required"] == ["pattern"]
-    assert set(schema["properties"]) == {"pattern"}
+    assert set(schema["properties"]) == {"pattern", "literal"}
     assert result.is_error is not True
     assert "Plan.md" in str(result) and "Ship it - café" in str(result)
 

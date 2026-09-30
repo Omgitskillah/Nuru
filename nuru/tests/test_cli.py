@@ -293,3 +293,17 @@ def test_main_help_command_lists_commands_without_asking_the_model(monkeypatch, 
     assert "/show" in out
     assert "/exit" in out
     assert s.asked == []
+
+
+@pytest.mark.parametrize("reply, approved", [("y", True), ("YES", True), ("", False), ("n", False)])
+def test_a_write_is_confirmed_only_by_a_yes(monkeypatch, reply, approved):
+    monkeypatch.setattr("builtins.input", lambda prompt: reply)
+    assert cli.confirm_write("append_note", {"id": "x", "content": "y"}) is approved
+
+
+def test_no_answer_is_no(monkeypatch):
+    def eof(prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", eof)
+    assert cli.confirm_write("append_note", {}) is False

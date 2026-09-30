@@ -1,2 +1,5 @@
+.logs/
+.file_cache.db
+# before 2026-09-28
 logs/
 file_cache.db

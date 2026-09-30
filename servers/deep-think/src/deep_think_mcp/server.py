@@ -20,8 +20,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from deep_think_mcp.file_cache import resolve_file_id
 from deep_think_mcp.providers import get_provider
 
-LOG_DIR = Path(os.environ.get("DEEP_THINK_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
-DB_PATH = Path(os.environ.get("DEEP_THINK_MCP_DB_PATH", Path(__file__).resolve().parents[2] / "file_cache.db"))
+LOG_DIR = Path(os.environ.get("DEEP_THINK_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
+DB_PATH = Path(os.environ.get("DEEP_THINK_MCP_DB_PATH", Path(__file__).resolve().parents[2] / ".file_cache.db"))
 
 # Base directory that a relative ask_an_expert file_path is resolved against.
 # Callers hand us the paths their own tools returned - nuru passes vault-relative

@@ -19,4 +19,8 @@ jobs:
       - name: Run tests
         env:
           VAULT_PATH: /tmp/ci-vault
-        run: uv run pytest -v
+        run: uv run pytest -v --cov=servers --cov=nuru --cov=tools --cov-report=term-missing
+
+      - name: Coverage summary
+        if: always()
+        run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,17 @@
+# Asked while the model is still reasoning, every few hundred thinking tokens: is it getting
+# somewhere? Code checks the cheap things first (a thinking budget per tier, repeated sentences);
+# this is for what code can't see - reasoning that has already reached its answer, or that is
+# stuck for want of a lookup. The harness acts on it only when watch_thinking is enforced.
+name: watch_thinking
+version: 1
+checkpoint: english
+max_state_tokens: 440
+questions:
+  state:
+    type: choice
+    instructions: "The assistant is still reasoning about the user's `request`. Judging by its latest `thinking` and the `steps` so far, what is happening?"
+    criteria:
+      progressing: "Working towards the next step; let it continue"
+      repeating: "Going over the same ground again without new progress"
+      ready: "Already knows the answer or the next action; it should act now"
+      stuck: "Needs information a tool could give; it should look it up"

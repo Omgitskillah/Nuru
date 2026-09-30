@@ -2,7 +2,7 @@
 
 Each MCP server lives in its own self-contained folder here (own `pyproject.toml`, deps, tests), and they're tied together by a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) rooted at the repo root, so `uv run pytest` from there discovers and runs every package's tests in one go.
 
-The servers: [obsidian](obsidian) (the vault), [deep-think](deep-think) (`ask_an_expert`, the cloud expert) and [calc](calc) (plain arithmetic, so the local model doesn't do sums in its head).
+The servers: [obsidian](obsidian) (the vault), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [calc](calc) (plain arithmetic, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
 
 ## Requirements
 
@@ -26,14 +26,14 @@ To interactively call a server's tools without connecting a full host:
 
 ```bash
 cd servers/obsidian
-MCP_INSPECTOR_LOG_DIR=./logs npx @modelcontextprotocol/inspector uv run obsidian-mcp
+MCP_INSPECTOR_LOG_DIR=./.logs npx @modelcontextprotocol/inspector uv run obsidian-mcp
 ```
 
 This opens a browser UI listing the server's registered tools, where you can invoke them and inspect the request/response JSON.
 
 ## Access logging
 
-Every MCP server in this repo logs its access (tool calls, resource reads, etc.) to `servers/<name>/logs/`, regardless of which client connects (Inspector, Claude Desktop, or anything else) - the logging lives in the server process itself rather than in any one client. This directory is gitignored.
+Every MCP server in this repo logs its access (tool calls, resource reads, etc.) to `servers/<name>/.logs/` (hidden, like everything generated - see [Generated files](../README.md#generated-files)), regardless of which client connects (Inspector, Claude Desktop, or anything else) - the logging lives in the server process itself rather than in any one client. This directory is gitignored.
 
 Each session (starting at `initialize`) gets its own log file, named `<count_up_id>_<date_time>_<client_name>.log` (`client_name` falls back to `unknown` if the client doesn't report one). The logging mechanism itself is shared, standalone middleware in [tools/logging](tools/logging) (`access-logging`) - a server just points it at its own log directory, e.g. in the Obsidian server's [server.py](obsidian/src/obsidian_mcp/server.py).
 

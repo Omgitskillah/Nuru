@@ -6,6 +6,7 @@ import pytest
 
 from core import session
 from core.conversation_store import ConversationStore
+from core.providers.mcp_tools import ToolResult
 from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ToolCall
 
 
@@ -47,6 +48,13 @@ class FakeMCPTools:
     def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
         return self._tool_results.get(name, "")
+
+    def call_tool_result(self, name, arguments):
+        return ToolResult(self.call_tool(name, arguments))
+
+    def call_harness_tool(self, name, arguments):
+        # No decision layer here: the shadow's calls fail, which it must shrug off.
+        return ToolResult("no decision layer in this test", is_error=True)
 
     def close(self):
         self.closed = True
@@ -153,7 +161,7 @@ def test_start_connects_mcp_tools_and_passes_them_to_chat(monkeypatch):
     assert seen["tools"] == tools
 
 
-def test_start_hides_delete_file_or_directory_from_the_local_model(monkeypatch):
+def test_start_offers_the_model_only_its_allowlist(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -166,8 +174,10 @@ def test_start_hides_delete_file_or_directory_from_the_local_model(monkeypatch):
 
     Session.start()
 
-    assert "delete_file_or_directory" in seen["hidden_tools"]
-    assert "archive_note" not in seen["hidden_tools"]
+    assert "delete_file_or_directory" not in seen["model_tools"]
+    assert "archive_note" in seen["model_tools"] and "classify_notes" in seen["model_tools"]
+    for harness_only in ("tool_gate", "assess_effort", "gate_write", "check_claim", "rerank", "health"):
+        assert harness_only not in seen["model_tools"]
 
 
 def test_start_closes_what_it_opened_when_a_later_step_fails(monkeypatch):
@@ -831,25 +841,42 @@ def test_ask_an_expert_gets_the_users_message_verbatim(monkeypatch):
     ]
 
 
-def test_a_second_expert_call_in_the_same_turn_is_refused_and_steers_to_the_answer(monkeypatch):
+def test_after_two_expert_answers_the_tool_is_withdrawn_and_the_model_told_to_ask_the_user(monkeypatch):
     fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
-    seen = []
-    chat = scripted_chat(
-        [
-            [tool_call("ask_an_expert", {"question": "Is B viable?"})],
-            [tool_call("ask_an_expert", {"question": "Is my summary right?"})],
-            "The expert says architecture B passes.",
-        ],
-        seen,
-    )
+    offered = []
+    steps = iter([
+        [tool_call("ask_an_expert", {"question": "Is B viable?"})],
+        [tool_call("ask_an_expert", {"question": "And under PSM?"})],
+        "The expert says architecture B passes.",
+    ])
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        offered.append([t["function"]["name"] for t in tools or []])
+        offered_messages.append([dict(m) for m in messages])
+        step = next(steps)
+        yield {"tool_calls": step} if isinstance(step, list) else step
+
+    offered_messages = []
     s = start_session(monkeypatch, chat=chat, tools=fake_tools)
 
     events = list(s.ask("Audit my battery notes."))
 
-    assert [name for name, _ in fake_tools.calls] == ["ask_an_expert"]  # the second never reached the server
-    assert seen[2][-1] == {"role": "tool", "content": session._EXPERT_ALREADY_ANSWERED}
+    assert len(fake_tools.calls) == 2
+    assert offered == [["ask_an_expert"], ["ask_an_expert"], []]  # gone after the second answer
+    assert offered_messages[2][-1]["content"].endswith(session._EXPERT_LAST_ANSWER)
     assert events[-1] == Text("The expert says architecture B passes.")
 
+
+def test_an_expert_call_past_the_limit_ends_the_turn_asking_the_user(monkeypatch):
+    fake_tools = FakeMCPTools(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    chat = scripted_chat([[tool_call("ask_an_expert", {"question": q})] for q in ("a", "b", "c")] + ["never reached"])
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("Audit my battery notes."))
+
+    assert len(fake_tools.calls) == 2  # the third never reached the server
+    assert events[-1].text.startswith("I stopped here: the expert has already answered 2 times")
+    assert "What's still unclear?" in events[-1].text
 
 def test_a_failed_expert_call_does_not_use_up_the_turns_one_call(monkeypatch):
     results = iter(["FileNotFoundError: No such file: 'nuru/x.md'", EXPERT_ANSWER])
@@ -867,6 +894,36 @@ def test_a_failed_expert_call_does_not_use_up_the_turns_one_call(monkeypatch):
     list(s.ask("audit"))
 
     assert len(fake_tools.calls) == 2
+
+
+def test_expert_attachments_named_by_title_are_resolved_to_vault_paths(monkeypatch):
+    class Resolving(FakeMCPTools):
+        def call_harness_tool(self, name, arguments):
+            if name == "get_links" and arguments["name"] == "Area Monitor Device Redesign":
+                return ToolResult(json.dumps({"note": "shared/Projects/area-monitor-device-redesign.md"}))
+            return ToolResult("FileNotFoundError: no such note", is_error=True)
+
+    fake_tools = Resolving(tools=[EXPERT_TOOL], tool_results={"ask_an_expert": EXPERT_ANSWER})
+    chat = scripted_chat([[tool_call("ask_an_expert", {"question": "q", "file_paths": ["Area Monitor Device Redesign", "x.pdf"]})], "done"])
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    list(s.ask("audit"))
+
+    # the title became its path; a name the vault can't resolve goes on as given
+    assert fake_tools.calls[0][1]["file_paths"] == ["shared/Projects/area-monitor-device-redesign.md", "x.pdf"]
+
+
+def test_a_tool_that_returns_an_error_is_logged_as_an_error(monkeypatch, tmp_path):
+    fake_tools = FakeMCPTools(tools=[{"type": "function", "function": {"name": "read_note", "description": "x", "parameters": {}}}])
+    fake_tools.call_tool_result = lambda name, arguments: ToolResult("FileNotFoundError: no note 'x'", is_error=True)
+    chat = scripted_chat([[tool_call("read_note", {"name": "x"})], "No such note."])
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    list(s.ask("read x"))
+
+    (log_file,) = tmp_path.glob("*.jsonl")
+    (call,) = [e for e in map(json.loads, log_file.read_text().splitlines()) if e["event"] == "tool_call"]
+    assert call["status"] == "error" and "no note 'x'" in call["error"]
 
 
 def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
@@ -887,7 +944,7 @@ def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
     assert [args["question"] for _, args in fake_tools.calls] == ["first", "second"]
 
 
-def test_start_connects_the_obsidian_deep_think_and_calc_servers(monkeypatch):
+def test_start_connects_the_obsidian_deep_think_calc_and_laya_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -900,7 +957,7 @@ def test_start_connects_the_obsidian_deep_think_and_calc_servers(monkeypatch):
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp"]
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp", "laya-mcp"]
 
 
 def test_index_change_reports_the_indexers_passes(monkeypatch):

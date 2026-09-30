@@ -2,7 +2,7 @@
 
 Talks to Anthropic over the network via the official `anthropic` SDK -
 POST /v1/messages, /v1/messages/count_tokens, GET /v1/models, and the Files
-API. Auth comes from the CLAUDE_API_KEY env var (see .env / .env.example);
+API. Auth comes from the CLAUDE_API_KEY env var (see .env.deep-think / .env.deep-think.example in the repo root);
 if unset, falls back to the SDK's own credential resolution
 (ANTHROPIC_API_KEY, an `ant auth login` profile, etc).
 """
@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 
 from deep_think_mcp.contract import Provider
 
-load_dotenv()
+# deep-think's settings (the key, the base dir) live in the repo root's .env.deep-think.
+load_dotenv(Path(__file__).resolve().parents[5] / ".env.deep-think")
 
 
 def _build_client() -> anthropic.Anthropic:

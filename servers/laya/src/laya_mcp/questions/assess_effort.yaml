@@ -1,0 +1,14 @@
+# The cheapest thinking tier that gets THIS step right - not how hard the request is overall.
+name: assess_effort
+version: 2       # 2: no medium tier (it did nothing on granite4.2), folded into high
+checkpoint: english
+max_state_tokens: 380
+questions:
+  tier:
+    type: choice
+    instructions: "What is the least reasoning effort that gets the next `step_type` step of the user's `request` right, given the `steps` so far and the `failures`?"
+    criteria:
+      "off": "No reasoning: copy or fill in something already known"
+      low: "A little reasoning: one simple inference"
+      high: "Careful reasoning: several connected steps, numbers, or conflicting information"
+      expert: "Beyond a small local model: needs a stronger planner"

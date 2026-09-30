@@ -178,12 +178,24 @@ def ensure_model_loaded(model: str) -> dict:
     }
 
 
-def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | str = True, tools: list[dict] | None = None):
+def chat(
+    model: str,
+    messages: list[dict],
+    num_ctx: int = 8192,
+    think: bool | str = True,
+    tools: list[dict] | None = None,
+    fmt: dict | None = None,
+):
     """Yields text chunks, then a dict with tool_calls (if the model made any), then a dict with its
-    thinking (if it did any), then a final usage dict.
+    thinking (if it did any), then a final usage dict. While the model reasons, each piece of its
+    thinking also comes as it arrives, as {"thinking_chunk": ...}, so a caller can watch it; closing
+    the generator early closes the request, which stops the model.
 
     `think` is True/False, or a reasoning level ("low", "medium", "high") for models that
     take one. It is ignored by models that don't support reasoning/thinking mode.
+
+    `fmt` is a JSON schema the reply must match (Ollama's `format`): the model can then only emit
+    JSON that fits it. Thinking models think first; the schema applies to the reply.
     """
     payload = {
         "model": model,
@@ -194,6 +206,8 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | st
     }
     if tools:
         payload["tools"] = tools
+    if fmt is not None:
+        payload["format"] = fmt
 
     r = requests.post(
         f"{BASE}/api/chat",
@@ -204,22 +218,26 @@ def chat(model: str, messages: list[dict], num_ctx: int = 8192, think: bool | st
     r.raise_for_status()
 
     thinking = ""
-    for line in r.iter_lines():
-        if not line:
-            continue
-        obj = json.loads(line)
-        message = obj.get("message", {})
-        if chunk := message.get("content"):
-            yield chunk
-        if thought := message.get("thinking"):
-            thinking += thought
-        if tool_calls := message.get("tool_calls"):
-            yield {"tool_calls": tool_calls}
-        if obj.get("done"):
-            if thinking:
-                yield {"thinking": thinking}
-            yield {
-                "prompt_tokens": obj.get("prompt_eval_count", 0),
-                "completion_tokens": obj.get("eval_count", 0),
-                "stop_reason": obj.get("done_reason"),
-            }
+    try:
+        for line in r.iter_lines():
+            if not line:
+                continue
+            obj = json.loads(line)
+            message = obj.get("message", {})
+            if chunk := message.get("content"):
+                yield chunk
+            if thought := message.get("thinking"):
+                thinking += thought
+                yield {"thinking_chunk": thought}
+            if tool_calls := message.get("tool_calls"):
+                yield {"tool_calls": tool_calls}
+            if obj.get("done"):
+                if thinking:
+                    yield {"thinking": thinking}
+                yield {
+                    "prompt_tokens": obj.get("prompt_eval_count", 0),
+                    "completion_tokens": obj.get("eval_count", 0),
+                    "stop_reason": obj.get("done_reason"),
+                }
+    finally:
+        r.close()  # an abandoned stream stops the model, rather than letting it run on unread

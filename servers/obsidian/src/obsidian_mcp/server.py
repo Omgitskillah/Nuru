@@ -1,6 +1,6 @@
 """MCP server exposing tools to read an Obsidian vault.
 
-Vault location is read from the VAULT_PATH env var (see .env / .env.example).
+Vault location is read from the VAULT_PATH env var (see .env.obsidian / .env.obsidian.example in the repo root).
 Run standalone via stdio with: uv run obsidian-mcp
 """
 
@@ -33,7 +33,7 @@ from obsidian_mcp import index as note_index
 from obsidian_mcp import semantic
 from obsidian_mcp import template_bodies
 
-load_dotenv()
+load_dotenv(semantic.ENV_FILE)
 
 VAULT_PATH = Path(os.environ["VAULT_PATH"]).expanduser().resolve()
 TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")
@@ -144,7 +144,7 @@ yaml.add_representer(_DoubleQuoted, _represent_double_quoted, Dumper=_Frontmatte
 
 # Every session's access is logged under here, independent of which client
 # connects (Inspector, Claude Desktop, or anything else) - see tools/logging.
-LOG_DIR = Path(os.environ.get("OBSIDIAN_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+LOG_DIR = Path(os.environ.get("OBSIDIAN_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
 mcp = MCPServer("obsidian-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
 
@@ -647,13 +647,15 @@ def _line_snippet(line: str, hit: int) -> str:
 @mcp.tool(
     description="Find the lines in notes that match a regular expression, like grep - for an exact phrase, "
     "number, id or code, where search_notes matches words. pattern: a regex (ripgrep syntax), ignoring "
-    "case; escape ( ) [ ] { } . * + ? ^ $ | \\ with a backslash to match them literally. Returns "
+    "case; escape ( ) [ ] { } . * + ? ^ $ | \\ with ONE backslash to match them literally, or set "
+    "literal=true to match pattern as plain text with nothing to escape (e.g. pattern '[[' with "
+    "literal=true). A pattern that isn't a valid regex is searched as plain text. Returns "
     "{pattern, count, matches, hint}: up to 10 matches, each {path, lines: [{line, text}]} with up to 5 "
     "matching lines per note; count is the total number of matching notes. Pass path to read_note. "
     "Excludes Templates/."
 )
 @_tool
-def find_in_notes(pattern: str) -> dict[str, Any]:
+def find_in_notes(pattern: str, literal: bool = False) -> dict[str, Any]:
     """Find the lines of the vault's notes that match a regular expression, using ripgrep.
 
     The line-level counterpart of search_notes: that ranks notes that contain
@@ -664,6 +666,8 @@ def find_in_notes(pattern: str) -> dict[str, Any]:
         pattern: A regular expression in ripgrep's syntax, matched against one
             line at a time, ignoring case, frontmatter lines included. A
             special character to be matched literally needs a backslash.
+        literal: Match `pattern` as plain text (ripgrep --fixed-strings), so
+            nothing needs escaping - small models escape badly.
 
     Returns {"pattern", "count", "matches"}. "matches" holds at most
     _SEARCH_LIMIT notes, in path order, each {"path", "lines"}; "lines" holds
@@ -677,8 +681,10 @@ def find_in_notes(pattern: str) -> dict[str, Any]:
     Only notes _all_notes() allows are reported, so Templates/, hidden folders
     and symlinks out of the vault never show up; archive/ does, as in
     search_notes. Needs the `rg` binary on PATH: without it this raises
-    FileNotFoundError saying so, and a pattern ripgrep rejects (an unclosed
-    parenthesis, say) raises ValueError with ripgrep's own explanation.
+    FileNotFoundError saying so. A pattern ripgrep rejects as a regex (an
+    unclosed bracket, say) is searched again as plain text, and the hint says
+    so with ripgrep's own explanation; only if that fails too does this raise
+    ValueError.
     """
     _check_accessible(VAULT_PATH)
     if not pattern.strip():
@@ -690,29 +696,12 @@ def find_in_notes(pattern: str) -> dict[str, Any]:
             "Use search_notes instead."
         )
 
-    # -e keeps a pattern that starts with '-' from being read as a flag. --no-ignore and
-    # --no-config: else a .gitignore in the vault would hide notes from the search, and a
-    # user's ripgreprc could change the output this parses. --max-count is one more than is
-    # shown, which tells a note with more matching lines than that from one with exactly that
-    # many. stdin is closed because rg searches it when it thinks it is being piped to - and
-    # here that is the MCP transport.
-    try:
-        done = subprocess.run(
-            [rg, "--json", "--no-config", "--no-ignore", "--ignore-case", "--glob", "*.md",
-             "--max-count", str(_FIND_LINES_PER_NOTE + 1), "-e", pattern, str(VAULT_PATH)],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            # Same deadline as the writers: a stalled vault filesystem stalls a search too.
-            timeout=_IO_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise TimeoutError(
-            f"ripgrep did not finish within {_IO_TIMEOUT_SECONDS:.0f}s. "
-            "VAULT_PATH may be on a stalled or unavailable filesystem."
-        ) from e
-    # 0: matches, 1: none, 2: an error - usually a pattern that isn't a valid regex.
+    done = _run_rg(rg, pattern, literal)
+    rejected = None  # ripgrep's reason, when the pattern wasn't a valid regex and was searched as plain text
+    if done.returncode == 2 and not literal:
+        rejected = " ".join(done.stderr.split())
+        done = _run_rg(rg, pattern, literal=True)
+    # 0: matches, 1: none, 2: an error.
     if done.returncode not in (0, 1):
         raise ValueError(
             f"ripgrep failed: {done.stderr.strip()} If the pattern is meant literally, escape "
@@ -739,21 +728,57 @@ def find_in_notes(pattern: str) -> dict[str, Any]:
         "count": len(notes),
         "matches": [{"path": rel, "lines": lines[:_FIND_LINES_PER_NOTE]} for rel, lines in shown],
     }
+    hints: list[str] = []
+    if rejected:
+        hints.append(f"'{pattern}' is not a valid regular expression ({rejected}), so it was searched for as plain text.")
     if not notes:
-        result["hint"] = (
+        hints.append(
             f"No line in any note matches '{pattern}'. find_in_notes matches a regular expression "
             "against one line at a time, ignoring case: retry with a shorter or looser pattern, or "
             "use search_notes to find notes containing words in any order."
         )
+        if "\\\\" in pattern and not literal and not rejected:
+            # e.g. \\[\\[ - a literal backslash before each bracket, where \[\[ was meant
+            hints.append("The pattern has a double backslash, which matches a backslash character: to match "
+                         "[ or ] write \\[ with one backslash, or pass literal=true and write [ as it is.")
     else:
-        hints: list[str] = []
-        if len(notes) > _SEARCH_LIMIT:
-            hints.append(f"Showing the first {_SEARCH_LIMIT} of {len(notes)} matching notes.")
+        cut = [f"Showing the first {_SEARCH_LIMIT} of {len(notes)} matching notes."] if len(notes) > _SEARCH_LIMIT else []
         if any(len(lines) > _FIND_LINES_PER_NOTE for _, lines in shown):
-            hints.append(f"A note shows only its first {_FIND_LINES_PER_NOTE} matching lines.")
-        if hints:
-            result["hint"] = " ".join([*hints, "Make the pattern more specific to narrow it down."])
+            cut.append(f"A note shows only its first {_FIND_LINES_PER_NOTE} matching lines.")
+        if cut:
+            hints += [*cut, "Make the pattern more specific to narrow it down."]
+    if hints:
+        result["hint"] = " ".join(hints)
     return result
+
+
+def _run_rg(rg: str, pattern: str, literal: bool) -> subprocess.CompletedProcess[str]:
+    """One ripgrep search of the vault's notes, as --json events; literal is --fixed-strings.
+
+    -e keeps a pattern that starts with '-' from being read as a flag. --no-ignore and
+    --no-config: else a .gitignore in the vault would hide notes from the search, and a
+    user's ripgreprc could change the output this parses. --max-count is one more than is
+    shown, which tells a note with more matching lines than that from one with exactly that
+    many. stdin is closed because rg searches it when it thinks it is being piped to - and
+    here that is the MCP transport.
+    """
+    try:
+        return subprocess.run(
+            [rg, "--json", "--no-config", "--no-ignore", "--ignore-case", "--glob", "*.md",
+             *(["--fixed-strings"] if literal else []),
+             "--max-count", str(_FIND_LINES_PER_NOTE + 1), "-e", pattern, str(VAULT_PATH)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            # Same deadline as the writers: a stalled vault filesystem stalls a search too.
+            timeout=_IO_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise TimeoutError(
+            f"ripgrep did not finish within {_IO_TIMEOUT_SECONDS:.0f}s. "
+            "VAULT_PATH may be on a stalled or unavailable filesystem."
+        ) from e
 
 
 @mcp.tool(
@@ -1190,6 +1215,48 @@ def get_links(name: str) -> dict[str, Any]:
     return result
 
 
+@mcp.tool(
+    description="Find every broken [[wikilink]] in the vault in one call: links whose target matches no note "
+    "(and no attachment file). Links resolve as in get_links - by filename, title, alias, id or path, "
+    "ignoring case. Returns {count, links, hint}: links is [{path, link, line}] - the note the link is in, "
+    "the target as written, and its line number - up to 25; count is the total."
+)
+@_tool
+def find_broken_links() -> dict[str, Any]:
+    """Every [[wikilink]] in the vault's notes that resolves to no note.
+
+    The whole-vault form of get_links' null paths: one walk, the same name
+    resolution (_NoteNames), so it agrees with get_links. A link to an
+    attachment that exists (![[diagram.png]]) isn't broken. A link counts once
+    per note, at the line it first appears on. Notes are those _all_notes()
+    allows - archive/ included, as in get_links.
+
+    Returns {"count", "links"}: "links" holds at most _LIST_LIMIT of
+    {"path", "link", "line"}, by path then line; "count" is the total. A "hint"
+    says when none are broken or when the list was cut off.
+    """
+    _check_accessible(VAULT_PATH)
+    names = _NoteNames()
+    files = {p.name.lower() for p in VAULT_PATH.rglob("*") if p.is_file() and p.suffix != ".md" and _is_visible(p)}
+
+    broken: list[dict[str, Any]] = []
+    for path in names.notes:
+        seen: set[str] = set()
+        for number, line in enumerate(path.read_text(errors="ignore").splitlines(), start=1):
+            for link in _link_targets(line):
+                if link in seen or names.resolve(link) or Path(link).name.lower() in files:
+                    continue
+                seen.add(link)
+                broken.append({"path": _rel(path), "link": link, "line": number})
+
+    result: dict[str, Any] = {"count": len(broken), "links": broken[:_LIST_LIMIT]}
+    if not broken:
+        result["hint"] = "Every [[wikilink]] in the vault resolves to a note or an attachment."
+    elif len(broken) > _LIST_LIMIT:
+        result["hint"] = f"Showing {_LIST_LIMIT} of {len(broken)} broken links."
+    return result
+
+
 # An open task: a Markdown checkbox not yet ticked ("- [ ]", "* [ ]", "1. [ ]"), or a TODO
 # marker anywhere in the line ("TODO:", "TODO(clarence):"). A ticked "[x]" is done and doesn't count.
 _OPEN_CHECKBOX = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[ \]")
@@ -1288,13 +1355,38 @@ def _reject_hidden(target: Path, rel_path: str) -> None:
         raise PermissionError(f"'{rel_path}' is inside a hidden/config folder (e.g. .obsidian) and is protected.")
 
 
-# The user/ folder (directives, daily, correction) is meant to be read-only
+# The user/ folder (directives, daily) is meant to be read-only
 # to everything except the tools that already gate what goes there by type:
 # create_note and append_note. This enforces that for the two structural/
 # destructive tools; it is a narrow slice of a real permission model, not one
 # - there's no notion here of who's calling, so it can't distinguish a
 # human-directed action from an autonomous one.
 _PROTECTED_FOLDER = "user"
+
+
+# Notes the user wrote - `author: user` in their frontmatter - outside user/ are the user's alone
+# when this server runs for Nuru, which turns this on (OBSIDIAN_PROTECT_USER_AUTHORED=1) for its own
+# server process: append_note, rename/move, archive and delete refuse them, and a change becomes a
+# new note instead (a correction can point at the original). Other clients - Claude Desktop, the
+# Inspector - leave it off: there a person is choosing what to change. Inside user/ the folder
+# rules above apply as before (add_to_daily still appends to today's daily).
+_PROTECT_USER_AUTHORED = os.environ.get("OBSIDIAN_PROTECT_USER_AUTHORED") == "1"
+
+
+def _reject_user_authored(target: Path, rel_path: str) -> None:
+    if not _PROTECT_USER_AUTHORED or not target.is_relative_to(VAULT_PATH):
+        return
+    rel = target.relative_to(VAULT_PATH)
+    if rel.parts[:1] == (_PROTECTED_FOLDER,):
+        return
+    notes = [target] if target.is_file() else sorted(target.rglob("*.md")) if target.is_dir() else []
+    for note in notes:
+        if note.suffix == ".md" and _read_frontmatter(note.read_text(errors="ignore")).get("author") == "user":
+            shown = rel_path if note == target else str(note.relative_to(VAULT_PATH))
+            raise PermissionError(
+                f"'{shown}' was written by the user (author: user), so Nuru may not change it. "
+                "Write a new note instead - a correction can point at it."
+            )
 
 
 def _reject_protected_folder(target: Path, rel_path: str) -> None:
@@ -1385,10 +1477,11 @@ def _find_daily(day: str) -> Path | None:
     description=(
         "Create a new note in the vault. type: one of directives, daily, correction, profile, "
         "preferences, person, topic, index, transcript, project, session. title: human-readable "
-        "title (becomes the filename). author: one of user, nuru, both (directives/daily/correction "
+        "title (becomes the filename). author: one of user, nuru, both (directives/daily "
         "require author=user). body: Markdown content. tags: extra tags, no whitespace. supersedes: "
         "id of a note this replaces, must already exist. date: for type=daily, YYYY-MM-DD, defaults "
-        "to today. targets: required for type=correction, list of existing note ids. session: for "
+        "to today. targets: required for type=correction, list of existing note ids - the notes it "
+        "corrects, linked from its first line. session: for "
         "type=transcript or type=session, YYYY-MM-DD-NN, defaults to today's next unused number. To "
         "add to today's daily use add_to_daily; to add to any other note use append_note (not this "
         "again). Returns {id, path}."
@@ -1418,7 +1511,7 @@ def create_note(
         title: Human-readable title. Slugified to become the filename, and
             used verbatim as the first alias.
         author: One of: user, nuru, both. Types under user/ (directives,
-            daily, correction) require author="user".
+            daily) require author="user".
         body: Markdown content, placed under the title heading.
         tags: Extra tags, beyond the type itself (which is always a tag).
             No tag may contain whitespace.
@@ -1507,6 +1600,10 @@ def create_note(
         tags=[type, *(tags or [])],
         aliases=[title, note_id],
     )
+    if type == "correction":
+        # A correction links the notes it corrects, so each one's backlinks lead here. By id: the
+        # id is in every note's aliases, and it survives the note being renamed or archived.
+        body = f"Corrects: {', '.join(f'[[{t}]]' for t in targets)}\n\n{body}"
     file_content = f"---\n{frontmatter}---\n\n# {title}\n\n{body}"
 
     def _create() -> None:
@@ -1614,6 +1711,7 @@ def append_note(id: str, content: str) -> str:
     target = _resolve_target(rel_path)
     if not target.is_file():
         raise FileNotFoundError(f"Note '{id}' is indexed at '{rel_path}', but that file no longer exists.")
+    _reject_user_authored(target, rel_path)
 
     _append_text(target, content)
     return rel_path
@@ -1773,6 +1871,7 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     _reject_hidden(destination, destination_path)
     _reject_protected_folder(source, source_path)
     _reject_protected_folder(destination, destination_path)
+    _reject_user_authored(source, source_path)
 
     if not source.is_file():
         raise FileNotFoundError(f"No file found at '{source_path}'.")
@@ -1808,7 +1907,7 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     "which takes it out of browse_notes and the tag lists. Reversible - nothing is deleted - so prefer this "
     "to deleting. name: a path, filename, title or id, as for read_note; a name that matches several notes "
     "is refused, so pass the path. Returns {from, to}; move it back with rename_or_move_file(to, from). "
-    "Notes under user/ (directives, daily, correction) can't be archived."
+    "Notes under user/ (directives, daily) can't be archived."
 )
 @_tool
 def archive_note(name: str) -> dict[str, str]:
@@ -1873,6 +1972,7 @@ def delete_file_or_directory(path: str) -> list[str]:
         raise ValueError("Refusing to delete the vault root.")
     _reject_hidden(target, path)
     _reject_protected_folder(target, path)
+    _reject_user_authored(target, path)
 
     def _delete() -> list[str]:
         if target.is_dir():

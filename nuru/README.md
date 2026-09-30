@@ -10,21 +10,21 @@ Requires [Ollama](https://ollama.com) installed (`ollama` on your `PATH`) and at
 ollama pull qwen3:8b
 ```
 
-Copy `.env.example` to `.env` and adjust if you want a different default model:
+Nuru's settings live in `.env.nuru` in the repo root (see [Settings](../README.md#settings)). From the root, copy the template and adjust if you want a different default model:
 
 ```bash
-cp .env.example .env
+cp .env.nuru.example .env.nuru
 ```
 
 ```
 NURU_BASE_MODEL=qwen3:8b
 MODEL=nuru
-THINK=true
+THINK=low
 ```
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
 - `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
-- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. Any value other than `false` counts as enabled.
+- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. `low` (the default) or `high` picks a reasoning level for models that have them (Granite, since 2026-09-29: the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high); `false` turns it off, and any other value counts as enabled.
 
 ## The custom model and its system prompt
 
@@ -59,10 +59,37 @@ uv run nuru-ui    # in a window
 
 1. **Server check** - if Ollama's server isn't already running on `localhost:11434`, it's started in the background (`ollama serve`).
 2. **Model check** - if the configured model isn't already loaded into memory, it's loaded, and its params (size, quantization, family, thinking support) are printed.
-3. **History loaded** - prior turns from the current conversation are read back from a local SQLite database (`db/conversation.db` by default, via `core.conversation_store.ConversationStore`) and sent along with the new message, oldest first, keeping as many of the most recent turns as fit under a token budget (80% of the model's context window - the rest is reserved for the response). The new message goes to the model behind a line giving the current local date and time (`[Current date and time: Monday 2026-09-21 17:52 CEST]`); the saved copy stays as you typed it. A message that would already exceed that budget on its own is rejected with an error instead of being sent. The `[user: NN%]` prompt shows how much of the context window the last turn used.
-4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
+3. **History loaded** - prior turns from the current conversation are read back from a local SQLite database (the hidden `.db/conversation.db` by default, via `core.conversation_store.ConversationStore`) and sent along with the new message, oldest first, keeping as many of the most recent turns as fit under a token budget (80% of the model's context window - the rest is reserved for the response). The new message goes to the model behind a line giving the current local date and time (`[Current date and time: Monday 2026-09-21 17:52 CEST]`); the saved copy stays as you typed it. A message that would already exceed that budget on its own is rejected with an error instead of being sent. The `[user: NN%]` prompt shows how much of the context window the last turn used.
+4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. The model is only offered the tools on an allowlist (`MODEL_TOOLS` in [`session.py`](src/core/session.py)): the vault, calc, `ask_an_expert` and `classify_notes` - never `delete_file_or_directory`, and never the decision layer's own tools. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
 
 History is scoped to one conversation per run of `nuru` - each launch starts a new conversation row in the database, but earlier conversations are kept, not deleted.
+
+5. **Decision layer** - at every decision point the harness also asks [Laya](../servers/laya) what it would do - what kind of request this is, whether to go on after a tool result, how much thinking the next step needs, whether a write should go ahead, whether the reply matches what actually ran - and logs that next to what Nuru actually did, in `.db/decisions.sqlite3`. Every tool Nuru runs is logged there too, from what actually ran (note text in a write is kept as its length and hash, not the text).
+
+   Each decision point is `off` (not asked), `shadow` (logged, changes nothing - if the Laya server is down or still loading, the turn runs exactly the same) or `enforce`, set per point in [`config/decision_layer.yaml`](../config/decision_layer.yaml). A point that asks Laya can't be enforced until its thresholds are calibrated on held-out labelled data; a point decided by code alone can. **Enforced today** (since 2026-09-30):
+   - **watch_thinking** - the thinking watch's code checks ([`thinking_watch.py`](src/core/thinking_watch.py)): a call past its thinking budget (low 1,200 tokens) or repeating a sentence 3 times is stopped, and the model asked to act with thinking off for that one call; the same tool called with the same arguments (ignoring case) 3 times in a turn stops the turn.
+   - **step_cap** - a turn stops after 10 rounds of tool calls (after one expert attempt if the budget allows), with the log of what ran.
+   - **write_checks** - a write naming a note ID no search returned, a blocked tool or a protected path doesn't run; the model is told why.
+
+   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at `THINK` (low). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
+   - **tool_gate** - a read or write request starts with the harness running the search itself (the request as its query); `answer` / `ask_user` get no tools.
+   - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
+   - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
+   - **check_claim** - the reply is held until checked against what ran; a false claim is written again once, then shown with a warning.
+
+   Always on, in code: `ask_an_expert` answers at most twice a turn. The second answer tells the model it was the last, and to ask you what's unclear if the answers don't settle it; the tool is then no longer offered, and a call made anyway ends the turn with that question to you, and its `file_paths` are resolved to real vault paths first, so a note named by its title attaches.
+
+## Reviewing the decision layer
+
+```bash
+uv run nuru label                  # label logged decisions, disagreements with what Nuru did first
+uv run nuru label --point gate_write --limit 10
+uv run nuru export labels.jsonl    # the labelled decisions, for calibrating and fine-tuning later
+```
+
+In the CLI, an enforced gate_write that wants your OK asks before the write runs.
+
+`label` shows each decision - what Laya proposed, what Nuru did, the state Laya saw - and asks for the right answer to each of its questions (a number or a name; Enter skips one, `q` stops). Labels are recorded as coming from `user`, or `--source claude`; never from the local model.
 
 ## Commands
 
@@ -101,6 +128,12 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 - **`session.load_model()`** / **`loaded_model_info()`** - Load the model if needed; its static info, or `None` if it isn't in memory.
 - **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
+
+`core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
+
+`core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
+
+`core.label_cli` - the `nuru label` / `nuru export` commands above.
 
 `core.reply_markdown` - Qt-free helpers for the UI: `Reply` folds a turn's events into one markdown document, and `split_fences` separates fenced code from the prose around it.
 

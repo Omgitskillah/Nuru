@@ -55,7 +55,7 @@ Currently registered providers:
 
 | Provider | `DEEP_THINK_PROVIDER` value | Notes |
 |---|---|---|
-| Claude | `claude` (default) | **Live** - calls the real Anthropic API via the `anthropic` SDK. Auth comes from `CLAUDE_API_KEY` in `.env` (see `.env.example`); falls back to the SDK's own credential resolution (`ANTHROPIC_API_KEY`, an `ant auth login` profile, etc.) if unset. |
+| Claude | `claude` (default) | **Live** - calls the real Anthropic API via the `anthropic` SDK. Auth comes from `CLAUDE_API_KEY` in the repo root's `.env.deep-think` (see `.env.deep-think.example`); falls back to the SDK's own credential resolution (`ANTHROPIC_API_KEY`, an `ant auth login` profile, etc.) if unset. |
 
 Unit tests never hit the network: `ClaudeProvider` accepts an injected
 `client`, and `tests/test_claude_provider.py` passes in a mocked
@@ -67,11 +67,11 @@ in `providers/__init__.py`'s `_REGISTRY`.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set:
+deep-think's settings live in `.env.deep-think` in the repo root (see [Settings](../../README.md#settings)). From the root, `cp .env.deep-think.example .env.deep-think` and set:
 
 - `DEEP_THINK_PROVIDER` - which provider to dispatch to (`claude` is the default).
 - `CLAUDE_API_KEY` - a real `sk-ant-...` key, required for the `claude` provider to reach the live API.
-- `DEEP_THINK_MCP_DB_PATH` - path to the SQLite file-cache database used by `ask_an_expert` (defaults to `file_cache.db` next to this package).
+- `DEEP_THINK_MCP_DB_PATH` - path to the SQLite file-cache database used by `ask_an_expert` (defaults to the hidden `.file_cache.db` next to this package).
 
 ## Running
 

@@ -1,0 +1,15 @@
+# Asked after every tool result: go on, or stop? Which tool to use next stays the model's choice
+# (it chose well; Laya picking among 26 tools proposed re-running the tool that had just succeeded
+# 37 times in 95 - eval 5). Each step carries a one-line summary of what it returned.
+name: tool_gate_next
+version: 2       # 2: continue / answer / ask_user over step summaries, not a choice among tools
+checkpoint: english
+max_state_tokens: 420
+questions:
+  next:
+    type: choice
+    instructions: "Given the user's `request` and what each of the `steps` returned, what should happen next?"
+    criteria:
+      continue: "Use another tool: what the steps returned does not yet answer the request"
+      answer: "Write the reply now: the steps returned enough, or the requested change is done"
+      ask_user: "Ask the user: the steps show the request can't be done as asked"

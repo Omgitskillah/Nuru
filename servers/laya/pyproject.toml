@@ -1,0 +1,35 @@
+[project]
+name = "laya-mcp"
+version = "0.1.0"
+description = "Nuru's decision layer: Laya answers typed questions for the harness, over stdio MCP"
+readme = "README.md"
+authors = [
+    { name = "Omgitskillah", email = "clarence.alucho@gmail.com" }
+]
+requires-python = ">=3.14.7"
+dependencies = [
+    "mcp>=2.2.0",
+    "python-dotenv>=1.2.3",
+    "access-logging",
+    "obsidian-mcp",
+    "laya==0.3.21",
+    "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+laya-mcp = "laya_mcp:main"
+laya-mcp-fetch = "laya_mcp.predictor:fetch"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+access-logging = { workspace = true }
+obsidian-mcp = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

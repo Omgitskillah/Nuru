@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["servers/obsidian", "servers/deep-think", "servers/calc", "tools/logging", "nuru"]
+members = ["servers/obsidian", "servers/deep-think", "servers/calc", "servers/laya", "tools/logging", "nuru"]
 
 [tool.pytest.ini_options]
 testpaths = ["servers", "nuru", "tools"]
@@ -10,13 +10,16 @@ dev = [
     "obsidian-mcp",
     "deep-think-mcp",
     "calc-mcp",
+    "laya-mcp",
     "access-logging",
     "core",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.uv.sources]
 obsidian-mcp = { workspace = true }
 deep-think-mcp = { workspace = true }
 calc-mcp = { workspace = true }
+laya-mcp = { workspace = true }
 access-logging = { workspace = true }
 core = { workspace = true }

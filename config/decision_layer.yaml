@@ -1,0 +1,111 @@
+# Nuru's decision layer: Laya answers typed questions, this file and the code decide what to do
+# with the answers. Every threshold lives here; none live in code or in Laya.
+#
+# A threshold is only trusted once it has been calibrated on held-out labelled data. Until then
+# its `calibration` is blank, and a decision point that uses it refuses to run in `enforce` mode
+# (the config fails to load). `shadow` only logs what Laya would have done.
+
+# SQLite decision log and labels. Relative paths are relative to the repo root. Kept next to
+# Nuru's conversation history in the hidden, gitignored nuru/.db/; it never leaves this machine.
+database: nuru/.db/decisions.sqlite3
+
+laya:
+  device: auto              # auto | mps | cpu
+  checkpoints: [english, multilingual]   # preloaded at startup, kept loaded for the process life
+  revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851   # pinned Hugging Face commit
+  offline: true             # never reach the Hub at runtime; `uv run laya-mcp-fetch` downloads
+
+# shadow | enforce, per decision point. Everything starts in shadow; switching is a human decision.
+# off: not asked at all; shadow: Laya is asked and logged, nothing changes; enforce: acted on.
+# A point that asks Laya can only be enforced once its thresholds are calibrated. step_cap,
+# write_checks and watch_thinking are decided by code alone, so they can be enforced now
+# (enforced 2026-09-30, at the user's request).
+decision_points:
+  tool_gate: shadow        # Laya: read / write / answer, and what to do next
+  step_cap: enforce        # code: a turn stops after tool_gate.step_cap rounds of tool calls
+  assess_effort: "off"     # Laya's thinking tier - off since 2026-09-30: THINK=low for every call
+                           # (the fixed default matched its savings; the code stays, for later)
+  gate_write: shadow       # Laya: does this write match the request (proceed / ask / block)
+  write_checks: enforce    # code: no invented note IDs, blocked tools or protected paths in a write
+  check_claim: shadow      # Laya: what the reply claims, checked against the log - after calibration
+  rerank: shadow           # Laya: reorder semantic_search results
+  watch_thinking: enforce  # code: thinking budget, repeated sentences, repeated tool calls
+  watch_laya: shadow       # Laya: the watch's own reading of the thinking
+
+# Watching the model's reasoning as it streams (core.thinking_watch). Code checks every
+# `check_every_tokens`: past the tier's budget, or a sentence of `repeat_min_chars`+ seen
+# `repeat_count` times, is a signal; otherwise Laya is asked (watch_thinking). Enforced, a signal
+# stops the call and asks again with thinking off - for that one call; the next may think again.
+# The same tool called with the same arguments `repeat_calls` times in a turn is a loop too:
+# enforced, the turn stops before that call runs. Budgets are thinking tokens per model call,
+# per tier; high's is above what passing turns used (argument steps averaged ~1,650 tokens) and
+# below the runaways (5,990-8,192 in the 2026-09-28 shadow run).
+watch_thinking:
+  check_every_tokens: 400
+  budgets: {low: 1200, high: 4000}
+  repeat_min_chars: 40
+  repeat_count: 3
+  tail_chars: 1200
+  repeat_calls: 3
+
+tool_gate:
+  step_cap: 10   # rounds of tool calls; 6 cut off passing test 32 runs (7-8 rounds at low,
+                 # 2026-09-29/30); past 10 were only loops (10-24 rounds)
+  default_first_read: semantic_search   # the first tool for a read or write request: search first
+
+tiers:
+  order: ["off", low, high, expert]
+  default: low              # matches THINK=low, Nuru's default since 2026-09-29
+  # Ollama `think` value per tier, per model. There is no medium tier: measured 2026-09-28 on
+  # Ollama 0.34.0 (nuru/evals/decision_layer, eval 1), granite4.2 given think="medium" sends the
+  # same prompt as "high" but answers differently - slower (107 s vs 65 s per argument step), one
+  # runaway to the token limit, and no more correct. So medium was folded into high.
+  models:
+    granite4.2:3b: {"off": false, low: low, high: high}
+
+expert:
+  model: claude-opus-5
+  daily_cap: 10             # calls per local day; the API key comes only from ANTHROPIC_API_KEY
+
+rerank:
+  top_k: 5
+
+# min_p per question set -> question -> option (`true` for a noul question; `any` for whichever
+# option Laya picked). `calibration` records when, and on how many labels (and how many of them
+# held out), the value was fitted; blank means uncalibrated. rerank only sorts, so it has none.
+thresholds:
+  tool_gate_start:
+    mode:
+      answer: {min_p: 0.95, calibration: {date: null, labels: 0, held_out: 0}}
+      write: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+      ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
+  tool_gate_next:
+    next:
+      answer: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+      ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
+      continue: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
+  assess_effort:
+    tier:
+      "off": {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
+      low: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+      high: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
+      expert: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+  gate_write:
+    matches_request:
+      "true": {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
+    verdict:
+      proceed: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+  check_claim:
+    claim:
+      made_change: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
+  watch_thinking:
+    state:
+      repeating: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
+      ready: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
+      stuck: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
+  classify_note_type:
+    note_type:
+      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
+  classify_subject:
+    subject:
+      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}

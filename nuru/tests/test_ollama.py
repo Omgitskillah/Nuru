@@ -28,6 +28,9 @@ class FakeResponse:
     def iter_lines(self):
         return iter(self._lines)
 
+    def close(self):
+        self.closed = True
+
 
 # --- is_server_running / ensure_server_running ---
 
@@ -396,10 +399,24 @@ def test_chat_yields_the_thinking_before_the_usage_dict(monkeypatch):
     results = list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
 
     assert results == [
+        {"thinking_chunk": "Let me "},
+        {"thinking_chunk": "check."},
         "Hi",
         {"thinking": "Let me check."},
         {"prompt_tokens": 5, "completion_tokens": 2, "stop_reason": "stop"},
     ]
+
+
+def test_chat_closes_the_request_when_the_caller_stops_reading(monkeypatch):
+    lines = _sse_lines(*[{"message": {"thinking": "again "}, "done": False}] * 50)
+    response = FakeResponse(lines=lines)
+    monkeypatch.setattr(requests, "post", lambda *a, **k: response)
+
+    stream = ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}])
+    next(stream)
+    stream.close()
+
+    assert response.closed is True
 
 
 def test_chat_skips_blank_lines(monkeypatch):
@@ -454,6 +471,23 @@ def test_chat_omits_tools_key_when_not_given(monkeypatch):
     list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
 
     assert "tools" not in seen["json"]
+
+
+def test_chat_sends_a_format_schema_only_when_given(monkeypatch):
+    seen = []
+
+    def fake_post(url, json, stream, timeout):
+        seen.append(json)
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    schema = {"type": "object", "properties": {"text": {"type": "string"}}}
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}], fmt=schema))
+    list(ollama.chat("qwen3:8b", [{"role": "user", "content": "hi"}]))
+
+    assert seen[0]["format"] == schema
+    assert "format" not in seen[1]
 
 
 def test_chat_yields_tool_calls(monkeypatch):

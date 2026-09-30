@@ -1,0 +1,16 @@
+# Asked once, before the model runs on a request: what kind of request is it? Which tool comes
+# first is not asked - as a 26-way choice it sat in the English checkpoint's uncalibrated 11+
+# bucket and matched the model 2 times in 34 (eval 5, 2026-09-28). Code picks it: search first.
+name: tool_gate_start
+version: 2       # 2: mode only; the first tool is code's default (tool_gate.default_first_read)
+checkpoint: english
+max_state_tokens: 400
+questions:
+  mode:
+    type: choice
+    instructions: "What must the assistant do first to handle the user's `request` correctly?"
+    criteria:
+      answer: "Reply directly; nothing in the user's notes is needed"
+      read: "Look something up in the user's notes first"
+      write: "Add to or change the user's notes"
+      ask_user: "The request is too unclear to act on; ask the user"

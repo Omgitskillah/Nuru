@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 
 from core.conversation_store import ConversationStore
-from core.session import Event, RetryWithoutThinking, Session, Text, Thinking, ToolCall
+from core.session import Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -36,6 +36,8 @@ def print_turn(events: Iterator[Event]) -> None:
             print(f"[tool] {event.name}({event.arguments})")
         elif isinstance(event, Thinking):
             print(f"[thinking] {event.text}")
+        elif isinstance(event, Steered):
+            print(f"[steer] Reasoning stopped ({event.reason}) - asking again with thinking off.")
         elif isinstance(event, RetryWithoutThinking):
             print("[retry] No reply was written - asking again with thinking off.")
         else:
@@ -57,8 +59,18 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
     return min(100, round(latest_prompt_tokens / context_window * 100))
 
 
+def confirm_write(tool: str, arguments: dict) -> bool:
+    """Asked when an enforced gate_write wants your OK before a write runs; anything but yes is no."""
+    try:
+        reply = input(f"[confirm] Run {tool}({json.dumps(arguments, ensure_ascii=False)})? [y/N] ")
+    except EOFError:
+        return False
+    return reply.strip().lower() in ("y", "yes")
+
+
 def main() -> None:
     session = Session.start()
+    session.confirm_write = confirm_write
     try:
         while True:
             usage_pct = _context_usage_percent(session.store, session.conversation_id, session.context_window)

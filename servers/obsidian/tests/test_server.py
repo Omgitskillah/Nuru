@@ -2566,6 +2566,54 @@ def test_get_links_marks_a_link_to_no_note_with_a_null_path_and_says_why(tmp_pat
     assert "null" in result["hint"]
 
 
+def test_find_broken_links_lists_every_unresolved_link_with_its_note_and_line(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "intro\nSee [[Real]] and [[Ghost]].\n[[Ghost|again]] and [[Other Ghost#h]]\n",
+        "sub/b.md": "[[real]] [[Missing Note]]",
+        "Real.md": "r",
+    })
+
+    result = server.find_broken_links()
+
+    assert result == {"count": 3, "links": [
+        {"path": "hub.md", "link": "Ghost", "line": 2},
+        {"path": "hub.md", "link": "Other Ghost", "line": 3},
+        {"path": "sub/b.md", "link": "Missing Note", "line": 1},
+    ]}
+
+
+def test_find_broken_links_agrees_with_get_links_resolution(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "[[nuru mcp]] [[Fancy Name]] [[wrong-folder/plan]] [[Nope]]",
+        "projects/Nuru MCP.md": "a",
+        "aliased.md": "---\naliases:\n  - Fancy Name\n---\n",
+        "shared/plan.md": "p",
+    })
+
+    null_in_get_links = [o["link"] for o in server.get_links("hub")["outgoing"] if o["path"] is None]
+
+    assert [b["link"] for b in server.find_broken_links()["links"]] == null_in_get_links == ["Nope"]
+
+
+def test_find_broken_links_skips_attachments_that_exist_and_notes_outside_the_working_rules(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "![[diagram.png]] ![[gone.png]]",
+        "assets/diagram.png": "png",
+        "Templates/t.md": "[[{{placeholder}}]]",
+    })
+
+    assert [b["link"] for b in server.find_broken_links()["links"]] == ["gone.png"]
+
+
+def test_find_broken_links_says_when_none_are_broken_and_when_the_list_is_cut(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "[[Real]]", "Real.md": "r"})
+    assert server.find_broken_links()["count"] == 0 and "resolves" in server.find_broken_links()["hint"]
+
+    (tmp_path / "many.md").write_text("\n".join(f"[[Ghost {i}]]" for i in range(30)))
+    result = server.find_broken_links()
+    assert result["count"] == 30 and len(result["links"]) == 25 and "25 of 30" in result["hint"]
+
+
 def test_get_links_omits_the_null_hint_when_every_link_resolves(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"hub.md": "[[Real]]", "Real.md": "r"})
 
@@ -3168,6 +3216,45 @@ def test_find_in_notes_relays_ripgreps_message_for_a_bad_pattern(tmp_path, monke
     assert "escape" in str(exc_info.value)
 
 
+def test_find_in_notes_literal_searches_plain_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = _fake_rg(monkeypatch, returncode=1)
+
+    server.find_in_notes("[[", literal=True)
+    server.find_in_notes("todo")
+
+    assert "--fixed-strings" in calls[0][0] and "--fixed-strings" not in calls[1][0]
+
+
+def test_find_in_notes_searches_an_invalid_regex_as_plain_text_and_says_why(tmp_path, monkeypatch):
+    (tmp_path / "Hub.md").write_text("See [[Alpha]]\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    calls = []
+    match = json.dumps(_rg_match(tmp_path / "Hub.md", 1, "See [[Alpha]]", "[[")) + "\n"
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if "--fixed-strings" in command:
+            return subprocess.CompletedProcess(command, 0, match, "")
+        return subprocess.CompletedProcess(command, 2, "", "rg: regex parse error:\n error: unclosed character class\n")
+
+    monkeypatch.setattr(server.shutil, "which", lambda name: "/fake/rg")
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    result = server.find_in_notes("[[")
+
+    assert len(calls) == 2 and _search_paths(result) == ["Hub.md"]
+    assert "not a valid regular expression" in result["hint"] and "unclosed character class" in result["hint"]
+
+
+def test_find_in_notes_says_a_double_backslash_matches_a_backslash(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _fake_rg(monkeypatch, returncode=1)
+
+    assert "double backslash" in server.find_in_notes(r"\\[\\[.*\\]\\]")["hint"]
+    assert "double backslash" not in server.find_in_notes(r"\[\[.*\]\]")["hint"]
+
+
 def test_find_in_notes_says_how_to_recover_when_ripgrep_is_not_installed(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     monkeypatch.setattr(server.shutil, "which", lambda name: None)
@@ -3216,6 +3303,16 @@ def test_find_in_notes_with_real_ripgrep_returns_paths_and_lines(tmp_path, monke
 
 
 @requires_rg
+def test_find_in_notes_with_real_ripgrep_finds_brackets_literally_or_after_a_bad_regex(tmp_path, monkeypatch):
+    (tmp_path / "Hub.md").write_text("See [[Alpha]]\nno links here\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    assert _search_paths(server.find_in_notes("[[", literal=True)) == ["Hub.md"]
+    fallback = server.find_in_notes("[[")
+    assert _search_paths(fallback) == ["Hub.md"] and "plain text" in fallback["hint"]
+
+
+@requires_rg
 def test_find_in_notes_with_real_ripgrep_still_searches_what_an_ignore_file_lists(tmp_path, monkeypatch):
     (tmp_path / ".ignore").write_text("drafts/\n")
     (tmp_path / "drafts").mkdir()
@@ -3234,13 +3331,12 @@ def test_find_in_notes_with_real_ripgrep_finds_a_pattern_that_starts_with_a_dash
 
 
 @requires_rg
-def test_find_in_notes_with_real_ripgrep_rejects_an_invalid_regex_and_finds_it_once_escaped(tmp_path, monkeypatch):
+def test_find_in_notes_with_real_ripgrep_finds_an_invalid_regex_as_text_or_once_escaped(tmp_path, monkeypatch):
     (tmp_path / "A.md").write_text("call f(x) here\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(ToolError, match="ValueError"):
-        server.find_in_notes("f(x")
-
+    unescaped = server.find_in_notes("f(x")
+    assert _search_paths(unescaped) == ["A.md"] and "not a valid regular expression" in unescaped["hint"]
     assert _search_paths(server.find_in_notes(r"f\(x")) == ["A.md"]
 
 
@@ -3320,3 +3416,72 @@ def test_note_todos_caps_a_long_list(tmp_path, monkeypatch):
 
     assert result["count"] == 30 and len(result["todos"]) == 25
     assert "first 25 of 30" in result["hint"]
+
+
+
+# --- corrections are Nuru's too (template 0.2.0) ---
+
+
+def test_a_correction_lives_in_nuru_and_links_what_it_corrects(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    first = server.create_note(type="project", title="Area Monitor", author="both")
+    second = server.create_note(type="topic", title="Vendor email", author="user")
+
+    result = server.create_note(type="correction", title="SARA lead time", author="nuru",
+                                targets=[first["id"], second["id"]], body="Lead time is 20 weeks, not 26.")
+
+    assert result["path"] == "nuru/sara-lead-time.md"
+    text = (tmp_path / result["path"]).read_text()
+    assert f"Corrects: [[{first['id']}]], [[{second['id']}]]\n\nLead time is 20 weeks, not 26." in text
+    assert "version: 0.2.0\n" in text and "author: nuru\n" in text
+    backlinks = server.get_links(first["id"])["backlinks"]
+    assert result["path"] in backlinks
+
+
+# --- notes the user wrote, outside user/, when the server runs for Nuru ---
+
+
+@pytest.fixture
+def protected(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", True)
+    return tmp_path
+
+
+def test_a_user_authored_note_outside_user_cannot_be_appended_to(protected):
+    note = server.create_note(type="topic", title="Vendor email", author="user", body="original")
+    with pytest.raises(ToolError, match="written by the user"):
+        server.append_note(note["id"], "more")
+    assert (protected / note["path"]).read_text().endswith("original")
+
+
+@pytest.mark.parametrize("change", [
+    lambda path: server.archive_note(path),
+    lambda path: server.rename_or_move_file(path, "nuru/elsewhere.md"),
+    lambda path: server.delete_file_or_directory(path),
+    lambda path: server.delete_file_or_directory("nuru"),  # a folder holding one
+])
+def test_a_user_authored_note_outside_user_cannot_be_moved_archived_or_deleted(protected, change):
+    note = server.create_note(type="topic", title="Vendor email", author="user")
+    with pytest.raises(ToolError, match="written by the user"):
+        change(note["path"])
+    assert (protected / note["path"]).is_file()
+
+
+def test_nuru_and_shared_notes_stay_writable(protected):
+    mine = server.create_note(type="topic", title="Mine", author="nuru")
+    ours = server.create_note(type="project", title="Ours", author="both")
+    server.append_note(mine["id"], "more")
+    server.append_note(ours["id"], "more")
+    assert server.archive_note(mine["path"])["to"] == "archive/nuru/mine.md"
+
+
+def test_todays_daily_still_takes_additions(protected):
+    assert server.add_to_daily("gym at six")["path"].startswith("user/")
+
+
+def test_without_the_flag_other_clients_can_still_change_user_authored_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", False)
+    note = server.create_note(type="topic", title="Vendor email", author="user")
+    server.append_note(note["id"], "more")

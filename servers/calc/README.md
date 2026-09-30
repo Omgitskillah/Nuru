@@ -15,7 +15,7 @@ decimal places, which removes binary float noise (`0.1 + 0.2` returns `0.3`) wit
 precision a note would use. Each tool's description is a single line: every tool schema is sent
 with every request to the model, and the local model's context window is small.
 
-Access is logged under `logs/` like the other servers (see the [servers README](../README.md));
+Access is logged under `.logs/` like the other servers (see the [servers README](../README.md));
 `CALC_MCP_LOG_DIR` overrides the location.
 
 ```bash

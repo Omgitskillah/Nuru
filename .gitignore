@@ -4,9 +4,25 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# Env / secrets
+# Env / secrets: one file per subsystem in the root (.env.nuru, .env.obsidian, ...); only the
+# .example templates are tracked
 .env
+.env.*
+!.env.*.example
 
 # OS
 .DS_Store
 .vscode/
+
+# Generated at runtime (see "Generated files" in README.md). Each package also ignores its own;
+# these are the safety net. New ones are hidden (dot-prefixed); the bare names are where they
+# were written before 2026-09-28, which a still-running old process may keep writing to.
+.logs/
+.db/
+.file_cache.db
+.runs/
+decisions.sqlite3*
+logs/
+db/
+file_cache.db
+.coverage

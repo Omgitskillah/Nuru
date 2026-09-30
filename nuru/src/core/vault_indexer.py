@@ -5,7 +5,7 @@ changed since it last looked (all of them, the first time) - the obsidian server
 semantic_search tool only reads that index. It runs here, in Nuru's own process, so the
 window can show when it's busy by reading `pending` instead of asking the server.
 
-Settings come from the obsidian server's own .env (VAULT_PATH, OBSIDIAN_EMBED_MODEL, ...),
+Settings come from the obsidian server's .env.obsidian in the repo root (VAULT_PATH, OBSIDIAN_EMBED_MODEL, ...),
 so Nuru and the server always agree on which index and which model; a variable already
 set in Nuru's environment wins, as it would for the server.
 """
@@ -20,7 +20,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 from obsidian_mcp import semantic
 
-OBSIDIAN_ENV = Path(__file__).resolve().parents[3] / "servers" / "obsidian" / ".env"
+OBSIDIAN_ENV = Path(__file__).resolve().parents[3] / ".env.obsidian"
 INTERVAL_SECONDS = 30.0
 STOP_WAIT_SECONDS = 5.0
 # A full first build names every note; the terminal line lists this many and counts the rest.

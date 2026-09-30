@@ -501,7 +501,7 @@ def test_semantic_search_is_registered_with_only_query_required(indexed_vault):
 
 
 def test_the_index_command_builds_the_index_and_rebuilds_it_for_a_new_model(vault, embed, monkeypatch, capsys):
-    monkeypatch.setattr(semantic, "load_dotenv", lambda: None)
+    monkeypatch.setattr(semantic, "load_dotenv", lambda path=None: None)
     monkeypatch.setattr(semantic, "ollama_embedder", lambda config: embed)
     monkeypatch.setenv("VAULT_PATH", str(vault))
 

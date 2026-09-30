@@ -17,7 +17,7 @@ from access_logging import AccessLogMiddleware
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-LOG_DIR = Path(os.environ.get("CALC_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / "logs"))
+LOG_DIR = Path(os.environ.get("CALC_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
 mcp = MCPServer("calc-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
 

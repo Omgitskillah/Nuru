@@ -47,6 +47,12 @@ class ConversationStore:
         self._conn.execute("PRAGMA foreign_keys = ON")
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            # Added 2026-09-30 for the window's history panel: where a title came from (the model,
+            # or a fallback when its summary failed the check) and what the check found.
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(conversations)")}
+            for column in ("title_source", "title_check"):
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE conversations ADD COLUMN {column} TEXT")
 
     def create_conversation(self, title: str | None = None) -> int:
         with self._conn:
@@ -151,6 +157,31 @@ class ConversationStore:
         ).fetchall()
         columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used"]
         return [dict(zip(columns, row)) for row in rows]
+
+    def list_conversations(self, limit: int = 200) -> list[dict]:
+        """Conversations that have messages, most recently active first: id, title (None until one
+        is set), created_at, last_at (the latest message) and first_prompt (the first user message)."""
+        rows = self._conn.execute(
+            "SELECT c.id, c.title, c.created_at, MAX(m.timestamp), "
+            "(SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id LIMIT 1) "
+            "FROM conversations c JOIN messages m ON m.conversation_id = c.id "
+            "GROUP BY c.id ORDER BY MAX(m.id) DESC LIMIT ?",  # ids always rise; two timestamps can tie
+            (limit,),
+        ).fetchall()
+        columns = ["id", "title", "created_at", "last_at", "first_prompt"]
+        return [dict(zip(columns, row)) for row in rows]
+
+    def get_title(self, conversation_id: int) -> str | None:
+        row = self._conn.execute("SELECT title FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return row[0] if row else None
+
+    def set_title(self, conversation_id: int, title: str, source: str, check: str | None = None) -> None:
+        """`source` is "model" or "fallback"; `check` is what validating the model's summary found (JSON)."""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE conversations SET title = ?, title_source = ?, title_check = ? WHERE id = ?",
+                (title, source, check, conversation_id),
+            )
 
     def close(self) -> None:
         self._conn.close()

@@ -208,3 +208,44 @@ def test_data_persists_across_store_instances(tmp_path):
     messages = reopened.get_messages(conversation_id)
 
     assert [m["content"] for m in messages] == ["hello"]
+
+
+def test_list_conversations_skips_empty_ones_and_puts_the_latest_first(tmp_path):
+    store = ConversationStore(tmp_path / "c.db")
+    empty = store.create_conversation()
+    first = store.create_conversation()
+    store.add_message(first, "user", "What's my battery life?")
+    second = store.create_conversation()
+    store.add_message(second, "user", "Summarize the vendor email")
+    store.add_message(first, "nuru", "237 days.")  # first is now the most recent
+
+    listed = store.list_conversations()
+
+    assert [c["id"] for c in listed] == [first, second]
+    assert empty not in [c["id"] for c in listed]
+    assert listed[0]["first_prompt"] == "What's my battery life?" and listed[0]["title"] is None
+
+
+def test_a_title_is_stored_with_where_it_came_from_and_its_check(tmp_path):
+    store = ConversationStore(tmp_path / "c.db")
+    cid = store.create_conversation()
+    store.add_message(cid, "user", "hi")
+
+    store.set_title(cid, "Battery life", "model", '{"passed": true}')
+
+    assert store.get_title(cid) == "Battery life"
+    row = store._conn.execute("SELECT title_source, title_check FROM conversations WHERE id = ?", (cid,)).fetchone()
+    assert row == ("model", '{"passed": true}')
+
+
+def test_an_older_database_gains_the_title_columns(tmp_path):
+    import sqlite3
+
+    old = sqlite3.connect(tmp_path / "c.db")
+    old.executescript("CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, title TEXT);")
+    old.close()
+
+    store = ConversationStore(tmp_path / "c.db")
+
+    columns = {row[1] for row in store._conn.execute("PRAGMA table_info(conversations)")}
+    assert {"title_source", "title_check"} <= columns

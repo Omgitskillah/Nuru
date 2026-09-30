@@ -119,7 +119,8 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 
   | Icon | What it shows |
   |---|---|
-  | lantern + model name | Nuru's model (by its base model's name, e.g. `granite4.2:3b`) |
+  | panel | shows or hides the history panel |
+| lantern + model name | Nuru's model (by its base model's name, e.g. `granite4.2:3b`) |
   | open book | the vault index - it turns into rotating arrows with a count (`12`) while notes are embedded, then shows `+12` for a few seconds |
   | signpost | Laya, the decision layer |
   | connected points | the embedding model (semantic search) |
@@ -137,7 +138,9 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
   | grey | idle or off: not loaded now (it loads when needed), no vault, no expert API key |
   | red | down or failed - the tooltip says why |
 
-  The icons are [Lucide](https://lucide.dev) (v0.469.0, ISC licence, in `src/core/assets/icons/` with the licence text); the lantern is Nuru's own.
+  The icons (and the history panel's pen) are [Lucide](https://lucide.dev) (v0.469.0, ISC licence, in `src/core/assets/icons/` with the licence text); the lantern is Nuru's own.
+- **History.** A panel on the left lists past conversations, most recent first, under Today / Yesterday / Previous 7 days / Older (only ones with messages). Clicking one continues it: its messages are shown - your prompts and Nuru's replies, without the working cards, which aren't stored - and your next message goes into it, with its history as the model's context. The pen starts a new chat. The panel icon at the far left of the status bar hides or shows it, and the window remembers which. Nothing can be opened while a reply is streaming.
+  - **Titles** are the local model's summary of the first prompt, written just after the first reply (thinking off, JSON; about half a second). Code checks it before it's used (`core.titles`): one line, at most 8 words and 60 characters, not the prompt copied out, and sharing a key word with the prompt. A title that fails is replaced by the prompt itself, cut short. Where it came from (`model` / `fallback`) and what the check found are stored with it (`title_source`, `title_check` in the conversations table), so how well the model summarises can be measured; a title that's just the question repeated is noted, not failed. A message sent in that half second goes out once the title is written. Conversations from before titles show their first prompt, cut short.
 - **Laya view.** The ladybug switch at the right of the status bar (filled when on) shows, in every reply's card, what the decision layer said at each step (`laya · tool_gate (start): read (top: read 0.62)`, `laya · check_claim: …`). In shadow mode that changes nothing - it's what Laya would have done. Off by default.
 - **Starting up.** The window opens straight away with the lantern rocking beside "Starting Nuru…" and no input box. Building the model, connecting the MCP servers and loading the model happen in the background; when they finish, the lantern settles, the greeting replaces the loading text, and the input box appears. If that fails, the reason is shown in the window and the input stays off.
 - **Stop.** The send button becomes a stop button while a reply streams. Stopping keeps what had been said so far as the reply, both in the window and in the saved history.

@@ -1020,3 +1020,55 @@ def test_status_reports_each_part_without_raising(monkeypatch):
     assert status["laya"]["state"] in ("unknown", "down", "off")  # the fake has no Laya server
     assert status["embedding"]["state"] == "no vault"
     assert status["expert"]["key"] is False and status["expert"]["turn_limit"] == 2
+
+
+def titling_session(monkeypatch, reply):
+    """A session whose conversation has one prompt, and whose model answers the title call with `reply`."""
+    seen = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None, fmt=None):
+        seen.append({"think": think, "fmt": fmt, "content": messages[-1]["content"]})
+        yield reply
+
+    s = start_session(monkeypatch, chat=chat)
+    s.store.add_message(s.conversation_id, "user", "What's my expected battery life with periodic attach?")
+    return s, seen
+
+
+def test_a_conversation_is_titled_by_the_model_when_the_title_passes_the_check(monkeypatch):
+    s, seen = titling_session(monkeypatch, '{"title": "Periodic attach battery life"}')
+
+    assert s.title_conversation() == "Periodic attach battery life"
+
+    assert seen[0]["think"] is False and seen[0]["fmt"] == session.titles.TITLE_SCHEMA
+    source, check = s.store._conn.execute(
+        "SELECT title_source, title_check FROM conversations WHERE id = ?", (s.conversation_id,)).fetchone()
+    assert source == "model" and json.loads(check)["passed"] is True
+    assert s.title_conversation() is None  # it has one now
+
+
+def test_a_title_that_fails_the_check_falls_back_to_the_prompt_and_records_why(monkeypatch):
+    s, _ = titling_session(monkeypatch, '{"title": "Weekend hiking plans"}')
+
+    title = s.title_conversation()
+
+    assert title.startswith("What's my expected battery life")
+    source, check = s.store._conn.execute(
+        "SELECT title_source, title_check FROM conversations WHERE id = ?", (s.conversation_id,)).fetchone()
+    assert source == "fallback"
+    assert json.loads(check) == {"raw": '{"title": "Weekend hiking plans"}', "passed": False,
+                                 "problems": ["shares no key word with the prompt"], "notes": []}
+
+
+def test_open_and_new_conversation(monkeypatch):
+    s = start_session(monkeypatch)
+    first = s.conversation_id
+    s.store.add_message(first, "user", "hello")
+
+    s.new_conversation()
+    second = s.conversation_id
+    s.new_conversation()  # the new one is still empty: reused, not another
+
+    assert second != first and s.conversation_id == second
+    assert [m["content"] for m in s.open_conversation(first)] == ["hello"] and s.conversation_id == first
+    assert [c["id"] for c in s.conversations()] == [first]

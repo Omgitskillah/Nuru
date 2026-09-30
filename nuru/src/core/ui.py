@@ -11,10 +11,10 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QObject, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QByteArray, QObject, QSettings, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtGui import (
     QBrush,
@@ -41,6 +41,8 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QListWidget,
+    QListWidgetItem,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,6 +54,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import titles
 from core.reply_markdown import Code, Prose, Reply, format_tool_call, split_fences
 from core.session import (
     Event,
@@ -76,6 +79,7 @@ MUTED = "#878586"
 QUOTE = "#615E5F"
 SEND = INK
 SEND_HOVER = "#3D393A"
+PANEL = "#F3F3F3"  # the history panel, a shade off the window's background
 LAYA = "#5B6B8C"  # the developer view's rows: set apart from the model's own working
 NOTICE_BG = "#FFFAF0"  # a turn Nuru ended itself: warm, not an error's red
 NOTICE_BORDER = "#E9D8B4"
@@ -121,6 +125,14 @@ QLabel#layaRow {{ color: {LAYA}; }}
 QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 6px; }}
 QLabel#noticeTitle {{ color: {NOTICE_TEXT}; font-size: 11px; }}
 QFrame#statusBar {{ background: {BG}; border-top: 1px solid {BORDER}; }}
+QFrame#history {{ background: {PANEL}; border-right: 1px solid {BORDER}; }}
+QLabel#historyTitle {{ color: {MUTED}; font-size: 11px; }}
+QListWidget#historyList {{ background: transparent; border: none; outline: none; font-size: 13px; color: {TEXT}; }}
+QListWidget#historyList::item {{ padding: 5px 8px; border-radius: 4px; }}
+QListWidget#historyList::item:selected {{ background: {BUBBLE}; color: {TEXT}; }}
+QListWidget#historyList::item:hover {{ background: rgba(36, 32, 33, 12); }}
+QPushButton#iconButton {{ background: transparent; border: none; border-radius: 3px; padding: 2px; }}
+QPushButton#iconButton:hover {{ background: rgba(36, 32, 33, 18); }}
 QLabel#statusItem {{ color: {MUTED}; font-size: 11px; }}
 QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 3px; color: {MUTED}; font-size: 11px; padding: 1px 7px; }}
 QPushButton#devToggle:checked {{ background: {INK}; color: white; border-color: {INK}; }}
@@ -862,6 +874,91 @@ class AssistantMessage(QWidget):
         self.header.finish()
 
 
+class HistoryPanel(QFrame):
+    """Past conversations, most recent first, under Today / Yesterday / Previous 7 days / Older.
+    Clicking one asks to continue it; the pen starts a new one. Each is listed by its title - the
+    model's summary of its first prompt (core.titles) - or that prompt cut short until it has one."""
+
+    opened = pyqtSignal(int)
+    new_chat = pyqtSignal()
+    WIDTH = 232
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("history")
+        self.setFixedWidth(self.WIDTH)
+        title = QLabel("History")
+        title.setObjectName("historyTitle")
+        self.new_button = QPushButton()
+        self.new_button.setObjectName("iconButton")
+        self.new_button.setIcon(QIcon(icon_pixmap("square-pen", MUTED)))
+        self.new_button.setIconSize(QSize(ICON_PX, ICON_PX))
+        self.new_button.setToolTip("New chat")
+        self.new_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.new_button.clicked.connect(self.new_chat)
+        header = QHBoxLayout()
+        header.setContentsMargins(12, 10, 8, 4)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.new_button)
+
+        self.list = QListWidget()
+        self.list.setObjectName("historyList")
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.list.itemClicked.connect(self.on_clicked)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addLayout(header)
+        layout.addWidget(self.list, 1)
+
+    @staticmethod
+    def group(last_at: str | None, today) -> str:
+        try:
+            day = datetime.fromisoformat((last_at or "").replace("Z", "+00:00")).astimezone().date()
+        except ValueError:
+            return "Older"
+        if day == today:
+            return "Today"
+        if day == today - timedelta(days=1):
+            return "Yesterday"
+        return "Previous 7 days" if day >= today - timedelta(days=7) else "Older"
+
+    def show_conversations(self, conversations: list[dict], current: int | None) -> None:
+        self.list.clear()
+        today, shown_group = datetime.now().astimezone().date(), None
+        for conversation in conversations:
+            group = self.group(conversation.get("last_at"), today)
+            if group != shown_group:
+                heading = QListWidgetItem(group)
+                heading.setFlags(Qt.ItemFlag.NoItemFlags)  # a label, not something to click
+                heading.setForeground(QColor(MUTED))
+                heading_font = font(11)
+                heading.setFont(heading_font)
+                self.list.addItem(heading)
+                shown_group = group
+            prompt = conversation.get("first_prompt") or ""
+            item = QListWidgetItem(conversation.get("title") or titles.fallback(prompt) or "Untitled")
+            item.setData(Qt.ItemDataRole.UserRole, conversation["id"])
+            item.setToolTip(prompt[:300])
+            self.list.addItem(item)
+            if conversation["id"] == current:
+                item.setSelected(True)
+                self.list.setCurrentItem(item)
+
+    def on_clicked(self, item: QListWidgetItem) -> None:
+        conversation_id = item.data(Qt.ItemDataRole.UserRole)
+        if conversation_id is not None:
+            self.opened.emit(conversation_id)
+
+    def conversation_ids(self) -> list[int]:
+        items = (self.list.item(i) for i in range(self.list.count()))
+        return [i.data(Qt.ItemDataRole.UserRole) for i in items if i.data(Qt.ItemDataRole.UserRole) is not None]
+
+
 class ChatWindow(QWidget):
     FLUSH_MS = 25  # streamed text is redrawn at most this often, however fast it arrives
     TITLE = "Nuru"
@@ -986,6 +1083,15 @@ class ChatWindow(QWidget):
         tray_row = QHBoxLayout(self.tray)
         tray_row.setContentsMargins(14, 4, 10, 4)
         tray_row.setSpacing(14)
+        self.history_toggle = QPushButton()
+        self.history_toggle.setObjectName("iconButton")
+        self.history_toggle.setCheckable(True)
+        self.history_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.history_toggle.setIcon(QIcon(icon_pixmap("panel-left", MUTED)))
+        self.history_toggle.setIconSize(QSize(ICON_PX, ICON_PX))
+        self.history_toggle.setToolTip("Show or hide the history")
+        self.history_toggle.toggled.connect(self.set_history_visible)
+        tray_row.addWidget(self.history_toggle)
         self.tray_items: dict[str, TrayItem] = {}
         for key, icon in (("model", "lantern"), ("index", "book-open"), ("laya", "signpost"), ("embedding", "waypoints"),
                           ("expert", "graduation-cap"), ("planner", "calendar"), ("think", "brain"), ("shield", "shield")):
@@ -1005,9 +1111,26 @@ class ChatWindow(QWidget):
         self.dev_toggle.toggled.connect(self.set_developer)
         tray_row.addWidget(self.dev_toggle)
 
+        # The history panel on the left, the chat beside it, the status bar under both.
+        self.history = HistoryPanel()
+        self.history.opened.connect(self.open_conversation)
+        self.history.new_chat.connect(self.new_chat)
+        self.titling: Worker | None = None  # the model writing a conversation's title, between turns
+        self.send_after_title = False  # a message was sent while a title was being written: it goes next
+        chat_area = QWidget()
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self.history)
+        body.addWidget(chat_area, 1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addLayout(body, 1)
+
         # The composer sits at the bottom from the start, as in a chat. Empty state centers the greeting
         # in the space above it; chat state gives that space to the scroll area.
-        self.root = QVBoxLayout(self)
+        self.root = QVBoxLayout(chat_area)
         self.root.setContentsMargins(0, 0, 0, 0)
         self.root.setSpacing(0)
         self.root.addStretch(1)
@@ -1015,7 +1138,11 @@ class ChatWindow(QWidget):
         self.root.addStretch(1)
         self.root.addWidget(self.scroll, 1)
         self.root.addWidget(self.dock)
-        self.root.addWidget(self.tray)
+        outer.addWidget(self.tray)
+
+        shown = self.settings().value("history/visible", True, type=bool)
+        self.history_toggle.setChecked(shown)
+        self.history.setVisible(shown)
 
         self.prompt.submitted.connect(self.submit)
         self.prompt.textChanged.connect(self.update_send)
@@ -1039,6 +1166,7 @@ class ChatWindow(QWidget):
         self.index_timer.start()
         self.status_timer.start()
         self.poller.poll(self.session)
+        self.refresh_history()
         self.greeting_title.setText(time_greeting(datetime.now().hour))
         self.greeting_logo.stop()
         self.dock.show()
@@ -1090,6 +1218,95 @@ class ChatWindow(QWidget):
             self.tray_items[key].set(icon, color, text, tip)
             self.tray_items[key].setVisible(True)
 
+    # ------------------------------------------------------------------ the history panel
+    @staticmethod
+    def settings() -> QSettings:
+        return QSettings("Nuru", "Nuru")
+
+    def set_history_visible(self, on: bool) -> None:
+        self.history.setVisible(on)
+        self.settings().setValue("history/visible", on)
+
+    def refresh_history(self) -> None:
+        """Relist the conversations. Only between turns: the store's connection is the turn's too."""
+        session = self.session
+        if session is None or self.worker is not None or not hasattr(session, "conversations"):
+            return
+        self.history.show_conversations(session.conversations(), session.conversation_id)
+
+    def busy(self) -> bool:
+        return self.worker is not None or self.titling is not None
+
+    def open_conversation(self, conversation_id: int) -> None:
+        """Continue a past conversation: show its messages; the next one goes into it."""
+        session = self.session
+        if session is None or self.busy() or conversation_id == getattr(session, "conversation_id", None):
+            return
+        messages = session.open_conversation(conversation_id)
+        self.clear_chat()
+        for message in messages:
+            if message["role"] == "user":
+                self.add_message(UserMessage(message["content"]))
+            else:
+                reply = AssistantMessage(self.developer)
+                self.replies.append(reply)
+                self.add_message(reply)
+                reply.set_markdown(message["content"])
+                reply.finish()
+        if messages:
+            self.show_chat()
+            self.following = True
+        self.refresh_history()
+        self.prompt.setFocus()
+
+    def new_chat(self) -> None:
+        session = self.session
+        if session is None or self.busy():
+            return
+        session.new_conversation()
+        self.clear_chat()
+        self.show_empty()
+        self.refresh_history()
+        self.prompt.setFocus()
+
+    def clear_chat(self) -> None:
+        """Take every message off the screen (the stretch at the end of the column stays)."""
+        while self.messages.count() > 1:
+            widget = self.messages.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self.replies = []
+        self.message = None
+
+    def show_empty(self) -> None:
+        """Back to the empty state: the greeting in the space above the composer."""
+        self.scroll.hide()
+        self.greeting.show()
+        self.root.setStretch(0, 1)
+        self.root.setStretch(2, 1)
+        self.prompt.setPlaceholderText("How can I help you today?")
+
+    def title_if_needed(self) -> None:
+        """After a turn: have the model title the conversation if it has no title yet - off the GUI
+        thread, and before the next message goes out (they share the model and the store)."""
+        session = self.session
+        if session is None or not hasattr(session, "title_conversation") or self.titling is not None:
+            return
+        titling = self.titling = Worker(lambda: (session.title_conversation(), None)[1])
+        titling.succeeded.connect(self.on_titled)
+        titling.failed.connect(lambda _message: self.on_titled())
+        titling.start()
+        self.update_send()
+
+    def on_titled(self) -> None:
+        self.titling = None
+        self.update_send()
+        self.refresh_history()
+        if self.send_after_title:
+            self.send_after_title = False
+            self.submit()
+
     def set_developer(self, on: bool) -> None:
         self.developer = on
         self.dev_toggle.setIcon(QIcon(icon_pixmap("bug", "white" if on else MUTED)))
@@ -1138,6 +1355,9 @@ class ChatWindow(QWidget):
         text = self.prompt.toPlainText().strip()
         session = self.session
         if not text or session is None or self.worker is not None:
+            return
+        if self.titling is not None:  # a second or two: it goes out once the title is written
+            self.send_after_title = True
             return
 
         self.prompt.clear()
@@ -1196,6 +1416,8 @@ class ChatWindow(QWidget):
         self.worker = None
         self.update_send()
         self.poller.poll(self.session)  # the expert's answers left, and anything else a turn changed
+        self.refresh_history()  # a new conversation appears; a continued one moves to the top
+        self.title_if_needed()
 
     def on_range_changed(self, _low: int, high: int) -> None:
         bar = self.scroll.verticalScrollBar()
@@ -1216,6 +1438,8 @@ class ChatWindow(QWidget):
         self.cancel.set()
         if self.worker is not None:
             self.worker.wait(self.CLOSE_WAIT_SECONDS)  # lets a reply in flight save what it has
+        if self.titling is not None:
+            self.titling.wait(self.CLOSE_WAIT_SECONDS)
 
         session, self.session = self.session, None
         try:

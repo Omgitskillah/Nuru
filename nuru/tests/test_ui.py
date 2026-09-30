@@ -35,6 +35,16 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def own_settings(monkeypatch, tmp_path):
+    """The window remembers things (the history panel's visibility) in QSettings; a test's go to a
+    file of its own, never the user's."""
+    from PyQt6.QtCore import QSettings
+
+    path = str(tmp_path / "nuru.ini")
+    monkeypatch.setattr(ui.ChatWindow, "settings", staticmethod(lambda: QSettings(path, QSettings.Format.IniFormat)))
+
+
 def wait_until(condition, timeout=5.0):
     """Runs Qt's event loop until `condition()` holds. Signals from worker threads only arrive through it."""
     deadline = time.monotonic() + timeout
@@ -74,6 +84,26 @@ class FakeSession:
 
     def shutdown(self, reason):
         self.calls.append(("shutdown", reason))
+
+    # the history panel's conversations: {id: (title, [messages])}; conversation 1 is the current one
+    conversation_id = 1
+    history: dict = {}
+
+    def conversations(self):
+        return [{"id": i, "title": title, "last_at": "2026-09-30T10:00:00.000Z", "first_prompt": msgs[0]["content"]}
+                for i, (title, msgs) in sorted(self.history.items(), reverse=True) if msgs]
+
+    def open_conversation(self, conversation_id):
+        self.conversation_id = conversation_id
+        return self.history[conversation_id][1]
+
+    def new_conversation(self):
+        self.calls.append("new_conversation")
+        self.conversation_id = max(self.history or {1: 0}) + 1
+
+    def title_conversation(self):
+        self.calls.append("title_conversation")
+        return None
 
     def close(self):
         self.calls.append("close")
@@ -135,7 +165,8 @@ def type_and_send(window, text):
 
 
 def finish(window):
-    wait_until(lambda: window.worker is None)
+    """Until the window is idle: the reply done, and the title it writes afterwards too."""
+    wait_until(lambda: window.worker is None and window.titling is None and not window.send_after_title)
 
 
 def bubble_text(window):
@@ -1091,3 +1122,101 @@ def test_the_laya_view_switch_is_a_bug_that_fills_in_when_on(started):
     window.dev_toggle.setChecked(True)
     on = window.dev_toggle.icon().pixmap(ui.ICON_PX, ui.ICON_PX).toImage()
     assert off != on
+
+
+
+# ---------------------------------------------------------------- the history panel
+def with_history(session):
+    session.history = {
+        1: (None, []),
+        2: ("Battery life estimate", [{"role": "user", "content": "What's my expected battery life?"},
+                                      {"role": "nuru", "content": "About **237 days** always-connected."}]),
+        3: (None, [{"role": "user", "content": "Summarize the vendor email about the SARA-R510S lead time please"},
+                   {"role": "nuru", "content": "26 weeks."}]),
+    }
+    return session
+
+
+def test_the_history_lists_conversations_by_title_or_their_first_prompt(started):
+    window, session = started()
+    with_history(session)
+    window.refresh_history()
+
+    texts = [window.history.list.item(i).text() for i in range(window.history.list.count())]
+    assert texts[1:] == ["Summarize the vendor email about the SARA-R510S…", "Battery life estimate"]
+    assert window.history.conversation_ids() == [3, 2]
+
+
+def test_opening_a_conversation_shows_it_and_the_next_message_continues_it(started):
+    window, session = started([Text("Still 237 days.")])
+    with_history(session)
+    window.refresh_history()
+
+    window.open_conversation(2)
+
+    assert session.conversation_id == 2
+    assert window.scroll.isVisible() and not window.greeting.isVisible()
+    assert "237 days" in " ".join(p.toPlainText() for p in window.replies[0].parts if isinstance(p, ui.MarkdownView))
+    type_and_send(window, "and with periodic attach?")
+    finish(window)
+    assert session.asked == ["and with periodic attach?"]  # went to the open conversation (the session's)
+
+
+def test_a_new_chat_clears_the_window_back_to_the_greeting(started):
+    window, session = started([Text("Hi.")])
+    type_and_send(window, "hello")
+    finish(window)
+
+    window.new_chat()
+
+    assert "new_conversation" in session.calls
+    assert window.greeting.isVisible() and not window.scroll.isVisible()
+    assert window.messages.count() == 1  # only the stretch left
+
+
+def test_the_panel_hides_and_remembers_it(started, make_window):
+    window, _ = started()
+    assert window.history.isVisibleTo(window)
+
+    window.history_toggle.setChecked(False)
+
+    assert not window.history.isVisibleTo(window)
+    again = make_window(FakeSession())
+    assert not again.history.isVisibleTo(again)  # the next window opens with it hidden
+
+
+def test_after_a_reply_the_conversation_gets_its_title_and_the_list_refreshes(started):
+    window, session = started([Text("Hi.")])
+    type_and_send(window, "hello")
+    finish(window)
+
+    wait_until(lambda: window.titling is None)
+    assert "title_conversation" in session.calls
+
+
+def test_nothing_can_be_opened_while_a_reply_is_streaming(started):
+    release = threading.Event()
+    window, session = started(waits_for(release, Text("done")))
+    with_history(session)
+    type_and_send(window, "hi")
+
+    window.open_conversation(2)
+
+    assert session.conversation_id == 1
+    release.set()
+    finish(window)
+
+
+def test_a_message_sent_while_the_title_is_written_goes_out_right_after(started):
+    release = threading.Event()
+    window, session = started([Text("Hi.")], [Text("Again.")])
+    session.title_conversation = lambda: (release.wait(5), session.calls.append("titled"))[1]
+    type_and_send(window, "hello")
+    wait_until(lambda: window.titling is not None)
+
+    type_and_send(window, "again")  # while the title is being written
+    assert session.asked == ["hello"] and window.send_after_title
+
+    release.set()
+    finish(window)
+    assert session.asked == ["hello", "again"]

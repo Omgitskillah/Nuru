@@ -42,6 +42,7 @@ from core.providers.ollama import (
     unload_all_models,
 )
 from core.vault_indexer import VaultIndexer
+from core import titles
 from core.thinking_watch import ThinkingWatch
 from core.write_args import ask_for_arguments, validate_arguments
 
@@ -494,6 +495,54 @@ class Session:
         """(how many indexing passes have changed the index, what the latest one did), for the
         window to announce a pass too quick to catch while it ran; (0, "") without an indexer."""
         return (self.indexer.changes, self.indexer.last_change) if self.indexer else (0, "")
+
+    # ------------------------------------------------------------------ conversations (the history panel)
+    def conversations(self, limit: int = 200) -> list[dict]:
+        """Past conversations with messages, most recent first (ConversationStore.list_conversations)."""
+        return self.store.list_conversations(limit)
+
+    def messages(self) -> list[dict]:
+        """The current conversation's messages, oldest first: role ("user" / "nuru") and content."""
+        return self.store.get_messages(self.conversation_id)
+
+    def open_conversation(self, conversation_id: int) -> list[dict]:
+        """Continue a past conversation: the next message goes into it, with its history as context.
+        Returns its messages, for the window to show."""
+        self.conversation_id = conversation_id
+        return self.messages()
+
+    def new_conversation(self) -> None:
+        """Start a fresh conversation - unless the current one has no messages yet, which is reused."""
+        if self.messages():
+            self.conversation_id = self.store.create_conversation()
+
+    def title_conversation(self) -> str | None:
+        """Give the current conversation a title if it has none: the model's summary of its first
+        prompt, or that prompt cut short if the summary fails the check (core.titles). Stores what
+        the check found with it. Returns the title, or None if it already had one or has no prompt.
+        Calls the model, so run it between turns, off the GUI thread."""
+        if self.store.get_title(self.conversation_id):
+            return None
+        prompt = next((m["content"] for m in self.messages() if m["role"] == "user"), None)
+        if not prompt:
+            return None
+        raw, problems = "", []
+        try:
+            self.load_model()
+            request = [{"role": "user", "content": titles.TITLE_PROMPT.format(prompt=prompt[:2000])}]
+            raw = "".join(out for out in chat(MODEL, request, num_ctx=_context_window(self.model_info), think=False,
+                                              fmt=titles.TITLE_SCHEMA) if isinstance(out, str))
+            title = titles.clean(raw)
+            problems = titles.check(title, prompt)
+        except Exception as e:  # no title from the model: the fallback, and why
+            title, problems = "", [f"model call failed: {e}"]
+        source = "model" if not problems else "fallback"
+        if problems:
+            title = titles.fallback(prompt)
+        self.store.set_title(self.conversation_id, title, source, json.dumps(
+            {"raw": raw, "passed": not problems, "problems": problems,
+             "notes": titles.notes(title, prompt) if not problems else []}))
+        return title
 
     def status(self) -> dict[str, Any]:
         """What the window's status bar shows: Nuru's model (by its base model's name), Laya, the

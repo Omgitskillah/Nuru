@@ -78,6 +78,10 @@ NOTICE_BG = "#FFFAF0"  # a turn Nuru ended itself: warm, not an error's red
 NOTICE_BORDER = "#E9D8B4"
 NOTICE_TEXT = "#8A6D2F"
 OK_DOT, WARN_DOT, BAD_DOT, OFF_DOT = "#3A9D5D", "#C9962B", "#C0453A", "#B5B3B4"  # the status bar's dots
+# A state's dot: green ready/loaded, amber working or starting, grey idle or off, red down or failed
+# (anything not listed). The README's "The window" section has the same key.
+STATE_DOTS = {"ready": OK_DOT, "loaded": OK_DOT, "loading": WARN_DOT, "not started": WARN_DOT,
+              "embedding": WARN_DOT, "idle": OFF_DOT, "off": OFF_DOT, "no vault": OFF_DOT}
 
 COLUMN_WIDTH = 760
 BUBBLE_WIDTH = 600  # your messages wrap before the full column width so they read as bubbles
@@ -101,23 +105,23 @@ QScrollBar::handle:vertical {{ background: rgba(36, 32, 33, 46); border-radius: 
 QScrollBar::handle:vertical:hover {{ background: rgba(36, 32, 33, 82); }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
-QFrame#composer, QFrame#reply {{ background: white; border: 1px solid {BORDER}; border-radius: 20px; }}
-QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radius: 14px; }}
-QPushButton#replyToggle {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED}; font-size: 12px; }}
+QFrame#composer, QFrame#reply {{ background: white; border: 1px solid {BORDER}; border-radius: 12px; }}
+QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radius: 9px; }}
+QPushButton#replyToggle {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED}; font-size: 11px; }}
 QPushButton#replyToggle:hover {{ color: {TEXT}; }}
 QLabel#workRow {{ color: {MUTED}; }}
 QLabel#layaRow {{ color: {LAYA}; }}
-QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 20px; }}
-QLabel#noticeTitle {{ color: {NOTICE_TEXT}; font-size: 12px; }}
+QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 12px; }}
+QLabel#noticeTitle {{ color: {NOTICE_TEXT}; font-size: 11px; }}
 QFrame#statusBar {{ background: {BG}; border-top: 1px solid {BORDER}; }}
-QLabel#statusItem {{ color: {MUTED}; font-size: 12px; }}
-QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 6px; color: {MUTED}; font-size: 12px; padding: 1px 8px; }}
+QLabel#statusItem {{ color: {MUTED}; font-size: 11px; }}
+QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 5px; color: {MUTED}; font-size: 11px; padding: 1px 7px; }}
 QPushButton#devToggle:checked {{ background: {INK}; color: white; border-color: {INK}; }}
-QFrame#userBubble {{ background: {BUBBLE}; border-radius: 16px; }}
-QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 12px; }}
+QFrame#userBubble {{ background: {BUBBLE}; border-radius: 10px; }}
+QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 7px; }}
 QLabel#userText, QLabel#greeting, QLabel#codeText {{ color: {TEXT}; }}
-QLabel#codeLanguage {{ color: {MUTED}; font-size: 13px; }}
-QPushButton#copy {{ background: transparent; border: none; color: {MUTED}; font-size: 13px; padding: 2px 6px; }}
+QLabel#codeLanguage {{ color: {MUTED}; font-size: 12px; }}
+QPushButton#copy {{ background: transparent; border: none; color: {MUTED}; font-size: 12px; padding: 2px 6px; }}
 QPushButton#copy:hover {{ color: {TEXT}; }}
 QPushButton#send {{ background: {SEND}; border: none; border-radius: 9px; }}
 QPushButton#send:hover {{ background: {SEND_HOVER}; }}
@@ -211,7 +215,7 @@ def centered(widget: QWidget) -> QHBoxLayout:
     """A row that centers `widget` and caps its width at COLUMN_WIDTH."""
     widget.setMaximumWidth(COLUMN_WIDTH)
     row = QHBoxLayout()
-    row.setContentsMargins(24, 0, 24, 0)
+    row.setContentsMargins(16, 0, 16, 0)
     row.addStretch(1)
     row.addWidget(widget, 100)
     row.addStretch(1)
@@ -285,40 +289,48 @@ def dot(color: str) -> str:
 
 
 def status_html(status: dict) -> dict[str, tuple[str, str]]:
-    """The status bar's items as (rich text, tooltip), from Session.status()."""
+    """The status bar's items as (rich text, tooltip), from Session.status(). The dot's color is
+    the state (see STATE_DOTS; the README has the key), so the text is just the name; the state
+    in words is in the tooltip."""
     items: dict[str, tuple[str, str]] = {}
+
+    model = status.get("model") or {}
+    if model:
+        state = model.get("state", "unknown")
+        tip = {"loaded": "loaded in Ollama", "idle": "not loaded - loads with the next message"}.get(state, state)
+        items["model"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} {model.get('name', 'model')}",
+                          f"Nuru's model: {model.get('error') or tip}")
+
     laya = status.get("laya") or {}
     state = laya.get("state", "unknown")
-    color = {"ready": OK_DOT, "loading": WARN_DOT, "not started": WARN_DOT, "off": OFF_DOT}.get(state, BAD_DOT)
-    items["laya"] = (f"{dot(color)} Laya {state}", laya.get("error") or "The decision layer (Laya)")
+    items["laya"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} Laya", f"Laya (the decision layer): {laya.get('error') or state}")
 
     embedding = status.get("embedding") or {}
-    state, model = embedding.get("state", "unknown"), embedding.get("model", "")
-    color = {"loaded": OK_DOT, "idle": OFF_DOT, "embedding": WARN_DOT, "no vault": OFF_DOT}.get(state, BAD_DOT)
-    label = {"embedding": f"embedding {embedding.get('pending', 0)}"}.get(state, state)
-    tip = embedding.get("error") or (f"{model} - " if model else "") + {
-        "idle": "not in memory; loads when a search or the indexer needs it",
-        "loaded": "in memory (Ollama unloads it after 5 minutes unused)"}.get(state, "")
-    items["embedding"] = (f"{dot(color)} Embeddings {label}", tip or "No vault index")
+    state, model_name = embedding.get("state", "unknown"), embedding.get("model", "")
+    words = {"idle": "not loaded - loads when a search or the indexer needs it",
+             "loaded": "loaded (Ollama unloads it after 5 minutes unused)",
+             "embedding": f"embedding {embedding.get('pending', 0)} notes", "no vault": "no vault index"}.get(state, state)
+    items["embedding"] = (f"{dot(STATE_DOTS.get(state, BAD_DOT))} Embeddings",
+                          f"{model_name + ': ' if model_name else ''}{embedding.get('error') or words}")
 
     expert = status.get("expert") or {}
     if expert.get("key"):
-        left = expert.get("turn_limit", 0) - expert.get("turn_used", 0)
-        text = f"{dot(OK_DOT)} Expert {left}/{expert.get('turn_limit')} this turn"
-        tip = f"{left} of {expert.get('turn_limit')} ask_an_expert answers left this turn"
+        left, limit = expert.get("turn_limit", 0) - expert.get("turn_used", 0), expert.get("turn_limit", 0)
+        text = f"{dot(OK_DOT if left else WARN_DOT)} Expert {left}/{limit}"
+        tip = f"{left} of {limit} ask_an_expert answers left this turn"
         if expert.get("planner_cap") is not None:
             planner_left = expert["planner_cap"] - (expert.get("planner_used_today") or 0)
-            text += f" · planner {planner_left}/{expert['planner_cap']}"
+            text += f" · {planner_left}/{expert['planner_cap']}"
             tip += f"; the planner (called at the step cap) has {planner_left} of {expert['planner_cap']} left today"
         items["expert"] = (text, tip)
     else:
-        items["expert"] = (f"{dot(OFF_DOT)} Expert: no API key", "Set ANTHROPIC_API_KEY in .env.deep-think")
+        items["expert"] = (f"{dot(OFF_DOT)} Expert", "No API key: set ANTHROPIC_API_KEY in .env.deep-think")
 
     think = status.get("think")
     enforced = ", ".join(status.get("enforced") or []) or "nothing"
-    items["think"] = (f"Thinking: {think if isinstance(think, str) else ('on' if think else 'off')}", f"Enforced: {enforced}")
+    items["think"] = (f"Thinking {think if isinstance(think, str) else ('on' if think else 'off')}", f"Enforced: {enforced}")
     if "error" in status and len(status) == 1:
-        items = {"laya": (f"{dot(BAD_DOT)} Status unavailable", status["error"])}
+        items = {"laya": (f"{dot(BAD_DOT)} Status", f"Status unavailable: {status['error']}")}
     return items
 
 
@@ -411,7 +423,7 @@ class PromptEdit(QTextEdit):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.viewport().setAutoFillBackground(False)
         self.setAcceptRichText(False)
-        self.setFont(font(16))
+        self.setFont(font(15))
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(MUTED))
@@ -442,7 +454,7 @@ class MarkdownView(QTextBrowser):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setOpenLinks(False)  # the text comes from a model, so links are vetted first
         self.anchorClicked.connect(open_link)
-        self.setFont(font(17, SERIF, QFont.StyleHint.Serif))
+        self.setFont(font(16, SERIF, QFont.StyleHint.Serif))
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
         palette.setColor(QPalette.ColorRole.WindowText, QColor(BORDER))  # Qt draws horizontal rules with this
@@ -481,7 +493,7 @@ class UserMessage(QWidget):
         super().__init__()
         label = BubbleLabel(text)
         label.setObjectName("userText")
-        label.setFont(font(16))
+        label.setFont(font(15))
         label.setWordWrap(True)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -489,7 +501,7 @@ class UserMessage(QWidget):
         bubble = QFrame()
         bubble.setObjectName("userBubble")
         inner = QVBoxLayout(bubble)
-        inner.setContentsMargins(16, 12, 16, 12)
+        inner.setContentsMargins(13, 9, 13, 9)
         inner.addWidget(label)
 
         row = QHBoxLayout(self)
@@ -513,7 +525,7 @@ class CodeBlock(QFrame):
         self.copy.clicked.connect(self.copy_code)
         self.code = QLabel()
         self.code.setObjectName("codeText")
-        self.code.setFont(font(14, MONO, QFont.StyleHint.Monospace))
+        self.code.setFont(font(13, MONO, QFont.StyleHint.Monospace))
         self.code.setWordWrap(True)
         self.code.setMinimumWidth(1)  # clip a long unbroken token rather than widen the whole column
         self.code.setTextFormat(Qt.TextFormat.PlainText)
@@ -530,7 +542,7 @@ class CodeBlock(QFrame):
         header.addStretch(1)
         header.addWidget(self.copy)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 10, 12, 16)
+        layout.setContentsMargins(12, 8, 10, 12)
         layout.setSpacing(6)
         layout.addLayout(header)
         layout.addWidget(self.code)
@@ -589,12 +601,12 @@ class ReplyHeader(QFrame):
 
         self.rows_box = QWidget()
         self.rows_column = QVBoxLayout(self.rows_box)
-        self.rows_column.setContentsMargins(16, 0, 0, 2)
+        self.rows_column.setContentsMargins(12, 0, 0, 2)
         self.rows_column.setSpacing(4)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 10, 24, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 7, 16, 7)
+        layout.setSpacing(6)
         layout.addWidget(self.toggle)
         layout.addWidget(self.rows_box)
         self.draw()
@@ -639,7 +651,7 @@ class ReplyHeader(QFrame):
     def add_laya(self, decision: LayaDecision) -> None:
         label = QLabel(f"laya · {decision.point}: {decision.summary}")
         label.setObjectName("layaRow")
-        label.setFont(font(12, MONO, QFont.StyleHint.Monospace))
+        label.setFont(font(11, MONO, QFont.StyleHint.Monospace))
         label.setMinimumWidth(1)
         label.setWordWrap(True)
         label.setTextFormat(Qt.TextFormat.PlainText)
@@ -663,7 +675,7 @@ class ReplyHeader(QFrame):
     def add_row(self, text: str, wrap: bool, at: int) -> QLabel:
         label = QLabel(text)
         label.setObjectName("workRow")
-        label.setFont(font(13, MONO, QFont.StyleHint.Monospace))
+        label.setFont(font(12, MONO, QFont.StyleHint.Monospace))
         label.setMinimumWidth(1)  # an unwrapped row is clipped rather than widening the column
         label.setWordWrap(wrap)
         label.setTextFormat(Qt.TextFormat.PlainText)
@@ -727,7 +739,7 @@ class AssistantMessage(QWidget):
     def __init__(self, developer: bool = False) -> None:
         super().__init__()
         self.parts: list[MarkdownView | CodeBlock] = []  # in order, ahead of the logo
-        self.logo = Logo(28, swing=SWING)
+        self.logo = Logo(19, swing=SWING)
         self.logo.start()
         self.header = ReplyHeader(developer)
         self.notice_title: QLabel | None = None  # set when Nuru ended the turn itself
@@ -735,8 +747,8 @@ class AssistantMessage(QWidget):
         body = self.body = QFrame()
         body.setObjectName("reply")
         self.column = QVBoxLayout(body)
-        self.column.setContentsMargins(24, 20, 24, 18)
-        self.column.setSpacing(14)
+        self.column.setContentsMargins(16, 13, 16, 11)
+        self.column.setSpacing(10)
         self.column.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignLeft)
 
         layout = QVBoxLayout(self)
@@ -840,12 +852,12 @@ class ChatWindow(QWidget):
         # beside "Starting Nuru…" instead, and the composer stays hidden.
         self.greeting_title = QLabel("Starting Nuru…")
         self.greeting_title.setObjectName("greeting")
-        self.greeting_title.setFont(font(38, SERIF, QFont.StyleHint.Serif))
-        self.greeting_logo = Logo(52, swing=SWING)
+        self.greeting_title.setFont(font(34, SERIF, QFont.StyleHint.Serif))
+        self.greeting_logo = Logo(35, swing=SWING)
         self.greeting_logo.start()
         self.greeting = QWidget()
         greeting_row = QHBoxLayout(self.greeting)
-        greeting_row.setContentsMargins(0, 0, 0, 28)
+        greeting_row.setContentsMargins(0, 0, 0, 20)
         greeting_row.setSpacing(14 - self.greeting_logo.reach)  # the room the lantern has to swing isn't part of the gap
         greeting_row.addStretch(1)
         greeting_row.addWidget(self.greeting_logo)
@@ -855,8 +867,8 @@ class ChatWindow(QWidget):
         # Conversation: a scrolling column of messages, centered and capped in width
         column = QWidget()
         self.messages = QVBoxLayout(column)
-        self.messages.setContentsMargins(0, 24, 0, 24)
-        self.messages.setSpacing(28)
+        self.messages.setContentsMargins(0, 16, 0, 16)
+        self.messages.setSpacing(18)
         self.messages.addStretch(1)
         content = QWidget()
         content.setLayout(centered(column))
@@ -882,14 +894,14 @@ class ChatWindow(QWidget):
         composer = QFrame()
         composer.setObjectName("composer")
         composer_layout = QVBoxLayout(composer)
-        composer_layout.setContentsMargins(18, 14, 12, 12)
-        composer_layout.setSpacing(8)
+        composer_layout.setContentsMargins(14, 10, 10, 10)
+        composer_layout.setSpacing(6)
         composer_layout.addWidget(self.prompt)
         composer_layout.addLayout(buttons)
 
         self.dock = QWidget()
         self.dock_layout = QVBoxLayout(self.dock)
-        self.dock_layout.setContentsMargins(0, 8, 0, 24)
+        self.dock_layout.setContentsMargins(0, 6, 0, 12)
         self.dock_layout.addLayout(centered(composer))
         # Hidden until the session is up, but its space stays reserved so the greeting doesn't jump
         # when the composer appears.
@@ -906,8 +918,8 @@ class ChatWindow(QWidget):
         tray_row.setContentsMargins(14, 4, 10, 4)
         tray_row.setSpacing(18)
         self.tray_items: dict[str, QLabel] = {}
-        for key, text in (("index", "Index: starting…"), ("laya", "Laya …"), ("embedding", "Embeddings …"),
-                          ("expert", "Expert …"), ("think", "")):
+        for key, text in (("model", ""), ("index", "Index…"), ("laya", "Laya"), ("embedding", "Embeddings"),
+                          ("expert", "Expert"), ("think", "")):
             label = QLabel(text)
             label.setObjectName("statusItem")
             label.setTextFormat(Qt.TextFormat.RichText if key != "index" else Qt.TextFormat.PlainText)
@@ -963,8 +975,8 @@ class ChatWindow(QWidget):
         self.prompt.setFocus()
 
     def update_index(self) -> None:
-        """The status bar's first item: "⠹ indexing 12 notes" while the indexer embeds, then
-        "✓ indexed 12 notes" for DONE_SECONDS, else "✓ index up to date".
+        """The status bar's index item: "⠹ Indexing 12 notes" while the indexer embeds, then
+        "✓ Indexed 12 notes" for DONE_SECONDS, else "✓ Index".
 
         The spinner stays up at least MIN_SPIN_SECONDS once shown. A pass that finished between two
         ticks - too quick ever to be seen pending - still gets the spinner and the summary.
@@ -993,12 +1005,12 @@ class ChatWindow(QWidget):
             self.spin_frame = (self.spin_frame + 1) % len(self.SPINNER)
             left = pending or self.spin_count
             count = f" {left} note{'' if left == 1 else 's'}" if left else ""
-            text = f"{self.SPINNER[self.spin_frame]} indexing{count}"
+            text = f"{self.SPINNER[self.spin_frame]} Indexing{count}"
         elif self.done_text and now < self.done_until:
-            text = f"✓ {self.done_text}"
+            text = f"✓ {self.done_text[:1].upper()}{self.done_text[1:]}"
         else:
             self.done_text = ""
-            text = "✓ index up to date"
+            text = "✓ Index"
         if self.tray_index.text() != text:
             self.tray_index.setText(text)
 

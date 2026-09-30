@@ -879,19 +879,19 @@ def test_the_status_bar_spins_while_notes_are_being_indexed(make_window):
     window.MIN_SPIN_SECONDS = 0.1
     window.start()
     settle(window.starting)
-    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    wait_until(lambda: window.tray_index.text() == "✓ Index")
     assert window.windowTitle() == "Nuru"  # the title stays put
 
     session.indexing = 12
-    wait_until(lambda: window.tray_index.text().endswith("indexing 12 notes"))
+    wait_until(lambda: window.tray_index.text().endswith("Indexing 12 notes"))
     first = window.tray_index.text()
     wait_until(lambda: window.tray_index.text() != first)  # the spinner moves on
     assert window.tray_index.text()[0] in ui.ChatWindow.SPINNER
 
     session.indexing = 1
-    wait_until(lambda: window.tray_index.text().endswith("indexing 1 note"))
+    wait_until(lambda: window.tray_index.text().endswith("Indexing 1 note"))
     session.indexing = 0
-    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    wait_until(lambda: window.tray_index.text() == "✓ Index")
 
 
 def started_window(make_window, session, min_spin=0.3, done=0.4):
@@ -908,14 +908,14 @@ def test_the_spinner_stays_up_for_a_minimum_time_even_if_the_pass_ends_at_once(m
     window = started_window(make_window, session, min_spin=0.5)
 
     session.indexing = 1
-    wait_until(lambda: window.tray_index.text().endswith("indexing 1 note"))
+    wait_until(lambda: window.tray_index.text().endswith("Indexing 1 note"))
     session.indexing = 0
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:  # well inside the minimum: still spinning
         QApplication.processEvents()
-        assert "indexing" in window.tray_index.text()
+        assert "Indexing" in window.tray_index.text()
         time.sleep(0.01)
-    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    wait_until(lambda: window.tray_index.text() == "✓ Index")
 
 
 def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_window):
@@ -924,9 +924,9 @@ def test_a_pass_too_quick_to_see_still_shows_the_spinner_then_what_it_did(make_w
 
     session.index_change = (1, "indexed 1 note")  # finished between two ticks: never seen pending
 
-    wait_until(lambda: "indexing" in window.tray_index.text())
-    wait_until(lambda: window.tray_index.text() == "✓ indexed 1 note")
-    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    wait_until(lambda: "Indexing" in window.tray_index.text())
+    wait_until(lambda: window.tray_index.text() == "✓ Indexed 1 note")
+    wait_until(lambda: window.tray_index.text() == "✓ Index")
 
 
 def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
@@ -934,12 +934,12 @@ def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
     window = started_window(make_window, session)
 
     session.indexing = 3
-    wait_until(lambda: window.tray_index.text().endswith("indexing 3 notes"))
+    wait_until(lambda: window.tray_index.text().endswith("Indexing 3 notes"))
     session.indexing = 0
     session.index_change = (1, "indexed 3 notes")
 
-    wait_until(lambda: window.tray_index.text() == "✓ indexed 3 notes")
-    wait_until(lambda: window.tray_index.text() == "✓ index up to date")
+    wait_until(lambda: window.tray_index.text() == "✓ Indexed 3 notes")
+    wait_until(lambda: window.tray_index.text() == "✓ Index")
 
 
 
@@ -1035,24 +1035,26 @@ def test_the_status_bar_shows_laya_the_embedding_model_and_the_experts_budget(ma
         "expert": {"key": True, "turn_used": 1, "turn_limit": 2, "planner_used_today": 3, "planner_cap": 10},
         "think": "low",
         "enforced": ["step_cap", "write_checks", "watch_thinking"],
+        "model": {"name": "granite4.2:3b", "state": "loaded"},
     }
     window = make_window(session)
     window.start()
     settle(window.starting)
 
-    wait_until(lambda: "Laya ready" in window.tray_items["laya"].text())
-    assert "Embeddings idle" in window.tray_items["embedding"].text()
-    assert "Expert 1/2 this turn" in window.tray_items["expert"].text()
-    assert "planner 7/10" in window.tray_items["expert"].text()
+    wait_until(lambda: ui.OK_DOT in window.tray_items["laya"].text())  # the first poll has come back
+    assert ui.OK_DOT in window.tray_items["laya"].text() and "ready" in window.tray_items["laya"].toolTip()
+    assert window.tray_items["model"].text().endswith("granite4.2:3b") and ui.OK_DOT in window.tray_items["model"].text()
+    assert ui.OFF_DOT in window.tray_items["embedding"].text() and "not loaded" in window.tray_items["embedding"].toolTip()
+    assert window.tray_items["expert"].text().endswith("Expert 1/2 · 7/10")
     assert "7 of 10 left today" in window.tray_items["expert"].toolTip()
-    assert window.tray_items["think"].text() == "Thinking: low"
+    assert window.tray_items["think"].text() == "Thinking low"
     assert "watch_thinking" in window.tray_items["think"].toolTip()
 
 
 def test_the_status_bar_says_so_when_there_is_no_expert_key_or_laya_is_down(qapp):
     items = ui.status_html({"laya": {"state": "failed", "error": "no weights"}, "expert": {"key": False}})
-    assert "Laya failed" in items["laya"][0] and items["laya"][1] == "no weights"
-    assert "no API key" in items["expert"][0]
+    assert ui.BAD_DOT in items["laya"][0] and "no weights" in items["laya"][1]
+    assert ui.OFF_DOT in items["expert"][0] and "No API key" in items["expert"][1]
 
 
 def test_the_developer_view_switch_shows_laya_rows_in_every_reply(started):

@@ -496,8 +496,8 @@ class Session:
         return (self.indexer.changes, self.indexer.last_change) if self.indexer else (0, "")
 
     def status(self) -> dict[str, Any]:
-        """What the window's status bar shows: Laya, the embedding model, the expert and the
-        thinking level. Each part is found out on its own, and one that can't be is reported as
+        """What the window's status bar shows: Nuru's model (by its base model's name), Laya, the
+        embedding model, the expert and the thinking level. Each part is found out on its own, and one that can't be is reported as
         unknown - this never raises. Asks the Laya server and Ollama, so call it off the GUI thread."""
         laya: dict[str, Any] = {"state": "off"}
         if self.shadow is not None:
@@ -519,6 +519,13 @@ class Session:
                      else "loaded" if loaded else "idle" if loaded is False else "unknown")
             embedding = {"state": state, "model": model, "error": self.indexer.error, "pending": self.indexer.pending}
 
+        try:
+            names = [m.get("name", "") for m in loaded_models()]
+            loaded = any(n.split(":")[0] == MODEL.split(":")[0] for n in names)
+            model = {"name": BASE_MODEL, "state": "loaded" if loaded else "idle"}
+        except Exception as e:
+            model = {"name": BASE_MODEL, "state": "down", "error": str(e)}
+
         planner = self.enforcement.planner if self.enforcement else None
         expert = {
             "key": bool(expert_api_key()),
@@ -535,7 +542,7 @@ class Session:
                 pass
 
         enforced = [p for p in self.enforcement.config.decision_points if self.enforcement.on(p)] if self.enforcement else []
-        return {"laya": laya, "embedding": embedding, "expert": expert, "think": THINK, "enforced": enforced}
+        return {"model": model, "laya": laya, "embedding": embedding, "expert": expert, "think": THINK, "enforced": enforced}
 
     @property
     def context_window(self) -> int:

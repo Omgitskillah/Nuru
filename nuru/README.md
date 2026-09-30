@@ -109,11 +109,25 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 `uv run nuru-ui` opens the same chat in a window (PyQt6). It runs on the same `core.session` as the CLI - same model, tools, history and logging - so only the display differs.
 
 - **One bubble per reply.** Where the CLI prints `[nuru]`, `[thinking]` and `[tool]` labels, the UI keeps a whole turn in a single reply bubble and separates its pieces with markdown breaks (`---`). Your own message stays in its own bubble.
-- **Nuru's working folds away.** A small card above each reply says "Thinking…" while it streams, with its working listed under it as it happens: the tool calls first, kept together however they arrived - `tool: ` then the name and arguments, cut off at 80 characters - and below them `thinking: ` and what the model reasoned, wrapped in full. When the reply lands the card shuts itself and says what was done ("Used 2 tools", or "Thought about it" when no tool was called); clicking the line opens it again. A reply with no working behind it loses the card altogether.
+- **Nuru's working folds away.** A small card above each reply shows its working as it happens: the tool calls first, kept together however they arrived - `tool: ` then the name and arguments, cut off at 80 characters - and below them `thinking: ` and what the model reasoned, wrapped in full. When the reply lands the card shuts itself and says what was done ("Used 2 tools", or "Thought about it" when no tool was called); clicking the line opens it again. A reply with no working behind it loses the card altogether.
+  - **Each call is marked** as it ends: `·` still running, `✓` ran, `✗` the tool reported an error, `⊘` not run (a check or a limit stopped it), with the reason after it. An expert call says which of the turn's answers it was ("answer 1 of 2 this turn").
+  - **A thinking-watch stop** is its own row ("reasoning stopped (budget) - asked to act…"), not a retry.
+  - **While the turn runs** the line counts: "Thinking… ~600 / 1,200 tokens · step 3 of 10" - the thinking so far against the watch's budget (estimated at four characters a token), and the step against the step cap.
+  - **The summary** adds what else happened: "Used 3 tools (1 blocked), asked the expert, reasoning stopped once".
+- **When Nuru ends a turn itself** - the step cap, a loop, the expert's limit - the reply is a warm notice card headed "Nuru stopped this turn", with what had run. When it ends by asking you something (the expert has answered twice and more was needed), the heading is "Nuru stopped - waiting for your answer" and the input box asks for your clarification.
+- **The status bar** along the bottom, left to right: Nuru's model (by its base model's name), the vault index (`⠹ Indexing 12 notes` while notes are embedded, then `✓ Indexed 12 notes`, else `✓ Index`), Laya, the embedding model, the expert (`Expert 1/2 · 10/10`: ask_an_expert answers left this turn, and the planner's calls left today), and the thinking level. Hover over an item for its state in words. It refreshes every 3 seconds and after each reply. The dots:
+
+  | Dot | Means |
+  |---|---|
+  | green | ready, or loaded in memory |
+  | amber | starting, loading or working (Laya loading, notes being embedded, the expert's answers for this turn used up) |
+  | grey | idle or off: not loaded now (it loads when needed), no vault, no expert API key |
+  | red | down or failed - the tooltip says why |
+- **Laya view.** The switch at the right of the status bar shows, in every reply's card, what the decision layer said at each step (`laya · tool_gate (start): read (top: read 0.62)`, `laya · check_claim: …`). In shadow mode that changes nothing - it's what Laya would have done. Off by default.
 - **Starting up.** The window opens straight away with the lantern rocking beside "Starting Nuru…" and no input box. Building the model, connecting the MCP servers and loading the model happen in the background; when they finish, the lantern settles, the greeting replaces the loading text, and the input box appears. If that fails, the reason is shown in the window and the input stays off.
 - **Stop.** The send button becomes a stop button while a reply streams. Stopping keeps what had been said so far as the reply, both in the window and in the saved history.
 - **Closing the window** is `/exit`: it unloads all models and stops the Ollama server if the UI started it.
-- There are no slash commands and no context-usage indicator; those are CLI only.
+- There are no slash commands and no context-usage indicator; those are CLI only. The CLI prints a failed or blocked tool call as `[error]` / `[blocked]`, and none of the rest above.
 
 The app icon is the same lantern, centred on a white tile shaped the way macOS shapes app icons - a rounded square filling 824 of the 1024-point canvas - so it doesn't disappear into a dark Dock.
 

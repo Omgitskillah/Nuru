@@ -1015,7 +1015,8 @@ def test_status_reports_each_part_without_raising(monkeypatch):
 
     status = s.status()
 
-    assert set(status) == {"laya", "embedding", "expert", "think", "enforced"}
+    assert set(status) == {"model", "laya", "embedding", "expert", "think", "enforced"}
+    assert status["model"]["name"] == session.BASE_MODEL
     assert status["laya"]["state"] in ("unknown", "down", "off")  # the fake has no Laya server
     assert status["embedding"]["state"] == "no vault"
     assert status["expert"]["key"] is False and status["expert"]["turn_limit"] == 2

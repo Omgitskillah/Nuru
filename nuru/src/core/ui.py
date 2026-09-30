@@ -112,25 +112,25 @@ QScrollBar::handle:vertical {{ background: rgba(36, 32, 33, 46); border-radius: 
 QScrollBar::handle:vertical:hover {{ background: rgba(36, 32, 33, 82); }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
-QFrame#composer, QFrame#reply {{ background: white; border: 1px solid {BORDER}; border-radius: 12px; }}
-QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radius: 9px; }}
+QFrame#composer, QFrame#reply {{ background: white; border: 1px solid {BORDER}; border-radius: 6px; }}
+QFrame#replyHeader {{ background: white; border: 1px solid {BORDER}; border-radius: 5px; }}
 QPushButton#replyToggle {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED}; font-size: 11px; }}
 QPushButton#replyToggle:hover {{ color: {TEXT}; }}
 QLabel#workRow {{ color: {MUTED}; }}
 QLabel#layaRow {{ color: {LAYA}; }}
-QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 12px; }}
+QFrame#notice {{ background: {NOTICE_BG}; border: 1px solid {NOTICE_BORDER}; border-radius: 6px; }}
 QLabel#noticeTitle {{ color: {NOTICE_TEXT}; font-size: 11px; }}
 QFrame#statusBar {{ background: {BG}; border-top: 1px solid {BORDER}; }}
 QLabel#statusItem {{ color: {MUTED}; font-size: 11px; }}
-QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 5px; color: {MUTED}; font-size: 11px; padding: 1px 7px; }}
+QPushButton#devToggle {{ background: transparent; border: 1px solid {BORDER}; border-radius: 3px; color: {MUTED}; font-size: 11px; padding: 1px 7px; }}
 QPushButton#devToggle:checked {{ background: {INK}; color: white; border-color: {INK}; }}
-QFrame#userBubble {{ background: {BUBBLE}; border-radius: 10px; }}
-QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 7px; }}
+QFrame#userBubble {{ background: {BUBBLE}; border-radius: 5px; }}
+QFrame#codeBlock {{ background: {BUBBLE}; border-radius: 4px; }}
 QLabel#userText, QLabel#greeting, QLabel#codeText {{ color: {TEXT}; }}
 QLabel#codeLanguage {{ color: {MUTED}; font-size: 12px; }}
 QPushButton#copy {{ background: transparent; border: none; color: {MUTED}; font-size: 12px; padding: 2px 6px; }}
 QPushButton#copy:hover {{ color: {TEXT}; }}
-QPushButton#send {{ background: {SEND}; border: none; border-radius: 9px; }}
+QPushButton#send {{ background: {SEND}; border: none; border-radius: 5px; }}
 QPushButton#send:hover {{ background: {SEND_HOVER}; }}
 QPushButton#send:disabled {{ background: rgba(36, 32, 33, 80); }}
 """
@@ -470,7 +470,7 @@ class SendButton(QPushButton):
         if self.stopping:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("white"))
-            painter.drawRoundedRect(QRectF(cx - 5, cy - 5, 10, 10), 2, 2)
+            painter.drawRoundedRect(QRectF(cx - 5, cy - 5, 10, 10), 1, 1)
             return
         pen = QPen(QColor("white"), 2)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -1005,15 +1005,16 @@ class ChatWindow(QWidget):
         self.dev_toggle.toggled.connect(self.set_developer)
         tray_row.addWidget(self.dev_toggle)
 
-        # Empty state centers the greeting + composer; chat state gives all the room to the scroll area
+        # The composer sits at the bottom from the start, as in a chat. Empty state centers the greeting
+        # in the space above it; chat state gives that space to the scroll area.
         self.root = QVBoxLayout(self)
         self.root.setContentsMargins(0, 0, 0, 0)
         self.root.setSpacing(0)
-        self.root.addStretch(2)
+        self.root.addStretch(1)
         self.root.addWidget(self.greeting)
+        self.root.addStretch(1)
         self.root.addWidget(self.scroll, 1)
         self.root.addWidget(self.dock)
-        self.root.addStretch(3)
         self.root.addWidget(self.tray)
 
         self.prompt.submitted.connect(self.submit)
@@ -1111,8 +1112,8 @@ class ChatWindow(QWidget):
         """Leave the empty state: hide the greeting and hand the space to the conversation."""
         self.greeting.hide()
         self.scroll.show()
-        self.root.setStretch(0, 0)
-        self.root.setStretch(4, 0)
+        self.root.setStretch(0, 0)  # the stretches around the greeting
+        self.root.setStretch(2, 0)
         self.prompt.setPlaceholderText("Reply to Nuru…")
 
     def add_message(self, widget: QWidget) -> None:

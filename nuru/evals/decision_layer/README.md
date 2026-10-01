@@ -13,6 +13,7 @@ Run them one at a time, under `caffeinate -i` (the Mac sleeps mid-run otherwise,
 | 5 | `run_suite.py` + `shadow_report.py` | The whole 34-prompt suite in shadow mode, then Laya's tool choice next to the model's at every step, disagreements included. | 34 turns |
 | 6 | `check_claim_set.py` | check_claim on planted false claims (a write claimed that failed, one never attempted, an invented note ID) mixed with honest replies: catches and false alarms. | Laya only |
 | 7 | `laya_latency.py` | Laya's per-call latency per question set, MPS against CPU. | Laya only |
+| 8 | `categorise.py` | Sorting 50 prompts (`prompt_categories.py`) into 7 categories, several per prompt: Laya in a loop of up to 3 calls (each pick removed from the options) against one granite4.2:3b call. Exact set, first pick, recall, precision and time. Notes in `categorisation-notes.md`. | 50 calls + Laya |
 
 ```bash
 cd nuru/evals/decision_layer
@@ -25,6 +26,7 @@ caffeinate -i uv run python run_suite.py --tests 1-34 --label shadow
 uv run python shadow_report.py .runs/suite-shadow-<time>
 uv run python check_claim_set.py
 uv run python laya_latency.py
+caffeinate -i uv run python categorise.py --think low
 ```
 
 ## Iterating quickly

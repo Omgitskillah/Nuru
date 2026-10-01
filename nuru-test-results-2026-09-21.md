@@ -1120,3 +1120,13 @@ six of them, and loses time everywhere, which risks timeouts on the long tests (
 is not clearly worth it as the default. It is worth it for judgment and pushback, and possibly
 multi-note reasoning: a routing case. The 8B ties the 3B on tool calling in IBM's own benchmark
 (BFCL 52.39 against 52.41).
+
+---
+
+# Granite 8B on the full suite, 2026-09-30/10-01
+
+**130.9/170** (tests 1-31 x5, 32 x3, 33 and 34 x2) against the 3B's 133.4, at about three to four times
+the time per turn. Better on judgment (2, 21, 22, 27), worse on speed (7 and 9 time out) and on tool
+choice (20, 31). Per-test table, details and Laya's metrics:
+`nuru/evals/decision_layer/results-2026-10-01.md`.
+

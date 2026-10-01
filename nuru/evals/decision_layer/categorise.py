@@ -15,14 +15,24 @@ picks are scored after 1, 2 and 3 calls; its first call's probabilities are kept
 a single call's top 2 or 3 would have scored (in that one call's time). See categorisation-notes.md.
 
     caffeinate -i uv run python categorise.py [--think low|off|high] [--only laya|3b]
+                                              [--laya-checkpoint .runs/laya-categorise-<time>]
+
+`--set user` runs the user's 100 prompts (prompt_categories_user.py) instead of the first 50, and
+reports its GROUPS separately too.
+
+`--laya-checkpoint` asks a checkpoint folder (a fine-tuned one, from train_categorise.py) through
+`laya.Agent` directly, instead of the pinned checkpoints Nuru's Laya server loads.
 """
 
 import argparse
 import json
+import os
 import statistics
 import time
+from types import SimpleNamespace
 
 from common import chat_once, save
+import prompt_categories_user
 from prompt_categories import CATEGORIES, PROMPTS
 
 from laya_mcp.config import load_config
@@ -58,6 +68,18 @@ YES_NO = QuestionSet.model_validate({
     "questions": {k: {"type": "noul", "instructions": f"Handling the user's `request` needs this: {v}."}
                   for k, v in CATEGORIES.items()},
 })
+
+
+class CheckpointPredictor:
+    """A checkpoint folder behind the same `predict` call as LayaPredictor."""
+
+    def __init__(self, path: str):
+        from laya import Agent
+
+        self.agent = Agent(os.path.abspath(path))
+
+    def predict(self, qset: QuestionSet, state, questions: dict):
+        return SimpleNamespace(answers=self.agent.predict(state, questions)["answers"])
 
 
 def ask_laya_yes_no(predictor: LayaPredictor, prompt: str) -> dict:
@@ -118,17 +140,24 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--think", default="low", help="the 3B's thinking: off, low or high")
     parser.add_argument("--only", choices=["laya", "3b"])
+    parser.add_argument("--set", choices=["first", "user"], default="first", help="which test prompts")
+    parser.add_argument("--laya-checkpoint", help="a checkpoint folder to ask instead of the pinned one")
     args = parser.parse_args()
     think = False if args.think == "off" else args.think
-    rows = [{"prompt": p, "gold": sorted(g)} for p, g in PROMPTS]
+    prompts, groups = (prompt_categories_user.PROMPTS, prompt_categories_user.GROUPS) if args.set == "user" \
+        else (PROMPTS, {})
+    rows = [{"prompt": p, "gold": sorted(g)} for p, g in prompts]
 
     if args.only != "3b":
-        predictor = LayaPredictor(load_config().laya)
-        predictor.start()
-        while predictor.status()["state"] == "loading":
-            time.sleep(0.2)
-        if predictor.status()["state"] != "ready":
-            raise SystemExit(f"Laya failed to load: {predictor.status()['error']}")
+        if args.laya_checkpoint:
+            predictor = CheckpointPredictor(args.laya_checkpoint)
+        else:
+            predictor = LayaPredictor(load_config().laya)
+            predictor.start()
+            while predictor.status()["state"] == "loading":
+                time.sleep(0.2)
+            if predictor.status()["state"] != "ready":
+                raise SystemExit(f"Laya failed to load: {predictor.status()['error']}")
         for _ in range(3):
             ask_laya(predictor, "Warm-up request.")
             ask_laya_yes_no(predictor, "Warm-up request.")
@@ -148,7 +177,13 @@ def main():
 
     results = {}
     several = [r for r in rows if len(r["gold"]) > 1]
-    for subset, chosen in (("all 50", rows), (f"several labels {len(several)}", several)):
+    subsets = [(f"all {len(rows)}", rows), (f"several labels {len(several)}", several)]
+    subsets += [(f"{name} {len(members)}", [r for r in rows if r["prompt"] in members]) for name, members in groups.items()]
+    if groups:
+        grouped = set().union(*groups.values())
+        rest = [r for r in rows if r["prompt"] not in grouped]
+        subsets.append((f"none of the groups {len(rest)}", rest))
+    for subset, chosen in subsets:
         print(f"\n{subset}:")
         results[subset] = {}
         if "laya" in rows[0]:
@@ -170,7 +205,8 @@ def main():
             results[subset]["3b"] = summary(f"3B (think {args.think})",
                                             [score(r["3b"]["picks"], set(r["gold"])) for r in chosen],
                                             [r["3b"]["seconds"] for r in chosen])
-    print(save("categorise", {"think": args.think, "model": MODEL, "summary": results, "rows": rows}))
+    print(save("categorise", {"think": args.think, "model": MODEL, "set": args.set,
+                              "laya_checkpoint": args.laya_checkpoint, "summary": results, "rows": rows}))
 
 
 if __name__ == "__main__":

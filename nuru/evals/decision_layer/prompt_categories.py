@@ -4,6 +4,11 @@ The categories' definitions are shared word for word by both contenders (Laya's 
 system prompt). Each category has 6 prompts of its own and 8 borderline prompts at the end need two.
 A write to a note that already exists needs `lookup` too (decided 2026-10-01), so 3 of the write
 prompts carry two labels; a new note, or today's daily note (found by date), is `write` alone.
+Relabelled 2026-10-01 to the user's rules (as categorise_train.py v2): self-contained calculations
+are answer+calculate and hard self-contained questions answer+expert; "Add a note about it." is
+`clarify` alone; adding to today's daily note is lookup+write. Results before that date used the
+old labels.
+
 The prompts are never resolved - only sorted. See categorisation-notes.md.
 """
 
@@ -41,14 +46,14 @@ PROMPTS = [
     ("What open todos do I have across all my notes?", {"sweep"}),
     ("Which people notes haven't been updated in over a month?", {"sweep"}),
     # calculate
-    ("A 2,400 mAh battery and an average draw of 18 mA: how many days does it last?", {"calculate"}),
-    ("What's the mean and standard deviation of 12, 15, 11, 19 and 14?", {"calculate"}),
-    ("Split a $186 dinner bill between 4 people, with an 18% tip.", {"calculate"}),
-    ("How many weeks are there between 3 March and 20 October?", {"calculate"}),
-    ("A 20% price rise followed by a 15% discount: what's the net change?", {"calculate"}),
-    ("Convert 72°F to Celsius.", {"calculate"}),
+    ("A 2,400 mAh battery and an average draw of 18 mA: how many days does it last?", {"answer", "calculate"}),
+    ("What's the mean and standard deviation of 12, 15, 11, 19 and 14?", {"answer", "calculate"}),
+    ("Split a $186 dinner bill between 4 people, with an 18% tip.", {"answer", "calculate"}),
+    ("How many weeks are there between 3 March and 20 October?", {"answer", "calculate"}),
+    ("A 20% price rise followed by a 15% discount: what's the net change?", {"answer", "calculate"}),
+    ("Convert 72°F to Celsius.", {"answer", "calculate"}),
     # write (a write to an existing note needs a lookup first)
-    ("Add 'buy milk' to today's daily note.", {"write"}),
+    ("Add 'buy milk' to today's daily note.", {"lookup", "write"}),
     ("Create a new note called 'Ideas for the offsite'.", {"write"}),
     ("Add a line to Priya's note saying she prefers async messages on Fridays.", {"lookup", "write"}),
     ("Rename the tag #wip to #in-progress in my reading list note.", {"lookup", "write"}),
@@ -56,15 +61,15 @@ PROMPTS = [
     ("Mark the 'order parts' todo in my area monitor note as done.", {"lookup", "write"}),
     # expert
     ("Design a power-management strategy for a battery IoT sensor that wakes every 10 minutes over LTE-M.",
-     {"expert"}),
+     {"answer", "expert"}),
     ("What are the trade-offs between rate-monotonic and earliest-deadline-first scheduling for a hard "
-     "real-time system?", {"expert"}),
-    ("Prove, step by step, that the halting problem is undecidable.", {"expert"}),
+     "real-time system?", {"answer", "expert"}),
+    ("Prove, step by step, that the halting problem is undecidable.", {"answer", "expert"}),
     ("Draft a migration plan from a monolith to microservices for a 5-person team, with risks and milestones.",
-     {"expert"}),
-    ("Derive the Kalman filter update equations for a 2-state position and velocity model.", {"expert"}),
+     {"answer", "expert"}),
+    ("Derive the Kalman filter update equations for a 2-state position and velocity model.", {"answer", "expert"}),
     ("Should I use Rust or C for a new safety-critical firmware project? Weigh certification, tooling and "
-     "team skills.", {"expert"}),
+     "team skills.", {"answer", "expert"}),
     # clarify
     ("Fix that thing from before.", {"clarify"}),
     ("Do it again.", {"clarify"}),
@@ -78,7 +83,7 @@ PROMPTS = [
     ("Review the task design in my FreeRTOS note and suggest a better scheduler.", {"lookup", "expert"}),
     ("Add up all the expenses I logged this month across my daily notes.", {"sweep", "calculate"}),
     ("Look up the SARA-R510S lead time and add it to the area monitor note.", {"lookup", "write"}),
-    ("Add a note about it.", {"write", "clarify"}),
+    ("Add a note about it.", {"clarify"}),
     ("Go through all my project notes and propose a priority order for next quarter.", {"sweep", "expert"}),
     ("Explain what a Kalman filter is and save the explanation as a new note.", {"answer", "write"}),
 ]

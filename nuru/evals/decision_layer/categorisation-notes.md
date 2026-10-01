@@ -4,6 +4,20 @@ Branch `prompt-categorisation`, started 2026-10-01. Eval 8 in the [README](READM
 
 ## Current state (2026-10-01)
 
+- **Update, first slice of training ([results](results-2026-10-01-laya-first-slice.md)):** fine-tuned on 300 requests labelled by Claude (22 minutes on this Mac), Laya's yes/no categorisation reached **43/50 exact and 49/50 first pick right** at 0.22 s per prompt. That's ahead of the 3B at `low`, even with a 5-call vote (35.4 / 40.9). The `clarify` bias is gone. *Caveat:* the same author wrote the training and test prompts, so the result still needs a fresh test set and a regression check of Laya's other question sets.
+- **Update, the user's 100 prompts ([results](results-2026-10-01-user-test-set.md)):** fine-tuned Laya yes/no scored 40 exact and 87 first picks right, against 24 / 61 for the 3B at `low` and 14 / 50 for the original Laya. So fine-tuning holds up on independent prompts. Its main gap is that the user tags `expert` on synthesis and judgement over notes, which the training data didn't, so the next step is to align the labelling and retrain. *Labels revised:* the user removed `expert` from 8 prompts. Regraded, the fine-tuned Laya scores 44 / 86, against 29 / 61 for the 3B.
+- **Phase 2 ([details](results-2026-10-01-laya-v2.md)):**
+  - The labelling rules were agreed with the user: `answer` on every request that needs no notes (also answer+calculate and answer+expert); `expert` for judgement over notes; `clarify` alone for vague requests; adding to today's daily note as lookup+write.
+  - 86 of the 300 training labels (v2) and 14 of the first test set's labels were changed to match.
+  - Retrained for 3 epochs. *Result:* better on my first set (43 / 47, against v1's 31 / 49 under the new labels), but worse on the user's 100 (39 / 81, against v1's 44 / 86).
+  - The 35 answer+expert examples taught Laya that `expert` means no notes, and 46 `clarify` examples tipped short questions into `clarify`.
+  - Next: add new requests for judgement over notes, short clear questions, three-label requests and "this note" requests. v1 remains the better checkpoint until then.
+- **Phase 3 ([details](results-2026-10-01-laya-v3.md)):**
+  - 190 new requests aimed at the gaps (audit list: [categorise-train-v3-audit.md](categorise-train-v3-audit.md)), for 490 in total; trained for 30 minutes.
+  - **v3 scores 56 / 94 on the user's 100** (v1 44 / 86, 3B 29 / 61) and 46 / 50 on the first set.
+  - `clarify` is fixed, and `expert` over notes is found on 25 of 32.
+  - Remaining: `expert` and `answer` are slightly over-applied.
+  - *Caveat:* the data now targets the user set's patterns, so a fresh third test set is needed.
 - **The best sorter is the 3B at `low`:** 31/50 exact sets, 38/50 first pick right, 1.7 s per prompt. A vote of 5 calls raises that to 35 / 41, at about 8.5 s.
 - **Laya's best format is 7 yes/no questions in one call:** 19 exact, 32 first right, 0.22 s. That beats its choice question (15 / 23) and the 3-call loop (0 / 23). It gets `expert` right on all 6 prompts, but still overuses `clarify` and almost never gives a second label.
 - **Both contenders are weak on `clarify` and `expert`**, which are the categories routing depends on most.
@@ -29,6 +43,8 @@ Branch `prompt-categorisation`, started 2026-10-01. Eval 8 in the [README](READM
    8. Fit thresholds with `calibrate.py`.
 
    First slice: 300 requests labelled by the 3B vote, and one short training run.
+
+   **Feasibility checked 2026-10-01** ([smoke test](results-2026-10-01-laya-training-smoke.md)): a full fine-tune runs on this Mac at about 5 GB allocated (8.7 GB including the driver), about 0.25 s per item, and the loss falls. Estimates: about 30 min for the first slice, about 1.75 h for 1,000 requests.
 4. **After the tools purge**, prototype the router with tool narrowing, and benchmark it on the suite against 133.4/170.
 5. **Still open:** "What does SPI stand for?" (`answer` or `lookup`?). The 50 prompts have no conversation history, so `clarify` behaviour in real use is still untested.
 

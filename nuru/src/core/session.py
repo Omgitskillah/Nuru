@@ -122,8 +122,10 @@ def expert_api_key() -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY") or dotenv_values(ENV_DIR / ".env.deep-think").get("CLAUDE_API_KEY")
 
 
-CALC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "calc")
-CALC_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "calc-mcp"], cwd=CALC_DIR)
+MATH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "math-4-llms")
+MATH_SERVER_PARAMS = StdioServerParameters(
+    command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"], cwd=MATH_DIR
+)
 
 LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
 # classify_notes reads the same vault the obsidian server serves: VAULT_PATH if this process has
@@ -147,8 +149,8 @@ MODEL_TOOLS = frozenset(
         "list_notes", "note_tags", "note_todos", "notes_with_tag", "read_note", "search_notes", "semantic_search",
         # obsidian, write
         "add_to_daily", "append_note", "archive_note", "create_note", "generate_templates", "rename_or_move_file",
-        # calc
-        "add", "subtract", "multiply", "divide",
+        # math-4-llms
+        "calculate", "statistics",
         # deep-think
         "ask_an_expert",
         # laya
@@ -358,7 +360,7 @@ class Session:
 
         with ExitStack() as opened:
             tools = MCPTools(
-                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, CALC_SERVER_PARAMS, LAYA_SERVER_PARAMS],
+                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS],
                 model_tools=MODEL_TOOLS,
             )
             tools.connect()
@@ -369,7 +371,7 @@ class Session:
                 LOG_DIR,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; uv run deep-think-mcp; uv run calc-mcp; uv run laya-mcp",
+                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp; uv run laya-mcp",
             )
             store = ConversationStore(DB_PATH)
             opened.callback(store.close)

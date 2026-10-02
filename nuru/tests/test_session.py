@@ -944,7 +944,7 @@ def test_the_expert_limit_is_per_turn_not_per_conversation(monkeypatch):
     assert [args["question"] for _, args in fake_tools.calls] == ["first", "second"]
 
 
-def test_start_connects_the_obsidian_deep_think_calc_and_laya_servers(monkeypatch):
+def test_start_connects_the_obsidian_deep_think_math_and_laya_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -957,7 +957,7 @@ def test_start_connects_the_obsidian_deep_think_calc_and_laya_servers(monkeypatc
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "calc-mcp", "laya-mcp"]
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "math-mcp", "laya-mcp"]
 
 
 def test_index_change_reports_the_indexers_passes(monkeypatch):

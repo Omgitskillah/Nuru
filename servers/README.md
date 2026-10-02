@@ -2,7 +2,7 @@
 
 Each MCP server lives in its own self-contained folder here (own `pyproject.toml`, deps, tests), and they're tied together by a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) rooted at the repo root, so `uv run pytest` from there discovers and runs every package's tests in one go.
 
-The servers: [obsidian](obsidian) (the vault), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [calc](calc) (plain arithmetic, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
+The servers: [obsidian](obsidian) (the vault), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [math-4-llms](math-4-llms) (a git submodule: `calculate` for strict expressions and `statistics` for a list of numbers, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
 
 ## Requirements
 

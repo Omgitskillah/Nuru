@@ -1,0 +1,3 @@
+[submodule "servers/math-4-llms"]
+	path = servers/math-4-llms
+	url = git@github.com:Omgitskillah/math-4-llms.git

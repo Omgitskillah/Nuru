@@ -21,6 +21,7 @@ import difflib
 
 from categorise_train import TRAIN
 from categorise_train_v3 import ADDED_V3
+from categorise_train_v4 import ADDED_V4
 
 PROMPTS = [
     ("What was I working on this time last year?", {"sweep"}),
@@ -147,4 +148,4 @@ GROUPS = {
 
 assert len(PROMPTS) == 100 and len({p for p, _ in PROMPTS}) == 100
 assert not {p for p, _ in PROMPTS} & set(_TRAIN) - GROUPS["overlap"], "a user test prompt is in the training data"
-assert not {p for p, _ in PROMPTS} & {r for r, _ in ADDED_V3}, "a user test prompt is in the v3 additions"
+assert not {p for p, _ in PROMPTS} & {r for r, _ in ADDED_V3 + ADDED_V4}, "a user test prompt is in the v3/v4 additions"

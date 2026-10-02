@@ -17,8 +17,8 @@ a single call's top 2 or 3 would have scored (in that one call's time). See cate
     caffeinate -i uv run python categorise.py [--think low|off|high] [--only laya|3b]
                                               [--laya-checkpoint .runs/laya-categorise-<time>]
 
-`--set user` runs the user's 100 prompts (prompt_categories_user.py) instead of the first 50, and
-reports its GROUPS separately too.
+`--set user` runs the user's 100 prompts (prompt_categories_user.py) and `--set third` their second
+100 (prompt_categories_third.py) instead of the first 50, and report each set's GROUPS separately.
 
 `--laya-checkpoint` asks a checkpoint folder (a fine-tuned one, from train_categorise.py) through
 `laya.Agent` directly, instead of the pinned checkpoints Nuru's Laya server loads.
@@ -32,6 +32,7 @@ import time
 from types import SimpleNamespace
 
 from common import chat_once, save
+import prompt_categories_third
 import prompt_categories_user
 from prompt_categories import CATEGORIES, PROMPTS
 
@@ -140,12 +141,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--think", default="low", help="the 3B's thinking: off, low or high")
     parser.add_argument("--only", choices=["laya", "3b"])
-    parser.add_argument("--set", choices=["first", "user"], default="first", help="which test prompts")
+    parser.add_argument("--set", choices=["first", "user", "third"], default="first", help="which test prompts")
     parser.add_argument("--laya-checkpoint", help="a checkpoint folder to ask instead of the pinned one")
     args = parser.parse_args()
     think = False if args.think == "off" else args.think
-    prompts, groups = (prompt_categories_user.PROMPTS, prompt_categories_user.GROUPS) if args.set == "user" \
-        else (PROMPTS, {})
+    module = {"user": prompt_categories_user, "third": prompt_categories_third}.get(args.set)
+    prompts, groups = (module.PROMPTS, module.GROUPS) if module else (PROMPTS, {})
     rows = [{"prompt": p, "gold": sorted(g)} for p, g in prompts]
 
     if args.only != "3b":
@@ -178,7 +179,8 @@ def main():
     results = {}
     several = [r for r in rows if len(r["gold"]) > 1]
     subsets = [(f"all {len(rows)}", rows), (f"several labels {len(several)}", several)]
-    subsets += [(f"{name} {len(members)}", [r for r in rows if r["prompt"] in members]) for name, members in groups.items()]
+    subsets += [(f"{name} {len(members)}", [r for r in rows if r["prompt"] in members])
+                for name, members in groups.items() if members]
     if groups:
         grouped = set().union(*groups.values())
         rest = [r for r in rows if r["prompt"] not in grouped]

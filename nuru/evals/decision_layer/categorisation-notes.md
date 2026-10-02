@@ -18,6 +18,17 @@ Branch `prompt-categorisation`, started 2026-10-01. Eval 8 in the [README](READM
   - `clarify` is fixed, and `expert` over notes is found on 25 of 32.
   - Remaining: `expert` and `answer` are slightly over-applied.
   - *Caveat:* the data now targets the user set's patterns, so a fresh third test set is needed.
+- **Phase 4 ([details](results-2026-10-01-laya-v4.md)):**
+  - The user approved all 190 v3 additions.
+  - 132 new requests that need some reasoning but not the expert, all labelled without `expert` (audit list: [categorise-train-v4-audit.md](categorise-train-v4-audit.md)), for 622 in total; trained for 35 minutes.
+  - **v4 on the user's 100: 65 exact (best so far), 90 first picks right** (v3: 56 / 94).
+  - `expert` and `answer` are overused half as often, but a few judgement prompts lost `expert`.
+  - First set: 43 / 49.
+  - Next: a fresh third test set, because neither test set can separate v3 and v4 reliably any more.
+- **Third test set, fresh ([results](results-2026-10-02-third-test-set.md)):** the user's #101–200, not aimed at by any training.
+  - Scores (exact / first pick right): original Laya 19 / 60, v1 61 / 92, **v3 68 / 97**, **v4 69 / 94**, 3B 45 / 75. So fine-tuning generalises.
+  - v3 and v4 tie on exact sets. v3 leads on first pick, recall and `clarify`; v4 adds fewer wrong labels. **v3 is the safer default.**
+  - Next: a small targeted round, the regression check of the other question sets, then shadow mode in Nuru.
 - **The best sorter is the 3B at `low`:** 31/50 exact sets, 38/50 first pick right, 1.7 s per prompt. A vote of 5 calls raises that to 35 / 41, at about 8.5 s.
 - **Laya's best format is 7 yes/no questions in one call:** 19 exact, 32 first right, 0.22 s. That beats its choice question (15 / 23) and the 3-call loop (0 / 23). It gets `expert` right on all 6 prompts, but still overuses `clarify` and almost never gives a second label.
 - **Both contenders are weak on `clarify` and `expert`**, which are the categories routing depends on most.

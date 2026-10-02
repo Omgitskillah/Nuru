@@ -25,9 +25,10 @@ Each request lists the categories it needs. Soft targets: p(true) = 0.95 for a l
 """
 
 from categorise_train_v3 import ADDED_V3, SOFT_V3
+from categorise_train_v4 import ADDED_V4, SOFT_V4
 from prompt_categories import CATEGORIES, PROMPTS
 
-TRAIN_VERSION = "v3"
+TRAIN_VERSION = "v4"
 YES, NO = 0.95, 0.04
 
 _V2 = [
@@ -372,7 +373,7 @@ _V2 = [
     ("What's the Celsius to Fahrenheit formula? Convert 37°C with it.", "answer calculate"),
 ]
 
-TRAIN = _V2 + ADDED_V3  # v3: 300 relabelled (v2) + the additions in categorise_train_v3.py
+TRAIN = _V2 + ADDED_V3 + ADDED_V4  # v4: 300 relabelled (v2) + categorise_train_v3.py + categorise_train_v4.py
 
 # Borderline cases: p(true) per category, overriding YES/NO for the categories named.
 SOFT = {
@@ -414,6 +415,7 @@ def targets() -> list[tuple[str, dict[str, float]]]:
         p = {c: YES if c in names else NO for c in CATEGORIES}
         p.update(SOFT.get(request, {}))
         p.update(SOFT_V3.get(request, {}))
+        p.update(SOFT_V4.get(request, {}))
         out.append((request, p))
     return out
 
@@ -421,6 +423,6 @@ def targets() -> list[tuple[str, dict[str, float]]]:
 _names = [r for r, _ in TRAIN]
 assert len(_V2) == 300 and len(set(_names)) == len(TRAIN), (len(TRAIN), len(set(_names)))
 assert all(set(l.split()) <= set(CATEGORIES) for _, l in TRAIN)
-assert set(SOFT) | set(SOFT_V3) <= set(_names), (set(SOFT) | set(SOFT_V3)) - set(_names)
+assert set(SOFT) | set(SOFT_V3) | set(SOFT_V4) <= set(_names), (set(SOFT) | set(SOFT_V3) | set(SOFT_V4)) - set(_names)
 assert not set(_names) & {p for p, _ in PROMPTS}, "a test prompt is in the training data"
 # prompt_categories_user.py checks that no user test prompt is in TRAIN (it imports this module).

@@ -122,7 +122,6 @@ Obsidian vault tools - use these directly for anything about my notes:
   reversible). There is no delete tool - archive instead.
 - rename_or_move_file(source_path, destination_path): rename or move a file.
 - list_notes / list_files / list_files_in_directory: list everything (long).
-- generate_templates: regenerate the vault's Templates/ files.
 Never guess at a note's contents from memory - read or search for it.
 
 ask_an_expert(message, file_paths) - escalates to a slower, more capable cloud

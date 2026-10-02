@@ -471,7 +471,7 @@ def test_semantic_search_hints_when_the_index_is_empty(tmp_path, monkeypatch, em
     result = server.semantic_search("car")
 
     assert result["matches"] == []
-    assert "search_notes" in result["hint"]
+    assert "Use search to find" in result["hint"]
 
 
 def test_semantic_search_passes_on_that_ollama_is_not_running(vault, embed, monkeypatch):
@@ -494,14 +494,63 @@ def test_semantic_search_refuses_an_index_from_another_model(indexed_vault, monk
         server.semantic_search("car")
 
 
-def test_semantic_search_is_registered_with_only_query_required(indexed_vault):
-    tool = next(t for t in _run(server.mcp.list_tools()) if t.name == "semantic_search")
+def test_search_is_registered_with_only_query_and_replaces_both_searches(indexed_vault):
+    tools = {t.name: t for t in _run(server.mcp.list_tools())}
 
-    assert tool.input_schema["required"] == ["query"]
-    assert tool.input_schema["properties"]["top_k"]["default"] == 5
+    assert tools["search"].input_schema["required"] == ["query"]
+    assert set(tools["search"].input_schema["properties"]) == {"query"}
+    assert "search_notes" not in tools and "semantic_search" not in tools
 
-    result = _run(server.mcp.call_tool("semantic_search", {"query": "car", "top_k": 1}))
+    result = _run(server.mcp.call_tool("search", {"query": "car"}))
     assert "Garage/Vehicle upkeep.md" in str(result)
+
+
+# --- search: exact matches first, then matches by meaning ---
+
+
+def test_search_lists_exact_matches_first_then_meaning_without_repeating_a_note(indexed_vault):
+    # "engine" is a word in the vehicle note and the trashed one; by meaning, the vehicle note
+    # is also the nearest - it must appear once, as an exact match.
+    result = server.search("engine")
+
+    assert result["exact_count"] == 1
+    assert [(m["path"], m["match"]) for m in result["matches"]][:1] == [("Garage/Vehicle upkeep.md", "exact")]
+    paths = [m["path"] for m in result["matches"]]
+    assert len(paths) == len(set(paths))
+    assert all(m["match"] == "meaning" for m in result["matches"][1:])
+    assert "snippet" in result["matches"][0] and "score" in result["matches"][1]
+
+
+def test_search_finds_by_meaning_when_no_note_has_the_words(indexed_vault):
+    result = server.search("car")
+
+    assert result["exact_count"] == 0
+    assert result["matches"][0] == {**result["matches"][0], "path": "Garage/Vehicle upkeep.md", "match": "meaning"}
+    assert "automobile" in result["matches"][0]["text"]
+    assert "all matches are by meaning" in result["hint"]
+
+
+def test_search_never_returns_trash_or_templates(indexed_vault):
+    paths = [m["path"] for m in server.search("automobile engine oil")["matches"]]
+
+    assert not any(p.startswith(("trash/", "Templates/", ".obsidian/")) for p in paths)
+
+
+def test_search_keeps_its_exact_matches_when_meaning_is_unavailable(vault, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", vault)  # no index built
+
+    result = server.search("engine")
+
+    assert [m["path"] for m in result["matches"]] == ["Garage/Vehicle upkeep.md"]
+    assert "Search by meaning is unavailable" in result["hint"] and "obsidian-mcp-index" in result["hint"]
+
+
+def test_search_cuts_a_long_passage(indexed_vault, monkeypatch):
+    monkeypatch.setattr(server, "_MEANING_TEXT_CHARS", 20)
+
+    meaning = [m for m in server.search("car")["matches"] if m["match"] == "meaning"]
+
+    assert all(len(m["text"]) <= 21 for m in meaning) and meaning[0]["text"].endswith("…")
 
 
 # --- obsidian-mcp-index ---

@@ -273,7 +273,7 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
     if not matches:
         result["hint"] = (
             f"No notes of type '{wanted}' found. A note made in Obsidian only counts if its "
-            f"frontmatter says 'type: {wanted}'. Call browse_notes without a type, or use search_notes."
+            f"frontmatter says 'type: {wanted}'. Call browse_notes without a type, or use search."
             if wanted
             else "The vault has no notes yet."
         )
@@ -526,14 +526,6 @@ def _snippet(text: str, patterns: list[re.Pattern[str]]) -> str:
     return f"{'…' if start else ''}{snippet}{'…' if end < len(body) else ''}"
 
 
-@mcp.tool(
-    description="Search notes by content, title and filename. query: one or more words - every word "
-    "must appear, in any order, ignoring case; a word like 'PDP-drop' or '09-17' matches its parts "
-    "side by side, joined by '-', '_' or a space. Returns "
-    "{query, count, matches, hint}: up to 10 matches, best first, each {path, id, type, title, "
-    "snippet}; count is the total. Pass path to read_note or write_note (id is null for notes "
-    "not made by write_note). hint says how to retry or narrow. Excludes Templates/."
-)
 @_tool
 def search_notes(query: str) -> dict[str, Any]:
     """Search notes (Markdown files) by content, title and filename.
@@ -610,6 +602,89 @@ def search_notes(query: str) -> dict[str, Any]:
     return result
 
 
+# A passage found by meaning is cut to this many characters in search's result: up to
+# _SEARCH_LIMIT of them reach a small model's context at once, and read_note has the rest.
+_MEANING_TEXT_CHARS = 400
+
+
+@mcp.tool(
+    description="Find notes. query: words, a name, a date, or a plain description of what you want. "
+    "Returns {query, exact_count, matches, hint}, at most 10 matches: first every note containing all the "
+    "words (match: exact, with a snippet), then notes found by meaning (match: meaning, with the passage "
+    "and a score; 1 is closest). Meaning matches always appear, even when nothing in the vault is relevant: "
+    "check each one really answers the request before using it. Pass path to read_note or write_note. For "
+    "an exact phrase, number or code use find_in_notes. Excludes Templates/ and trash/."
+)
+@_tool
+def search(query: str) -> dict[str, Any]:
+    """search_notes and semantic_search in one call: exact word matches first, then
+    matches by meaning, one entry per note.
+
+    The exact matches keep search_notes' order (query words in the filename or
+    title first). The rest of the _SEARCH_LIMIT slots go to semantic_search's
+    passages, best score first, skipping any note already listed and keeping only
+    the best passage of each note. Every match says how it was found, since a
+    meaning match is only ever "nearest", never "contains".
+
+    If the meaning half can't run (no index yet, an index from another model,
+    Ollama not running), the exact matches still come back, with a hint saying
+    why the rest are missing.
+
+    Returns {"query", "exact_count", "matches", "hint"?}: "exact_count" is how many
+    notes contain every word, which can exceed the exact matches shown.
+    """
+    exact = search_notes(query)  # validates the query and raises ValueError on an empty one
+    matches = [{**m, "match": "exact"} for m in exact["matches"]]
+    seen = {m["path"] for m in matches}
+    unavailable = None
+    room = _SEARCH_LIMIT - len(matches)
+    if room > 0:
+        try:
+            # More passages than slots: several can come from one note, or from one already listed.
+            passages = semantic_search(query, _SEARCH_LIMIT)["matches"]
+        except ToolError as e:
+            unavailable = str(e)
+            passages = []
+        indexed = _indexed_notes()
+        for passage in passages:
+            if len(matches) >= _SEARCH_LIMIT:
+                break
+            if passage["path"] in seen:
+                continue
+            seen.add(passage["path"])
+            info = indexed.get(passage["path"], {})
+            text = passage["text"]
+            matches.append({
+                "path": passage["path"],
+                "id": passage["id"],
+                "type": info.get("type"),
+                "title": info.get("title", Path(passage["path"]).stem),
+                "match": "meaning",
+                "score": passage["score"],
+                "text": text if len(text) <= _MEANING_TEXT_CHARS else text[:_MEANING_TEXT_CHARS] + "…",
+            })
+
+    result: dict[str, Any] = {"query": query, "exact_count": exact["count"], "matches": matches}
+    hints = []
+    if not matches:
+        hints.append(
+            f"Nothing found for '{query}'. Retry with fewer or different words, or a different format "
+            "(e.g. '2026-09-17' instead of 'September 17')."
+        )
+    elif not exact["matches"]:
+        hints.append(
+            f"No note contains every word of '{query}'; all matches are by meaning. Check each passage "
+            "really answers the request - if none does, say nothing was found."
+        )
+    elif exact["count"] > len(exact["matches"]):
+        hints.append(f"Showing the top {len(exact['matches'])} of {exact['count']} exact matches - add a word to narrow.")
+    if unavailable:
+        hints.append(f"Search by meaning is unavailable, so only exact matches are shown ({unavailable}).")
+    if hints:
+        result["hint"] = " ".join(hints)
+    return result
+
+
 def _rg_bytes(field: dict[str, str]) -> bytes:
     """A path or line from ripgrep's --json output, as bytes: {"text": ...}, or
     {"bytes": <base64>} when it isn't valid UTF-8 (a note saved as Latin-1, say)."""
@@ -627,7 +702,7 @@ def _line_snippet(line: str, hit: int) -> str:
 
 @mcp.tool(
     description="Find the lines in notes that match a regular expression, like grep - for an exact phrase, "
-    "number, id or code, where search_notes matches words. pattern: a regex (ripgrep syntax), ignoring "
+    "number, id or code, where search matches words. pattern: a regex (ripgrep syntax), ignoring "
     "case; escape ( ) [ ] { } . * + ? ^ $ | \\ with ONE backslash to match them literally, or set "
     "literal=true to match pattern as plain text with nothing to escape (e.g. pattern '[[' with "
     "literal=true). A pattern that isn't a valid regex is searched as plain text. Returns "
@@ -674,7 +749,7 @@ def find_in_notes(pattern: str, literal: bool = False) -> dict[str, Any]:
     if rg is None:
         raise FileNotFoundError(
             "ripgrep ('rg') is not installed or not on PATH, and find_in_notes needs it. "
-            "Use search_notes instead."
+            "Use search instead."
         )
 
     done = _run_rg(rg, pattern, literal)
@@ -716,7 +791,7 @@ def find_in_notes(pattern: str, literal: bool = False) -> dict[str, Any]:
         hints.append(
             f"No line in any note matches '{pattern}'. find_in_notes matches a regular expression "
             "against one line at a time, ignoring case: retry with a shorter or looser pattern, or "
-            "use search_notes to find notes containing words in any order."
+            "use search to find notes containing words in any order."
         )
         if "\\\\" in pattern and not literal and not rejected:
             # e.g. \\[\\[ - a literal backslash before each bracket, where \[\[ was meant
@@ -762,15 +837,6 @@ def _run_rg(rg: str, pattern: str, literal: bool) -> subprocess.CompletedProcess
         ) from e
 
 
-@mcp.tool(
-    description="Find passages by meaning rather than exact words - for a question or an idea when you don't "
-    "know the words the note uses ('looking after my car' finds a note about servicing the automobile). "
-    "query: a question or description in plain language. top_k: how many passages (default 5, max 10). "
-    "Returns {query, matches, hint}: matches are {path, id, text, score}, best first - text is the passage, "
-    "headed by its note's title and section; score is similarity, 1 is closest. Pass path to read_note for "
-    "the whole note or to write_note to add to it (id is null for notes without one). For an exact word, name, id or "
-    "number use search_notes or find_in_notes. Excludes Templates/ and trash/."
-)
 @_tool
 def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
     """The passages of the vault's notes nearest in meaning to `query` (see semantic.py).
@@ -802,7 +868,7 @@ def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
     if not config.db_path.is_file():
         raise FileNotFoundError(
             "The semantic index hasn't been built yet: Nuru builds it in the background while it runs, or run "
-            "`uv run obsidian-mcp-index` in servers/obsidian. Use search_notes meanwhile."
+            "`uv run obsidian-mcp-index` in servers/obsidian."
         )
     with contextlib.closing(semantic.connect(config)) as conn:
         matches = semantic.search(conn, config, semantic.ollama_embedder(config), query, top_k)
@@ -810,7 +876,7 @@ def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
     result: dict[str, Any] = {"query": query, "matches": matches}
     if not matches:
         result["hint"] = (
-            "The semantic index has no notes in it yet - it may still be building. Use search_notes to find "
+            "The semantic index has no notes in it yet - it may still be building. Use search to find "
             "notes by their words meanwhile."
         )
     return result
@@ -1040,7 +1106,7 @@ def _resolve_notes(name: str) -> list[Path]:
     message = f"No note found named '{name}'."
     if close := _NoteNames().closest(name):
         message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
-    raise FileNotFoundError(f"{message} Use browse_notes or search_notes to find the right note.")
+    raise FileNotFoundError(f"{message} Use browse_notes or search to find the right note.")
 
 
 def _resolve_note(name: str) -> Path:
@@ -1744,7 +1810,7 @@ def write_note(
             if type is None or author is None:
                 raise ValueError(
                     f"No note named '{note}' exists. To create it, pass type and author too; "
-                    "to add to an existing note, use search_notes to find its path."
+                    "to add to an existing note, use search to find its path."
                 )
             made = create_note(
                 type=type, title=note, author=author, body=content, tags=tags,

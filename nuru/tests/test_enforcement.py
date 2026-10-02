@@ -60,7 +60,7 @@ class Tools:
 
     def list_tools(self):
         return [{"type": "function", "function": {"name": n, "description": "x", "parameters": p}} for n, p in [
-            ("semantic_search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
+            ("search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
             ("write_note", {"properties": {"content": {"type": "string"},
                                            "note": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}},
                             "required": ["content"], "type": "object"}),
@@ -125,7 +125,7 @@ def setup(monkeypatch, tmp_path):
             seen.append({"think": think, "tools": tools is not None, "fmt": fmt, "messages": [dict(m) for m in messages]})
             yield from next(responses)
 
-        tools = Tools(results or {"semantic_search": SEARCH, "write_note": "nuru/priya-raman.md"})
+        tools = Tools(results or {"search": SEARCH, "write_note": "nuru/priya-raman.md"})
         monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
         monkeypatch.setattr(session, "ensure_server_running", lambda: None)
         monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
@@ -156,8 +156,8 @@ def test_with_nothing_enforced_the_turn_is_the_models(setup):
 def test_a_read_or_write_request_starts_with_the_harness_running_the_search(setup):
     s, seen, tools = setup(["tool_gate"], [["Priya prefers async on Fridays - noted."]], script={**DEFAULT_SCRIPT, "claim": {"no_change": 0.9}})
     events = list(s.ask(REQUEST))
-    assert events[0] == ToolCall("semantic_search", {"query": REQUEST})
-    assert tools.calls[0] == ("semantic_search", {"query": REQUEST})
+    assert events[0] == ToolCall("search", {"query": REQUEST})
+    assert tools.calls[0] == ("search", {"query": REQUEST})
     first_call_messages = seen[0]["messages"]
     assert first_call_messages[-1] == {"role": "tool", "content": SEARCH}
 
@@ -169,7 +169,7 @@ def test_a_confident_answer_gets_no_tools(setup):
 
 
 def test_the_step_cap_stops_the_turn_when_there_is_no_expert(setup):
-    s, seen, tools = setup(["step_cap"], [[call("semantic_search", {"query": q})] for q in "abc"],
+    s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abc"],
                            tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))
     assert isinstance(events[-1], Text) and events[-1].text.startswith("I stopped here: it reached the 2-step limit")
@@ -196,13 +196,13 @@ def test_past_the_highest_local_tier_the_expert_plans(setup, monkeypatch):
 
     def create(**kwargs):
         client.calls.append(kwargs)
-        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="1. semantic_search")])
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="1. search")])
 
     client.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
     s, seen, _ = setup(["assess_effort"], [[{"thinking": "hmm"}], [{"thinking": "hmm"}], ["Done."]],
                        script={**DEFAULT_SCRIPT, "tier": {"high": 0.95}}, expert_client=client)
     events = list(s.ask("Something hard"))
-    assert Thinking("Plan from the expert:\n1. semantic_search") in events
+    assert Thinking("Plan from the expert:\n1. search") in events
     assert "Request: Something hard" in client.calls[0]["messages"][0]["content"]
     assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] A plan from the expert")
 
@@ -210,7 +210,7 @@ def test_past_the_highest_local_tier_the_expert_plans(setup, monkeypatch):
 # ---------------------------------------------------------------- gate_write
 def test_a_write_runs_with_forced_arguments_limited_to_searched_ids(setup):
     responses = [
-        [call("semantic_search", {"query": "Priya"})],
+        [call("search", {"query": "Priya"})],
         [call("write_note", {"note": INVENTED, "content": "Prefers async"})],
         [json.dumps({"note": PRIYA, "content": "Prefers async messages on Fridays"})],  # the forced-schema call
         ["Added it to Priya's note."],
@@ -225,7 +225,7 @@ def test_a_write_runs_with_forced_arguments_limited_to_searched_ids(setup):
 
 def test_a_write_whose_own_arguments_are_valid_runs_without_being_asked_again(setup):
     responses = [
-        [call("semantic_search", {"query": "Priya"})],
+        [call("search", {"query": "Priya"})],
         [call("write_note", {"note": PRIYA, "content": "Prefers async messages on Fridays"})],
         ["Added it to Priya's note."],
     ]
@@ -237,7 +237,7 @@ def test_a_write_whose_own_arguments_are_valid_runs_without_being_asked_again(se
 
 def test_a_write_that_needs_confirmation_is_blocked_when_nobody_is_there(setup):
     responses = [
-        [call("semantic_search", {"query": "Priya"})],
+        [call("search", {"query": "Priya"})],
         [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
         ["I couldn't add it."],
     ]
@@ -250,7 +250,7 @@ def test_a_write_that_needs_confirmation_is_blocked_when_nobody_is_there(setup):
 
 def test_a_confirmed_write_runs(setup):
     responses = [
-        [call("semantic_search", {"query": "Priya"})],
+        [call("search", {"query": "Priya"})],
         [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
         ["Added."],
     ]
@@ -262,12 +262,12 @@ def test_a_confirmed_write_runs(setup):
 
 def test_cannot_do_is_a_failure_and_nothing_is_written(setup):
     responses = [
-        [call("semantic_search", {"query": "Zed"})],
+        [call("search", {"query": "Zed"})],
         [call("write_note", {"note": INVENTED, "content": "hi"})],
         [json.dumps({"cannot_do": "no note for Zed"})],
         ["I couldn't find Zed's note."],
     ]
-    s, seen, tools = setup(["gate_write"], responses, results={"semantic_search": json.dumps({"matches": []})})
+    s, seen, tools = setup(["gate_write"], responses, results={"search": json.dumps({"matches": []})})
     list(s.ask("Add hi to Zed's note"))
     assert not any(name == "write_note" for name, _ in tools.calls)
     assert {"type": "object", "properties": {"cannot_do": {"type": "string"}}, "required": ["cannot_do"],
@@ -367,10 +367,10 @@ def test_enforced_write_checks_stop_a_write_to_an_invented_note_id(setup):
 
 
 def test_write_checks_let_a_write_to_a_searched_note_through(setup):
-    s, seen, tools = setup(["write_checks"], [[call("semantic_search", {"query": "Priya"})],
+    s, seen, tools = setup(["write_checks"], [[call("search", {"query": "Priya"})],
                                               [call("write_note", {"note": PRIYA, "content": "x"})], ["Done."]])
     list(s.ask("Add x to Priya's note"))
-    assert [name for name, _ in tools.calls] == ["semantic_search", "write_note"]
+    assert [name for name, _ in tools.calls] == ["search", "write_note"]
 
 
 def test_the_repeated_call_stop_ignores_case(setup):
@@ -381,7 +381,7 @@ def test_the_repeated_call_stop_ignores_case(setup):
 
 
 def test_after_a_steer_only_the_next_call_goes_without_thinking(setup):
-    s, seen, _ = setup(["watch_thinking"], [RUNAWAY + ["never reached"], [call("semantic_search", {"query": "loads"})],
+    s, seen, _ = setup(["watch_thinking"], [RUNAWAY + ["never reached"], [call("search", {"query": "loads"})],
                                             ["5.35 mA."]],
                        script={**DEFAULT_SCRIPT, "state": {"progressing": 0.9}})
     events = list(s.ask("Recompute the average current"))
@@ -390,7 +390,7 @@ def test_after_a_steer_only_the_next_call_goes_without_thinking(setup):
 
 
 def test_in_shadow_a_repeated_call_is_logged_once_and_runs(setup, tmp_path):
-    same = [call("semantic_search", {"query": "loads"})]
+    same = [call("search", {"query": "loads"})]
     s, seen, tools = setup([], [same, same, same, same, ["Done."]])
     events = list(s.ask("Find the loads"))
     assert events[-1] == Text("Done.") and len(tools.calls) == 4
@@ -399,11 +399,11 @@ def test_in_shadow_a_repeated_call_is_logged_once_and_runs(setup, tmp_path):
 
 
 def test_enforced_a_repeated_call_stops_the_turn_before_it_runs(setup, tmp_path):
-    same = [call("semantic_search", {"query": "loads"})]
-    other = [call("semantic_search", {"query": "other loads"})]
+    same = [call("search", {"query": "loads"})]
+    other = [call("search", {"query": "other loads"})]
     s, seen, tools = setup(["watch_thinking"], [same, other, same, same, ["never reached"]])
     events = list(s.ask("Find the loads"))
     assert len(tools.calls) == 3
-    assert events[-1].text.startswith("I stopped here: it called semantic_search with the same arguments 3 times")
+    assert events[-1].text.startswith("I stopped here: it called search with the same arguments 3 times")
     rows = [r for r in watch_rows(tmp_path) if r["proposed_action"] == "repeated_call"]
     assert rows[0]["action_taken"] == "stopped"

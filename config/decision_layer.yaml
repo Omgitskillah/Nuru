@@ -28,7 +28,7 @@ decision_points:
   gate_write: shadow       # Laya: does this write match the request (proceed / ask / block)
   write_checks: enforce    # code: no invented note IDs, blocked tools or protected paths in a write
   check_claim: shadow      # Laya: what the reply claims, checked against the log - after calibration
-  rerank: shadow           # Laya: reorder semantic_search results
+  rerank: shadow           # Laya: reorder search's matches by meaning
   watch_thinking: enforce  # code: thinking budget, repeated sentences, repeated tool calls
   watch_laya: shadow       # Laya: the watch's own reading of the thinking
 
@@ -51,7 +51,7 @@ watch_thinking:
 tool_gate:
   step_cap: 10   # rounds of tool calls; 6 cut off passing test 32 runs (7-8 rounds at low,
                  # 2026-09-29/30); past 10 were only loops (10-24 rounds)
-  default_first_read: semantic_search   # the first tool for a read or write request: search first
+  default_first_read: search   # the first tool for a read or write request: search first
 
 tiers:
   order: ["off", low, high, expert]

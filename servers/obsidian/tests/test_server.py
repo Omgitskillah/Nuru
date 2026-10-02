@@ -2962,7 +2962,7 @@ def test_find_in_notes_returns_no_matches_and_a_retry_hint_when_not_found(tmp_pa
     assert result["matches"] == []
     assert result["count"] == 0
     assert "nonexistent" in result["hint"]
-    assert "search_notes" in result["hint"]
+    assert "use search to find" in result["hint"]
 
 
 def test_find_in_notes_only_reports_notes_the_other_tools_can_see(tmp_path, monkeypatch):
@@ -3176,7 +3176,7 @@ def test_find_in_notes_says_how_to_recover_when_ripgrep_is_not_installed(tmp_pat
         server.find_in_notes("todo")
 
     assert "ripgrep" in str(exc_info.value)
-    assert "search_notes" in str(exc_info.value)
+    assert "Use search instead" in str(exc_info.value)
 
 
 def test_find_in_notes_times_out_instead_of_hanging(tmp_path, monkeypatch):

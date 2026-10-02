@@ -7,7 +7,7 @@ The session calls these hooks as a turn runs:
 
     begin(request, task_id)        tool_gate (start) and assess_effort, before the first model call
     model_called(tools, ...)       what the model did - resolves the pending decisions' action_taken
-    before_tool / after_tool       gate_write for a write; the execution log; rerank for semantic_search
+    before_tool / after_tool       gate_write for a write; the execution log; rerank for search
     before_next_call()             tool_gate (next) and assess_effort, after a round of tool results
     end(reply)                     check_claim on the reply the user is shown; the turn's mode
 
@@ -275,7 +275,7 @@ class DecisionShadow:
         error: str | None = None,
     ) -> str | None:
         """Log what actually ran. `result` is None when the call raised (`error` says why) or was refused.
-        For a semantic_search, returns the reranked result (JSON) if rerank answered, else None."""
+        For a search, returns the result (JSON) with its matches by meaning reranked, if rerank answered, else None."""
         ok = result is not None and not result.is_error and error is None
         error = error or (result.text[:500] if result is not None and result.is_error else None)
 
@@ -297,7 +297,7 @@ class DecisionShadow:
                 self._log.set_action_taken(gate_id, "executed", "ok" if ok else "error")
 
         self._safely(record)
-        if name == "semantic_search" and ok:
+        if name == "search" and ok:
             try:
                 return self._rerank(result.text)
             except Exception:
@@ -305,13 +305,17 @@ class DecisionShadow:
         return None
 
     def _rerank(self, text: str) -> str | None:
+        """Only the matches by meaning are reranked: an exact match contains every word, and stays first."""
         found = json.loads(text)
-        if not found.get("matches"):
+        matches = found.get("matches") or []
+        meaning = [m for m in matches if m.get("match") == "meaning"]
+        if not meaning:
             return None
-        reranked = self._ask("rerank", {"query": found.get("query", ""), "matches": found["matches"]})
+        reranked = self._ask("rerank", {"query": found.get("query", ""), "matches": meaning})
         if not reranked or not reranked.get("reranked"):
             return None
-        return json.dumps({"query": found.get("query", ""), "matches": reranked["matches"]})
+        exact = [m for m in matches if m.get("match") != "meaning"]
+        return json.dumps({**found, "matches": exact + reranked["matches"]})
 
     def before_next_call(self) -> StepDecisions:
         return self._gate_then_effort("next")

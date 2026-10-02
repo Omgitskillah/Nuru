@@ -259,7 +259,7 @@ class DecisionLayer:
 
     # ------------------------------------------------------------------ rerank
     def rerank(self, query: str, matches: list[dict], context: Context | None = None) -> dict[str, Any]:
-        """semantic_search matches reordered by Laya's `relevant` probability, top k kept. If any
+        """search's matches by meaning reordered by Laya's `relevant` probability, top k kept. If any
         chunk can't be scored, the search's own order stands - a partial ranking would be worse."""
         top_k = self.config.rerank.top_k
         scored = []

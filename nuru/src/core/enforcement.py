@@ -19,7 +19,8 @@ one that is `off` isn't asked. Enforced, per point:
   decides: proceed, ask the user (blocked when nobody is there to ask), or block.
 - check_claim: the reply is held back until checked; a failed one is regenerated once with the
   log in view, and shown with a warning if it fails again.
-- rerank: semantic_search results the model sees are Laya's reranked top k.
+- rerank: the matches by meaning in a search result the model sees are Laya's reranked top k, after
+  the exact matches.
 
 Everything that can be decided in code - which tools exist, what may be written where, which note
 IDs are real - is decided before any of this, and stays so in shadow mode too.

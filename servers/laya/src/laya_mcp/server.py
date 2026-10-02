@@ -147,7 +147,7 @@ def watch_thinking(
     return _get_layer().watch_thinking(request, steps or [], thinking, _context(session_id, task_id, step))
 
 
-@mcp.tool(description="Harness only. Reorders semantic_search matches by relevance to the query; keeps the top k.")
+@mcp.tool(description="Harness only. Reorders search's matches by meaning by relevance to the query; keeps the top k.")
 @_tool
 def rerank(
     query: str,

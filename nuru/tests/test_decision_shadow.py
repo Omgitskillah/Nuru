@@ -78,7 +78,7 @@ def definition(name, description="Does a thing. More detail."):
     return {"type": "function", "function": {"name": name, "description": description, "parameters": {}}}
 
 
-TOOLS = [definition("search_notes"), definition("semantic_search"), definition("write_note"), definition("read_note")]
+TOOLS = [definition("search"), definition("find_in_notes"), definition("write_note"), definition("read_note")]
 
 
 @pytest.fixture
@@ -120,11 +120,11 @@ def rows(path, table="decisions"):
 
 
 A_WRITE_TURN = [
-    [{"tool_calls": [call("search_notes", {"query": "Priya"})]}],
+    [{"tool_calls": [call("search", {"query": "Priya"})]}],
     [{"tool_calls": [call("write_note", {"note": NOTE_ID, "content": "Prefers async on Fridays"})]}],
     ["Done - added it to ", f"{NOTE_ID}."],
 ]
-RESULTS = {"search_notes": json.dumps({"matches": [{"id": NOTE_ID, "title": "Priya"}]}), "write_note": "ok"}
+RESULTS = {"search": json.dumps({"matches": [{"id": NOTE_ID, "title": "Priya"}]}), "write_note": "ok"}
 
 
 def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decision_log):
@@ -168,7 +168,7 @@ def test_the_execution_log_is_what_ran_with_note_text_left_out(monkeypatch, deci
     s.close()
 
     calls = rows(decision_log, "tool_calls")
-    assert [(c["tool"], c["ok"]) for c in calls] == [("search_notes", 1), ("write_note", 0)]
+    assert [(c["tool"], c["ok"]) for c in calls] == [("search", 1), ("write_note", 0)]
     assert "FileNotFoundError" in calls[1]["error"]
     assert "Prefers async" not in calls[1]["arguments_json"]
     assert NOTE_ID in calls[1]["arguments_json"]
@@ -185,7 +185,7 @@ def test_the_turn_is_identical_with_or_without_the_shadow(monkeypatch, decision_
     without.close()
 
     assert events_with == events_without
-    assert events_with[0] == ToolCall("search_notes", {"query": "Priya"})
+    assert events_with[0] == ToolCall("search", {"query": "Priya"})
     assert events_with[-1] == Text(f"{NOTE_ID}.")
 
 
@@ -196,17 +196,19 @@ def test_a_dead_decision_layer_changes_nothing_and_the_execution_log_still_runs(
     s.close()
 
     assert events[-1] == Text(f"{NOTE_ID}.")
-    assert [name for name, _ in tools.model_calls] == ["search_notes", "write_note"]
+    assert [name for name, _ in tools.model_calls] == ["search", "write_note"]
     assert s.shadow.failures > 0
     assert rows(decision_log) == []
     assert len(rows(decision_log, "tool_calls")) == 2
 
 
-def test_semantic_search_results_are_reranked_in_shadow(monkeypatch, decision_log):
-    found = {"query": "power budget", "matches": [{"path": "a.md", "id": None, "text": "power", "score": 0.8},
-                                                  {"path": "b.md", "id": None, "text": "budget", "score": 0.7}]}
-    turn = [[{"tool_calls": [call("semantic_search", {"query": "power budget"})]}], ["The budget is 5 mA."]]
-    s = start(monkeypatch, turn, ShadowedTools(TOOLS, {"semantic_search": json.dumps(found)}))
+def test_a_searchs_matches_by_meaning_are_reranked_in_shadow_and_exact_ones_are_not(monkeypatch, decision_log):
+    found = {"query": "power budget", "matches": [
+        {"path": "x.md", "id": None, "match": "exact", "snippet": "power budget"},
+        {"path": "a.md", "id": None, "match": "meaning", "text": "power", "score": 0.8},
+        {"path": "b.md", "id": None, "match": "meaning", "text": "budget", "score": 0.7}]}
+    turn = [[{"tool_calls": [call("search", {"query": "power budget"})]}], ["The budget is 5 mA."]]
+    s = start(monkeypatch, turn, ShadowedTools(TOOLS, {"search": json.dumps(found)}))
     list(s.ask("What's my power budget?"))
     s.close()
 
@@ -231,7 +233,7 @@ def test_laya_sees_what_each_step_returned(monkeypatch, decision_log):
     s.close()
 
     nexts = [json.loads(r["state_text"]) for r in rows(decision_log) if r["question_set"] == "tool_gate_next"]
-    assert nexts[0]["steps"] == [{"tool": "search_notes", "status": "ok", "result": f"1 found: Priya ({NOTE_ID})"}]
+    assert nexts[0]["steps"] == [{"tool": "search", "status": "ok", "result": f"1 found: Priya ({NOTE_ID})"}]
     # check_claim: Laya reads the reply alone; the log it is checked against is the harness's own.
     claim = next(json.loads(r["state_text"]) for r in rows(decision_log) if r["decision_point"] == "check_claim")
     assert claim == {"reply": f"Done - added it to {NOTE_ID}."}
@@ -245,10 +247,10 @@ def test_a_turn_without_tools_is_an_answer(monkeypatch, decision_log):
 
 
 @pytest.mark.parametrize("tool, text, ok, error, summary", [
-    ("search_notes", json.dumps({"query": "x", "count": 5, "matches": [
+    ("search", json.dumps({"query": "x", "count": 5, "matches": [
         {"title": "A", "id": NOTE_ID}, {"title": "B", "id": None}, {"path": "c.md"}, {"title": "D"}]}), True, None,
      f"5 found: A ({NOTE_ID}), B, c.md and 2 more"),
-    ("semantic_search", json.dumps({"query": "x", "matches": []}), True, None, "0 found"),
+    ("search", json.dumps({"query": "x", "matches": []}), True, None, "0 found"),
     ("write_note", json.dumps({"id": NOTE_ID, "path": "nuru/x.md"}), True, None, f"done: nuru/x.md {NOTE_ID}"),
     ("write_note", json.dumps({"path": "user/daily.md", "id": None, "created": True}), True, None,
      "done: user/daily.md (created)"),

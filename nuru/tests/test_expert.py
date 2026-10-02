@@ -27,7 +27,7 @@ READ_RESULT = "# Priya Raman\n\n## Role\nFirmware engineer, same team. Owns the 
 
 def test_no_note_text_seen_in_the_session_reaches_the_brief():
     """The privacy guarantee: whatever the session read, only titles and IDs go to the cloud."""
-    seen = [("search_notes", SEARCH_RESULT), ("semantic_search", SEMANTIC_RESULT), ("read_note", READ_RESULT)]
+    seen = [("search", SEARCH_RESULT), ("search", SEMANTIC_RESULT), ("read_note", READ_RESULT)]
     notes = [n for tool, text in seen for n in notes_found(tool, text)]
     steps = [{"tool": tool, "status": "ok", "result": text[:200]} for tool, text in seen]  # results are ignored
     brief = build_brief("Add a line to Priya's note saying she prefers async on Fridays.", TOOLS, notes, steps)
@@ -48,16 +48,16 @@ def test_no_note_text_seen_in_the_session_reaches_the_brief():
 
 def test_only_search_results_name_notes():
     assert notes_found("read_note", READ_RESULT) == []
-    assert notes_found("search_notes", SEARCH_RESULT) == [FoundNote("Priya Raman", PRIYA_ID), FoundNote("Daily 2026-09-17", None)]
-    assert notes_found("search_notes", "not json") == []
+    assert notes_found("search", SEARCH_RESULT) == [FoundNote("Priya Raman", PRIYA_ID), FoundNote("Daily 2026-09-17", None)]
+    assert notes_found("search", "not json") == []
 
 
 def test_the_brief_has_the_request_tools_notes_and_steps():
     brief = build_brief("do it", TOOLS, [FoundNote("A", PRIYA_ID), FoundNote("A", PRIYA_ID)],
-                        [{"tool": "search_notes", "status": "ok"}])
+                        [{"tool": "search", "status": "ok"}])
     assert "Request: do it" in brief and "append_note" in brief and '"content"' in brief
     assert brief.count("(id " + PRIYA_ID + ")") == 1
-    assert "1. search_notes - ok" in brief
+    assert "1. search - ok" in brief
 
 
 class FakeClient:

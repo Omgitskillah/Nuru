@@ -32,7 +32,7 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 | `assess_effort(request, step_type, steps, failures)` | `tier` (off / low / high / expert - there is no medium: on Granite it was identical to high): the predicted tier if its probability clears that tier's threshold, else `tiers.default`. The within-task rules (tiers only go up, failure signals, expert budget) are the harness's. |
 | `gate_write(request, tool, arguments, known_ids)` | `verdict`: `block` (a code check failed - `reasons` says which), `proceed` (both Laya answers cleared their thresholds) or `ask`. |
 | `check_claim(reply, log, known_ids)` | `passed`, `verified` and `failures`. A note ID in the reply that isn't in the log or `known_ids` fails straight away, without Laya. Otherwise Laya reads the reply alone and says what it claims (`made_change` / `reports_failure` / `no_change`), and code checks that against the log: a claimed change with no successful write behind it fails. |
-| `rerank(query, matches)` | `semantic_search` matches reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
+| `rerank(query, matches)` | `search`'s matches by meaning reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
 | `health()` | Laya's load state, device, loaded checkpoints, question-set versions, decision-point modes. |
 
 For the model: **`classify_notes(question_set, ids | folder | date_from/date_to, labels)`** returns `{count, labelled: [{id, label, p}], uncertain}` - confident labels only, plus how many weren't. It never returns note content. `id` is the note's frontmatter id, or its vault-relative path if it has none. At most 50 notes per call.

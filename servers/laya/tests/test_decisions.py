@@ -6,7 +6,7 @@ from ulid import ULID
 from laya_mcp.vault import Vault
 from laya_fakes import rows
 
-READ = {"semantic_search": "Passages nearest in meaning", "read_note": "Read a note", "search_notes": "Search by words"}
+READ = {"search": "Passages nearest in meaning", "read_note": "Read a note", "search": "Search by words"}
 WRITE = {"write_note": "Write to a note", "rename_or_move_file": "Move a note"}
 CTX = {"session_id": "s1", "task_id": "t1", "step": 0}
 ID = str(ULID())
@@ -16,7 +16,7 @@ ID = str(ULID())
 def test_answer_needs_its_high_threshold_or_the_default_is_a_read(make_layer, log):
     layer, _ = make_layer({"mode": {"answer": 0.9, "read": 0.1}})
     result = layer.tool_gate_start("What do my notes say about Kubernetes?", CTX)
-    assert (result["mode"], result["first_tool"], result["source"]) == ("read", "semantic_search", "laya")
+    assert (result["mode"], result["first_tool"], result["source"]) == ("read", "search", "laya")
     [row] = rows(log)
     assert row["proposed_action"] == "read" and row["decision_point"] == "tool_gate"
     assert row["session_id"] == "s1"
@@ -31,7 +31,7 @@ def test_a_confident_answer_skips_tools(make_layer):
 def test_the_first_tool_is_codes_search_first_not_a_choice_laya_makes(make_layer):
     layer, predictor = make_layer({"mode": {"write": 0.9}})
     result = layer.tool_gate_start("Add a line to Priya's note")
-    assert (result["mode"], result["first_tool"]) == ("write", "semantic_search")
+    assert (result["mode"], result["first_tool"]) == ("write", "search")
     _, _, questions = predictor.calls[0]
     assert set(questions) == {"mode"}
 
@@ -45,7 +45,7 @@ def test_tool_gate_falls_back_to_a_read_when_laya_is_down(make_layer, log):
     layer, _ = make_layer(available=False)
     result = layer.tool_gate_start("anything")
     assert (result["mode"], result["first_tool"], result["source"], result["status"]) == (
-        "read", "semantic_search", "fallback", "unavailable")
+        "read", "search", "fallback", "unavailable")
     assert rows(log)[0]["status"] == "unavailable"
 
 
@@ -58,7 +58,7 @@ def test_an_over_budget_request_is_rejected_not_truncated(make_layer, log):
 
 
 def test_next_step_is_continue_answer_or_ask_and_defers_when_unsure(make_layer):
-    steps = [{"tool": "search_notes", "status": "ok", "result": "1 found: Priya Raman"}]
+    steps = [{"tool": "search", "status": "ok", "result": "1 found: Priya Raman"}]
     layer, _ = make_layer({"next": {"continue": 0.5, "answer": 0.5}})
     assert layer.tool_gate_next("r", steps)["next"] == "defer"
     layer, predictor = make_layer({"next": {"answer": 0.9}})
@@ -134,7 +134,7 @@ def test_laya_sees_only_the_reply_and_code_checks_it_against_the_log(make_layer)
 
 def test_a_claimed_change_with_no_write_behind_it_fails(make_layer):
     layer, _ = make_layer({"claim": {"made_change": 0.9}})
-    result = layer.check_claim("I created a new project note for you.", [{"tool": "search_notes", "ok": True}], [])
+    result = layer.check_claim("I created a new project note for you.", [{"tool": "search", "ok": True}], [])
     assert result["failures"] == ["claims a change the log does not show"]
 
 

@@ -204,32 +204,22 @@ def _check_accessible(path: Path) -> None:
         ) from e
 
 
-@mcp.tool(description="List all Markdown notes in the vault, as vault-relative paths. Excludes Templates/.")
-@_tool
-def list_notes() -> list[str]:
-    """List all notes (Markdown files) in the vault, as paths relative to the vault root.
-
-    Excludes Templates/ - those are placeholder skeletons, not notes - and trash/.
-    """
-    _check_accessible(VAULT_PATH)
-    return [_rel(path) for path in _all_notes()]
-
-
 @mcp.tool(
-    description="List notes newest first - the way to get oriented or answer \"what's my latest daily\". "
-    f"type: optional filter, one of {', '.join(sorted(template.TYPE_FOLDER))}. limit: how many notes "
-    f"(default 10, max {_BROWSE_MAX_LIMIT}). Returns {{count, notes, hint}}: notes are {{path, id, type, "
-    "title}}, count is the total that match. Newest = when write_note made it, or last-modified for "
-    "notes made in Obsidian; with type daily, transcript or session it is the latest date / session "
-    "number instead. Excludes Templates/ and trash/. Pass path to read_note or write_note "
-    "(id is null for notes not made by write_note)."
+    description="List notes newest first - to get oriented, see what's in a folder, or answer \"what's my "
+    "latest daily\". folder: optional, a folder's path or name (e.g. 'nuru/People' or 'People'). type: "
+    f"optional, one of {', '.join(sorted(template.TYPE_FOLDER))}. limit: how many notes (default 10, max "
+    f"{_BROWSE_MAX_LIMIT}). Returns {{folder, count, notes, files, hint}}: notes are {{path, id, type, title}}, "
+    "count is the total that match; with a folder, files lists its other files (images, PDFs). Newest = when "
+    "write_note made it, or last-modified for notes made in Obsidian; with type daily, transcript or session "
+    "it is the latest date / session number instead. Excludes Templates/ and trash/. Pass path to read_note "
+    "or write_note."
 )
 @_tool
-def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
-    """List notes newest first, optionally only one type.
+def browse(type: str | None = None, limit: int = 10, folder: str | None = None) -> dict[str, Any]:
+    """List notes newest first, optionally only one type, only one folder, or both.
 
-    Replaces list_notes as the way to get oriented: a bounded, ordered slice
-    instead of every path in the vault.
+    Replaces list_notes, list_files, list_files_in_directory and browse_notes:
+    a bounded, ordered slice instead of every path in the vault.
 
     Args:
         type: Only notes of this type (one of template.TYPE_FOLDER's keys).
@@ -238,8 +228,12 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
             Obsidian from a Templates/ file is found too. Blank means no filter.
         limit: How many notes to return, at least 1; capped at
             _BROWSE_MAX_LIMIT so this can't turn back into a whole-vault dump.
+        folder: Only notes under this folder (recursively) - a vault-relative
+            path, or a folder name found anywhere in the vault, as
+            _folder_listing resolves it. Its other files (attachments) come
+            back too, under "files", at most _LIST_LIMIT.
 
-    Returns {"count", "notes"}: "notes" holds at most `limit` of
+    Returns {"count", "notes"} (and "folder", "files" with a folder): "notes" holds at most `limit` of
     {"path", "id", "type", "title"}, newest first; "count" is how many notes
     match in total. Ordered by `created` for a note in the index, else by the
     file's modified time - except when `type` is daily, transcript or session
@@ -258,8 +252,15 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
         raise ValueError(f"limit must be at least 1, got {limit}.")
     limit = min(limit, _BROWSE_MAX_LIMIT)
 
+    listing = None
+    notes = _all_notes()
+    if folder is not None and folder.strip().strip("/"):
+        listing = _folder_listing(folder.strip())
+        inside = set(listing["files"])
+        notes = [p for p in notes if _rel(p) in inside]
+
     indexed = _indexed_notes()
-    newest_first = sorted(_all_notes(), key=lambda p: _newest_key(p, indexed), reverse=True)
+    newest_first = sorted(notes, key=lambda p: _newest_key(p, indexed), reverse=True)
     rows = (_note_row(path, indexed) for path in newest_first)
     matches = [row for row in rows if wanted is None or row["type"] == wanted]
     field = template.TYPE_FIELD.get(wanted) if wanted else None
@@ -270,12 +271,18 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
         matches.sort(key=lambda row: _sort_field(VAULT_PATH / row["path"], field), reverse=True)
 
     result: dict[str, Any] = {"count": len(matches), "notes": matches[:limit]}
-    if not matches:
+    if listing is not None:
+        attachments = [f for f in listing["files"] if not f.endswith(".md")]
+        result = {"folder": listing["directory"], **result, "files": attachments[:_LIST_LIMIT]}
+    if listing is not None and "hint" in listing:
+        result["hint"] = listing["hint"]
+    elif not matches:
+        where = f" in '{folder}'" if listing is not None else ""
         result["hint"] = (
-            f"No notes of type '{wanted}' found. A note made in Obsidian only counts if its "
-            f"frontmatter says 'type: {wanted}'. Call browse_notes without a type, or use search."
+            f"No notes of type '{wanted}' found{where}. A note made in Obsidian only counts if its "
+            f"frontmatter says 'type: {wanted}'. Call browse without a type, or use search."
             if wanted
-            else "The vault has no notes yet."
+            else f"No notes{where}." if listing is not None else "The vault has no notes yet."
         )
     elif len(matches) > limit:
         hint = f"Showing the newest {limit} of {len(matches)} notes."
@@ -336,33 +343,8 @@ def _all_notes() -> list[Path]:
     )
 
 
-@mcp.tool(
-    description="List all files in the vault (notes and attachments), as vault-relative paths. "
-    "Excludes .obsidian/ and dotfiles."
-)
-@_tool
-def list_files() -> list[str]:
-    """List all files in the vault (notes and attachments alike), as paths relative to the vault root.
-
-    Excludes Obsidian's internal .obsidian/ config folder and dotfiles (e.g. .DS_Store).
-    """
-    _check_accessible(VAULT_PATH)
-    return sorted(
-        str(path.relative_to(VAULT_PATH))
-        for path in VAULT_PATH.rglob("*")
-        if path.is_file() and _is_visible(path) and not _is_trashed(path)
-    )
-
-
-@mcp.tool(
-    description="List all files recursively under a vault subdirectory. directory: subdirectory name or "
-    "path relative to the vault root (matched by name anywhere in the vault if not found directly). "
-    "Returns {directory, count, files} with files as vault-relative paths; when files is empty, a "
-    "'hint' explains why."
-)
-@_tool
-def list_files_in_directory(directory: str) -> dict[str, Any]:
-    """List all files recursively within a subdirectory of the vault, as paths relative to the vault root.
+def _folder_listing(directory: str) -> dict[str, Any]:
+    """Every visible file under a folder of the vault, as paths relative to the vault root - browse's folder.
 
     Args:
         directory: Path to the subdirectory, relative to the vault root. If it
@@ -391,7 +373,7 @@ def list_files_in_directory(directory: str) -> dict[str, Any]:
                 "count": 0,
                 "files": [],
                 "hint": f"No directory matching '{directory}' exists in the vault. "
-                "Use list_files to see the real paths.",
+                "Call browse without a folder, or search, to find the real paths.",
             }
         target = matches[0]
 
@@ -469,7 +451,7 @@ def _note_row(path: Path, indexed: dict[str, dict[str, str]], text: str | None =
     A note create_note made gets all four from the index. Any other note has
     no id (append_note can't target it) and its filename as title; its type
     is whatever its own frontmatter says, which is what lets a note made from
-    a Templates/ file in Obsidian show up under browse_notes(type=...). Pass
+    a Templates/ file in Obsidian show up under browse(type=...). Pass
     `text` if the caller already read the note; it's only read here if needed.
     """
     rel = _rel(path)
@@ -928,7 +910,7 @@ def all_tags() -> dict[str, Any]:
 )
 @_tool
 def notes_with_tag(tag: str) -> dict[str, Any]:
-    """List the notes carrying a tag, newest first (same order as browse_notes).
+    """List the notes carrying a tag, newest first (same order as browse).
 
     Args:
         tag: The tag, with or without a leading '#', in any case. A parent tag
@@ -1106,7 +1088,7 @@ def _resolve_notes(name: str) -> list[Path]:
     message = f"No note found named '{name}'."
     if close := _NoteNames().closest(name):
         message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
-    raise FileNotFoundError(f"{message} Use browse_notes or search to find the right note.")
+    raise FileNotFoundError(f"{message} Use browse or search to find the right note.")
 
 
 def _resolve_note(name: str) -> Path:

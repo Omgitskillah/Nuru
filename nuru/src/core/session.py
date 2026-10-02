@@ -142,8 +142,8 @@ LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"
 MODEL_TOOLS = frozenset(
     {
         # obsidian, read
-        "all_tags", "browse_notes", "find_broken_links", "find_in_notes", "get_links", "list_files", "list_files_in_directory",
-        "list_notes", "note_tags", "note_todos", "notes_with_tag", "read_note", "search",
+        "all_tags", "browse", "find_broken_links", "find_in_notes", "get_links", "note_tags", "note_todos", "notes_with_tag",
+        "read_note", "search",
         # obsidian, write
         "rename_or_move_file", "write_note",
         # math-4-llms

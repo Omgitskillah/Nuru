@@ -12,13 +12,27 @@ from mcp.server.mcpserver.exceptions import ToolError
 from obsidian_mcp import server
 
 
-# --- list_notes ---
+def _notes():
+    """Every note the tools can see, as vault-relative paths (what list_notes returned)."""
+    return [server._rel(p) for p in server._all_notes()]
+
+
+def _files():
+    """Every visible file outside trash/, as vault-relative paths (what list_files returned)."""
+    root = server.VAULT_PATH
+    return sorted(
+        str(p.relative_to(root)) for p in root.rglob("*")
+        if p.is_file() and server._is_visible(p) and not server._is_trashed(p)
+    )
+
+
+# --- which notes the tools see ---
 
 
 def test_list_notes_empty_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_notes() == []
+    assert _notes() == []
 
 
 def test_list_notes_returns_markdown_files_only(tmp_path, monkeypatch):
@@ -26,7 +40,7 @@ def test_list_notes_returns_markdown_files_only(tmp_path, monkeypatch):
     (tmp_path / "notes.txt").write_text("not markdown")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_notes() == ["Welcome.md"]
+    assert _notes() == ["Welcome.md"]
 
 
 def test_list_notes_includes_nested_files_as_relative_paths(tmp_path, monkeypatch):
@@ -35,10 +49,10 @@ def test_list_notes_includes_nested_files_as_relative_paths(tmp_path, monkeypatc
     (tmp_path / "Projects" / "Nuru MCP.md").write_text("# Nuru MCP")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_notes() == ["Projects/Nuru MCP.md", "Welcome.md"]
+    assert _notes() == ["Projects/Nuru MCP.md", "Welcome.md"]
 
 
-def test_list_notes_raises_clear_error_on_permission_denied(monkeypatch):
+def test_browse_raises_clear_error_on_permission_denied(monkeypatch):
     class DeniedPath:
         def iterdir(self):
             raise PermissionError("denied")
@@ -46,7 +60,7 @@ def test_list_notes_raises_clear_error_on_permission_denied(monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", DeniedPath())
 
     with pytest.raises(ToolError, match="Access denied"):
-        server.list_notes()
+        server.browse()
 
 
 def test_list_notes_excludes_templates_folder(tmp_path, monkeypatch):
@@ -55,31 +69,10 @@ def test_list_notes_excludes_templates_folder(tmp_path, monkeypatch):
     (tmp_path / "Templates" / "01 Profile.md").write_text("---\n---\n\n# {{title}}\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_notes() == ["Welcome.md"]
+    assert _notes() == ["Welcome.md"]
 
 
-# --- list_files ---
-
-
-def test_list_files_includes_notes_and_attachments(tmp_path, monkeypatch):
-    (tmp_path / "Welcome.md").write_text("# Welcome")
-    (tmp_path / "diagram.png").write_bytes(b"fake image data")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    assert server.list_files() == ["Welcome.md", "diagram.png"]
-
-
-def test_list_files_excludes_obsidian_config_and_dotfiles(tmp_path, monkeypatch):
-    (tmp_path / "Welcome.md").write_text("# Welcome")
-    (tmp_path / ".DS_Store").write_text("junk")
-    (tmp_path / ".obsidian").mkdir()
-    (tmp_path / ".obsidian" / "app.json").write_text("{}")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    assert server.list_files() == ["Welcome.md"]
-
-
-# --- list_files_in_directory ---
+# --- _folder_listing (browse's folder) ---
 
 
 def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
@@ -90,7 +83,7 @@ def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
     (tmp_path / "Other.md").write_text("# Other")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.list_files_in_directory("Projects")
+    result = server._folder_listing("Projects")
 
     assert result["files"] == ["Projects/Nuru MCP.md", "Projects/Sub/diagram.png"]
     assert result["count"] == 2
@@ -101,19 +94,19 @@ def test_list_files_in_directory_lists_recursively(tmp_path, monkeypatch):
 def test_list_files_in_directory_returns_empty_files_and_a_hint_if_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.list_files_in_directory("NoSuchDir")
+    result = server._folder_listing("NoSuchDir")
 
     assert result["files"] == []
     assert result["count"] == 0
     assert "NoSuchDir" in result["hint"]
-    assert "list_files" in result["hint"]
+    assert "browse without a folder" in result["hint"]
 
 
 def test_list_files_in_directory_hints_when_the_directory_exists_but_is_empty(tmp_path, monkeypatch):
     (tmp_path / "Empty").mkdir()
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.list_files_in_directory("Empty")
+    result = server._folder_listing("Empty")
 
     assert result["files"] == []
     assert "exists but contains no visible files" in result["hint"]
@@ -124,10 +117,10 @@ def test_list_files_in_directory_finds_first_nested_match_by_name(tmp_path, monk
     (tmp_path / "Projects" / "folder" / "a.md").write_text("a")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.list_files_in_directory("folder")["files"] == ["Projects/folder/a.md"]
+    assert server._folder_listing("folder")["files"] == ["Projects/folder/a.md"]
 
 
-def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_path, monkeypatch):
+def test_browse_raises_clear_error_on_a_locked_folder(tmp_path, monkeypatch):
     import os
 
     locked = tmp_path / "locked"
@@ -137,7 +130,7 @@ def test_list_files_in_directory_raises_clear_error_on_permission_denied(tmp_pat
 
     try:
         with pytest.raises(ToolError, match="Access denied"):
-            server.list_files_in_directory("locked")
+            server.browse(folder="locked")
     finally:
         os.chmod(locked, 0o755)
 
@@ -529,7 +522,7 @@ def test_read_note_allows_symlink_pointing_within_the_vault(tmp_path, monkeypatc
     assert server.read_note("Alias") == "Real content"
 
 
-# --- Vault containment: list_files_in_directory ---
+# --- Vault containment: _folder_listing ---
 
 
 def test_list_files_in_directory_rejects_dotdot_traversal_outside_vault(
@@ -542,8 +535,8 @@ def test_list_files_in_directory_rejects_dotdot_traversal_outside_vault(
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("../outside")["files"] == []
-    assert server.list_files_in_directory("..")["files"] == []
+    assert server._folder_listing("../outside")["files"] == []
+    assert server._folder_listing("..")["files"] == []
 
 
 def test_list_files_in_directory_rejects_absolute_path_outside_vault(
@@ -556,7 +549,7 @@ def test_list_files_in_directory_rejects_absolute_path_outside_vault(
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory(str(outside_dir))["files"] == []
+    assert server._folder_listing(str(outside_dir))["files"] == []
 
 
 def test_list_files_in_directory_rejects_nested_dotdot_traversal(tmp_path, monkeypatch):
@@ -567,7 +560,7 @@ def test_list_files_in_directory_rejects_nested_dotdot_traversal(tmp_path, monke
     (outside_dir / "secret.md").write_text("TOP SECRET")
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("Projects/../../outside")["files"] == []
+    assert server._folder_listing("Projects/../../outside")["files"] == []
 
 
 def test_list_files_in_directory_rejects_symlinked_directory_pointing_outside(
@@ -581,7 +574,7 @@ def test_list_files_in_directory_rejects_symlinked_directory_pointing_outside(
     (vault / "link").symlink_to(outside_dir)
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("link")["files"] == []
+    assert server._folder_listing("link")["files"] == []
 
 
 def test_list_files_in_directory_rejects_symlinked_directory_found_via_fallback(
@@ -596,7 +589,7 @@ def test_list_files_in_directory_rejects_symlinked_directory_found_via_fallback(
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
     # Looked up by bare name, so it hits the recursive fallback search.
-    assert server.list_files_in_directory("link")["files"] == []
+    assert server._folder_listing("link")["files"] == []
 
 
 def test_list_files_in_directory_excludes_symlinked_subdir_pointing_outside(
@@ -611,7 +604,7 @@ def test_list_files_in_directory_excludes_symlinked_subdir_pointing_outside(
     (vault / "Projects" / "link").symlink_to(outside_dir)
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.list_files_in_directory("Projects")["files"] == ["Projects/real.md"]
+    assert server._folder_listing("Projects")["files"] == ["Projects/real.md"]
 
 
 def test_list_files_in_directory_allows_symlinked_directory_within_the_vault(
@@ -624,7 +617,7 @@ def test_list_files_in_directory_allows_symlinked_directory_within_the_vault(
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
     # The resolved target is used, so paths come back under its real name.
-    assert server.list_files_in_directory("Alias")["files"] == ["Real/note.md"]
+    assert server._folder_listing("Alias")["files"] == ["Real/note.md"]
 
 
 # --- create_note ---
@@ -1016,7 +1009,7 @@ def test_write_note_does_not_create_a_note_for_a_typo_d_id(tmp_path, monkeypatch
 
     with pytest.raises(ToolError, match="FileNotFoundError"):
         server.write_note("content", note="01K0000000000000000000TYPO", type="topic", author="nuru")
-    assert server.list_files() == []
+    assert _files() == []
 
 
 def test_append_note_raises_if_the_indexed_file_was_deleted_outside_the_server(tmp_path, monkeypatch):
@@ -1198,6 +1191,53 @@ def test_rename_or_move_file_of_a_non_indexed_file_is_a_no_op_on_the_index(tmp_p
 
 
 
+# --- browse(folder=...): what list_files_in_directory did ---
+
+
+def _folder_vault(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "nuru/People/alice.md": "---\ntype: person\n---\n# Alice",
+        "nuru/People/bob.md": "---\ntype: person\n---\n# Bob",
+        "nuru/Topics/rtos.md": "---\ntype: topic\n---\n# RTOS",
+        "shared/plan.md": "# Plan",
+        "trash/nuru/People/gone.md": "---\ntype: person\n---\n# Gone",
+    })
+    (tmp_path / "nuru" / "People" / "alice.png").write_bytes(b"x")
+
+
+def test_browse_a_folder_lists_its_notes_and_its_other_files(tmp_path, monkeypatch):
+    _folder_vault(tmp_path, monkeypatch)
+
+    result = server.browse(folder="nuru/People")
+
+    assert result["folder"] == "nuru/People"
+    assert sorted(_browse_paths(result)) == ["nuru/People/alice.md", "nuru/People/bob.md"]
+    assert result["count"] == 2 and result["files"] == ["nuru/People/alice.png"]
+
+
+def test_browse_finds_a_folder_by_name_and_takes_a_type_too(tmp_path, monkeypatch):
+    _folder_vault(tmp_path, monkeypatch)
+
+    assert sorted(_browse_paths(server.browse(folder="People"))) == ["nuru/People/alice.md", "nuru/People/bob.md"]
+    assert _browse_paths(server.browse(folder="nuru", type="topic")) == ["nuru/Topics/rtos.md"]
+
+
+def test_browse_never_lists_trash(tmp_path, monkeypatch):
+    _folder_vault(tmp_path, monkeypatch)
+
+    assert server.browse(folder="trash")["notes"] == []
+    assert "trash/nuru/People/gone.md" not in _browse_paths(server.browse(limit=50))
+
+
+def test_browse_hints_at_an_unknown_folder(tmp_path, monkeypatch):
+    _folder_vault(tmp_path, monkeypatch)
+
+    result = server.browse(folder="Recipes")
+
+    assert result["notes"] == [] and result["files"] == []
+    assert "No directory matching 'Recipes'" in result["hint"]
+
+
 # --- browse_notes ---
 
 
@@ -1227,7 +1267,7 @@ def test_browse_notes_lists_indexed_notes_newest_created_first(tmp_path, monkeyp
     _backdate(mid, "2026-09-10T09:00")
     _backdate(new, "2026-09-18T09:00")
 
-    result = server.browse_notes()
+    result = server.browse()
 
     assert _browse_paths(result) == [new["path"], mid["path"], old["path"]]
     assert result["count"] == 3
@@ -1238,7 +1278,7 @@ def test_browse_notes_returns_path_id_type_and_title(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="Nuru MCP", author="both")
 
-    assert server.browse_notes()["notes"] == [
+    assert server.browse()["notes"] == [
         {"path": created["path"], "id": created["id"], "type": "project", "title": "Nuru MCP"}
     ]
 
@@ -1251,7 +1291,7 @@ def test_browse_notes_orders_notes_made_in_obsidian_by_modified_time(tmp_path, m
     _touch(tmp_path / "newer.md", datetime(2026, 9, 5, 9, 0))
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert _browse_paths(server.browse_notes()) == ["newer.md", "older.md"]
+    assert _browse_paths(server.browse()) == ["newer.md", "older.md"]
 
 
 def test_browse_notes_interleaves_indexed_and_obsidian_notes_by_recency(tmp_path, monkeypatch):
@@ -1263,7 +1303,7 @@ def test_browse_notes_interleaves_indexed_and_obsidian_notes_by_recency(tmp_path
     _touch(tmp_path / "before.md", datetime(2026, 9, 5, 9, 0))
     _touch(tmp_path / "after.md", datetime(2026, 9, 15, 9, 0))
 
-    assert _browse_paths(server.browse_notes()) == ["after.md", indexed["path"], "before.md"]
+    assert _browse_paths(server.browse()) == ["after.md", indexed["path"], "before.md"]
 
 
 def test_browse_notes_orders_an_indexed_note_by_created_not_by_a_later_append(tmp_path, monkeypatch):
@@ -1275,14 +1315,14 @@ def test_browse_notes_orders_an_indexed_note_by_created_not_by_a_later_append(tm
     _backdate(later, "2026-09-02T09:00")
     server.write_note("edited just now", note=earlier["id"])
 
-    assert _browse_paths(server.browse_notes(type="daily"))[0] == later["path"]
+    assert _browse_paths(server.browse(type="daily"))[0] == later["path"]
 
 
 def test_browse_notes_gives_a_note_made_in_obsidian_a_null_id_and_its_filename_as_title(tmp_path, monkeypatch):
     (tmp_path / "Plain.md").write_text("no frontmatter")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.browse_notes()["notes"] == [{"path": "Plain.md", "id": None, "type": None, "title": "Plain"}]
+    assert server.browse()["notes"] == [{"path": "Plain.md", "id": None, "type": None, "title": "Plain"}]
 
 
 def test_browse_notes_filters_by_type(tmp_path, monkeypatch):
@@ -1290,7 +1330,7 @@ def test_browse_notes_filters_by_type(tmp_path, monkeypatch):
     daily = server.create_note(type="daily", title="Daily", author="user", date="2026-09-14")
     server.create_note(type="topic", title="Topic", author="nuru")
 
-    result = server.browse_notes(type="daily")
+    result = server.browse(type="daily")
 
     assert _browse_paths(result) == [daily["path"]]
     assert result["count"] == 1
@@ -1301,7 +1341,7 @@ def test_browse_notes_type_filter_finds_a_note_made_in_obsidian_from_its_frontma
     (tmp_path / "other.md").write_text("---\ntype: topic\n---\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes(type="daily")
+    result = server.browse(type="daily")
 
     assert result["notes"] == [{"path": "2026-09-17.md", "id": None, "type": "daily", "title": "2026-09-17"}]
 
@@ -1311,29 +1351,29 @@ def test_browse_notes_tolerates_broken_frontmatter_in_a_note_made_in_obsidian(tm
     (tmp_path / "fine.md").write_text("---\ntype: daily\n---\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert sorted(_browse_paths(server.browse_notes())) == ["broken.md", "fine.md"]
-    assert _browse_paths(server.browse_notes(type="daily")) == ["fine.md"]
+    assert sorted(_browse_paths(server.browse())) == ["broken.md", "fine.md"]
+    assert _browse_paths(server.browse(type="daily")) == ["fine.md"]
 
 
 def test_browse_notes_treats_a_blank_type_as_no_filter(tmp_path, monkeypatch):
     (tmp_path / "a.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert _browse_paths(server.browse_notes(type="  ")) == ["a.md"]
+    assert _browse_paths(server.browse(type="  ")) == ["a.md"]
 
 
 def test_browse_notes_type_is_case_insensitive(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     daily = server.create_note(type="daily", title="Daily", author="user", date="2026-09-14")
 
-    assert _browse_paths(server.browse_notes(type="Daily")) == [daily["path"]]
+    assert _browse_paths(server.browse(type="Daily")) == [daily["path"]]
 
 
 def test_browse_notes_rejects_an_unknown_type(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     with pytest.raises(ToolError, match="Unknown type 'dailies'"):
-        server.browse_notes(type="dailies")
+        server.browse(type="dailies")
 
 
 @pytest.mark.parametrize("limit", [0, -3])
@@ -1341,7 +1381,7 @@ def test_browse_notes_rejects_a_limit_below_one(tmp_path, monkeypatch, limit):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     with pytest.raises(ToolError, match="limit must be at least 1"):
-        server.browse_notes(limit=limit)
+        server.browse(limit=limit)
 
 
 def test_browse_notes_caps_at_limit_and_reports_the_true_count(tmp_path, monkeypatch):
@@ -1350,7 +1390,7 @@ def test_browse_notes_caps_at_limit_and_reports_the_true_count(tmp_path, monkeyp
         _touch(tmp_path / f"note{i}.md", datetime(2026, 9, 1 + i, 9, 0))
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes(limit=2)
+    result = server.browse(limit=2)
 
     assert _browse_paths(result) == ["note4.md", "note3.md"]
     assert result["count"] == 5
@@ -1363,7 +1403,7 @@ def test_browse_notes_defaults_to_ten(tmp_path, monkeypatch):
         (tmp_path / f"note{i:02d}.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes()
+    result = server.browse()
 
     assert len(result["notes"]) == 10
     assert result["count"] == 12
@@ -1374,7 +1414,7 @@ def test_browse_notes_clamps_limit_to_the_maximum(tmp_path, monkeypatch):
         (tmp_path / f"note{i:03d}.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes(limit=10_000)
+    result = server.browse(limit=10_000)
 
     assert len(result["notes"]) == server._BROWSE_MAX_LIMIT
     assert result["count"] == server._BROWSE_MAX_LIMIT + 3
@@ -1384,7 +1424,7 @@ def test_browse_notes_clamps_limit_to_the_maximum(tmp_path, monkeypatch):
 def test_browse_notes_hints_on_an_empty_vault(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes()
+    result = server.browse()
 
     assert result["count"] == 0
     assert result["notes"] == []
@@ -1395,7 +1435,7 @@ def test_browse_notes_hints_when_no_note_has_the_type(tmp_path, monkeypatch):
     (tmp_path / "a.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = server.browse_notes(type="daily")
+    result = server.browse(type="daily")
 
     assert result["notes"] == []
     assert "type: daily" in result["hint"]
@@ -1408,7 +1448,7 @@ def test_browse_notes_excludes_templates_trash_and_hidden_folders(tmp_path, monk
     (tmp_path / "kept.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert _browse_paths(server.browse_notes()) == ["kept.md"]
+    assert _browse_paths(server.browse()) == ["kept.md"]
 
 
 def test_browse_notes_excludes_a_symlink_pointing_outside_the_vault(tmp_path, monkeypatch):
@@ -1419,14 +1459,14 @@ def test_browse_notes_excludes_a_symlink_pointing_outside_the_vault(tmp_path, mo
     (vault / "leak.md").symlink_to(outside)
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
-    assert server.browse_notes()["notes"] == []
+    assert server.browse()["notes"] == []
 
 
 def test_browse_notes_does_not_create_the_index_file(tmp_path, monkeypatch):
     (tmp_path / "a.md").write_text("x")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    server.browse_notes()
+    server.browse()
 
     assert not (tmp_path / server._INDEX_DB_NAME).exists()
 
@@ -1757,7 +1797,7 @@ def test_read_note_miss_names_the_closest_notes(tmp_path, monkeypatch):
     assert "No note found named 'Nuru MCPP'" in message
     assert "Projects/Nuru MCP.md" in message
     assert "Unrelated.md" not in message
-    assert "browse_notes" in message
+    assert "Use browse or search" in message
 
 
 def test_read_note_miss_names_at_most_three_candidates(tmp_path, monkeypatch):
@@ -2131,7 +2171,7 @@ def test_write_note_appends_to_a_note_found_by_its_title(tmp_path, monkeypatch):
 
     assert result == {"path": created["path"], "id": created["id"], "created": False}
     assert (tmp_path / created["path"]).read_text().endswith("first\n\nsecond")
-    assert server.list_notes() == ["nuru/garden-plan.md"]
+    assert _notes() == ["nuru/garden-plan.md"]
 
 
 def test_write_note_appends_to_a_note_made_in_obsidian_by_its_path(tmp_path, monkeypatch):
@@ -2156,7 +2196,7 @@ def test_write_note_refuses_a_path_that_matches_nothing_instead_of_creating_it(t
 
     with pytest.raises(ToolError, match="Closest matches: nuru/priya-raman.md"):
         server.write_note("more", note="nuru/People/priya-ramen.md", type="person", author="nuru")
-    assert server.list_notes() == ["nuru/priya-raman.md"]
+    assert _notes() == ["nuru/priya-raman.md"]
 
 
 def test_write_note_needs_type_and_author_to_create(tmp_path, monkeypatch):
@@ -2164,7 +2204,7 @@ def test_write_note_needs_type_and_author_to_create(tmp_path, monkeypatch):
 
     with pytest.raises(ToolError, match="pass type and author too"):
         server.write_note("more", note="New Thing", type="topic")
-    assert server.list_files() == []
+    assert _files() == []
 
 
 def test_a_correction_never_appends_to_the_note_it_corrects(tmp_path, monkeypatch):
@@ -2621,12 +2661,12 @@ def test_an_archived_note_stays_visible_everywhere(tmp_path, monkeypatch):
 
     server.rename_or_move_file("Old Idea", "archive")
 
-    assert sorted(n["title"] for n in server.browse_notes()["notes"]) == ["Keeper", "Old Idea"]
+    assert sorted(n["title"] for n in server.browse()["notes"]) == ["Keeper", "Old Idea"]
     assert [m["path"] for m in server.notes_with_tag("zzz")["matches"]] == ["archive/nuru/old-idea.md"]
     assert "zzz" in server.all_tags()["tags"]
     assert "findable words" in server.read_note("Old Idea")
     assert server.search_notes("findable")["count"] == 1
-    assert "archive/nuru/old-idea.md" in server.list_notes()
+    assert "archive/nuru/old-idea.md" in _notes()
 
 
 def test_an_archived_note_cannot_be_written_until_it_is_moved_out(tmp_path, monkeypatch):
@@ -2665,10 +2705,10 @@ def test_a_trashed_note_keeps_its_folder_path_under_trash(tmp_path, monkeypatch)
 def test_a_trashed_note_is_invisible_to_every_read_tool(tmp_path, monkeypatch):
     gone = _trash(tmp_path, monkeypatch)
 
-    assert [n["title"] for n in server.browse_notes()["notes"]] == ["Keeper"]
-    assert server.list_notes() == ["nuru/keeper.md"]
-    assert server.list_files() == ["nuru/keeper.md"]
-    assert server.list_files_in_directory("trash")["files"] == []
+    assert [n["title"] for n in server.browse()["notes"]] == ["Keeper"]
+    assert _notes() == ["nuru/keeper.md"]
+    assert _files() == ["nuru/keeper.md"]
+    assert server._folder_listing("trash")["files"] == []
     assert server.search_notes("findable")["count"] == 0
     assert server.notes_with_tag("zzz")["matches"] == []
     assert "zzz" not in server.all_tags()["tags"]
@@ -2819,7 +2859,7 @@ def test_browse_notes_orders_notes_made_in_the_same_minute_by_when_they_were_mad
         _backdate(made[-1], "2026-09-20T09:00")
         time.sleep(0.005)
 
-    assert _browse_paths(server.browse_notes()) == [n["path"] for n in reversed(made)]
+    assert _browse_paths(server.browse()) == [n["path"] for n in reversed(made)]
 
 
 def test_browse_notes_type_daily_orders_by_the_notes_date_not_by_when_it_was_made(tmp_path, monkeypatch):
@@ -2830,9 +2870,9 @@ def test_browse_notes_type_daily_orders_by_the_notes_date_not_by_when_it_was_mad
     _backdate(real, "2026-09-20T08:00")
     _backdate(backfilled, "2026-09-20T18:00")  # made later, dated earlier
 
-    assert _browse_paths(server.browse_notes(type="daily")) == [real["path"], backfilled["path"]]
+    assert _browse_paths(server.browse(type="daily")) == [real["path"], backfilled["path"]]
     # With no type the mixed list is still newest-made-first.
-    assert _browse_paths(server.browse_notes()) == [backfilled["path"], real["path"]]
+    assert _browse_paths(server.browse()) == [backfilled["path"], real["path"]]
 
 
 def test_browse_notes_type_daily_orders_indexed_and_obsidian_dailies_by_date_together(tmp_path, monkeypatch):
@@ -2842,7 +2882,7 @@ def test_browse_notes_type_daily_orders_indexed_and_obsidian_dailies_by_date_tog
     newer = server.create_note(type="daily", title="Newer", author="user", date="2026-09-20")
     _touch(tmp_path / "typed.md", datetime(2026, 1, 1, 9, 0))  # edited long ago: mtime would put it last
 
-    assert _browse_paths(server.browse_notes(type="daily")) == [newer["path"], "typed.md", older["path"]]
+    assert _browse_paths(server.browse(type="daily")) == [newer["path"], "typed.md", older["path"]]
 
 
 def test_browse_notes_type_daily_puts_a_daily_with_no_date_after_the_dated_ones(tmp_path, monkeypatch):
@@ -2851,7 +2891,7 @@ def test_browse_notes_type_daily_puts_a_daily_with_no_date_after_the_dated_ones(
     dated = server.create_note(type="daily", title="Dated", author="user", date="2026-09-01")
     _touch(tmp_path / "undated.md", datetime(2030, 1, 1, 9, 0))
 
-    assert _browse_paths(server.browse_notes(type="daily")) == [dated["path"], "undated.md"]
+    assert _browse_paths(server.browse(type="daily")) == [dated["path"], "undated.md"]
 
 
 def test_browse_notes_type_session_orders_by_session_number(tmp_path, monkeypatch):
@@ -2861,7 +2901,7 @@ def test_browse_notes_type_session_orders_by_session_number(tmp_path, monkeypatc
     second = server.create_note(type="session", title="Second", author="nuru", session="2026-09-20-02")
     yesterday = server.create_note(type="session", title="Y", author="nuru", session="2026-09-19-09")
 
-    assert _browse_paths(server.browse_notes(type="session")) == [
+    assert _browse_paths(server.browse(type="session")) == [
         third["path"], second["path"], first["path"], yesterday["path"],
     ]
 
@@ -2873,7 +2913,7 @@ def test_browse_notes_type_without_a_date_or_session_field_keeps_created_order(t
     _backdate(old, "2026-09-01T09:00")
     _backdate(new, "2026-09-09T09:00")
 
-    assert _browse_paths(server.browse_notes(type="topic")) == [new["path"], old["path"]]
+    assert _browse_paths(server.browse(type="topic")) == [new["path"], old["path"]]
 
 
 def test_notes_with_tag_orders_same_minute_notes_by_when_they_were_made(tmp_path, monkeypatch):

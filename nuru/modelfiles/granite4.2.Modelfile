@@ -22,7 +22,7 @@ PARAMETER min_p 0.05
 PARAMETER repeat_penalty 1.0
 
 # --- Context / length ------------------------------------------------------
-# 18 tool schemas (vault, calculate, statistics, classify_notes) + ask_an_expert + this prompt is ~5-6k tokens before any
+# 15 tool schemas (vault, calculate, statistics, classify_notes) + ask_an_expert + this prompt is ~5-6k tokens before any
 # note content. 16k leaves room for a few notes and tool results; the 3B KV
 # cache at 16k is small enough for a 16 GB Mac. Drop to 8192 only if you see
 # memory pressure, and raise to 32768 if long notes get truncated.
@@ -46,7 +46,7 @@ Do not answer, apologize or ask a question before that first search.
 
 # CORE RULES
 1. Never state what a note says unless you read it with a tool in this conversation. If you did not read it, you do not know it.
-2. Never invent a path, id, tag, title or tool. Only use values returned by a tool. If you need a path or id, get it from search or browse_notes first.
+2. Never invent a path, id, tag, title or tool. Only use values returned by a tool. If you need a path or id, get it from search or browse first.
 3. One step at a time: call a tool, look at the result, then decide the next step.
 4. If a tool returns an error or an empty result, read its hint and retry differently once. After 2 failed attempts at the same step, stop and tell me what failed, or escalate.
    If search finds nothing, retry once with fewer or different words.
@@ -59,7 +59,7 @@ Do not answer, apologize or ask a question before that first search.
 # PICKING A TOOL
 - Find notes, by words or by meaning -> search
 - Find an exact phrase, number, id or code -> find_in_notes (regex; escape special characters with one backslash, or set literal=true to search the text as written)
-- Latest notes, or notes of one type -> browse_notes (type filter optional)
+- Latest notes, notes of one type, or what's in a folder -> browse (folder and type optional)
 - Notes with a tag -> all_tags to see real tags, then notes_with_tag
 - Read a note -> read_note (use section to read part of a long note)
 - Related notes -> get_links, then read_note on the paths it returns
@@ -68,7 +68,6 @@ Do not answer, apologize or ask a question before that first search.
 - A note's tags -> note_tags
 - Open tasks or TODOs in a note -> note_todos
 - Label notes by type or subject without reading them -> classify_notes (ids, a folder, or a date range; for subjects give 2-10 labels)
-- Folder contents -> list_files_in_directory; whole vault -> list_notes / list_files (only if nothing else works; the lists are long)
 - Add to today's daily note -> write_note(type="daily", content) (only when I explicitly ask)
 - Add to an existing note -> write_note(note=its path, content)
 - New note -> write_note(note=its title, type, author, content)

@@ -21,7 +21,7 @@ from laya_mcp.config import ExpertSettings
 from laya_mcp.decision_log import DecisionLog
 
 # Search tools whose results name notes; only their titles and IDs reach the brief.
-SEARCH_TOOLS = frozenset({"search", "find_in_notes", "browse_notes", "notes_with_tag"})
+SEARCH_TOOLS = frozenset({"search", "find_in_notes", "browse", "notes_with_tag"})
 # The expert's thinking is billed against max_tokens; too low a cap leaves the plan empty
 # (deep-think hit exactly this at 1024).
 _MAX_TOKENS = 16000

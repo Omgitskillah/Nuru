@@ -865,10 +865,26 @@ def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
 
 
 @mcp.tool(
-    description="List every tag in use and how many notes carry it, most-used first - both frontmatter "
-    "tags (which write_note writes) and inline #tags. Returns {count, tags: {tag: notes}, hint}. "
-    "Pass a tag to notes_with_tag. Excludes Templates/ and trash/."
+    description="Tags. No arguments: every tag in use and how many notes carry it, most-used first. tag: the "
+    "notes carrying that tag, newest first (with or without '#', any case; a parent tag matches nested ones). "
+    "note: that note's tags (a path, title or id, as for read_note). Pass tag or note, not both. Reads "
+    "frontmatter tags and inline #tags, lowercased. Excludes Templates/ and trash/."
 )
+@_tool
+def tags(tag: str | None = None, note: str | None = None) -> dict[str, Any]:
+    """all_tags, notes_with_tag and note_tags in one tool: which one runs depends on
+    which argument is given."""
+    tag = tag.strip() if tag else None
+    note = note.strip() if note else None
+    if tag and note:
+        raise ValueError("Pass tag or note, not both: tag lists the notes carrying a tag, note lists a note's tags.")
+    if tag:
+        return notes_with_tag(tag)
+    if note:
+        return note_tags(note)
+    return all_tags()
+
+
 @_tool
 def all_tags() -> dict[str, Any]:
     """Every tag in use across the vault's notes, with the number of notes carrying each.
@@ -897,17 +913,11 @@ def all_tags() -> dict[str, Any]:
     elif len(counts) > _LIST_LIMIT:
         result["hint"] = (
             f"Showing the {_LIST_LIMIT} most-used of {len(counts)} tags. "
-            "Pass a tag you expect to notes_with_tag to check it directly."
+            "Pass a tag you expect as tags(tag=...) to check it directly."
         )
     return result
 
 
-@mcp.tool(
-    description="List the notes carrying a tag, newest first. tag: with or without the '#', any case; "
-    "'project' also matches nested tags like 'project/alpha'. Matches frontmatter tags and inline "
-    "#tags. Returns {tag, count, matches, hint}: up to 10 matches {path, id, type, title}; count is the "
-    "total. A tag that matches nothing gets a hint with the closest real tags. Excludes Templates/ and trash/."
-)
 @_tool
 def notes_with_tag(tag: str) -> dict[str, Any]:
     """List the notes carrying a tag, newest first (same order as browse).
@@ -927,7 +937,7 @@ def notes_with_tag(tag: str) -> dict[str, Any]:
     _check_accessible(VAULT_PATH)
     wanted = tag.strip().lstrip("#").lower()
     if not wanted:
-        raise ValueError("tag is empty - give a tag such as 'project'. Call all_tags to see the tags in use.")
+        raise ValueError("tag is empty - give a tag such as 'project'. Call tags with no arguments to see the tags in use.")
 
     indexed = _indexed_notes()
     in_use: set[str] = set()
@@ -949,7 +959,7 @@ def notes_with_tag(tag: str) -> dict[str, Any]:
         hint = f"No note is tagged '{wanted}'."
         if close := difflib.get_close_matches(wanted, sorted(in_use), n=3, cutoff=0.6):
             hint += f" Did you mean: {', '.join(close)}?"
-        result["hint"] = f"{hint} Call all_tags to see every tag in use."
+        result["hint"] = f"{hint} Call tags with no arguments to see every tag in use."
     elif len(hits) > _SEARCH_LIMIT:
         result["hint"] = f"Showing the newest {_SEARCH_LIMIT} of {len(hits)} notes tagged '{wanted}'."
     return result
@@ -1297,7 +1307,6 @@ _OPEN_CHECKBOX = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[ \]")
 _TODO_MARKER = re.compile(r"\bTODO\b")
 
 
-@mcp.tool(description="A note's tags (frontmatter and inline #tags), lowercased. name: as for read_note.")
 @_tool
 def note_tags(name: str) -> dict[str, Any]:
     """Every tag on one note, as _note_tags reads them: the frontmatter `tags` list and inline

@@ -70,8 +70,8 @@ def test_new_tools_are_registered_and_only_their_named_params_are_required(tmp_p
 
     assert schemas["browse"].get("required", []) == []
     assert set(schemas["browse"]["properties"]) == {"type", "limit", "folder"}
-    assert schemas["all_tags"].get("required", []) == []
-    assert schemas["notes_with_tag"]["required"] == ["tag"]
+    assert schemas["tags"].get("required", []) == []
+    assert set(schemas["tags"]["properties"]) == {"tag", "note"}
     assert schemas["get_links"]["required"] == ["name"]
     assert schemas["rename_or_move_file"]["required"] == ["source_path", "destination_path"]
     assert schemas["read_note"]["required"] == ["name"]
@@ -99,8 +99,9 @@ def test_the_new_tools_work_end_to_end_through_call_tool(tmp_path, monkeypatch):
     call("write_note", {"type": "daily", "content": "- 09:00 [[Plan]] kicked off"})
     call("write_note", {"note": "Plan", "type": "project", "author": "both", "tags": ["mcp"], "content": "## Goal\n\nShip"})
     assert "user/daily-2026-09-20.md" in str(call("browse", {"type": "daily"}))
-    assert "mcp" in str(call("all_tags"))
-    assert "shared/plan.md" in str(call("notes_with_tag", {"tag": "#MCP"}))
+    assert "mcp" in str(call("tags"))
+    assert "shared/plan.md" in str(call("tags", {"tag": "#MCP"}))
+    assert "project" in str(call("tags", {"note": "Plan"}))
     assert "Ship" in str(call("read_note", {"name": "plan", "section": "goal"}))
     assert "user/daily-2026-09-20.md" in str(call("get_links", {"name": "Plan"}))
     assert "archive/shared/plan.md" in str(call("rename_or_move_file", {"source_path": "Plan", "destination_path": "archive"}))

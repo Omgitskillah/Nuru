@@ -1571,7 +1571,7 @@ def test_notes_with_tag_suggests_close_tags_on_a_miss(tmp_path, monkeypatch):
     assert result["count"] == 0
     assert result["matches"] == []
     assert "Did you mean: project" in result["hint"]
-    assert "all_tags" in result["hint"]
+    assert "Call tags with no arguments" in result["hint"]
 
 
 def test_notes_with_tag_hints_without_suggestions_when_nothing_is_close(tmp_path, monkeypatch):
@@ -1581,7 +1581,7 @@ def test_notes_with_tag_hints_without_suggestions_when_nothing_is_close(tmp_path
     hint = server.notes_with_tag("zzzzzz")["hint"]
 
     assert "Did you mean" not in hint
-    assert "all_tags" in hint
+    assert "Call tags with no arguments" in hint
 
 
 @pytest.mark.parametrize("query", ["", "  ", "#"])
@@ -1666,6 +1666,34 @@ def test_all_tags_excludes_templates_and_trash(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     assert server.all_tags()["tags"] == {}
+
+
+# --- tags: all_tags, notes_with_tag and note_tags in one tool ---
+
+
+def test_tags_with_no_arguments_lists_every_tag(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a.md": "#router #mcp", "b.md": "#router"})
+
+    assert server.tags()["tags"] == {"router": 2, "mcp": 1}
+
+
+def test_tags_with_a_tag_lists_the_notes_carrying_it(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a.md": "#router #mcp", "b.md": "#router"})
+
+    assert sorted(m["path"] for m in server.tags(tag="#Router")["matches"]) == ["a.md", "b.md"]
+
+
+def test_tags_with_a_note_lists_its_tags(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a.md": "---\ntags:\n  - project\n---\n#router"})
+
+    assert server.tags(note="a") == {"note": "a.md", "tags": ["project", "router"]}
+
+
+def test_tags_refuses_a_tag_and_a_note_together(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a.md": "#router"})
+
+    with pytest.raises(ToolError, match="Pass tag or note, not both"):
+        server.tags(tag="router", note="a")
 
 
 # --- read_note: forgiving name matching ---

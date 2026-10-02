@@ -1696,6 +1696,48 @@ def test_tags_refuses_a_tag_and_a_note_together(tmp_path, monkeypatch):
         server.tags(tag="router", note="a")
 
 
+# --- note_info: get_links, note_tags and note_todos in one call ---
+
+
+def test_note_info_gives_tags_links_both_ways_and_open_tasks(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {
+        "hub.md": "---\ntags:\n  - project\n---\n# Hub\n[[Alpha]] and [[Missing]] #router\n- [ ] call Bob\n- [x] done\nTODO: ship",
+        "Alpha.md": "# Alpha",
+        "fan.md": "see [[hub]]",
+    })
+
+    info = server.note_info("hub")
+
+    assert info["note"] == "hub.md"
+    assert info["tags"] == ["project", "router"]
+    assert info["outgoing"] == [{"link": "Alpha", "path": "Alpha.md"}, {"link": "Missing", "path": None}]
+    assert info["backlinks"] == ["fan.md"]
+    assert info["todos"] == [{"line": 7, "text": "- [ ] call Bob"}, {"line": 9, "text": "TODO: ship"}]
+    assert info["todo_count"] == 2
+    assert "path null matches no note" in info["hint"]
+
+
+def test_note_info_does_not_return_the_notes_text(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "# Hub\nsecret body text"})
+
+    assert "secret body text" not in json.dumps(server.note_info("hub"))
+
+
+def test_note_info_resolves_the_name_once_so_every_part_is_the_same_note(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a/notes.md": "#one\n- [ ] a", "b/notes.md": "#two\n- [ ] b"})
+
+    info = server.note_info("notes")
+
+    assert info["note"] == "a/notes.md" and info["tags"] == ["one"] and info["todos"][0]["text"] == "- [ ] a"
+
+
+def test_note_info_on_an_unknown_note_names_the_closest(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"Plan.md": "x"})
+
+    with pytest.raises(ToolError, match="Closest matches: Plan.md"):
+        server.note_info("Plann")
+
+
 # --- read_note: forgiving name matching ---
 
 

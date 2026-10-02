@@ -1192,12 +1192,37 @@ def _link_targets(text: str) -> list[str]:
 
 
 @mcp.tool(
-    description="Show a note's place in the link graph: the notes it links to with [[wikilinks]] (resolved "
-    "to paths) and the notes that link to it (backlinks). name: as for read_note. Returns {note, outgoing, "
-    "backlinks, hint}: outgoing is [{link, path}] with path null if no note has that name; backlinks is a "
-    "list of paths. Follow a path with read_note instead of guessing a search query. Each list shows up "
-    "to 25."
+    description="What surrounds one note, without its text (read_note gives the text). name: a path, title "
+    "or id, as for read_note. Returns {note, tags, outgoing, backlinks, todos, todo_count, hint}: tags are its "
+    "frontmatter and inline #tags; outgoing is each [[link]] in it as {link, path}, path null when no note "
+    "has that name; backlinks are the notes that link to it; todos are its open tasks (unticked checkboxes "
+    "and TODO lines) as {line, text}. Each list is capped at 25."
 )
+@_tool
+def note_info(name: str) -> dict[str, Any]:
+    """get_links, note_tags and note_todos for one note, in one call.
+
+    The name is resolved once, by get_links; tags and todos are then read from
+    that same path, so all three describe the same note even when a forgiving
+    name could have matched another. Hints from the parts are joined.
+    """
+    links = get_links(name)
+    path = links["note"]
+    todos = note_todos(path)
+    result: dict[str, Any] = {
+        "note": path,
+        "tags": note_tags(path)["tags"],
+        "outgoing": links["outgoing"],
+        "backlinks": links["backlinks"],
+        "todos": todos["todos"],
+        "todo_count": todos["count"],
+    }
+    hints = [part["hint"] for part in (links, todos) if part.get("hint")]
+    if hints:
+        result["hint"] = " ".join(hints)
+    return result
+
+
 @_tool
 def get_links(name: str) -> dict[str, Any]:
     """A note's outgoing [[wikilinks]] resolved to paths, plus its backlinks.
@@ -1255,12 +1280,6 @@ def get_links(name: str) -> dict[str, Any]:
     return result
 
 
-@mcp.tool(
-    description="Find every broken [[wikilink]] in the vault in one call: links whose target matches no note "
-    "(and no attachment file). Links resolve as in get_links - by filename, title, alias, id or path, "
-    "ignoring case. Returns {count, links, hint}: links is [{path, link, line}] - the note the link is in, "
-    "the target as written, and its line number - up to 25; count is the total."
-)
 @_tool
 def find_broken_links() -> dict[str, Any]:
     """Every [[wikilink]] in the vault's notes that resolves to no note.
@@ -1316,10 +1335,6 @@ def note_tags(name: str) -> dict[str, Any]:
     return {"note": _rel(target), "tags": sorted(_note_tags(target.read_text(errors="ignore")))}
 
 
-@mcp.tool(
-    description="A note's open tasks: unticked checkboxes (- [ ]) and lines containing TODO, with line "
-    "numbers. name: as for read_note."
-)
 @_tool
 def note_todos(name: str) -> dict[str, Any]:
     """The open tasks in one note: every unticked Markdown checkbox, and every line with a

@@ -898,7 +898,7 @@ def test_a_failed_expert_call_does_not_use_up_the_turns_one_call(monkeypatch):
 def test_expert_attachments_named_by_title_are_resolved_to_vault_paths(monkeypatch):
     class Resolving(FakeMCPTools):
         def call_harness_tool(self, name, arguments):
-            if name == "get_links" and arguments["name"] == "Area Monitor Device Redesign":
+            if name == "note_info" and arguments["name"] == "Area Monitor Device Redesign":
                 return ToolResult(json.dumps({"note": "shared/Projects/area-monitor-device-redesign.md"}))
             return ToolResult("FileNotFoundError: no such note", is_error=True)
 

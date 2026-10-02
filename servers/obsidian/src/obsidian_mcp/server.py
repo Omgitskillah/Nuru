@@ -31,7 +31,6 @@ from ulid import ULID
 from obsidian_mcp import frontmatter_template as template
 from obsidian_mcp import index as note_index
 from obsidian_mcp import semantic
-from obsidian_mcp import template_bodies
 
 load_dotenv(semantic.ENV_FILE)
 
@@ -43,18 +42,23 @@ TAG_PATTERN = re.compile(r"#([A-Za-z0-9_][A-Za-z0-9_/-]*)")
 # (which skip dotfiles) never surface it.
 _INDEX_DB_NAME = ".obsidian-mcp-index.sqlite3"
 
-# generate_templates writes here. Placeholder skeletons, not vault content -
+# Obsidian's template skeletons live here. Placeholder skeletons, not vault content -
 # note-content-scanning tools (list_notes, search_notes, list_tags,
 # count_tags) exclude it, or an agent could retrieve "{{title}}" and
 # unfilled placeholder text as if it were something a person actually wrote.
 _TEMPLATES_FOLDER = "Templates"
 
-# archive_note moves a note here, keeping its folder path underneath
-# (nuru/x.md -> archive/nuru/x.md): the note's filename never changes, so
-# [[links]] to it still resolve, and moving it back is just stripping "archive/".
-# browse_notes and the tag tools skip it - an archived note is out of the
-# working set - while read_note, search_notes and get_links still reach it.
+# rename_or_move_file(x, "archive") moves a note here, keeping its folder path underneath
+# (nuru/x.md -> archive/nuru/x.md): the note's filename never changes, so [[links]] to it
+# still resolve, and moving it back is just stripping "archive/". Archived notes stay
+# visible - listed, searched, read, embedded - but write_note refuses them: move one out
+# first to change it.
 _ARCHIVE_FOLDER = "archive"
+
+# rename_or_move_file(x, "trash") moves a note here, the same way. Trash is where a delete
+# goes: no tool lists, searches, reads, resolves or embeds anything in it, and nothing can be
+# moved out of it again - a person empties or restores it in Obsidian.
+_TRASH_FOLDER = "trash"
 
 _SLUG_INVALID = re.compile(r"[^a-z0-9]+")
 
@@ -124,23 +128,6 @@ def _represent_none_as_blank(dumper: yaml.Dumper, _: None) -> yaml.Node:
 
 yaml.add_representer(type(None), _represent_none_as_blank, Dumper=_FrontmatterDumper)
 
-
-class _DoubleQuoted(str):
-    """A string that must render as a double-quoted YAML scalar.
-
-    Used for Obsidian core Templates placeholders like "{{date}}T{{time}}" -
-    unquoted, a leading '{' reads as a flow mapping and the frontmatter fails
-    to parse. PyYAML would quote it automatically (it must, to stay valid
-    YAML) but defaults to single quotes; this forces the double quotes the
-    template spec calls for.
-    """
-
-
-def _represent_double_quoted(dumper: yaml.Dumper, data: "_DoubleQuoted") -> yaml.Node:
-    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style='"')
-
-
-yaml.add_representer(_DoubleQuoted, _represent_double_quoted, Dumper=_FrontmatterDumper)
 
 # Every session's access is logged under here, independent of which client
 # connects (Inspector, Claude Desktop, or anything else) - see tools/logging.
@@ -222,24 +209,20 @@ def _check_accessible(path: Path) -> None:
 def list_notes() -> list[str]:
     """List all notes (Markdown files) in the vault, as paths relative to the vault root.
 
-    Excludes Templates/ - those are placeholder skeletons, not notes.
+    Excludes Templates/ - those are placeholder skeletons, not notes - and trash/.
     """
     _check_accessible(VAULT_PATH)
-    return sorted(
-        str(path.relative_to(VAULT_PATH))
-        for path in VAULT_PATH.rglob("*.md")
-        if not _is_in_templates(path)
-    )
+    return [_rel(path) for path in _all_notes()]
 
 
 @mcp.tool(
     description="List notes newest first - the way to get oriented or answer \"what's my latest daily\". "
     f"type: optional filter, one of {', '.join(sorted(template.TYPE_FOLDER))}. limit: how many notes "
     f"(default 10, max {_BROWSE_MAX_LIMIT}). Returns {{count, notes, hint}}: notes are {{path, id, type, "
-    "title}}, count is the total that match. Newest = when create_note made it, or last-modified for "
+    "title}}, count is the total that match. Newest = when write_note made it, or last-modified for "
     "notes made in Obsidian; with type daily, transcript or session it is the latest date / session "
-    "number instead. Excludes Templates/ and archive/. Pass path to read_note, id to append_note "
-    "(id is null for notes not made by create_note)."
+    "number instead. Excludes Templates/ and trash/. Pass path to read_note or write_note "
+    "(id is null for notes not made by write_note)."
 )
 @_tool
 def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
@@ -265,7 +248,7 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
     was written more recently. A "hint" explains an empty result, or that results
     were cut off - a bare empty list would reach the model as a blank tool
     result it can't interpret.
-    Excludes Templates/ and archive/ (see _ARCHIVE_FOLDER).
+    Excludes Templates/ and trash/.
     """
     _check_accessible(VAULT_PATH)
     wanted = (type or "").strip().lower() or None
@@ -276,7 +259,7 @@ def browse_notes(type: str | None = None, limit: int = 10) -> dict[str, Any]:
     limit = min(limit, _BROWSE_MAX_LIMIT)
 
     indexed = _indexed_notes()
-    newest_first = sorted(_live_notes(), key=lambda p: _newest_key(p, indexed), reverse=True)
+    newest_first = sorted(_all_notes(), key=lambda p: _newest_key(p, indexed), reverse=True)
     rows = (_note_row(path, indexed) for path in newest_first)
     matches = [row for row in rows if wanted is None or row["type"] == wanted]
     field = template.TYPE_FIELD.get(wanted) if wanted else None
@@ -334,23 +317,23 @@ def _is_archived(path: Path) -> bool:
     return bool(parts) and parts[0] == _ARCHIVE_FOLDER
 
 
+def _is_trashed(path: Path) -> bool:
+    parts = path.relative_to(VAULT_PATH).parts
+    return bool(parts) and parts[0] == _TRASH_FOLDER
+
+
 def _all_notes() -> list[Path]:
     """Every real note in the vault, sorted by path.
 
-    Skips Templates/ (placeholder skeletons), hidden folders (.obsidian,
+    Skips Templates/ (placeholder skeletons), trash/, hidden folders (.obsidian,
     Obsidian's .trash) and any symlink that resolves outside the vault - the
     notes the tools below are allowed to read the contents of and name.
     """
     return sorted(
         p
         for p in VAULT_PATH.rglob("*.md")
-        if _is_visible(p) and not _is_in_templates(p) and _is_within_vault(p)
+        if _is_visible(p) and not _is_in_templates(p) and not _is_trashed(p) and _is_within_vault(p)
     )
-
-
-def _live_notes() -> list[Path]:
-    """_all_notes() minus archive/ - the working set browse_notes and the tag tools show."""
-    return [p for p in _all_notes() if not _is_archived(p)]
 
 
 @mcp.tool(
@@ -367,7 +350,7 @@ def list_files() -> list[str]:
     return sorted(
         str(path.relative_to(VAULT_PATH))
         for path in VAULT_PATH.rglob("*")
-        if path.is_file() and _is_visible(path)
+        if path.is_file() and _is_visible(path) and not _is_trashed(path)
     )
 
 
@@ -395,12 +378,12 @@ def list_files_in_directory(directory: str) -> dict[str, Any]:
     _check_accessible(VAULT_PATH)
 
     target = (VAULT_PATH / directory).resolve()
-    if not target.is_relative_to(VAULT_PATH) or not target.is_dir():
+    if not target.is_relative_to(VAULT_PATH) or not target.is_dir() or _is_trashed(target):
         name = Path(directory).name
         matches = sorted(
             p
             for p in VAULT_PATH.rglob("*")
-            if p.is_dir() and p.name == name and _is_within_vault(p)
+            if p.is_dir() and p.name == name and not _is_trashed(p) and _is_within_vault(p)
         )
         if not matches:
             return {
@@ -417,7 +400,7 @@ def list_files_in_directory(directory: str) -> dict[str, Any]:
     files = sorted(
         str(path.relative_to(VAULT_PATH))
         for path in target.rglob("*")
-        if path.is_file() and _is_visible(path) and _is_within_vault(path)
+        if path.is_file() and _is_visible(path) and not _is_trashed(path) and _is_within_vault(path)
     )
     result: dict[str, Any] = {"directory": directory, "count": len(files), "files": files}
     if not files:
@@ -548,8 +531,8 @@ def _snippet(text: str, patterns: list[re.Pattern[str]]) -> str:
     "must appear, in any order, ignoring case; a word like 'PDP-drop' or '09-17' matches its parts "
     "side by side, joined by '-', '_' or a space. Returns "
     "{query, count, matches, hint}: up to 10 matches, best first, each {path, id, type, title, "
-    "snippet}; count is the total. Pass path to read_note and id to append_note (id is null for notes "
-    "not made by create_note). hint says how to retry or narrow. Excludes Templates/."
+    "snippet}; count is the total. Pass path to read_note or write_note (id is null for notes "
+    "not made by write_note). hint says how to retry or narrow. Excludes Templates/."
 )
 @_tool
 def search_notes(query: str) -> dict[str, Any]:
@@ -589,9 +572,7 @@ def search_notes(query: str) -> dict[str, Any]:
     indexed = _indexed_notes()
 
     hits: list[tuple[int, dict[str, Any]]] = []
-    for path in VAULT_PATH.rglob("*.md"):
-        if _is_in_templates(path):
-            continue
+    for path in _all_notes():
         rel_path = str(path.relative_to(VAULT_PATH))
         info: dict[str, str] = indexed.get(rel_path, {})
         title = info.get("title", path.stem)
@@ -787,8 +768,8 @@ def _run_rg(rg: str, pattern: str, literal: bool) -> subprocess.CompletedProcess
     "query: a question or description in plain language. top_k: how many passages (default 5, max 10). "
     "Returns {query, matches, hint}: matches are {path, id, text, score}, best first - text is the passage, "
     "headed by its note's title and section; score is similarity, 1 is closest. Pass path to read_note for "
-    "the whole note, id to append_note (id is null for notes without one). For an exact word, name, id or "
-    "number use search_notes or find_in_notes. Excludes Templates/ and archive/."
+    "the whole note or to write_note to add to it (id is null for notes without one). For an exact word, name, id or "
+    "number use search_notes or find_in_notes. Excludes Templates/ and trash/."
 )
 @_tool
 def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
@@ -837,8 +818,8 @@ def semantic_search(query: str, top_k: int = 5) -> dict[str, Any]:
 
 @mcp.tool(
     description="List every tag in use and how many notes carry it, most-used first - both frontmatter "
-    "tags (which create_note writes) and inline #tags. Returns {count, tags: {tag: notes}, hint}. "
-    "Pass a tag to notes_with_tag. Excludes Templates/ and archive/."
+    "tags (which write_note writes) and inline #tags. Returns {count, tags: {tag: notes}, hint}. "
+    "Pass a tag to notes_with_tag. Excludes Templates/ and trash/."
 )
 @_tool
 def all_tags() -> dict[str, Any]:
@@ -854,11 +835,11 @@ def all_tags() -> dict[str, Any]:
     Returns {"count", "tags"}: "tags" maps tag -> number of notes, most-used
     first (ties alphabetical), at most _LIST_LIMIT of them; "count" is the
     total number of distinct tags. A "hint" explains an empty or cut-off result.
-    Tags are lowercased, without the '#'. Excludes Templates/ and archive/.
+    Tags are lowercased, without the '#'. Excludes Templates/ and trash/.
     """
     _check_accessible(VAULT_PATH)
     counts: Counter[str] = Counter()
-    for path in _live_notes():
+    for path in _all_notes():
         counts.update(_note_tags(path.read_text(errors="ignore")))
 
     most_used = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
@@ -877,7 +858,7 @@ def all_tags() -> dict[str, Any]:
     description="List the notes carrying a tag, newest first. tag: with or without the '#', any case; "
     "'project' also matches nested tags like 'project/alpha'. Matches frontmatter tags and inline "
     "#tags. Returns {tag, count, matches, hint}: up to 10 matches {path, id, type, title}; count is the "
-    "total. A tag that matches nothing gets a hint with the closest real tags. Excludes Templates/ and archive/."
+    "total. A tag that matches nothing gets a hint with the closest real tags. Excludes Templates/ and trash/."
 )
 @_tool
 def notes_with_tag(tag: str) -> dict[str, Any]:
@@ -893,7 +874,7 @@ def notes_with_tag(tag: str) -> dict[str, Any]:
     "hint" says how to narrow when results were cut off, and when nothing
     matches suggests the closest tags actually in use (a typo, a plural) -
     a bare empty list would reach the model as a blank tool result it can't
-    interpret. Excludes Templates/ and archive/.
+    interpret. Excludes Templates/ and trash/.
     """
     _check_accessible(VAULT_PATH)
     wanted = tag.strip().lstrip("#").lower()
@@ -903,7 +884,7 @@ def notes_with_tag(tag: str) -> dict[str, Any]:
     indexed = _indexed_notes()
     in_use: set[str] = set()
     hits: list[tuple[tuple[str, str, str], Path, str]] = []
-    for path in _live_notes():
+    for path in _all_notes():
         text = path.read_text(errors="ignore")
         tags = _note_tags(text)
         in_use |= tags
@@ -934,9 +915,7 @@ def list_tags() -> list[str]:
     """
     _check_accessible(VAULT_PATH)
     tags: set[str] = set()
-    for path in VAULT_PATH.rglob("*.md"):
-        if _is_in_templates(path):
-            continue
+    for path in _all_notes():
         tags.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
     return sorted(tags)
 
@@ -949,9 +928,7 @@ def count_tags() -> dict[str, int]:
     """
     _check_accessible(VAULT_PATH)
     counts: Counter[str] = Counter()
-    for path in VAULT_PATH.rglob("*.md"):
-        if _is_in_templates(path):
-            continue
+    for path in _all_notes():
         counts.update(TAG_PATTERN.findall(path.read_text(errors="ignore")))
     return dict(sorted(counts.items()))
 
@@ -1032,31 +1009,36 @@ class _NoteNames:
         return found[:n]
 
 
-def _resolve_notes(name: str) -> list[Path]:
-    """Every note `name` could mean, best match first.
+def _matching_notes(name: str) -> list[Path]:
+    """Every note `name` could mean, best match first - [] if none.
 
     Exact first, as read_note always did: `name` as a vault-relative path,
     then a note with that filename anywhere in the vault (sorted by path).
     Failing both, forgiving (see _NoteNames): case, slug, title, alias and id.
     More than one is only returned when a name genuinely matches several -
-    the same filename in two folders, two notes sharing an alias.
-
-    Raises FileNotFoundError, naming the closest notes, if there is none.
+    the same filename in two folders, two notes sharing an alias. Nothing in
+    trash/ ever matches. The forgiving step reads every note, so it only runs
+    when the exact ones find nothing.
     """
     filename = name if name.endswith(".md") else f"{name}.md"
 
     target = (VAULT_PATH / filename).resolve()
-    if target.is_relative_to(VAULT_PATH) and target.is_file():
+    if target.is_relative_to(VAULT_PATH) and target.is_file() and not _is_trashed(target):
         return [target]
-    exact = sorted(p for p in VAULT_PATH.rglob("*.md") if p.name == filename and _is_within_vault(p))
+    exact = sorted(
+        p for p in VAULT_PATH.rglob("*.md") if p.name == filename and not _is_trashed(p) and _is_within_vault(p)
+    )
     if exact:
         return exact
+    return _NoteNames().resolve(name)
 
-    names = _NoteNames()
-    if found := names.resolve(name):
+
+def _resolve_notes(name: str) -> list[Path]:
+    """_matching_notes(name), raising FileNotFoundError, naming the closest notes, if there is none."""
+    if found := _matching_notes(name):
         return found
     message = f"No note found named '{name}'."
-    if close := names.closest(name):
+    if close := _NoteNames().closest(name):
         message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
     raise FileNotFoundError(f"{message} Use browse_notes or search_notes to find the right note.")
 
@@ -1237,7 +1219,11 @@ def find_broken_links() -> dict[str, Any]:
     """
     _check_accessible(VAULT_PATH)
     names = _NoteNames()
-    files = {p.name.lower() for p in VAULT_PATH.rglob("*") if p.is_file() and p.suffix != ".md" and _is_visible(p)}
+    files = {
+        p.name.lower()
+        for p in VAULT_PATH.rglob("*")
+        if p.is_file() and p.suffix != ".md" and _is_visible(p) and not _is_trashed(p)
+    }
 
     broken: list[dict[str, Any]] = []
     for path in names.notes:
@@ -1356,9 +1342,8 @@ def _reject_hidden(target: Path, rel_path: str) -> None:
 
 
 # The user/ folder (directives, daily) is meant to be read-only
-# to everything except the tools that already gate what goes there by type:
-# create_note and append_note. This enforces that for the two structural/
-# destructive tools; it is a narrow slice of a real permission model, not one
+# to everything except write_note, which already gates what goes there by type.
+# This enforces that for the structural tool, rename_or_move_file; it is a narrow slice of a real permission model, not one
 # - there's no notion here of who's calling, so it can't distinguish a
 # human-directed action from an autonomous one.
 _PROTECTED_FOLDER = "user"
@@ -1366,10 +1351,10 @@ _PROTECTED_FOLDER = "user"
 
 # Notes the user wrote - `author: user` in their frontmatter - outside user/ are the user's alone
 # when this server runs for Nuru, which turns this on (OBSIDIAN_PROTECT_USER_AUTHORED=1) for its own
-# server process: append_note, rename/move, archive and delete refuse them, and a change becomes a
-# new note instead (a correction can point at the original). Other clients - Claude Desktop, the
-# Inspector - leave it off: there a person is choosing what to change. Inside user/ the folder
-# rules above apply as before (add_to_daily still appends to today's daily).
+# server process: write_note and rename_or_move_file (so archive and trash too) refuse them, and a
+# change becomes a new note instead (a correction can point at the original). Other clients - Claude
+# Desktop, the Inspector - leave it off: there a person is choosing what to change. Inside user/ the
+# folder rules above apply as before (write_note still appends to today's daily).
 _PROTECT_USER_AUTHORED = os.environ.get("OBSIDIAN_PROTECT_USER_AUTHORED") == "1"
 
 
@@ -1394,7 +1379,7 @@ def _reject_protected_folder(target: Path, rel_path: str) -> None:
         parts = target.relative_to(VAULT_PATH).parts
         if parts and parts[0] == _PROTECTED_FOLDER:
             raise PermissionError(
-                f"'{rel_path}' is under '{_PROTECTED_FOLDER}/', which only create_note/append_note may write to."
+                f"'{rel_path}' is under '{_PROTECTED_FOLDER}/', which only write_note may write to."
             )
 
 
@@ -1473,20 +1458,6 @@ def _find_daily(day: str) -> Path | None:
     return None
 
 
-@mcp.tool(
-    description=(
-        "Create a new note in the vault. type: one of directives, daily, correction, profile, "
-        "preferences, person, topic, index, transcript, project, session. title: human-readable "
-        "title (becomes the filename). author: one of user, nuru, both (directives/daily "
-        "require author=user). body: Markdown content. tags: extra tags, no whitespace. supersedes: "
-        "id of a note this replaces, must already exist. date: for type=daily, YYYY-MM-DD, defaults "
-        "to today. targets: required for type=correction, list of existing note ids - the notes it "
-        "corrects, linked from its first line. session: for "
-        "type=transcript or type=session, YYYY-MM-DD-NN, defaults to today's next unused number. To "
-        "add to today's daily use add_to_daily; to add to any other note use append_note (not this "
-        "again). Returns {id, path}."
-    )
-)
 @_tool
 def create_note(
     type: str,
@@ -1499,10 +1470,11 @@ def create_note(
     targets: list[str] | None = None,
     session: str | None = None,
 ) -> dict[str, str]:
-    """Create a new note, with server-owned frontmatter, in the vault.
+    """Create a new note, with server-owned frontmatter, in the vault - write_note's
+    create path, not a tool of its own.
 
     Notes are append-only after creation: frontmatter is written exactly
-    once, here, and never rewritten - use append_note to add to the body.
+    once, here, and never rewritten - write_note adds to the body.
 
     Args:
         type: One of: directives, daily, correction, profile, preferences,
@@ -1642,7 +1614,7 @@ def create_note(
             ) from e
         except Exception:
             # The index insert is what makes this note visible to
-            # supersedes/append_note lookups - if it fails, the file must
+            # supersedes and id lookups - if it fails, the file must
             # not stand, so a retry doesn't collide with a half-created note.
             target.unlink(missing_ok=True)
             raise
@@ -1680,177 +1652,141 @@ def _append_text(target: Path, content: str) -> None:
     _run_with_timeout(_append)
 
 
+# Shaped like a ULID, as create_note mints them - loosely, so a mistyped id (an O for a 0)
+# still reads as an id passed as write_note's `note`, not as a new note's title.
+_NOTE_ID = re.compile(r"[0-9A-Z]{26}")
+
+
+def _looks_like_path_or_id(note: str) -> bool:
+    """A name that points at one particular note rather than naming a new one."""
+    return "/" in note or note.endswith(".md") or bool(_NOTE_ID.fullmatch(note.strip()))
+
+
 @mcp.tool(
-    description="Append content to an existing note's body. id: the note's id (not its path), as "
-    "returned by create_note. content: Markdown to append. Returns the note's vault-relative path."
+    description=(
+        "Write to a note: add content to it if it exists, create it if it doesn't. content: Markdown. "
+        "note: an existing note's path, title or id, or the title for a new note. type: needed to create "
+        "one of directives, daily, correction, profile, preferences, person, topic, index, transcript, "
+        "project, session; type=daily (no note) adds to today's daily. author: needed to create - user, "
+        "nuru or both. tags, supersedes (id of a note this replaces), targets (for a correction: ids of "
+        "the notes it corrects) and session (YYYY-MM-DD-NN, for transcript/session) only apply when "
+        "creating. Archived notes can't be written - move one out first. Returns {path, id, created}."
+    )
 )
 @_tool
-def append_note(id: str, content: str) -> str:
-    """Append content to an existing note's body, looked up by id.
+def write_note(
+    content: str,
+    note: str | None = None,
+    type: str | None = None,
+    author: str | None = None,
+    tags: list[str] | None = None,
+    supersedes: str | None = None,
+    targets: list[str] | None = None,
+    session: str | None = None,
+) -> dict[str, Any]:
+    """Add `content` to a note, creating the note first if there isn't one.
 
-    A blank line is inserted before `content` if the note doesn't already end
-    with one, so the appended text starts its own block instead of running
-    onto the end of the note's last line - `content` itself does not need a
-    leading newline.
+    Replaces create_note, append_note and add_to_daily, so the model never
+    has to decide whether a note exists before writing to it:
 
-    Args:
-        id: The note's id, as returned by create_note (or read/searched, once
-            those tools are updated to return ids). Never a path - a typo'd
-            id fails loudly instead of silently creating a new note.
-        content: The content to append.
+    - type="daily" is today's daily ("today" is the server's clock): found by
+      its frontmatter (see _find_daily), so one made in Obsidian is appended
+      to rather than duplicated; otherwise created as "Daily YYYY-MM-DD",
+      author "user" (the only author a daily may have). `note` is ignored.
+    - Otherwise `note` is resolved as read_note resolves a name (path,
+      filename, title, alias or id; never anything in trash/). One match is
+      appended to. Several are refused, listing them - a guess would write to
+      the wrong note. None creates a new note titled `note` (see create_note).
 
-    Returns the vault-relative path of the note.
+    Guards against the ways a write lands somewhere it shouldn't:
+    - A `note` that is a path or an id but matches nothing is refused, with
+      the closest notes, rather than turned into a new note's title - a
+      mistyped path would otherwise quietly become a duplicate.
+    - An existing note can't be appended to with arguments that only make
+      sense for a new one: supersedes or targets, or a type other than the
+      note's own (a correction must never become an edit of the note it
+      corrects).
+    - An archived note is refused: move it out of archive/ first.
+    - A user-authored note is refused when OBSIDIAN_PROTECT_USER_AUTHORED is on.
+
+    Returns {"path", "id", "created"}: "created" says whether this call made
+    the note; "id" is null for a note the index doesn't know (one made in
+    Obsidian without an id in its frontmatter).
     """
     _check_accessible(VAULT_PATH)
+    if not content.strip():
+        raise ValueError("content is empty - give the Markdown to write.")
 
-    with contextlib.closing(_open_index()) as conn:
-        rel_path = note_index.get_path(conn, id)
-    if rel_path is None:
-        raise FileNotFoundError(f"No note with id '{id}'.")
+    if type == "daily":
+        today = _today()
+        existing = _find_daily(today)
+        if existing is None:
+            made = create_note(type="daily", title=f"Daily {today}", author="user", body=content, date=today)
+            return {**made, "created": True}
+        matches = [existing]
+    else:
+        if note is None or not note.strip():
+            raise ValueError("note is empty - give the title, path or id of the note to write to.")
+        matches = _matching_notes(note)
+        if len(matches) > 1:
+            raise ValueError(
+                f"'{note}' matches {len(matches)} notes: {', '.join(_rel(p) for p in matches[:5])}. "
+                "Pass the path of the one to write to."
+            )
+        if not matches:
+            if _looks_like_path_or_id(note):
+                message = f"No note found at '{note}'."
+                if close := _NoteNames().closest(note):
+                    message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
+                raise FileNotFoundError(
+                    f"{message} To make a new note, pass its title (not a path or id) as note, with type and author."
+                )
+            if type is None or author is None:
+                raise ValueError(
+                    f"No note named '{note}' exists. To create it, pass type and author too; "
+                    "to add to an existing note, use search_notes to find its path."
+                )
+            made = create_note(
+                type=type, title=note, author=author, body=content, tags=tags,
+                supersedes=supersedes, targets=targets, session=session,
+            )
+            return {**made, "created": True}
 
-    target = _resolve_target(rel_path)
-    if not target.is_file():
-        raise FileNotFoundError(f"Note '{id}' is indexed at '{rel_path}', but that file no longer exists.")
+    target = matches[0]
+    rel_path = _rel(target)
+    frontmatter = _read_frontmatter(target.read_text(errors="ignore"))
+    if supersedes is not None or targets is not None:
+        raise ValueError(
+            f"'{rel_path}' already exists; supersedes and targets only apply to a new note. "
+            "Give the new note its own title."
+        )
+    if type is not None and type != frontmatter.get("type"):
+        raise ValueError(
+            f"'{rel_path}' already exists and is a {frontmatter.get('type') or 'untyped'} note, not {type}. "
+            "To make a new note, give it its own title."
+        )
+    if _is_archived(target):
+        raise PermissionError(
+            f"'{rel_path}' is archived and can't be written to. Move it out first: "
+            f"rename_or_move_file('{rel_path}', '{rel_path.removeprefix(_ARCHIVE_FOLDER + '/')}')."
+        )
     _reject_user_authored(target, rel_path)
 
     _append_text(target, content)
-    return rel_path
+    note_id = _indexed_notes().get(rel_path, {}).get("id") or frontmatter.get("id")
+    return {"path": rel_path, "id": note_id, "created": False}
 
 
 @mcp.tool(
-    description="Add text to today's daily note, creating the note first if there isn't one yet. text: "
-    "Markdown to add. No date, title or id needed - use this for anything that belongs in today's daily. "
-    "Returns {path, id, created}: created says whether this call made the note; id is null for a daily "
-    "made in Obsidian rather than by create_note."
+    description="Rename or move a file within the vault. source_path: a vault-relative path, or a note's "
+    "title or id. destination_path: the new vault-relative path, or just 'archive' or 'trash' to move it "
+    "there under its own folder path (nuru/x.md -> archive/nuru/x.md). Archive keeps a note visible but "
+    "read-only until it is moved out. Trash is final: use it to delete; nothing comes back out of trash. "
+    "Returns {from, to}."
 )
 @_tool
-def add_to_daily(text: str) -> dict[str, Any]:
-    """Append text to today's daily note, creating it if it doesn't exist.
-
-    Replaces three decisions the model would otherwise make - does today's
-    daily exist, what is its id, what is today's date - with none. "Today" is
-    the server's clock. An existing daily is found by its frontmatter (see
-    _find_daily), so one made in Obsidian is appended to rather than
-    duplicated; a new one is a normal create_note daily titled
-    "Daily YYYY-MM-DD" (so it's the file daily-YYYY-MM-DD.md), author "user"
-    (the only author a daily may have), with `text` as its body.
-
-    Args:
-        text: The Markdown to add. Starts its own paragraph, like append_note.
-
-    Returns {"path", "id", "created"}. "id" is null for a note the index
-    doesn't know - one made in Obsidian - which append_note couldn't reach.
-    """
-    _check_accessible(VAULT_PATH)
-    if not text.strip():
-        raise ValueError("text is empty - give the Markdown to add.")
-
-    today = _today()
-    existing = _find_daily(today)
-    if existing is None:
-        made = create_note(type="daily", title=f"Daily {today}", author="user", body=text, date=today)
-        return {"path": made["path"], "id": made["id"], "created": True}
-
-    _append_text(existing, text)
-    rel_path = _rel(existing)
-    return {"path": rel_path, "id": _indexed_notes().get(rel_path, {}).get("id"), "created": False}
-
-
-def _build_template_file(type: str) -> str:
-    """Build one Obsidian template file's full text for the given type.
-
-    Frontmatter uses the same shape and field order create_note writes for a
-    real note, but with placeholder/blank values instead of real ones: id and
-    author are left blank (no {{id}}/{{author}} token exists - a human or the
-    MCP fills them in later, same as id is blank on a note in progress),
-    created uses Obsidian's own {{date}}/{{time}} template tokens, and a
-    type's extra frontmatter field (see frontmatter_template.TYPE_FIELD) uses
-    {{date}} where a real token exists or is left blank where it doesn't
-    (e.g. session's "<YYYY-MM-DD>-NN" has no token for "NN").
-    """
-    required_field = template.TYPE_FIELD.get(type)
-    if required_field == "date":
-        type_field = (required_field, _DoubleQuoted("{{date}}"))
-    elif required_field == "targets":
-        type_field = (required_field, [])
-    elif required_field == "session":
-        type_field = (required_field, None)
-    else:
-        type_field = None
-
-    frontmatter = _build_frontmatter(
-        note_id=None,
-        type=type,
-        created=_DoubleQuoted("{{date}}T{{time}}"),
-        author=template.TEMPLATE_AUTHOR[type],
-        supersedes=None,
-        type_field=type_field,
-        tags=[type],
-        # No id exists yet to be the second alias (create_note mints one only
-        # once a real note is created), so this is a single-item list rather
-        # than [title, <blank>] - a trailing blank list item parses as a
-        # `null` alias in Obsidian, which is worse than just omitting it.
-        aliases=[_DoubleQuoted("{{title}}")],
-    )
-    h1 = f"# {{{{date}}}}" if type == template_bodies.DAILY_TYPE else "# {{title}}"
-    body = template_bodies.BODIES[type]
-    return f"---\n{frontmatter}---\n\n{h1}\n\n{body}" + ("\n" if body else "")
-
-
-@mcp.tool(
-    description="Regenerate Obsidian template files under Templates/. overwrite: if true, overwrite "
-    "existing template files; default false leaves them untouched. Returns {written, skipped} "
-    "vault-relative paths."
-)
-@_tool
-def generate_templates(overwrite: bool = False) -> dict[str, list[str]]:
-    """Generate the vault's Obsidian template files under Templates/.
-
-    Writes one file per note type (see frontmatter_template.TYPE_FOLDER) to
-    the Templates/ folder at the vault root. This is a regeneration of static
-    skeleton files for Obsidian's own "Insert template" feature, not a note,
-    so it isn't subject to the append-only rule notes are - but a template a
-    human has since hand-edited (or that already reflects the current spec)
-    still shouldn't be silently clobbered by default.
-
-    Args:
-        overwrite: If false (the default), a file that already exists is left
-            untouched and reported under "skipped" rather than rewritten. Pass
-            true to force every template back to the current generated form.
-
-    Returns {"written": [...], "skipped": [...]} - vault-relative paths.
-    """
-    _check_accessible(VAULT_PATH)
-
-    written: list[str] = []
-    skipped: list[str] = []
-    for type, filename in template_bodies.FILENAMES.items():
-        rel_path = f"{_TEMPLATES_FOLDER}/{filename}"
-        target = _resolve_target(rel_path)
-
-        if not overwrite and target.exists():
-            skipped.append(rel_path)
-            continue
-
-        content = _build_template_file(type)
-
-        def _write(target: Path = target, content: str = content) -> None:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
-
-        _run_with_timeout(_write)
-        written.append(rel_path)
-
-    return {"written": written, "skipped": skipped}
-
-
-@mcp.tool(
-    description="Rename or move a file within the vault. source_path/destination_path: vault-relative "
-    "paths. Returns the destination path."
-)
-@_tool
-def rename_or_move_file(source_path: str, destination_path: str) -> str:
-    """Rename or move a file within the vault.
+def rename_or_move_file(source_path: str, destination_path: str) -> dict[str, str]:
+    """Rename or move a file within the vault - which is also how a note is archived or deleted.
 
     If a note create_note made is being moved, its index row is repointed to
     the new path in the same operation, so it stays reachable by id
@@ -1858,14 +1794,36 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
     viable under the append-only design.
 
     Args:
-        source_path: Current path of the file, relative to the vault root.
+        source_path: Current path of the file, relative to the vault root -
+            or, for a note, any name read_note accepts. A name that fits
+            several notes is refused rather than guessed. Nothing in trash/
+            can be a source: trash is one-way.
         destination_path: New path for the file, relative to the vault root.
+            "archive" or "trash" alone moves it into that folder under its
+            own path (an archived note going to trash drops the "archive/").
 
-    Returns the vault-relative destination path.
+    Returns {"from", "to"}: vault-relative paths before and after.
     """
     _check_accessible(VAULT_PATH)
 
     source = _resolve_target(source_path)
+    if source.is_relative_to(VAULT_PATH) and _is_trashed(source):
+        raise PermissionError(f"'{source_path}' is in {_TRASH_FOLDER}/, and nothing can be moved out of trash.")
+    if not source.is_file():
+        matches = _resolve_notes(source_path)
+        if len(matches) > 1:
+            raise ValueError(
+                f"'{source_path}' matches {len(matches)} notes: {', '.join(_rel(p) for p in matches[:5])}. "
+                "Pass the path of the one to move."
+            )
+        source = matches[0]
+        source_path = _rel(source)
+
+    folder = destination_path.strip().strip("/")
+    if folder in (_ARCHIVE_FOLDER, _TRASH_FOLDER):
+        if folder == _ARCHIVE_FOLDER and _is_archived(source):
+            raise ValueError(f"'{source_path}' is already archived.")
+        destination_path = f"{folder}/{_rel(source).removeprefix(_ARCHIVE_FOLDER + '/')}"
     destination = _resolve_target(destination_path)
     _reject_hidden(source, source_path)
     _reject_hidden(destination, destination_path)
@@ -1899,101 +1857,7 @@ def rename_or_move_file(source_path: str, destination_path: str) -> str:
                 raise
 
     _run_with_timeout(_move)
-    return destination_rel
-
-
-@mcp.tool(
-    description="Archive a note: move it under archive/, keeping its folder (nuru/x.md -> archive/nuru/x.md), "
-    "which takes it out of browse_notes and the tag lists. Reversible - nothing is deleted - so prefer this "
-    "to deleting. name: a path, filename, title or id, as for read_note; a name that matches several notes "
-    "is refused, so pass the path. Returns {from, to}; move it back with rename_or_move_file(to, from). "
-    "Notes under user/ (directives, daily) can't be archived."
-)
-@_tool
-def archive_note(name: str) -> dict[str, str]:
-    """Archive a note by moving it to archive/, under its own folder path.
-
-    The safe alternative to deleting: the file, its id and its index row all
-    survive (rename_or_move_file repoints the row), and the filename doesn't
-    change, so [[links]] to the note keep resolving. Undo it by moving the
-    file back - "from" in the result is where it belongs.
-
-    This is a move, so it goes through rename_or_move_file and inherits its
-    boundaries: it refuses hidden folders, anything under user/, a destination
-    that already exists. Since the name is resolved as read_note resolves it,
-    which is forgiving, a name that fits several notes is refused rather than
-    guessed - a wrong guess would archive the wrong note.
-
-    Args:
-        name: The note to archive, as for read_note.
-
-    Returns {"from", "to"}: vault-relative paths before and after.
-    """
-    _check_accessible(VAULT_PATH)
-    matches = _resolve_notes(name)
-    if len(matches) > 1:
-        raise ValueError(
-            f"'{name}' matches {len(matches)} notes: {', '.join(_rel(p) for p in matches[:5])}. "
-            "Pass the path of the one to archive."
-        )
-    source = _rel(matches[0])
-    if _is_archived(matches[0]):
-        raise ValueError(f"'{source}' is already archived.")
-    destination = f"{_ARCHIVE_FOLDER}/{source}"
-    rename_or_move_file(source, destination)
-    return {"from": source, "to": destination}
-
-
-@mcp.tool(
-    description="Delete a file or directory (recursively) from the vault. path: vault-relative path. "
-    "Returns every path deleted."
-)
-@_tool
-def delete_file_or_directory(path: str) -> list[str]:
-    """Delete a file or directory (recursively) from the vault.
-
-    Any note create_note made among what's deleted has its index row removed
-    too, in the same operation - otherwise its id would keep resolving to a
-    path that no longer exists.
-
-    Args:
-        path: Path to the file or directory, relative to the vault root.
-
-    Returns the vault-relative paths of everything deleted (the path itself,
-    plus every file and subdirectory under it if it was a directory) - so a
-    recursive delete's actual extent is visible in the response, not just the
-    one path that was passed in.
-    """
-    _check_accessible(VAULT_PATH)
-
-    target = _resolve_target(path)
-
-    if target == VAULT_PATH:
-        raise ValueError("Refusing to delete the vault root.")
-    _reject_hidden(target, path)
-    _reject_protected_folder(target, path)
-    _reject_user_authored(target, path)
-
-    def _delete() -> list[str]:
-        if target.is_dir():
-            manifest = sorted(str(p.relative_to(VAULT_PATH)) for p in target.rglob("*"))
-            manifest.append(str(target.relative_to(VAULT_PATH)))
-            shutil.rmtree(target)
-            manifest = sorted(manifest)
-            with contextlib.closing(_open_index()) as conn:
-                for rel in manifest:
-                    note_index.delete_by_path(conn, rel)
-            return manifest
-        elif target.is_file():
-            rel = str(target.relative_to(VAULT_PATH))
-            target.unlink()
-            with contextlib.closing(_open_index()) as conn:
-                note_index.delete_by_path(conn, rel)
-            return [rel]
-        else:
-            raise FileNotFoundError(f"No file or directory found at '{path}'.")
-
-    return _run_with_timeout(_delete)
+    return {"from": source_rel, "to": destination_rel}
 
 
 def main() -> None:

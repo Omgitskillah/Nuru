@@ -59,11 +59,12 @@ DB_NAME = ".obsidian-mcp-semantic.sqlite3"
 _DOCUMENT_PREFIX = "search_document: "
 _QUERY_PREFIX = "search_query: "
 
-# The same notes server._live_notes() works on: no Templates/ (placeholder skeletons), no
-# archive/ (out of the working set), no hidden folders, no symlinks out of the vault.
+# The same notes server._all_notes() works on: no Templates/ (placeholder skeletons), no
+# trash/ (deleted, as far as any tool is concerned), no hidden folders, no symlinks out of the
+# vault. archive/ is embedded: archived notes stay findable.
 # Repeated here rather than imported because importing server reads VAULT_PATH and builds
 # the MCP server, which Nuru's indexer (running in Nuru's own process) doesn't want.
-_SKIPPED_FOLDERS = ("Templates", "archive")
+_SKIPPED_FOLDERS = ("Templates", "trash")
 # server._INDEX_DB_NAME: create_note's id/title index, read here for each note's id.
 _NOTE_INDEX_NAME = ".obsidian-mcp-index.sqlite3"
 

@@ -2,7 +2,7 @@
 
 The vault's Markdown files remain the source of truth for content and
 frontmatter; this index exists only so create_note can validate `supersedes`
-and so ID-based tools (e.g. append_note) can resolve an id to a path without
+and so ID-based lookups can resolve an id to a path without
 scanning the vault. It only knows about notes created through create_note -
 a note added any other way (e.g. directly in Obsidian) has no row here.
 """

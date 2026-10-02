@@ -61,8 +61,9 @@ class Tools:
     def list_tools(self):
         return [{"type": "function", "function": {"name": n, "description": "x", "parameters": p}} for n, p in [
             ("semantic_search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
-            ("append_note", {"properties": {"id": {"type": "string"}, "content": {"type": "string"}},
-                             "required": ["id", "content"], "type": "object"}),
+            ("write_note", {"properties": {"content": {"type": "string"},
+                                           "note": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}},
+                            "required": ["content"], "type": "object"}),
         ]]
 
     def call_tool_result(self, name, arguments):
@@ -124,7 +125,7 @@ def setup(monkeypatch, tmp_path):
             seen.append({"think": think, "tools": tools is not None, "fmt": fmt, "messages": [dict(m) for m in messages]})
             yield from next(responses)
 
-        tools = Tools(results or {"semantic_search": SEARCH, "append_note": "nuru/priya-raman.md"})
+        tools = Tools(results or {"semantic_search": SEARCH, "write_note": "nuru/priya-raman.md"})
         monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
         monkeypatch.setattr(session, "ensure_server_running", lambda: None)
         monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
@@ -210,67 +211,67 @@ def test_past_the_highest_local_tier_the_expert_plans(setup, monkeypatch):
 def test_a_write_runs_with_forced_arguments_limited_to_searched_ids(setup):
     responses = [
         [call("semantic_search", {"query": "Priya"})],
-        [call("append_note", {"id": INVENTED, "content": "Prefers async"})],
-        [json.dumps({"id": PRIYA, "content": "Prefers async messages on Fridays"})],  # the forced-schema call
+        [call("write_note", {"note": INVENTED, "content": "Prefers async"})],
+        [json.dumps({"note": PRIYA, "content": "Prefers async messages on Fridays"})],  # the forced-schema call
         ["Added it to Priya's note."],
     ]
     s, seen, tools = setup(["gate_write"], responses)
     list(s.ask(REQUEST))
     forced = next(c for c in seen if c["fmt"] is not None)
-    assert forced["fmt"]["anyOf"][0]["properties"]["id"]["enum"] == [PRIYA]
-    assert ("append_note", {"id": PRIYA, "content": "Prefers async messages on Fridays"}) in tools.calls
-    assert not any(args.get("id") == INVENTED for name, args in tools.calls)
+    assert forced["messages"][-1]["content"].startswith("[Nuru] Next step: `write_note`")
+    assert ("write_note", {"note": PRIYA, "content": "Prefers async messages on Fridays"}) in tools.calls
+    assert not any(args.get("note") == INVENTED for name, args in tools.calls)
 
 
 def test_a_write_whose_own_arguments_are_valid_runs_without_being_asked_again(setup):
     responses = [
         [call("semantic_search", {"query": "Priya"})],
-        [call("append_note", {"id": PRIYA, "content": "Prefers async messages on Fridays"})],
+        [call("write_note", {"note": PRIYA, "content": "Prefers async messages on Fridays"})],
         ["Added it to Priya's note."],
     ]
     s, seen, tools = setup(["gate_write"], responses)
     list(s.ask(REQUEST))
     assert all(c["fmt"] is None for c in seen)  # no forced-schema call
-    assert ("append_note", {"id": PRIYA, "content": "Prefers async messages on Fridays"}) in tools.calls
+    assert ("write_note", {"note": PRIYA, "content": "Prefers async messages on Fridays"}) in tools.calls
 
 
 def test_a_write_that_needs_confirmation_is_blocked_when_nobody_is_there(setup):
     responses = [
         [call("semantic_search", {"query": "Priya"})],
-        [call("append_note", {"id": PRIYA, "content": "Prefers async"})],
+        [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
         ["I couldn't add it."],
     ]
     s, seen, tools = setup(["gate_write"], responses, script={**DEFAULT_SCRIPT, "verdict": {"confirm": 0.9}})
     list(s.ask(REQUEST))
-    assert not any(name == "append_note" for name, _ in tools.calls)
-    tool_message = next(m for m in seen[-1]["messages"] if m["role"] == "tool" and "append_note" in m["content"])
+    assert not any(name == "write_note" for name, _ in tools.calls)
+    tool_message = next(m for m in seen[-1]["messages"] if m["role"] == "tool" and "write_note" in m["content"])
     assert "nobody was there to give it" in tool_message["content"]
 
 
 def test_a_confirmed_write_runs(setup):
     responses = [
         [call("semantic_search", {"query": "Priya"})],
-        [call("append_note", {"id": PRIYA, "content": "Prefers async"})],
+        [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
         ["Added."],
     ]
     s, _, tools = setup(["gate_write"], responses, script={**DEFAULT_SCRIPT, "verdict": {"confirm": 0.9}})
     s.confirm_write = lambda name, args: True
     list(s.ask(REQUEST))
-    assert ("append_note", {"id": PRIYA, "content": "Prefers async"}) in tools.calls
+    assert ("write_note", {"note": PRIYA, "content": "Prefers async"}) in tools.calls
 
 
 def test_cannot_do_is_a_failure_and_nothing_is_written(setup):
     responses = [
         [call("semantic_search", {"query": "Zed"})],
-        [call("append_note", {"id": INVENTED, "content": "hi"})],
+        [call("write_note", {"note": INVENTED, "content": "hi"})],
         [json.dumps({"cannot_do": "no note for Zed"})],
         ["I couldn't find Zed's note."],
     ]
     s, seen, tools = setup(["gate_write"], responses, results={"semantic_search": json.dumps({"matches": []})})
     list(s.ask("Add hi to Zed's note"))
-    assert not any(name == "append_note" for name, _ in tools.calls)
-    assert json.loads(json.dumps(seen[2]["fmt"])) == {"anyOf": [{"type": "object", "properties": {"cannot_do": {"type": "string"}},
-                                                                "required": ["cannot_do"], "additionalProperties": False}]}
+    assert not any(name == "write_note" for name, _ in tools.calls)
+    assert {"type": "object", "properties": {"cannot_do": {"type": "string"}}, "required": ["cannot_do"],
+            "additionalProperties": False} in seen[2]["fmt"]["anyOf"]
 
 
 # ---------------------------------------------------------------- check_claim
@@ -296,8 +297,8 @@ def test_a_reply_that_fails_twice_is_shown_with_a_warning_and_the_log(setup):
 
 def test_log_lines_read_plainly():
     assert log_lines([]) == "- nothing was run"
-    assert log_lines([{"tool": "append_note", "ok": False, "result": "failed: timeout"}]) == \
-        "- append_note: FAILED - failed: timeout"
+    assert log_lines([{"tool": "write_note", "ok": False, "result": "failed: timeout"}]) == \
+        "- write_note: FAILED - failed: timeout"
 
 
 def test_enforcement_is_off_until_a_point_is_enforced(tmp_path):
@@ -358,18 +359,18 @@ def test_with_only_the_code_checks_enforced_laya_s_signal_is_logged_not_acted_on
 # ---------------------------------------------------------------- write_checks
 def test_enforced_write_checks_stop_a_write_to_an_invented_note_id(setup):
     invented = "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
-    s, seen, tools = setup(["write_checks"], [[call("append_note", {"id": invented, "content": "x"})], ["I couldn't."]])
+    s, seen, tools = setup(["write_checks"], [[call("write_note", {"note": invented, "content": "x"})], ["I couldn't."]])
     events = list(s.ask("Add x to Priya's note"))
     assert tools.calls == []  # never reached the server
-    assert "append_note was not run" in seen[1]["messages"][-1]["content"]
+    assert "write_note was not run" in seen[1]["messages"][-1]["content"]
     assert events[-1] == Text("I couldn't.")
 
 
 def test_write_checks_let_a_write_to_a_searched_note_through(setup):
     s, seen, tools = setup(["write_checks"], [[call("semantic_search", {"query": "Priya"})],
-                                              [call("append_note", {"id": PRIYA, "content": "x"})], ["Done."]])
+                                              [call("write_note", {"note": PRIYA, "content": "x"})], ["Done."]])
     list(s.ask("Add x to Priya's note"))
-    assert [name for name, _ in tools.calls] == ["semantic_search", "append_note"]
+    assert [name for name, _ in tools.calls] == ["semantic_search", "write_note"]
 
 
 def test_the_repeated_call_stop_ignores_case(setup):

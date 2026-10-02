@@ -17,7 +17,7 @@ import copy
 from typing import Any
 
 # Tool arguments that name a note by ID. Tool knowledge, not model knowledge.
-NOTE_ID_FIELDS = {"append_note": ("id",), "create_note": ("supersedes", "targets")}
+NOTE_ID_FIELDS = {"write_note": ("supersedes", "targets")}
 
 CANNOT_DO = {
     "type": "object",

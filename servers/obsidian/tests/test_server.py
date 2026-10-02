@@ -952,7 +952,7 @@ def test_append_note_appends_to_the_note_s_body(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="X", author="both", body="Original.")
 
-    path = server.append_note(created["id"], "More.")
+    path = server.write_note("More.", note=created["id"])["path"]
 
     assert path == created["path"]
     assert (tmp_path / path).read_text().endswith("Original.\n\nMore.")
@@ -965,7 +965,7 @@ def test_append_note_inserts_a_blank_line_without_the_caller_adding_one(tmp_path
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="X", author="both", body="First real note.")
 
-    server.append_note(created["id"], "Appended line one.")
+    server.write_note("Appended line one.", note=created["id"])
 
     text = (tmp_path / created["path"]).read_text()
     assert text.endswith("First real note.\n\nAppended line one.")
@@ -976,7 +976,7 @@ def test_append_note_does_not_add_a_second_blank_line_if_one_already_exists(tmp_
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="X", author="both", body="Original.\n\n")
 
-    server.append_note(created["id"], "More.")
+    server.write_note("More.", note=created["id"])
 
     text = (tmp_path / created["path"]).read_text()
     assert text.endswith("Original.\n\nMore.")
@@ -987,7 +987,7 @@ def test_append_note_completes_a_single_trailing_newline_into_a_blank_line(tmp_p
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="X", author="both", body="Original.\n")
 
-    server.append_note(created["id"], "More.")
+    server.write_note("More.", note=created["id"])
 
     text = (tmp_path / created["path"]).read_text()
     assert text.endswith("Original.\n\nMore.")
@@ -997,25 +997,25 @@ def test_append_note_twice_separates_both_appends(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="X", author="both", body="First real note.")
 
-    server.append_note(created["id"], "Appended line one.")
-    server.append_note(created["id"], "- second bullet")
+    server.write_note("Appended line one.", note=created["id"])
+    server.write_note("- second bullet", note=created["id"])
 
     text = (tmp_path / created["path"]).read_text()
     assert text.endswith("First real note.\n\nAppended line one.\n\n- second bullet")
 
 
-def test_append_note_raises_for_an_unknown_id(tmp_path, monkeypatch):
+def test_write_note_raises_for_an_unknown_id(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     with pytest.raises(ToolError, match="FileNotFoundError"):
-        server.append_note("nonexistent-id", "content")
+        server.write_note("content", note="01K0000000000000000000NOPE")
 
 
-def test_append_note_does_not_create_a_note_for_a_typo_d_id(tmp_path, monkeypatch):
+def test_write_note_does_not_create_a_note_for_a_typo_d_id(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     with pytest.raises(ToolError, match="FileNotFoundError"):
-        server.append_note("typo-d-id", "content")
+        server.write_note("content", note="01K0000000000000000000TYPO", type="topic", author="nuru")
     assert server.list_files() == []
 
 
@@ -1025,7 +1025,7 @@ def test_append_note_raises_if_the_indexed_file_was_deleted_outside_the_server(t
     (tmp_path / created["path"]).unlink()
 
     with pytest.raises(ToolError, match="FileNotFoundError"):
-        server.append_note(created["id"], "content")
+        server.write_note("content", note=created["id"])
 
 
 # --- _run_with_timeout ---
@@ -1059,111 +1059,6 @@ def test_run_with_timeout_raises_timeout_error_on_a_stalled_call(monkeypatch):
         release.set()  # let the abandoned worker thread finish so it doesn't leak
 
 
-# --- generate_templates ---
-
-
-def test_generate_templates_writes_one_file_per_type_under_templates(tmp_path, monkeypatch):
-    from obsidian_mcp import template_bodies
-
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    result = server.generate_templates()
-
-    assert result["skipped"] == []
-    assert sorted(result["written"]) == sorted(f"Templates/{name}" for name in template_bodies.FILENAMES.values())
-    for rel_path in result["written"]:
-        assert (tmp_path / rel_path).is_file()
-
-
-def test_generate_templates_does_not_overwrite_by_default(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-    (tmp_path / "Templates").mkdir()
-    (tmp_path / "Templates" / "01 Profile.md").write_text("stale content")
-
-    result = server.generate_templates()
-
-    assert (tmp_path / "Templates" / "01 Profile.md").read_text() == "stale content"
-    assert "Templates/01 Profile.md" in result["skipped"]
-    assert "Templates/01 Profile.md" not in result["written"]
-
-
-def test_generate_templates_overwrites_when_asked(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-    (tmp_path / "Templates").mkdir()
-    (tmp_path / "Templates" / "01 Profile.md").write_text("stale content")
-
-    result = server.generate_templates(overwrite=True)
-
-    assert (tmp_path / "Templates" / "01 Profile.md").read_text() != "stale content"
-    assert "Templates/01 Profile.md" in result["written"]
-    assert result["skipped"] == []
-
-
-def test_generate_templates_leaves_id_blank_and_stamps_a_concrete_author(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "01 Profile.md").read_text()
-    assert "id:\n" in text
-    assert "author: nuru\n" in text
-
-
-def test_generate_templates_quotes_the_created_placeholder(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "01 Profile.md").read_text()
-    assert 'created: "{{date}}T{{time}}"\n' in text
-
-
-def test_generate_templates_daily_uses_date_as_h1_and_has_empty_body(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "10 Daily.md").read_text()
-    assert text.endswith("# {{date}}\n\n")
-
-
-def test_generate_templates_other_types_use_title_as_h1(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "01 Profile.md").read_text()
-    assert "\n\n# {{title}}\n\n## Identity" in text
-
-
-def test_generate_templates_preserves_trailing_space_on_placeholder_lines(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "01 Profile.md").read_text()
-    assert "- [stated] Name: \n" in text
-
-
-def test_generate_templates_ends_with_a_single_trailing_newline(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    result = server.generate_templates()
-
-    for rel_path in result["written"]:
-        text = (tmp_path / rel_path).read_text()
-        assert text.endswith("\n")
-        assert not text.endswith("\n\n\n")
-
-
-def test_generate_templates_correction_targets_field_is_an_empty_list(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    server.generate_templates()
-
-    text = (tmp_path / "Templates" / "11 Correction.md").read_text()
-    assert "targets: []\n" in text
-
 
 # --- rename_or_move_file ---
 
@@ -1172,7 +1067,7 @@ def test_rename_or_move_file_renames_within_same_directory(tmp_path, monkeypatch
     (tmp_path / "Welcome.md").write_text("content")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.rename_or_move_file("Welcome.md", "Hello.md") == "Hello.md"
+    assert server.rename_or_move_file("Welcome.md", "Hello.md")["to"] == "Hello.md"
     assert not (tmp_path / "Welcome.md").exists()
     assert (tmp_path / "Hello.md").read_text() == "content"
 
@@ -1181,7 +1076,7 @@ def test_rename_or_move_file_moves_to_new_directory(tmp_path, monkeypatch):
     (tmp_path / "Welcome.md").write_text("content")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert server.rename_or_move_file("Welcome.md", "Projects/Welcome.md") == "Projects/Welcome.md"
+    assert server.rename_or_move_file("Welcome.md", "Projects/Welcome.md")["to"] == "Projects/Welcome.md"
     assert (tmp_path / "Projects" / "Welcome.md").read_text() == "content"
 
 
@@ -1271,9 +1166,9 @@ def test_rename_or_move_file_keeps_an_indexed_note_reachable_by_id(tmp_path, mon
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="project", title="Move Target", author="both", body="Original.")
 
-    new_path = server.rename_or_move_file(created["path"], "shared/moved-target.md")
+    new_path = server.rename_or_move_file(created["path"], "shared/moved-target.md")["to"]
 
-    assert server.append_note(created["id"], "Still reachable.") == new_path
+    assert server.write_note("Still reachable.", note=created["id"])["path"] == new_path
     assert (tmp_path / new_path).read_text().endswith("Original.\n\nStill reachable.")
 
 
@@ -1299,144 +1194,8 @@ def test_rename_or_move_file_of_a_non_indexed_file_is_a_no_op_on_the_index(tmp_p
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     # Must not raise just because nothing in the index matches this path.
-    assert server.rename_or_move_file("attachment.png", "moved.png") == "moved.png"
+    assert server.rename_or_move_file("attachment.png", "moved.png")["to"] == "moved.png"
 
-
-# --- delete_file_or_directory ---
-
-
-def test_delete_file_or_directory_deletes_a_file(tmp_path, monkeypatch):
-    (tmp_path / "Welcome.md").write_text("content")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    assert server.delete_file_or_directory("Welcome.md") == ["Welcome.md"]
-    assert not (tmp_path / "Welcome.md").exists()
-
-
-def test_delete_file_or_directory_deletes_a_directory_recursively(tmp_path, monkeypatch):
-    (tmp_path / "Projects").mkdir()
-    (tmp_path / "Projects" / "Nuru MCP.md").write_text("content")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    manifest = server.delete_file_or_directory("Projects")
-
-    assert sorted(manifest) == ["Projects", "Projects/Nuru MCP.md"]
-    assert not (tmp_path / "Projects").exists()
-
-
-def test_delete_file_or_directory_raises_if_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    with pytest.raises(ToolError, match="FileNotFoundError"):
-        server.delete_file_or_directory("NoSuchNote.md")
-
-
-def test_delete_file_or_directory_refuses_to_delete_vault_root(tmp_path, monkeypatch):
-    (tmp_path / "Welcome.md").write_text("content")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    with pytest.raises(ToolError, match="ValueError"):
-        server.delete_file_or_directory(".")
-    assert (tmp_path / "Welcome.md").exists()
-
-
-def test_delete_file_or_directory_rejects_dotdot_traversal_outside_vault(tmp_path, monkeypatch):
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    outside = tmp_path / "outside.md"
-    outside.write_text("TOP SECRET")
-    monkeypatch.setattr(server, "VAULT_PATH", vault)
-
-    with pytest.raises(ToolError, match="ValueError"):
-        server.delete_file_or_directory("../outside.md")
-    assert outside.exists()
-
-
-def test_delete_file_or_directory_rejects_dot_obsidian_contents(tmp_path, monkeypatch):
-    (tmp_path / ".obsidian").mkdir()
-    (tmp_path / ".obsidian" / "app.json").write_text("{}")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    with pytest.raises(ToolError, match="PermissionError"):
-        server.delete_file_or_directory(".obsidian/app.json")
-    assert (tmp_path / ".obsidian" / "app.json").exists()
-
-
-def test_delete_file_or_directory_rejects_dot_obsidian_itself(tmp_path, monkeypatch):
-    (tmp_path / ".obsidian").mkdir()
-    (tmp_path / ".obsidian" / "app.json").write_text("{}")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    with pytest.raises(ToolError, match="PermissionError"):
-        server.delete_file_or_directory(".obsidian")
-    assert (tmp_path / ".obsidian").exists()
-
-
-def test_delete_file_or_directory_rejects_the_index_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-    server.create_note(type="project", title="X", author="both")  # creates the index db
-
-    with pytest.raises(ToolError, match="PermissionError"):
-        server.delete_file_or_directory(server._INDEX_DB_NAME)
-    assert (tmp_path / server._INDEX_DB_NAME).exists()
-
-
-def test_delete_file_or_directory_rejects_a_path_under_user_folder(tmp_path, monkeypatch):
-    (tmp_path / "user").mkdir()
-    (tmp_path / "user" / "note.md").write_text("content")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    with pytest.raises(ToolError, match="PermissionError"):
-        server.delete_file_or_directory("user/note.md")
-    assert (tmp_path / "user" / "note.md").exists()
-
-
-def test_delete_file_or_directory_removes_the_note_s_index_row(tmp_path, monkeypatch):
-    """Regression test: deleting a note used to leave its index row behind,
-    so append_note("<id>", ...) reported a stale "indexed at <path>, but
-    that file no longer exists" instead of a clean "no note with id"."""
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-    created = server.create_note(type="project", title="X", author="both")
-
-    server.delete_file_or_directory(created["path"])
-
-    with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
-        server.append_note(created["id"], "content")
-    assert "no longer exists" not in str(exc_info.value)
-
-
-def test_delete_file_or_directory_removes_index_rows_for_notes_in_a_deleted_directory(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-    created = server.create_note(type="project", title="X", author="both")
-    note_dir = (tmp_path / created["path"]).parent
-
-    server.delete_file_or_directory(str(note_dir.relative_to(tmp_path)))
-
-    with pytest.raises(ToolError, match="FileNotFoundError"):
-        server.append_note(created["id"], "content")
-
-
-def test_delete_file_or_directory_of_a_non_indexed_file_is_a_no_op_on_the_index(tmp_path, monkeypatch):
-    (tmp_path / "attachment.png").write_bytes(b"data")
-    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
-
-    # Must not raise just because nothing in the index matches this path.
-    assert server.delete_file_or_directory("attachment.png") == ["attachment.png"]
-
-
-def test_delete_file_or_directory_rejects_symlinked_target_pointing_outside_vault(
-    tmp_path, monkeypatch
-):
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    outside = tmp_path / "outside.md"
-    outside.write_text("TOP SECRET")
-    (vault / "leak.md").symlink_to(outside)
-    monkeypatch.setattr(server, "VAULT_PATH", vault)
-
-    with pytest.raises(ToolError, match="ValueError"):
-        server.delete_file_or_directory("leak.md")
-    assert outside.exists()
 
 
 # --- browse_notes ---
@@ -1514,7 +1273,7 @@ def test_browse_notes_orders_an_indexed_note_by_created_not_by_a_later_append(tm
     later = server.create_note(type="daily", title="Daily 2", author="user", date="2026-09-02")
     _backdate(earlier, "2026-09-01T09:00")
     _backdate(later, "2026-09-02T09:00")
-    server.append_note(earlier["id"], "edited just now")
+    server.write_note("edited just now", note=earlier["id"])
 
     assert _browse_paths(server.browse_notes(type="daily"))[0] == later["path"]
 
@@ -1642,8 +1401,8 @@ def test_browse_notes_hints_when_no_note_has_the_type(tmp_path, monkeypatch):
     assert "type: daily" in result["hint"]
 
 
-def test_browse_notes_excludes_templates_archive_and_hidden_folders(tmp_path, monkeypatch):
-    for folder in ("Templates", "archive", ".trash", ".obsidian"):
+def test_browse_notes_excludes_templates_trash_and_hidden_folders(tmp_path, monkeypatch):
+    for folder in ("Templates", "trash", ".trash", ".obsidian"):
         (tmp_path / folder).mkdir()
         (tmp_path / folder / "hidden.md").write_text("x")
     (tmp_path / "kept.md").write_text("x")
@@ -1793,8 +1552,8 @@ def test_notes_with_tag_rejects_an_empty_tag(tmp_path, monkeypatch, query):
         server.notes_with_tag(query)
 
 
-def test_notes_with_tag_excludes_templates_and_archive(tmp_path, monkeypatch):
-    for folder in ("Templates", "archive"):
+def test_notes_with_tag_excludes_templates_and_trash(tmp_path, monkeypatch):
+    for folder in ("Templates", "trash"):
         (tmp_path / folder).mkdir()
         (tmp_path / folder / "x.md").write_text("#profile")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
@@ -1860,8 +1619,8 @@ def test_all_tags_caps_the_list_and_reports_the_true_count(tmp_path, monkeypatch
     assert "hint" in result
 
 
-def test_all_tags_excludes_templates_and_archive(tmp_path, monkeypatch):
-    for folder in ("Templates", "archive"):
+def test_all_tags_excludes_templates_and_trash(tmp_path, monkeypatch):
+    for folder in ("Templates", "trash"):
         (tmp_path / folder).mkdir()
         (tmp_path / folder / "x.md").write_text("#profile")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
@@ -2343,12 +2102,87 @@ def test_create_note_defaults_do_not_apply_to_types_that_take_no_extra_field(tmp
     assert "session:" not in text
 
 
-def test_create_note_defaults_leave_the_schema_required_set_unchanged():
+def test_write_note_defaults_leave_the_schema_required_set_unchanged():
     import asyncio
 
-    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "create_note")
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "write_note")
 
-    assert set(tool.input_schema["required"]) == {"type", "title", "author"}
+    assert tool.input_schema["required"] == ["content"]
+
+
+# --- write_note: create or append ---
+
+
+def test_write_note_creates_a_note_that_does_not_exist(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.write_note("first words", note="Garden Plan", type="topic", author="nuru", tags=["garden"])
+
+    assert result["created"] is True and result["path"] == "nuru/garden-plan.md"
+    text = (tmp_path / result["path"]).read_text()
+    assert "# Garden Plan\n\nfirst words" in text and "  - garden\n" in text
+
+
+def test_write_note_appends_to_a_note_found_by_its_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Garden Plan", author="nuru", body="first")
+
+    result = server.write_note("second", note="garden plan", type="topic", author="nuru")
+
+    assert result == {"path": created["path"], "id": created["id"], "created": False}
+    assert (tmp_path / created["path"]).read_text().endswith("first\n\nsecond")
+    assert server.list_notes() == ["nuru/garden-plan.md"]
+
+
+def test_write_note_appends_to_a_note_made_in_obsidian_by_its_path(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"Projects/Plan.md": "# Plan"})
+
+    result = server.write_note("more", note="Projects/Plan.md")
+
+    assert result == {"path": "Projects/Plan.md", "id": None, "created": False}
+
+
+def test_write_note_refuses_a_name_that_matches_several_notes(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"a/notes.md": "1", "b/notes.md": "2"})
+
+    with pytest.raises(ToolError, match="matches 2 notes: a/notes.md, b/notes.md"):
+        server.write_note("more", note="notes")
+    assert (tmp_path / "a/notes.md").read_text() == "1" and (tmp_path / "b/notes.md").read_text() == "2"
+
+
+def test_write_note_refuses_a_path_that_matches_nothing_instead_of_creating_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="person", title="Priya Raman", author="nuru")
+
+    with pytest.raises(ToolError, match="Closest matches: nuru/priya-raman.md"):
+        server.write_note("more", note="nuru/People/priya-ramen.md", type="person", author="nuru")
+    assert server.list_notes() == ["nuru/priya-raman.md"]
+
+
+def test_write_note_needs_type_and_author_to_create(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="pass type and author too"):
+        server.write_note("more", note="New Thing", type="topic")
+    assert server.list_files() == []
+
+
+def test_a_correction_never_appends_to_the_note_it_corrects(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    wrong = server.create_note(type="topic", title="Lead Time", author="nuru", body="26 weeks")
+
+    with pytest.raises(ToolError, match="nuru/lead-time.md' already exists"):
+        server.write_note("20 weeks", note="Lead Time", type="correction", author="nuru", targets=[wrong["id"]])
+    assert (tmp_path / wrong["path"]).read_text().endswith("26 weeks")
+
+
+def test_write_note_refuses_supersedes_on_an_existing_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    old = server.create_note(type="topic", title="Old", author="nuru")
+    server.create_note(type="topic", title="New", author="nuru", body="x")
+
+    with pytest.raises(ToolError, match="supersedes and targets only apply to a new note"):
+        server.write_note("more", note="New", supersedes=old["id"])
 
 
 # --- add_to_daily ---
@@ -2358,7 +2192,7 @@ def test_add_to_daily_creates_todays_daily_when_there_is_none(tmp_path, monkeypa
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
-    result = server.add_to_daily("- 09:00 Coffee")
+    result = server.write_note("- 09:00 Coffee", type="daily")
 
     assert result["created"] is True
     assert result["path"] == "user/daily-2026-09-20.md"
@@ -2373,17 +2207,17 @@ def test_add_to_daily_returns_the_id_of_the_note_it_created(tmp_path, monkeypatc
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
-    result = server.add_to_daily("x")
+    result = server.write_note("x", type="daily")
 
-    assert server.append_note(result["id"], "y") == result["path"]
+    assert server.write_note("y", note=result["id"])["path"] == result["path"]
 
 
 def test_add_to_daily_appends_to_an_existing_daily_instead_of_making_another(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
-    first = server.add_to_daily("first")
+    first = server.write_note("first", type="daily")
 
-    second = server.add_to_daily("second")
+    second = server.write_note("second", type="daily")
 
     assert second == {"path": first["path"], "id": first["id"], "created": False}
     assert (tmp_path / first["path"]).read_text().endswith("first\n\nsecond")
@@ -2396,7 +2230,7 @@ def test_add_to_daily_finds_a_daily_create_note_made_under_any_title(tmp_path, m
     _today_is(monkeypatch, "2026-09-20")
     made = server.create_note(type="daily", title="Daily Note", author="user", date="2026-09-20", body="earlier")
 
-    result = server.add_to_daily("later")
+    result = server.write_note("later", type="daily")
 
     assert result == {"path": made["path"], "id": made["id"], "created": False}
     assert (tmp_path / made["path"]).read_text().endswith("earlier\n\nlater")
@@ -2407,7 +2241,7 @@ def test_add_to_daily_ignores_a_daily_for_another_date(tmp_path, monkeypatch):
     _today_is(monkeypatch, "2026-09-20")
     yesterday = server.create_note(type="daily", title="Yesterday", author="user", date="2026-09-19")
 
-    result = server.add_to_daily("today's entry")
+    result = server.write_note("today's entry", type="daily")
 
     assert result["created"] is True
     assert result["path"] != yesterday["path"]
@@ -2419,7 +2253,7 @@ def test_add_to_daily_ignores_a_non_daily_note_that_mentions_todays_date(tmp_pat
     _today_is(monkeypatch, "2026-09-20")
     server.create_note(type="project", title="Launch 2026-09-20", author="both", body="due 2026-09-20")
 
-    assert server.add_to_daily("x")["created"] is True
+    assert server.write_note("x", type="daily")["created"] is True
 
 
 def test_add_to_daily_appends_to_a_daily_made_in_obsidian_with_an_unquoted_date(tmp_path, monkeypatch):
@@ -2428,7 +2262,7 @@ def test_add_to_daily_appends_to_a_daily_made_in_obsidian_with_an_unquoted_date(
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
-    result = server.add_to_daily("typed elsewhere")
+    result = server.write_note("typed elsewhere", type="daily")
 
     assert result == {"path": "user/2026-09-20.md", "id": None, "created": False}
     assert (tmp_path / "user" / "2026-09-20.md").read_text().endswith("# 2026-09-20\n\ntyped elsewhere")
@@ -2440,7 +2274,7 @@ def test_add_to_daily_survives_a_note_with_broken_frontmatter_mentioning_the_dat
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
-    assert server.add_to_daily("x")["created"] is True
+    assert server.write_note("x", type="daily")["created"] is True
 
 
 def test_add_to_daily_uses_one_date_for_the_whole_call(tmp_path, monkeypatch):
@@ -2449,7 +2283,7 @@ def test_add_to_daily_uses_one_date_for_the_whole_call(tmp_path, monkeypatch):
     days = iter(["2026-09-20", "2026-09-21", "2026-09-21"])
     monkeypatch.setattr(server, "_today", lambda: next(days))
 
-    result = server.add_to_daily("x")
+    result = server.write_note("x", type="daily")
 
     assert result["path"] == "user/daily-2026-09-20.md"
     assert "date: '2026-09-20'\n" in (tmp_path / result["path"]).read_text()
@@ -2459,8 +2293,8 @@ def test_add_to_daily_uses_one_date_for_the_whole_call(tmp_path, monkeypatch):
 def test_add_to_daily_rejects_empty_text(tmp_path, monkeypatch, text):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(ToolError, match="text is empty"):
-        server.add_to_daily(text)
+    with pytest.raises(ToolError, match="content is empty"):
+        server.write_note(text, type="daily")
     assert not (tmp_path / "user").exists()
 
 
@@ -2471,7 +2305,7 @@ def test_add_to_daily_reports_a_filename_clash_with_a_note_it_could_not_recognis
     _today_is(monkeypatch, "2026-09-20")
 
     with pytest.raises(ToolError, match="FileExistsError"):
-        server.add_to_daily("x")
+        server.write_note("x", type="daily")
     assert (tmp_path / "user" / "daily-2026-09-20.md").read_text() == "no frontmatter at all"
 
 
@@ -2481,7 +2315,7 @@ def test_add_to_daily_is_callable_through_the_protocol(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
-    result = asyncio.run(server.mcp.call_tool("add_to_daily", {"text": "hello"}))
+    result = asyncio.run(server.mcp.call_tool("write_note", {"type": "daily", "content": "hello"}))
 
     assert result.is_error is not True
     assert (tmp_path / "user" / "daily-2026-09-20.md").exists()
@@ -2724,7 +2558,7 @@ def test_archive_note_moves_a_note_under_archive_keeping_its_folder(tmp_path, mo
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
 
-    result = server.archive_note("Old Idea")
+    result = server.rename_or_move_file("Old Idea", "archive")
 
     assert result == {"from": "nuru/old-idea.md", "to": "archive/nuru/old-idea.md"}
     assert not (tmp_path / "nuru" / "old-idea.md").exists()
@@ -2736,9 +2570,11 @@ def test_archive_note_keeps_the_note_reachable_by_id(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
 
-    server.archive_note(created["id"])
+    server.rename_or_move_file(created["id"], "archive")
 
-    assert server.append_note(created["id"], "still here") == "archive/nuru/old-idea.md"
+    assert server.read_note(created["id"]).endswith("content")
+    with pytest.raises(ToolError, match="is archived and can't be written to"):
+        server.write_note("still here", note=created["id"])
 
 
 def test_archive_note_is_reversible_by_moving_the_file_back(tmp_path, monkeypatch):
@@ -2746,17 +2582,17 @@ def test_archive_note_is_reversible_by_moving_the_file_back(tmp_path, monkeypatc
     created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
     before = (tmp_path / created["path"]).read_text()
 
-    result = server.archive_note("Old Idea")
+    result = server.rename_or_move_file("Old Idea", "archive")
     server.rename_or_move_file(result["to"], result["from"])
 
     assert (tmp_path / created["path"]).read_text() == before
-    assert server.append_note(created["id"], "x") == created["path"]
+    assert server.write_note("x", note=created["id"])["path"] == created["path"]
 
 
 def test_archive_note_accepts_a_forgiving_name(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"projects/Nuru MCP.md": "x"})
 
-    assert server.archive_note("nuru mcp") == {
+    assert server.rename_or_move_file("nuru mcp", "archive") == {
         "from": "projects/Nuru MCP.md",
         "to": "archive/projects/Nuru MCP.md",
     }
@@ -2765,7 +2601,7 @@ def test_archive_note_accepts_a_forgiving_name(tmp_path, monkeypatch):
 def test_archive_note_archives_a_note_made_in_obsidian(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"Plain.md": "typed by hand"})
 
-    server.archive_note("Plain")
+    server.rename_or_move_file("Plain", "archive")
 
     assert (tmp_path / "archive" / "Plain.md").read_text() == "typed by hand"
 
@@ -2773,23 +2609,100 @@ def test_archive_note_archives_a_note_made_in_obsidian(tmp_path, monkeypatch):
 def test_archive_note_keeps_links_to_the_note_resolving(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"projects/Target.md": "t", "hub.md": "[[Target]]"})
 
-    server.archive_note("Target")
+    server.rename_or_move_file("Target", "archive")
 
     assert server.get_links("hub")["outgoing"] == [{"link": "Target", "path": "archive/projects/Target.md"}]
 
 
-def test_archive_note_takes_a_note_out_of_browse_and_tags_but_not_out_of_read_or_search(tmp_path, monkeypatch):
+def test_an_archived_note_stays_visible_everywhere(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     server.create_note(type="topic", title="Old Idea", author="nuru", body="findable words", tags=["zzz"])
     server.create_note(type="topic", title="Keeper", author="nuru")
 
-    server.archive_note("Old Idea")
+    server.rename_or_move_file("Old Idea", "archive")
 
-    assert [n["title"] for n in server.browse_notes()["notes"]] == ["Keeper"]
-    assert server.notes_with_tag("zzz")["matches"] == []
-    assert "zzz" not in server.all_tags()["tags"]
+    assert sorted(n["title"] for n in server.browse_notes()["notes"]) == ["Keeper", "Old Idea"]
+    assert [m["path"] for m in server.notes_with_tag("zzz")["matches"]] == ["archive/nuru/old-idea.md"]
+    assert "zzz" in server.all_tags()["tags"]
     assert "findable words" in server.read_note("Old Idea")
     assert server.search_notes("findable")["count"] == 1
+    assert "archive/nuru/old-idea.md" in server.list_notes()
+
+
+def test_an_archived_note_cannot_be_written_until_it_is_moved_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    created = server.create_note(type="topic", title="Old Idea", author="nuru", body="content")
+    server.rename_or_move_file("Old Idea", "archive")
+
+    with pytest.raises(ToolError, match="rename_or_move_file\\('archive/nuru/old-idea.md', 'nuru/old-idea.md'\\)"):
+        server.write_note("more", note="Old Idea")
+    assert (tmp_path / "archive/nuru/old-idea.md").read_text().endswith("content")
+
+    assert server.rename_or_move_file("archive/nuru/old-idea.md", "nuru/old-idea.md")["to"] == "nuru/old-idea.md"
+    assert server.write_note("more", note=created["id"]) == {"path": created["path"], "id": created["id"], "created": False}
+
+
+# --- trash: rename_or_move_file(x, "trash") is a delete as far as any tool can tell ---
+
+
+def _trash(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    gone = server.create_note(type="topic", title="Gone", author="nuru", body="findable words [[Keeper]]", tags=["zzz"])
+    server.create_note(type="topic", title="Keeper", author="nuru", body="links to [[Gone]]")
+    (tmp_path / "nuru" / "pic.png").write_bytes(b"x")
+    assert server.rename_or_move_file("Gone", "trash") == {"from": "nuru/gone.md", "to": "trash/nuru/gone.md"}
+    server.rename_or_move_file("nuru/pic.png", "trash")
+    return gone
+
+
+def test_a_trashed_note_keeps_its_folder_path_under_trash(tmp_path, monkeypatch):
+    _trash(tmp_path, monkeypatch)
+
+    assert (tmp_path / "trash" / "nuru" / "gone.md").is_file()
+    assert (tmp_path / "trash" / "nuru" / "pic.png").is_file()
+
+
+def test_a_trashed_note_is_invisible_to_every_read_tool(tmp_path, monkeypatch):
+    gone = _trash(tmp_path, monkeypatch)
+
+    assert [n["title"] for n in server.browse_notes()["notes"]] == ["Keeper"]
+    assert server.list_notes() == ["nuru/keeper.md"]
+    assert server.list_files() == ["nuru/keeper.md"]
+    assert server.list_files_in_directory("trash")["files"] == []
+    assert server.search_notes("findable")["count"] == 0
+    assert server.notes_with_tag("zzz")["matches"] == []
+    assert "zzz" not in server.all_tags()["tags"]
+    assert server.get_links("Keeper")["outgoing"] == [{"link": "Gone", "path": None}]
+    assert server.find_broken_links()["count"] == 1
+    for name in ("Gone", gone["id"], "trash/nuru/gone.md"):
+        with pytest.raises(ToolError, match="FileNotFoundError"):
+            server.read_note(name)
+
+
+def test_nothing_comes_back_out_of_trash(tmp_path, monkeypatch):
+    _trash(tmp_path, monkeypatch)
+
+    for destination in ("nuru/gone.md", "archive"):
+        with pytest.raises(ToolError, match="nothing can be moved out of trash"):
+            server.rename_or_move_file("trash/nuru/gone.md", destination)
+    with pytest.raises(ToolError, match="FileNotFoundError"):
+        server.rename_or_move_file("Gone", "nuru/gone.md")
+    assert (tmp_path / "trash" / "nuru" / "gone.md").is_file()
+
+
+def test_writing_to_a_trashed_notes_title_makes_a_new_note(tmp_path, monkeypatch):
+    gone = _trash(tmp_path, monkeypatch)
+
+    result = server.write_note("fresh start", note="Gone", type="topic", author="nuru")
+
+    assert result["created"] is True and result["path"] == "nuru/gone.md" and result["id"] != gone["id"]
+    assert (tmp_path / "trash" / "nuru" / "gone.md").read_text().endswith("findable words [[Keeper]]")
+
+
+def test_an_archived_note_goes_to_trash_without_its_archive_prefix(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"archive/nuru/old.md": "x"})
+
+    assert server.rename_or_move_file("old", "trash")["to"] == "trash/nuru/old.md"
 
 
 @pytest.mark.parametrize("type_,extra", [("daily", {"date": "2026-09-14"}), ("directives", {})])
@@ -2798,7 +2711,7 @@ def test_archive_note_refuses_a_note_under_user(tmp_path, monkeypatch, type_, ex
     created = server.create_note(type=type_, title="Protected", author="user", **extra)
 
     with pytest.raises(ToolError, match="PermissionError"):
-        server.archive_note("Protected")
+        server.rename_or_move_file("Protected", "archive")
     assert (tmp_path / created["path"]).exists()
     assert not (tmp_path / "archive").exists()
 
@@ -2807,7 +2720,7 @@ def test_archive_note_refuses_a_note_in_a_hidden_folder(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {".trash/gone.md": "x"})
 
     with pytest.raises(ToolError, match="PermissionError"):
-        server.archive_note(".trash/gone.md")
+        server.rename_or_move_file(".trash/gone.md", "archive")
     assert (tmp_path / ".trash" / "gone.md").exists()
 
 
@@ -2815,7 +2728,7 @@ def test_archive_note_refuses_a_note_that_is_already_archived(tmp_path, monkeypa
     _vault_with(tmp_path, monkeypatch, {"archive/old.md": "x"})
 
     with pytest.raises(ToolError, match="already archived"):
-        server.archive_note("old")
+        server.rename_or_move_file("old", "archive")
     assert (tmp_path / "archive" / "old.md").exists()
     assert not (tmp_path / "archive" / "archive").exists()
 
@@ -2824,7 +2737,7 @@ def test_archive_note_refuses_a_name_that_matches_several_notes_and_moves_none(t
     _vault_with(tmp_path, monkeypatch, {"a/notes.md": "1", "b/notes.md": "2"})
 
     with pytest.raises(ToolError, match="ValueError") as exc_info:
-        server.archive_note("notes")
+        server.rename_or_move_file("notes", "archive")
 
     assert "a/notes.md" in str(exc_info.value)
     assert "b/notes.md" in str(exc_info.value)
@@ -2836,7 +2749,7 @@ def test_archive_note_refuses_a_name_that_matches_several_notes_and_moves_none(t
 def test_archive_note_takes_the_path_when_a_name_is_ambiguous(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"a/notes.md": "1", "b/notes.md": "2"})
 
-    server.archive_note("b/notes.md")
+    server.rename_or_move_file("b/notes.md", "archive")
 
     assert (tmp_path / "archive" / "b" / "notes.md").exists()
     assert (tmp_path / "a" / "notes.md").exists()
@@ -2849,14 +2762,14 @@ def test_archive_note_refuses_a_name_that_shares_an_alias_across_notes(tmp_path,
     })
 
     with pytest.raises(ToolError, match="matches 2 notes"):
-        server.archive_note("twin")
+        server.rename_or_move_file("twin", "archive")
 
 
 def test_archive_note_on_an_unknown_note_names_the_closest_and_moves_nothing(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"Nuru MCP.md": "x"})
 
     with pytest.raises(ToolError, match="FileNotFoundError") as exc_info:
-        server.archive_note("Nuru MCPP")
+        server.rename_or_move_file("Nuru MCPP", "archive")
 
     assert "Nuru MCP.md" in str(exc_info.value)
     assert (tmp_path / "Nuru MCP.md").exists()
@@ -2866,7 +2779,7 @@ def test_archive_note_refuses_to_overwrite_an_existing_archived_note(tmp_path, m
     _vault_with(tmp_path, monkeypatch, {"x.md": "new", "archive/x.md": "older"})
 
     with pytest.raises(ToolError, match="FileExistsError"):
-        server.archive_note("x.md")
+        server.rename_or_move_file("x.md", "archive")
     assert (tmp_path / "x.md").read_text() == "new"
     assert (tmp_path / "archive" / "x.md").read_text() == "older"
 
@@ -2880,7 +2793,7 @@ def test_archive_note_does_not_reach_a_symlink_pointing_outside_the_vault(tmp_pa
     monkeypatch.setattr(server, "VAULT_PATH", vault)
 
     with pytest.raises(ToolError):
-        server.archive_note("leak")
+        server.rename_or_move_file("leak", "archive")
     assert outside.exists()
 
 
@@ -3451,17 +3364,16 @@ def protected(tmp_path, monkeypatch):
 def test_a_user_authored_note_outside_user_cannot_be_appended_to(protected):
     note = server.create_note(type="topic", title="Vendor email", author="user", body="original")
     with pytest.raises(ToolError, match="written by the user"):
-        server.append_note(note["id"], "more")
+        server.write_note("more", note=note["id"])
     assert (protected / note["path"]).read_text().endswith("original")
 
 
 @pytest.mark.parametrize("change", [
-    lambda path: server.archive_note(path),
+    lambda path: server.rename_or_move_file(path, "archive"),
     lambda path: server.rename_or_move_file(path, "nuru/elsewhere.md"),
-    lambda path: server.delete_file_or_directory(path),
-    lambda path: server.delete_file_or_directory("nuru"),  # a folder holding one
+    lambda path: server.rename_or_move_file(path, "trash"),
 ])
-def test_a_user_authored_note_outside_user_cannot_be_moved_archived_or_deleted(protected, change):
+def test_a_user_authored_note_outside_user_cannot_be_moved_archived_or_trashed(protected, change):
     note = server.create_note(type="topic", title="Vendor email", author="user")
     with pytest.raises(ToolError, match="written by the user"):
         change(note["path"])
@@ -3471,17 +3383,17 @@ def test_a_user_authored_note_outside_user_cannot_be_moved_archived_or_deleted(p
 def test_nuru_and_shared_notes_stay_writable(protected):
     mine = server.create_note(type="topic", title="Mine", author="nuru")
     ours = server.create_note(type="project", title="Ours", author="both")
-    server.append_note(mine["id"], "more")
-    server.append_note(ours["id"], "more")
-    assert server.archive_note(mine["path"])["to"] == "archive/nuru/mine.md"
+    server.write_note("more", note=mine["id"])
+    server.write_note("more", note=ours["id"])
+    assert server.rename_or_move_file(mine["path"], "archive")["to"] == "archive/nuru/mine.md"
 
 
 def test_todays_daily_still_takes_additions(protected):
-    assert server.add_to_daily("gym at six")["path"].startswith("user/")
+    assert server.write_note("gym at six", type="daily")["path"].startswith("user/")
 
 
 def test_without_the_flag_other_clients_can_still_change_user_authored_notes(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", False)
     note = server.create_note(type="topic", title="Vendor email", author="user")
-    server.append_note(note["id"], "more")
+    server.write_note("more", note=note["id"])

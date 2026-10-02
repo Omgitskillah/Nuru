@@ -26,7 +26,7 @@ from typing import Any
 
 from dataclasses import dataclass
 
-from laya_mcp.checks import BLOCKED_TOOLS, WRITE_TOOLS, find_note_ids
+from laya_mcp.checks import WRITE_TOOLS, find_note_ids
 from laya_mcp.decision_log import DecisionLog
 
 from core.expert import SEARCH_TOOLS, FoundNote, notes_found
@@ -258,7 +258,7 @@ class DecisionShadow:
 
     def before_tool(self, name: str, arguments: dict) -> dict | None:
         """gate_write for a write about to run: its verdict, or None for a read (or a failed call)."""
-        if name not in WRITE_TOOLS and name not in BLOCKED_TOOLS:
+        if name not in WRITE_TOOLS:
             return None
         return self._ask(
             "gate_write",

@@ -7,7 +7,7 @@ from laya_mcp.vault import Vault
 from laya_fakes import rows
 
 READ = {"semantic_search": "Passages nearest in meaning", "read_note": "Read a note", "search_notes": "Search by words"}
-WRITE = {"append_note": "Append to a note", "create_note": "Create a note"}
+WRITE = {"write_note": "Write to a note", "rename_or_move_file": "Move a note"}
 CTX = {"session_id": "s1", "task_id": "t1", "step": 0}
 ID = str(ULID())
 
@@ -88,25 +88,25 @@ def test_step_type_is_checked(make_layer):
 # ---------------------------------------------------------------- gate_write
 def test_code_blocks_before_laya_is_asked(make_layer, log):
     layer, predictor = make_layer()
-    result = layer.gate_write("add a note", "append_note", {"id": str(ULID()), "content": "x"}, [ID], CTX)
+    result = layer.gate_write("add a note", "write_note", {"note": str(ULID()), "content": "x"}, [ID], CTX)
     assert result["verdict"] == "block" and result["source"] == "code"
     assert predictor.calls == []
     assert rows(log)[0]["status"] == "code_blocked"
 
 
 def test_proceed_needs_both_answers_to_clear(make_layer):
-    args = {"id": ID, "content": "Prefers async messages on Fridays"}
+    args = {"note": ID, "content": "Prefers async messages on Fridays"}
     layer, _ = make_layer({"matches_request": 0.95, "verdict": {"proceed": 0.9}})
-    assert layer.gate_write("add to Priya", "append_note", args, [ID])["verdict"] == "proceed"
+    assert layer.gate_write("add to Priya", "write_note", args, [ID])["verdict"] == "proceed"
     layer, _ = make_layer({"matches_request": 0.95, "verdict": {"proceed": 0.6, "confirm": 0.4}})
-    assert layer.gate_write("add to Priya", "append_note", args, [ID])["verdict"] == "ask"
+    assert layer.gate_write("add to Priya", "write_note", args, [ID])["verdict"] == "ask"
     layer, _ = make_layer({"matches_request": 0.5, "verdict": {"proceed": 0.9}})
-    assert layer.gate_write("add to Priya", "append_note", args, [ID])["verdict"] == "ask"
+    assert layer.gate_write("add to Priya", "write_note", args, [ID])["verdict"] == "ask"
 
 
 def test_gate_write_asks_when_laya_is_down(make_layer):
     layer, _ = make_layer(available=False)
-    result = layer.gate_write("r", "append_note", {"id": ID, "content": "x"}, [ID])
+    result = layer.gate_write("r", "write_note", {"note": ID, "content": "x"}, [ID])
     assert (result["verdict"], result["source"]) == ("ask", "fallback")
 
 
@@ -121,13 +121,13 @@ def test_an_invented_note_id_fails_without_asking_laya(make_layer):
 
 def test_an_id_the_harness_passed_to_a_tool_counts_as_known(make_layer):
     layer, _ = make_layer({"claim": {"made_change": 0.9}})
-    log = [{"tool": "append_note", "arguments": {"id": ID}, "ok": True}]
+    log = [{"tool": "write_note", "arguments": {"note": ID}, "ok": True}]
     assert layer.check_claim(f"Appended to {ID}.", log, [])["passed"] is True
 
 
 def test_laya_sees_only_the_reply_and_code_checks_it_against_the_log(make_layer):
     layer, predictor = make_layer({"claim": {"made_change": 0.9}})
-    layer.check_claim("I added it.", [{"tool": "append_note", "ok": True}], [])
+    layer.check_claim("I added it.", [{"tool": "write_note", "ok": True}], [])
     _, state, questions = predictor.calls[0]
     assert state == {"reply": "I added it."} and list(questions) == ["claim"]
 
@@ -140,14 +140,14 @@ def test_a_claimed_change_with_no_write_behind_it_fails(make_layer):
 
 def test_a_claimed_change_whose_write_failed_says_so(make_layer):
     layer, _ = make_layer({"claim": {"made_change": 0.9}})
-    result = layer.check_claim("Done, the line is added.", [{"tool": "append_note", "ok": False}], [])
+    result = layer.check_claim("Done, the line is added.", [{"tool": "write_note", "ok": False}], [])
     assert result["failures"] == ["presents a failed write as successful"] and result["failed_writes"] == 1
 
 
 @pytest.mark.parametrize("claim, executed", [
-    ({"reports_failure": 0.9}, [{"tool": "append_note", "ok": False}]),  # an admitted failure
+    ({"reports_failure": 0.9}, [{"tool": "write_note", "ok": False}]),  # an admitted failure
     ({"no_change": 0.9}, [{"tool": "read_note", "ok": True}]),  # a plain answer
-    ({"made_change": 0.9}, [{"tool": "append_note", "ok": True}]),  # a change that happened
+    ({"made_change": 0.9}, [{"tool": "write_note", "ok": True}]),  # a change that happened
     ({"made_change": 0.4, "no_change": 0.6}, []),  # not confident it claims a change
 ])
 def test_honest_replies_pass(make_layer, claim, executed):

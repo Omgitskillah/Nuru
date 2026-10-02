@@ -78,7 +78,7 @@ def definition(name, description="Does a thing. More detail."):
     return {"type": "function", "function": {"name": name, "description": description, "parameters": {}}}
 
 
-TOOLS = [definition("search_notes"), definition("semantic_search"), definition("append_note"), definition("read_note")]
+TOOLS = [definition("search_notes"), definition("semantic_search"), definition("write_note"), definition("read_note")]
 
 
 @pytest.fixture
@@ -121,10 +121,10 @@ def rows(path, table="decisions"):
 
 A_WRITE_TURN = [
     [{"tool_calls": [call("search_notes", {"query": "Priya"})]}],
-    [{"tool_calls": [call("append_note", {"id": NOTE_ID, "content": "Prefers async on Fridays"})]}],
+    [{"tool_calls": [call("write_note", {"note": NOTE_ID, "content": "Prefers async on Fridays"})]}],
     ["Done - added it to ", f"{NOTE_ID}."],
 ]
-RESULTS = {"search_notes": json.dumps({"matches": [{"id": NOTE_ID, "title": "Priya"}]}), "append_note": "ok"}
+RESULTS = {"search_notes": json.dumps({"matches": [{"id": NOTE_ID, "title": "Priya"}]}), "write_note": "ok"}
 
 
 def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decision_log):
@@ -162,13 +162,13 @@ def test_the_gate_saw_the_id_the_search_returned(monkeypatch, decision_log):
 
 
 def test_the_execution_log_is_what_ran_with_note_text_left_out(monkeypatch, decision_log):
-    results = {**RESULTS, "append_note": ToolResult("FileNotFoundError: no note", is_error=True)}
+    results = {**RESULTS, "write_note": ToolResult("FileNotFoundError: no note", is_error=True)}
     s = start(monkeypatch, A_WRITE_TURN, ShadowedTools(TOOLS, results))
     list(s.ask("Add a line to Priya's note"))
     s.close()
 
     calls = rows(decision_log, "tool_calls")
-    assert [(c["tool"], c["ok"]) for c in calls] == [("search_notes", 1), ("append_note", 0)]
+    assert [(c["tool"], c["ok"]) for c in calls] == [("search_notes", 1), ("write_note", 0)]
     assert "FileNotFoundError" in calls[1]["error"]
     assert "Prefers async" not in calls[1]["arguments_json"]
     assert NOTE_ID in calls[1]["arguments_json"]
@@ -196,7 +196,7 @@ def test_a_dead_decision_layer_changes_nothing_and_the_execution_log_still_runs(
     s.close()
 
     assert events[-1] == Text(f"{NOTE_ID}.")
-    assert [name for name, _ in tools.model_calls] == ["search_notes", "append_note"]
+    assert [name for name, _ in tools.model_calls] == ["search_notes", "write_note"]
     assert s.shadow.failures > 0
     assert rows(decision_log) == []
     assert len(rows(decision_log, "tool_calls")) == 2
@@ -249,14 +249,14 @@ def test_a_turn_without_tools_is_an_answer(monkeypatch, decision_log):
         {"title": "A", "id": NOTE_ID}, {"title": "B", "id": None}, {"path": "c.md"}, {"title": "D"}]}), True, None,
      f"5 found: A ({NOTE_ID}), B, c.md and 2 more"),
     ("semantic_search", json.dumps({"query": "x", "matches": []}), True, None, "0 found"),
-    ("create_note", json.dumps({"id": NOTE_ID, "path": "nuru/x.md"}), True, None, f"done: nuru/x.md {NOTE_ID}"),
-    ("add_to_daily", json.dumps({"path": "user/daily.md", "id": None, "created": True}), True, None,
+    ("write_note", json.dumps({"id": NOTE_ID, "path": "nuru/x.md"}), True, None, f"done: nuru/x.md {NOTE_ID}"),
+    ("write_note", json.dumps({"path": "user/daily.md", "id": None, "created": True}), True, None,
      "done: user/daily.md (created)"),
-    ("archive_note", json.dumps({"from": "nuru/x.md", "to": "archive/nuru/x.md"}), True, None,
+    ("rename_or_move_file", json.dumps({"from": "nuru/x.md", "to": "archive/nuru/x.md"}), True, None,
      "moved nuru/x.md to archive/nuru/x.md"),
-    ("append_note", "", False, "TimeoutError: the write timed out", "failed: TimeoutError: the write timed out"),
+    ("write_note", "", False, "TimeoutError: the write timed out", "failed: TimeoutError: the write timed out"),
     ("read_note", "# Priya\nFirmware engineer.", True, None, "read 26 characters: # Priya Firmware engineer."),
-    ("append_note", "nuru/priya-raman.md", True, None, "done: nuru/priya-raman.md"),
+    ("write_note", "nuru/priya-raman.md", True, None, "done: nuru/priya-raman.md"),
     ("multiply", "128.4", True, None, "128.4"),
 ])
 def test_results_are_summarized_in_one_line(tool, text, ok, error, summary):

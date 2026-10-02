@@ -34,7 +34,7 @@ VERSION = "0.2.0"
 # 0.1.0:
 #   Field order: id, version, type, created, author, supersedes,
 #   [<type-specific field>], tags, aliases.
-#     - id: ULID, minted once by create_note. Immutable - append_note never
+#     - id: ULID, minted once by create_note. Immutable - write_note never
 #       touches frontmatter.
 #     - version: this table's key.
 #     - type: one of TYPE_FOLDER's keys; fixes the note's folder.
@@ -75,22 +75,4 @@ TYPE_FIELD = {
     "correction": "targets",
     "transcript": "session",
     "session": "session",
-}
-
-# Default `author` generate_templates stamps into each type's template file.
-# create_note itself requires the caller to state an author explicitly for a
-# real note; this is only for the Templates/ skeletons, which need *some*
-# concrete value to be valid frontmatter (there's no {{author}} token).
-TEMPLATE_AUTHOR = {
-    "directives": "user",
-    "daily": "user",
-    "correction": "user",
-    "profile": "nuru",
-    "preferences": "nuru",
-    "person": "nuru",
-    "topic": "nuru",
-    "index": "nuru",
-    "transcript": "nuru",
-    "project": "both",
-    "session": "nuru",
 }

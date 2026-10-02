@@ -7,12 +7,6 @@ KNOWN = str(ULID())
 UNKNOWN = str(ULID())
 
 
-def test_delete_is_blocked_whatever_the_arguments():
-    assert check_write("delete_file_or_directory", {"path": "nuru/x.md"}, set()) == [
-        "delete_file_or_directory is blocked; archive the note instead"
-    ]
-
-
 def test_a_tool_off_the_write_allowlist_is_blocked():
     assert "not a write tool" in check_write("read_note", {"name": "x"}, set())[0]
 
@@ -20,25 +14,37 @@ def test_a_tool_off_the_write_allowlist_is_blocked():
 @pytest.mark.parametrize("tool, arguments", [
     ("rename_or_move_file", {"source_path": "user/daily-2026-09-17.md", "destination_path": "nuru/x.md"}),
     ("rename_or_move_file", {"source_path": "nuru/x.md", "destination_path": "user/x.md"}),
-    ("archive_note", {"name": "user/directives-for-local-model.md"}),
+    ("rename_or_move_file", {"source_path": "user/directives-for-local-model.md", "destination_path": "trash"}),
 ])
 def test_structural_tools_stay_out_of_the_users_folder(tool, arguments):
     assert any("under user/" in r for r in check_write(tool, arguments, set()))
 
 
 def test_a_users_note_type_needs_the_user_as_author():
-    reasons = check_write("create_note", {"type": "directives", "title": "x", "author": "nuru"}, set())
+    reasons = check_write("write_note", {"note": "x", "type": "directives", "author": "nuru", "content": "c"}, set())
     assert reasons == ["a directives note is the user's own and needs author 'user'"]
-    assert check_write("create_note", {"type": "directives", "title": "x", "author": "user"}, set()) == []
+    assert check_write("write_note", {"note": "x", "type": "directives", "author": "user", "content": "c"}, set()) == []
+
+
+def test_todays_daily_needs_no_author():
+    assert check_write("write_note", {"type": "daily", "content": "c"}, set()) == []
 
 
 def test_nuru_may_file_a_correction_pointing_at_known_notes():
-    args = {"type": "correction", "title": "x", "author": "nuru", "targets": [KNOWN]}
-    assert check_write("create_note", args, {KNOWN}) == []
+    args = {"note": "x", "type": "correction", "author": "nuru", "targets": [KNOWN], "content": "c"}
+    assert check_write("write_note", args, {KNOWN}) == []
 
 
 def test_an_unknown_note_type_is_blocked():
-    assert "not one of" in check_write("create_note", {"type": "memo", "title": "x", "author": "nuru"}, set())[0]
+    reasons = check_write("write_note", {"note": "x", "type": "memo", "author": "nuru", "content": "c"}, set())
+    assert "not one of" in reasons[0]
+
+
+def test_an_archived_note_is_not_written_and_trash_is_one_way():
+    assert "is archived" in check_write("write_note", {"note": "archive/nuru/x.md", "content": "c"}, set())[0]
+    reasons = check_write("rename_or_move_file", {"source_path": "trash/nuru/x.md", "destination_path": "nuru/x.md"}, set())
+    assert reasons == ["'trash/nuru/x.md' is in trash/, and nothing comes back out of trash"]
+    assert check_write("rename_or_move_file", {"source_path": "nuru/x.md", "destination_path": "trash"}, set()) == []
 
 
 @pytest.mark.parametrize("path, problem", [
@@ -52,21 +58,16 @@ def test_path_rules(path, problem):
     assert any(problem in r for r in reasons)
 
 
-def test_generate_templates_may_not_overwrite():
-    assert check_write("generate_templates", {}, set()) == []
-    assert "overwrite" in check_write("generate_templates", {"overwrite": True}, set())[0]
-
-
-def test_append_needs_an_id_a_search_returned():
-    assert check_write("append_note", {"id": KNOWN, "content": "x"}, {KNOWN}) == []
-    assert "not returned by any search" in check_write("append_note", {"id": UNKNOWN, "content": "x"}, {KNOWN})[0]
-    assert "is not a note ID" in check_write("append_note", {"id": "priya-raman", "content": "x"}, {KNOWN})[0]
+def test_a_note_named_by_id_needs_an_id_a_search_returned():
+    assert check_write("write_note", {"note": KNOWN, "content": "x"}, {KNOWN}) == []
+    assert "not returned by any search" in check_write("write_note", {"note": UNKNOWN, "content": "x"}, {KNOWN})[0]
+    assert check_write("write_note", {"note": "Priya Raman", "content": "x"}, {KNOWN}) == []
 
 
 def test_supersedes_and_targets_need_known_ids_too():
     reasons = check_write(
-        "create_note",
-        {"type": "topic", "title": "x", "author": "nuru", "supersedes": UNKNOWN, "targets": None},
+        "write_note",
+        {"note": "x", "type": "topic", "author": "nuru", "supersedes": UNKNOWN, "targets": None, "content": "c"},
         {KNOWN},
     )
     assert reasons == [f"supersedes {UNKNOWN} was not returned by any search this session"]

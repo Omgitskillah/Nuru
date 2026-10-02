@@ -137,9 +137,6 @@ LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"
 
 # The only tools the local model is offered or allowed to call - an allowlist, so a tool a server
 # adds later reaches the model only once it is added here. Left out on purpose:
-# - delete_file_or_directory: a recursive delete on a free-form path, the riskiest tool for a model
-#   that emits placeholder paths; archive_note is its reversible substitute. The obsidian server
-#   still offers it to every other client, where a person is choosing the path.
 # - the decision layer's harness tools (tool_gate, assess_effort, gate_write, check_claim, rerank,
 #   health): Nuru calls those itself; the model never does.
 MODEL_TOOLS = frozenset(
@@ -148,7 +145,7 @@ MODEL_TOOLS = frozenset(
         "all_tags", "browse_notes", "find_broken_links", "find_in_notes", "get_links", "list_files", "list_files_in_directory",
         "list_notes", "note_tags", "note_todos", "notes_with_tag", "read_note", "search_notes", "semantic_search",
         # obsidian, write
-        "add_to_daily", "append_note", "archive_note", "create_note", "generate_templates", "rename_or_move_file",
+        "rename_or_move_file", "write_note",
         # math-4-llms
         "calculate", "statistics",
         # deep-think

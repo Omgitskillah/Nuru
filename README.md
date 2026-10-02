@@ -26,12 +26,13 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |
 | `servers/deep-think/.file_cache.db` | deep-think | Which files were already uploaded to the expert, by content hash | `DEEP_THINK_MCP_DB_PATH` |
 | `nuru/evals/**/.runs/` | the eval scripts | Raw eval results and scratch vault copies (see [decision-layer evals](nuru/evals/decision_layer/README.md)) | - |
-| `<vault>/.obsidian-mcp-index.sqlite3` | obsidian-mcp | Note id -> path for notes `create_note` made | - |
+| `<vault>/.obsidian-mcp-index.sqlite3` | obsidian-mcp | Note id -> path for notes `write_note` created | - |
 | `<vault>/.obsidian-mcp-semantic.sqlite3` | obsidian-mcp and Nuru's indexer | Semantic-search chunks and their vectors | `OBSIDIAN_SEMANTIC_DB` |
 
 Not hidden, on purpose:
 
-- **`<vault>/Templates/`** - written by `generate_templates`, but it is vault content: Obsidian's own "Insert template" has to see it.
+- **`<vault>/Templates/`** - Obsidian's own "Insert template" has to see it; no tool writes it.
+- **`<vault>/archive/` and `<vault>/trash/`** - where `rename_or_move_file` puts archived and deleted notes. Visible in Obsidian, so a person can review, restore or empty them; the tools see `archive/` but never `trash/`.
 - **Tooling caches** - `.venv/`, `__pycache__/`, `.pytest_cache/` (already hidden or conventional), and Laya's checkpoints in the Hugging Face cache (`~/.cache/huggingface/`, outside the repo; `uv run laya-mcp-fetch` fills it).
 
 Before 2026-09-28 these were written without the dot (`logs/`, `db/`, `file_cache.db`). Those names stay gitignored, so a server still running the old code (a Claude Desktop session, say) can't leave untracked files behind; move their contents across once it has restarted.

@@ -51,7 +51,7 @@ NOTES = {
         "Mix flour and water into a dough, then bake the loaf in a hot oven.\n"
     ),
     "user/Budget.md": "Monthly spending plan: put money into savings first.\n",
-    "archive/Old engine.md": "An old automobile note about the engine and its oil.\n",
+    "trash/Old engine.md": "An old automobile note about the engine and its oil.\n",
     "Templates/Topic.md": "---\ntype: topic\n---\n\n# {{title}}\n\nautomobile engine oil\n",
     ".obsidian/hidden.md": "automobile engine oil\n",
 }
@@ -150,7 +150,7 @@ def test_chunk_note_skips_headings_with_nothing_under_them():
 # --- vault_notes ---
 
 
-def test_vault_notes_skip_templates_archive_hidden_folders_and_symlinks_out_but_keep_user(vault, tmp_path_factory):
+def test_vault_notes_skip_templates_trash_hidden_folders_and_symlinks_out_but_keep_user(vault, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside") / "leak.md"
     outside.write_text("secret")
     (vault / "leak.md").symlink_to(outside)
@@ -277,12 +277,19 @@ def test_refresh_re_embeds_a_renamed_note_since_its_title_is_part_of_every_chunk
     assert search(vault, embed, "car", top_k=1)[0]["text"].startswith("Servicing\n\n")
 
 
-def test_refresh_drops_a_note_once_it_is_archived(vault, embed):
+def test_refresh_drops_a_note_once_it_is_trashed(vault, embed):
     refresh(vault, embed)
-    (vault / "archive/Garden").mkdir()
-    (vault / "Garden/Tomatoes.md").rename(vault / "archive/Garden/Tomatoes.md")
+    (vault / "trash/Garden").mkdir(parents=True)
+    (vault / "Garden/Tomatoes.md").rename(vault / "trash/Garden/Tomatoes.md")
 
     assert refresh(vault, embed).removed == ["Garden/Tomatoes.md"]
+
+
+def test_vault_notes_keep_archived_notes(tmp_path):
+    (tmp_path / "archive" / "nuru").mkdir(parents=True)
+    (tmp_path / "archive" / "nuru" / "old.md").write_text("old")
+
+    assert [str(p.relative_to(tmp_path)) for p in semantic.vault_notes(tmp_path)] == ["archive/nuru/old.md"]
 
 
 def test_refresh_reports_how_many_notes_are_left_and_can_be_stopped_between_notes(vault, embed):

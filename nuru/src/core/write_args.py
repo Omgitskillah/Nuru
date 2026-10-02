@@ -9,6 +9,7 @@ trusted, and what catches a model that satisfies the grammar with the wrong kind
 """
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -22,29 +23,15 @@ class _Args(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AppendNote(_Args):
-    id: str
+class WriteNote(_Args):
     content: str = Field(min_length=1)
-
-
-class AddToDaily(_Args):
-    text: str = Field(min_length=1)
-
-
-class CreateNote(_Args):
-    type: str
-    title: str = Field(min_length=1)
-    author: str
-    body: str = ""
+    note: str | None = None
+    type: str | None = None
+    author: str | None = None
     tags: list[str] | None = None
     supersedes: str | None = None
-    date: str | None = None
     targets: list[str] | None = None
     session: str | None = None
-
-
-class ArchiveNote(_Args):
-    name: str = Field(min_length=1)
 
 
 class RenameOrMoveFile(_Args):
@@ -52,14 +39,11 @@ class RenameOrMoveFile(_Args):
     destination_path: str = Field(min_length=1)
 
 
-class GenerateTemplates(_Args):
-    overwrite: bool = False
+ARGUMENT_MODELS: dict[str, type[_Args]] = {"write_note": WriteNote, "rename_or_move_file": RenameOrMoveFile}
 
-
-ARGUMENT_MODELS: dict[str, type[_Args]] = {
-    "append_note": AppendNote, "add_to_daily": AddToDaily, "create_note": CreateNote,
-    "archive_note": ArchiveNote, "rename_or_move_file": RenameOrMoveFile, "generate_templates": GenerateTemplates,
-}
+# write_note's `note` may be a new note's title, so the schema can't limit it to known IDs - but one
+# shaped like an ID (a ULID, or a mistyped one) still has to be an ID the last search returned.
+_NOTE_ID = re.compile(r"[0-9A-Z]{26}")
 
 INSTRUCTION = (
     "[Nuru] Next step: `{tool}`. Give its arguments as JSON, using only note IDs from the results "
@@ -87,6 +71,9 @@ def validate_arguments(tool: str, answer: Any, known_ids: set[str]) -> ForcedArg
         for value in values if isinstance(values, list) else [values] if values else []:
             if value not in known_ids:
                 problems.append(f"{name}: {value} was not returned by the last search")
+    note = arguments.get("note")
+    if tool == "write_note" and isinstance(note, str) and _NOTE_ID.fullmatch(note) and note not in known_ids:
+        problems.append(f"note: {note} was not returned by the last search")
     return ForcedArguments(None, None, problems) if problems else ForcedArguments(arguments, None, [])
 
 

@@ -18,35 +18,34 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_create_note_schema_has_no_required_wildcard_param(tmp_path, monkeypatch):
+def test_write_note_schema_requires_only_content(tmp_path, monkeypatch):
     """Regression test for the bug where **type_fields was exposed in the MCP
     schema as a single required string param no caller could satisfy."""
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     tools = _run(server.mcp.list_tools())
-    create_note_tool = next(t for t in tools if t.name == "create_note")
-    schema = create_note_tool.input_schema
+    schema = next(t for t in tools if t.name == "write_note").input_schema
 
     assert "type_fields" not in schema["properties"]
-    assert set(schema["required"]) == {"type", "title", "author"}
-    assert {"date", "targets", "session"} <= set(schema["properties"])
+    assert schema["required"] == ["content"]
+    assert {"note", "type", "author", "targets", "session"} <= set(schema["properties"])
 
 
-def test_create_note_is_callable_through_call_tool(tmp_path, monkeypatch):
+def test_write_note_is_callable_through_call_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    result = _run(server.mcp.call_tool("create_note", {"type": "topic", "title": "X", "author": "nuru"}))
+    result = _run(server.mcp.call_tool("write_note", {"note": "X", "type": "topic", "author": "nuru", "content": "hi"}))
 
     assert result.is_error is not True
     assert (tmp_path / "nuru" / "x.md").exists()
 
 
-def test_create_note_with_a_type_specific_field_is_callable_through_call_tool(tmp_path, monkeypatch):
+def test_write_note_with_a_type_specific_field_is_callable_through_call_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     result = _run(
         server.mcp.call_tool(
-            "create_note", {"type": "daily", "title": "X", "author": "user", "date": "2026-09-14"}
+            "write_note", {"note": "X", "type": "session", "author": "nuru", "session": "2026-09-14-01", "content": "hi"}
         )
     )
 
@@ -60,7 +59,7 @@ def test_anticipated_failure_reaches_the_caller_with_its_message_through_call_to
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
     with pytest.raises(ToolError, match="ValueError") as exc_info:
-        _run(server.mcp.call_tool("create_note", {"type": "bogus", "title": "X", "author": "nuru"}))
+        _run(server.mcp.call_tool("write_note", {"note": "X", "type": "bogus", "author": "nuru", "content": "hi"}))
     assert "Unknown type" in str(exc_info.value)
 
 
@@ -73,19 +72,19 @@ def test_new_tools_are_registered_and_only_their_named_params_are_required(tmp_p
     assert set(schemas["browse_notes"]["properties"]) == {"type", "limit"}
     assert schemas["all_tags"].get("required", []) == []
     assert schemas["notes_with_tag"]["required"] == ["tag"]
-    assert schemas["add_to_daily"]["required"] == ["text"]
     assert schemas["get_links"]["required"] == ["name"]
-    assert schemas["archive_note"]["required"] == ["name"]
+    assert schemas["rename_or_move_file"]["required"] == ["source_path", "destination_path"]
     assert schemas["read_note"]["required"] == ["name"]
     assert "section" in schemas["read_note"]["properties"]
 
 
-def test_delete_file_or_directory_is_still_offered_by_the_server(tmp_path, monkeypatch):
-    """It is hidden from the local model by the nuru client, not removed here -
-    other clients (a person in Claude Desktop) still need it."""
+def test_the_retired_tools_are_gone(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    assert "delete_file_or_directory" in {t.name for t in _run(server.mcp.list_tools())}
+    names = {t.name for t in _run(server.mcp.list_tools())}
+
+    assert not names & {"create_note", "append_note", "add_to_daily", "archive_note", "generate_templates",
+                        "delete_file_or_directory"}
 
 
 def test_the_new_tools_work_end_to_end_through_call_tool(tmp_path, monkeypatch):
@@ -97,14 +96,14 @@ def test_the_new_tools_work_end_to_end_through_call_tool(tmp_path, monkeypatch):
         assert result.is_error is not True, result
         return result
 
-    call("add_to_daily", {"text": "- 09:00 [[Plan]] kicked off"})
-    call("create_note", {"type": "project", "title": "Plan", "author": "both", "tags": ["mcp"], "body": "## Goal\n\nShip"})
+    call("write_note", {"type": "daily", "content": "- 09:00 [[Plan]] kicked off"})
+    call("write_note", {"note": "Plan", "type": "project", "author": "both", "tags": ["mcp"], "content": "## Goal\n\nShip"})
     assert "user/daily-2026-09-20.md" in str(call("browse_notes", {"type": "daily"}))
     assert "mcp" in str(call("all_tags"))
     assert "shared/plan.md" in str(call("notes_with_tag", {"tag": "#MCP"}))
     assert "Ship" in str(call("read_note", {"name": "plan", "section": "goal"}))
     assert "user/daily-2026-09-20.md" in str(call("get_links", {"name": "Plan"}))
-    assert "archive/shared/plan.md" in str(call("archive_note", {"name": "Plan"}))
+    assert "archive/shared/plan.md" in str(call("rename_or_move_file", {"source_path": "Plan", "destination_path": "archive"}))
 
 
 def test_a_read_note_miss_reaches_the_caller_with_its_closest_candidates(tmp_path, monkeypatch):

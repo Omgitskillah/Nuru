@@ -10,7 +10,6 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 | `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`), `THINK`, context size |
 | `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
 | `.env.deep-think` | deep-think (`ask_an_expert`), and Nuru's expert tier | `CLAUDE_API_KEY`, `DEEP_THINK_BASE_DIR` |
-| `.env.laya` | the laya server when started on its own (optional) | `VAULT_PATH` for `classify_notes` |
 
 A variable already set in the environment always wins over the file. Nuru hands its servers only what they need, since MCP servers start with a stripped-down environment.
 

@@ -128,12 +128,7 @@ MATH_SERVER_PARAMS = StdioServerParameters(
 )
 
 LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
-# classify_notes reads the same vault the obsidian server serves: VAULT_PATH if this process has
-# one (an eval driver sets it), otherwise the one in .env.obsidian.
-_laya_env = get_default_environment()
-if _vault := (os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH")):
-    _laya_env["VAULT_PATH"] = _vault
-LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
+LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR)
 
 # The only tools the local model is offered or allowed to call - an allowlist, so a tool a server
 # adds later reaches the model only once it is added here. Left out on purpose:
@@ -149,8 +144,6 @@ MODEL_TOOLS = frozenset(
         "calculate", "statistics",
         # deep-think
         "ask_an_expert",
-        # laya
-        "classify_notes",
     }
 )
 

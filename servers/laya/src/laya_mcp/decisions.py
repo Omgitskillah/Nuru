@@ -10,20 +10,14 @@ method still answers - with the conservative default - and says `source: "fallba
 
 from typing import Any
 
-from obsidian_mcp.frontmatter_template import TYPE_FOLDER
 
 from laya_mcp import checks
 from laya_mcp.config import DecisionConfig
 from laya_mcp.decision_log import DecisionLog, canonical, sha256
 from laya_mcp.predictor import OverBudget, Prediction, Predictor, Unavailable
 from laya_mcp.question_sets import QuestionSet
-from laya_mcp.vault import Vault
 
 Context = dict[str, Any]  # session_id, task_id, step - whatever the harness passes
-
-# classify_notes reads whole notes on the long-context checkpoint (seconds each on CPU), so one
-# call covers at most this many.
-CLASSIFY_LIMIT = 50
 
 
 class DecisionLayer:
@@ -33,7 +27,6 @@ class DecisionLayer:
         question_sets: dict[str, QuestionSet],
         predictor: Predictor,
         log: DecisionLog,
-        vault: Vault | None = None,
     ):
         for qset, questions in config.thresholds.items():
             if qset not in question_sets:
@@ -45,7 +38,6 @@ class DecisionLayer:
         self.sets = question_sets
         self.predictor = predictor
         self.log = log
-        self.vault = vault
 
     # ------------------------------------------------------------------ plumbing
     def _ask(self, qset_name: str, state: Any, options: dict | None = None):
@@ -299,57 +291,3 @@ class DecisionLayer:
                                    mode=self.config.mode("watch_laya"))
         return {"decision_id": decision_id, "signal": signal, "source": "laya" if prediction else "fallback",
                 "status": status, "probabilities": probabilities}
-
-    # ------------------------------------------------------------------ classify_notes
-    def classify_notes(
-        self,
-        question_set: str,
-        ids: list[str] | None = None,
-        folder: str | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-        labels: list[str] | None = None,
-        context: Context | None = None,
-    ) -> dict[str, Any]:
-        """Label notes without their content passing through the model: [{id, label, p}] for the
-        confident ones, and a count of the rest."""
-        if self.vault is None:
-            raise ValueError("no vault is configured (VAULT_PATH)")
-        if question_set == "note_type":
-            qset_name, qid, options = "classify_note_type", "note_type", {"note_types": sorted(TYPE_FOLDER)}
-        elif question_set == "subject":
-            if not labels or not 2 <= len(set(labels)) <= 10:
-                raise ValueError("subject needs 2 to 10 distinct candidate labels in `labels`")
-            qset_name, qid, options = "classify_subject", "subject", {"subjects": sorted(set(labels))}
-        else:
-            raise ValueError("question_set is 'note_type' or 'subject'")
-        qset = self.sets[qset_name]
-        notes, not_found = self.vault.select(ids, folder, date_from, date_to)
-        skipped = max(0, len(notes) - CLASSIFY_LIMIT)
-        options_hash = sha256(canonical(options))
-
-        confident, uncertain = [], 0
-        for note in notes[:CLASSIFY_LIMIT]:
-            key = (note.key, sha256(note.body), qset_name, qset.version, options_hash)
-            cached = self.log.cached_label(key)
-            if cached is None:
-                state = {"note": note.body}
-                questions, prediction, status, detail = self._ask(qset_name, state, options)
-                if status == "unavailable":
-                    raise RuntimeError("the note classifier is not available right now")
-                if prediction:
-                    label, p, _ = self._choice(prediction, qid)
-                    cached = (label, p)
-                    self.log.cache_label(key, label, p)
-                self._record("classify_notes", qset_name, state, questions, prediction, status, detail,
-                             cached[0] if cached else "unlabelled", context, mode="tool")
-            if cached and self._clears(qset_name, qid, cached[0], cached[1]):
-                confident.append({"id": note.key, "label": cached[0], "p": round(cached[1], 4)})
-            else:
-                uncertain += 1
-        result: dict[str, Any] = {"count": len(notes), "labelled": confident, "uncertain": uncertain}
-        if not_found:
-            result["not_found"] = not_found
-        if skipped:
-            result["hint"] = f"Only the first {CLASSIFY_LIMIT} notes were classified; {skipped} more matched. Narrow the selector."
-        return result

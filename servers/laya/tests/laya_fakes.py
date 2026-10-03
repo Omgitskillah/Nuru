@@ -56,9 +56,9 @@ def log(tmp_path):
 
 @pytest.fixture
 def make_layer(log):
-    def make(script=None, available=True, vault=None):
+    def make(script=None, available=True):
         predictor = FakePredictor(script, available)
-        return DecisionLayer(load_config(), load_question_sets(), predictor, log, vault), predictor
+        return DecisionLayer(load_config(), load_question_sets(), predictor, log), predictor
 
     return make
 

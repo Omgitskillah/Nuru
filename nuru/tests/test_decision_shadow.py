@@ -282,6 +282,6 @@ def test_think_values_map_to_tier_names(think, tier):
     assert think_tier(think) == tier
 
 
-def test_the_laya_server_gets_the_same_vault_as_obsidian():
+def test_the_laya_server_is_started_without_a_vault():
     assert session.LAYA_SERVER_PARAMS.args[-1] == "laya-mcp"
-    assert "VAULT_PATH" in session.LAYA_SERVER_PARAMS.env
+    assert session.LAYA_SERVER_PARAMS.env is None  # it reads no notes since classify_notes went

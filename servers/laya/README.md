@@ -7,7 +7,6 @@ The split of work: **Laya returns probabilities, the config and the code own the
 ## Setup
 
 ```bash
-cp ../../.env.laya.example ../../.env.laya   # VAULT_PATH, for classify_notes (read-only); Nuru passes its own
 uv sync
 uv run laya-mcp-fetch             # once: downloads the pinned checkpoints (~1.5 GB)
 uv run laya-mcp                   # stdio server; Nuru starts it itself
@@ -15,10 +14,10 @@ uv run laya-mcp                   # stdio server; Nuru starts it itself
 
 The server runs with the Hugging Face hub offline (`laya.offline: true`), so after `laya-mcp-fetch` it never touches the network. The checkpoints are pinned to one commit (`laya.revision`).
 
-To try the tools by hand in the MCP Inspector, pass the vault with `-e` - the Inspector starts the server with its own environment, so a `VAULT_PATH` set in your shell never reaches it (and `classify_notes` fails with "no vault is configured"). `health` reports `"vault": true` once it has one, and `laya.state: "ready"` once the checkpoints have loaded (~10 s):
+To try the tools by hand, use the MCP Inspector. `health` reports `laya.state: "ready"` once the checkpoints have loaded (~10 s). Laya reads no notes (`classify_notes`, its one model tool, was removed on 2026-10-03), so it needs no vault:
 
 ```bash
-MCP_INSPECTOR_LOG_DIR=./.logs npx @modelcontextprotocol/inspector -e VAULT_PATH=/absolute/path/to/vault uv run laya-mcp
+MCP_INSPECTOR_LOG_DIR=./.logs npx @modelcontextprotocol/inspector uv run laya-mcp
 ```
 
 ## Tools
@@ -35,32 +34,23 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 | `rerank(query, matches)` | `search`'s matches by meaning reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
 | `health()` | Laya's load state, device, loaded checkpoints, question-set versions, decision-point modes. |
 
-For the model: **`classify_notes(question_set, ids | folder | date_from/date_to, labels)`** returns `{count, labelled: [{id, label, p}], uncertain}` - confident labels only, plus how many weren't. It never returns note content. `id` is the note's frontmatter id, or its vault-relative path if it has none. At most 50 notes per call.
-
 Every answer carries `probabilities` and `source` (`laya`, `code` or `fallback`), and a `decision_id` the harness uses to record what it actually did.
 
 ### How Nuru uses it
 
-Nuru starts this server with the others, asks at every decision point, and records what it actually did against each `decision_id` (`action_taken`, plus `outcome` - `empty_reply`, or `ok` / `error` for a write). A point in **shadow** changes nothing; a point the config sets to **enforce** is acted on, and one set to **off** isn't asked, as [Nuru's README](../../nuru/README.md) describes. Since 2026-09-30 every point that asks Laya is in shadow or off; the enforced ones (`step_cap`, `write_checks`, `watch_thinking`) are decided by code alone. The hooks are in [`nuru/src/core/decision_shadow.py`](../../nuru/src/core/decision_shadow.py), the enforce paths in [`enforcement.py`](../../nuru/src/core/enforcement.py). Nuru passes the server the same `VAULT_PATH` the obsidian server uses.
+Nuru starts this server with the others, asks at every decision point, and records what it actually did against each `decision_id` (`action_taken`, plus `outcome` - `empty_reply`, or `ok` / `error` for a write). A point in **shadow** changes nothing; a point the config sets to **enforce** is acted on, and one set to **off** isn't asked, as [Nuru's README](../../nuru/README.md) describes. Since 2026-09-30 every point that asks Laya is in shadow or off; the enforced ones (`step_cap`, `write_checks`, `watch_thinking`) are decided by code alone. The hooks are in [`nuru/src/core/decision_shadow.py`](../../nuru/src/core/decision_shadow.py), the enforce paths in [`enforcement.py`](../../nuru/src/core/enforcement.py).
 
 ### Fail safe
 
-If Laya is still loading, failed to load, raises, or an input is over its token budget, every tool still answers - conservatively - with `source: "fallback"`: `tool_gate` gives `read` / `defer`, `assess_effort` the default tier, `gate_write` `ask` (Nuru blocks in unattended runs), `check_claim` its code checks only with `verified: false`, `rerank` the search's own order. `classify_notes` reports that it isn't available.
+If Laya is still loading, failed to load, raises, or an input is over its token budget, every tool still answers - conservatively - with `source: "fallback"`: `tool_gate` gives `read` / `defer`, `assess_effort` the default tier, `gate_write` `ask` (Nuru blocks in unattended runs), `check_claim` its code checks only with `verified: false`, `rerank` the search's own order.
 
 ## Question sets
 
 One YAML file per decision point in [`src/laya_mcp/questions/`](src/laya_mcp/questions), in the `POST /v1/systemone` question shape (kept so the backend could be swapped for Jev) plus `name`, `version`, `checkpoint`, `max_state_tokens` and optionally `max_len` / `head_max_len`. All are validated at startup.
 
-- **Options known only at request time** are named with `criteria_from`: the note types and the caller's labels for `classify_notes`.
+- **Options known only at request time** can be named with `criteria_from` (no current question set uses it; `classify_notes` did).
 - **Small option sets, narrow questions.** Version 1 asked `tool_gate` to pick among Nuru's 26 tools and `check_claim` to compare a reply with a log; zero-shot, the first matched the model 10% of the time and the second flagged 88% of honest replies (2026-09-28 evals, [results](../../nuru/evals/decision_layer/results-2026-09-28.md)). Version 2 keeps every choice to a few options and asks Laya only what it can judge from the text in front of it; code does the rest.
 - **Bump `version`** whenever a question's wording or options change. It is logged with every decision and exported with every label, so fine-tuning data never mixes wordings.
-
-### classify_notes: note_type and subject
-
-- **`note_type`** options are the eleven types from `obsidian_mcp.frontmatter_template.TYPE_FOLDER` - the same list the vault's Templates README defines - read at request time, so they can't drift. The note's frontmatter is stripped before classifying (it names the type).
-- **`subject`** options are **the labels the caller passes** (2-10 of them), e.g. "firmware / personal / career". Nothing is derived from the vault's folders or tags. This was a deliberate choice: the folder layout differs between vaults (dummyVault's `nuru/` folders just repeat the note types; the real vault uses its own), and the tags in use are too noisy to be subjects (`sample`, `analysis-test`, `412`). Caller-supplied labels work on any vault, and Laya's options are defined per request by design.
-
-Results are cached by (note id or path, content hash, question set and version, options), so an unchanged note is never classified twice for the same labels.
 
 ## Token budgets
 
@@ -69,7 +59,7 @@ Laya cuts over-long input off **silently**. So before every call the state is co
 | Checkpoint | Context | Used for |
 |---|---|---|
 | english | 512 | tool_gate, assess_effort, gate_write, rerank |
-| multilingual | 1024, or up to 8192 with `max_len` | check_claim (4096), classify_notes (8192) |
+| multilingual | 1024, or up to 4096 with `max_len` | check_claim (4096) |
 
 English question sets still go through Laya's Router, which sends non-English text to the multilingual checkpoint: the English checkpoint collapses on other scripts. Both are preloaded and stay loaded.
 

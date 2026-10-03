@@ -1,9 +1,10 @@
 """laya-mcp: Nuru's decision layer over stdio MCP. No network ports; Laya runs in this process.
 
-Six tools are for Nuru's harness only - it calls them, acts on the answers in code, and never
-offers them to the model: assess_effort, tool_gate, gate_write, check_claim, rerank, health. One
-is for the model: classify_notes. Nuru builds the model's tool list from an allowlist, so the
-split below is documentation for it, not a lock; the harness is the watchdog.
+Every tool is for Nuru's harness only - it calls them, acts on the answers in code, and never
+offers them to the model: assess_effort, tool_gate, gate_write, check_claim, rerank,
+watch_thinking, health. (classify_notes, the one model tool, was removed on 2026-10-03.) Nuru
+builds the model's tool list from an allowlist, so the split below is documentation for it, not a
+lock; the harness is the watchdog.
 
 Run standalone via stdio with: uv run laya-mcp
 """
@@ -14,7 +15,6 @@ from pathlib import Path
 from typing import Any, Callable, Literal, TypeVar
 
 from access_logging import AccessLogMiddleware
-from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -23,14 +23,11 @@ from laya_mcp.decision_log import DecisionLog
 from laya_mcp.decisions import DecisionLayer
 from laya_mcp.predictor import LayaPredictor
 from laya_mcp.question_sets import load_question_sets
-from laya_mcp.vault import Vault
-
-load_dotenv(Path(__file__).resolve().parents[4] / ".env.laya")  # optional: VAULT_PATH for classify_notes
 
 LOG_DIR = Path(os.environ.get("LAYA_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
 HARNESS_TOOLS = frozenset({"assess_effort", "tool_gate", "gate_write", "check_claim", "rerank", "watch_thinking", "health"})
-MODEL_TOOLS = frozenset({"classify_notes"})
+MODEL_TOOLS: frozenset[str] = frozenset()
 
 mcp = MCPServer("laya-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
 
@@ -69,7 +66,6 @@ def health() -> dict[str, Any]:
         "laya": layer.predictor.status(),
         "question_sets": {name: qset.version for name, qset in layer.sets.items()},
         "decision_points": dict(layer.config.decision_points),
-        "vault": layer.vault is not None,
     }
 
 
@@ -159,31 +155,12 @@ def rerank(
     return _get_layer().rerank(query, matches, _context(session_id, task_id, step))
 
 
-@mcp.tool(
-    description="Label notes by type or subject without reading them. Pick one selector: ids, folder, or "
-    "date_from/date_to (YYYY-MM-DD). For subject, pass 2-10 candidate labels."
-)
-@_tool
-def classify_notes(
-    question_set: Literal["note_type", "subject"],
-    ids: list[str] | None = None,
-    folder: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    labels: list[str] | None = None,
-) -> dict[str, Any]:
-    return _get_layer().classify_notes(question_set, ids, folder, date_from, date_to, labels)
-
-
 def build_layer() -> DecisionLayer:
     """Load and validate the config and question sets, open the log, and start loading Laya."""
     config = load_config()
     question_sets = load_question_sets()
     predictor = LayaPredictor(config.laya)
-    vault_path = os.environ.get("VAULT_PATH")
-    layer = DecisionLayer(
-        config, question_sets, predictor, DecisionLog(config.database_path), Vault(Path(vault_path)) if vault_path else None
-    )
+    layer = DecisionLayer(config, question_sets, predictor, DecisionLog(config.database_path))
     predictor.start()
     return layer
 

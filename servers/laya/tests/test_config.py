@@ -71,7 +71,6 @@ def test_every_decision_point_must_be_listed(raw):
 
 def test_an_option_without_its_own_threshold_uses_the_questions_any():
     config = load_config()
-    assert config.threshold("classify_note_type", "note_type", "person") == 0.70
     assert config.threshold("tool_gate_start", "mode", "read") is None
 
 

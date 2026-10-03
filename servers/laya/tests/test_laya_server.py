@@ -15,7 +15,7 @@ def layer(make_layer, monkeypatch):
 def test_every_registered_tool_is_either_harness_only_or_for_the_model():
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert names == server.HARNESS_TOOLS | server.MODEL_TOOLS
-    assert server.MODEL_TOOLS == {"classify_notes"}
+    assert server.MODEL_TOOLS == frozenset()
     assert not server.HARNESS_TOOLS & server.MODEL_TOOLS
 
 
@@ -40,8 +40,8 @@ def test_health_reports_versions_and_modes(layer):
 def test_bad_input_is_a_tool_error_with_its_message(layer):
     from mcp.server.mcpserver.exceptions import ToolError
 
-    with pytest.raises(ToolError, match="no vault is configured"):
-        server.classify_notes("note_type", folder="nuru")
+    with pytest.raises(ToolError, match="step_type is 'arguments' or 'answer'"):
+        server.assess_effort("r", "bogus", [], {})
 
 
 def test_calls_before_startup_are_a_clear_error(monkeypatch):

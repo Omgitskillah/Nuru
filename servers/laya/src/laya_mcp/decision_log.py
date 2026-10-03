@@ -61,16 +61,6 @@ CREATE TABLE IF NOT EXISTS expert_calls (
     stop_reason TEXT,
     ok INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS classify_cache (
-    note_key TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    question_set TEXT NOT NULL,
-    question_set_version INTEGER NOT NULL,
-    options_hash TEXT NOT NULL,
-    label TEXT NOT NULL,
-    p REAL NOT NULL,
-    PRIMARY KEY (note_key, content_hash, question_set, question_set_version, options_hash)
-);
 """
 
 LABEL_SOURCES = ("user", "claude")
@@ -256,15 +246,3 @@ class DecisionLog:
 
     def expert_calls_on(self, day: str) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM expert_calls WHERE day = ?", (day,)).fetchone()[0]
-
-    def cached_label(self, key: tuple) -> tuple[str, float] | None:
-        row = self._conn.execute(
-            "SELECT label, p FROM classify_cache WHERE note_key = ? AND content_hash = ? AND question_set = ?"
-            " AND question_set_version = ? AND options_hash = ?",
-            key,
-        ).fetchone()
-        return (row["label"], row["p"]) if row else None
-
-    def cache_label(self, key: tuple, label: str, p: float) -> None:
-        with self._lock:
-            self._conn.execute("INSERT OR REPLACE INTO classify_cache VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, label, p))

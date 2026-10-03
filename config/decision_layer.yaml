@@ -103,9 +103,3 @@ thresholds:
       repeating: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
       ready: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
       stuck: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
-  classify_note_type:
-    note_type:
-      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
-  classify_subject:
-    subject:
-      any: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}

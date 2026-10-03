@@ -3,7 +3,6 @@ import json
 import pytest
 from ulid import ULID
 
-from laya_mcp.vault import Vault
 from laya_fakes import rows
 
 READ = {"search": "Passages nearest in meaning", "read_note": "Read a note", "search": "Search by words"}
@@ -179,81 +178,6 @@ def test_rerank_keeps_the_search_order_if_any_chunk_cannot_be_scored(make_layer)
     matches = MATCHES[:2] + [{"path": "long.md", "text": "x" * 5000}]
     result = layer.rerank("q", matches)
     assert result["reranked"] is False and result["matches"] == matches
-
-
-# ---------------------------------------------------------------- classify_notes
-@pytest.fixture
-def vault(tmp_path):
-    root = tmp_path / "vault"
-    notes = {
-        "nuru/People/alice.md": f"---\nid: {ID}\ntype: person\ncreated: 2026-09-10T10:00\n---\n# Alice\nWorks on firmware.",
-        "nuru/topic.md": "---\ntype: topic\ncreated: 2026-09-20T10:00\n---\nFreeRTOS notes.",
-        "Templates/01 Profile.md": "---\nid:\n---\n# {{title}}",
-        "archive/nuru/old.md": "old",
-        ".obsidian/workspace.md": "config",
-    }
-    for rel, text in notes.items():
-        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).write_text(text)
-    return Vault(root)
-
-
-def test_classify_returns_labels_and_never_content(make_layer, vault, log):
-    layer, predictor = make_layer({"note_type": {"person": 0.9}}, vault=vault)
-    result = layer.classify_notes("note_type", folder="nuru")
-    assert result == {"count": 2, "labelled": [{"id": "nuru/topic.md", "label": "person", "p": 0.9},
-                                               {"id": ID, "label": "person", "p": 0.9}], "uncertain": 0}
-    assert "firmware" not in json.dumps(result)
-    # Frontmatter is stripped: it names the type.
-    assert all("type:" not in state["note"] for _, state, _ in predictor.calls)
-    assert rows(log)[0]["mode"] == "tool"
-
-
-def test_the_note_types_are_the_vaults_own_eleven(make_layer, vault):
-    layer, predictor = make_layer(vault=vault)
-    layer.classify_notes("note_type", ids=[ID])
-    _, _, questions = predictor.calls[0]
-    assert len(questions["note_type"]["criteria"]) == 11 and "correction" in questions["note_type"]["criteria"]
-
-
-def test_uncertain_notes_are_counted_not_listed(make_layer, vault):
-    layer, _ = make_layer({"note_type": {"person": 0.4, "topic": 0.35}}, vault=vault)
-    assert layer.classify_notes("note_type", folder="nuru") == {"count": 2, "labelled": [], "uncertain": 2}
-
-
-def test_an_unchanged_note_is_not_classified_twice(make_layer, vault):
-    layer, predictor = make_layer({"note_type": {"topic": 0.9}}, vault=vault)
-    layer.classify_notes("note_type", folder="nuru")
-    layer.classify_notes("note_type", folder="nuru")
-    assert len(predictor.calls) == 2
-
-
-def test_subject_takes_the_callers_labels(make_layer, vault):
-    layer, predictor = make_layer({"subject": {"firmware": 0.8}}, vault=vault)
-    result = layer.classify_notes("subject", ids=[ID], labels=["firmware", "personal"])
-    assert result["labelled"] == [{"id": ID, "label": "firmware", "p": 0.8}]
-    assert set(predictor.calls[0][2]["subject"]["criteria"]) == {"firmware", "personal"}
-    with pytest.raises(ValueError, match="2 to 10"):
-        layer.classify_notes("subject", ids=[ID], labels=["only one"])
-
-
-def test_selectors(make_layer, vault):
-    layer, _ = make_layer(vault=vault)
-    assert layer.classify_notes("note_type", date_from="2026-09-15")["count"] == 1
-    missing = str(ULID())
-    assert layer.classify_notes("note_type", ids=[ID, missing])["not_found"] == [missing]
-    assert layer.classify_notes("note_type", folder="Templates")["count"] == 0
-    with pytest.raises(ValueError, match="exactly one selector"):
-        layer.classify_notes("note_type", ids=[ID], folder="nuru")
-    with pytest.raises(ValueError, match="outside the vault"):
-        layer.classify_notes("note_type", folder="../")
-
-
-def test_classify_reports_when_laya_is_down(make_layer, vault):
-    layer, _ = make_layer(available=False, vault=vault)
-    with pytest.raises(RuntimeError, match="not available"):
-        layer.classify_notes("note_type", folder="nuru")
-
 
 # ---------------------------------------------------------------- startup validation
 def test_thresholds_must_name_real_question_sets_and_questions(log):

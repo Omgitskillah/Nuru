@@ -174,7 +174,7 @@ def test_start_offers_the_model_only_its_allowlist(monkeypatch):
 
     Session.start()
 
-    assert "write_note" in seen["model_tools"] and "classify_notes" in seen["model_tools"]
+    assert "write_note" in seen["model_tools"] and "classify_notes" not in seen["model_tools"]
     for harness_only in ("tool_gate", "assess_effort", "gate_write", "check_claim", "rerank", "health"):
         assert harness_only not in seen["model_tools"]
 

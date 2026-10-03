@@ -76,13 +76,6 @@ def test_redaction_leaves_non_text_arguments_alone():
     assert redact_arguments({"targets": ["a"], "overwrite": True}) == {"targets": ["a"], "overwrite": True}
 
 
-def test_the_classify_cache_round_trips(log):
-    key = ("id", "hash", "classify_note_type", 1, "opts")
-    assert log.cached_label(key) is None
-    log.cache_label(key, "topic", 0.9)
-    assert log.cached_label(key) == ("topic", 0.9)
-
-
 def test_state_and_questions_are_kept_in_the_order_laya_saw_them(log):
     # Laya reads keys and options in order, and its answers change with it: a replay or a training
     # example built from a re-sorted copy would not be the decision that was made.

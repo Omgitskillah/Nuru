@@ -68,7 +68,7 @@
  {
   "id": 814,
   "group": "replace",
-  "expect": "read_note(content), write_note(replace) with clean text",
+  "expect": "read_note(include_revision=true), write_note(replace, expected_revision) with clean text",
   "prompt": "In my UART ring buffer snippets note, remove the last code snippet and keep everything else."
  }
 ]

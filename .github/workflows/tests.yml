@@ -33,7 +33,7 @@ jobs:
       - name: Run tests
         env:
           VAULT_PATH: /tmp/ci-vault
-        run: uv run --locked pytest -v --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=tools/logging/src --cov-report=term-missing
+        run: uv run --locked pytest -v --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov-report=term-missing
 
       - name: Coverage summary
         if: always()

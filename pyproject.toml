@@ -1,8 +1,8 @@
 [tool.uv.workspace]
-members = ["servers/obsidian", "servers/deep-think", "servers/laya", "tools/logging", "nuru"]
+members = ["servers/obsidian", "servers/deep-think", "servers/laya", "nuru"]
 
 [tool.pytest.ini_options]
-testpaths = ["nuru/tests", "servers/deep-think/tests", "servers/laya/tests", "tools/logging/tests"]
+testpaths = ["nuru/tests", "servers/deep-think/tests", "servers/laya/tests"]
 
 [dependency-groups]
 dev = [
@@ -19,5 +19,5 @@ dev = [
 obsidian-mcp = { workspace = true }
 deep-think-mcp = { workspace = true }
 laya-mcp = { workspace = true }
-access-logging = { workspace = true }
+access-logging = { path = "servers/obsidian/vendor/access-logging" }
 core = { workspace = true }

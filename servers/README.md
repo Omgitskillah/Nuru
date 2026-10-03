@@ -35,7 +35,7 @@ This opens a browser UI listing the server's registered tools, where you can inv
 
 Every MCP server in this repo logs its access (tool calls, resource reads, etc.) to `servers/<name>/.logs/` (hidden, like everything generated - see [Generated files](../README.md#generated-files)), regardless of which client connects (Inspector, Claude Desktop, or anything else) - the logging lives in the server process itself rather than in any one client. This directory is gitignored.
 
-Each session (starting at `initialize`) gets its own log file, named `<count_up_id>_<date_time>_<client_name>.log` (`client_name` falls back to `unknown` if the client doesn't report one). The logging mechanism itself is shared, standalone middleware in [tools/logging](tools/logging) (`access-logging`) - a server just points it at its own log directory, e.g. in the Obsidian server's [server.py](obsidian/src/obsidian_mcp/server.py).
+Each session (starting at `initialize`) gets its own log file, named `<count_up_id>_<date_time>_<client_name>.log` (`client_name` falls back to `unknown` if the client doesn't report one). The logging mechanism itself is shared, standalone middleware in the Obsidian submodule's [vendor/access-logging](obsidian/vendor/access-logging) (`access-logging`) - a server just points it at its own log directory, e.g. in the Obsidian server's [server.py](obsidian/src/obsidian_mcp/server.py).
 
 ## Running tests
 
@@ -74,5 +74,5 @@ For a private Obsidian repository, set the Nuru Actions secret
 
 Commit and push Obsidian changes in its own repository first, then commit the
 updated `servers/obsidian` submodule pointer in Nuru. The Obsidian repository
-includes a copy of `access-logging` for its standalone CI workspace; Nuru's workspace
-continues to use `tools/logging`. Nuru's test discovery excludes submodules and their vendored dependencies.
+includes `access-logging` in `vendor/access-logging`; Nuru's workspace, Deep Think and Laya
+use that copy by path, so the submodule must be initialised before `uv sync`. Nuru's test discovery excludes submodules and their vendored dependencies.

@@ -33,6 +33,7 @@ class WriteNote(_Args):
     supersedes: str | None = None
     targets: list[str] | None = None
     session: str | None = None
+    expected_revision: str | None = None
 
 
 class RenameOrMoveFile(_Args):

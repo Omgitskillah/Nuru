@@ -98,7 +98,7 @@
  {
   "id": 501,
   "group": "replace",
-  "expect": "read, write_note(mode=replace)",
+  "expect": "read_note(include_revision=true), write_note(mode=replace, expected_revision)",
   "prompt": "Rewrite my Priya Raman note so the items under Expertise are in alphabetical order."
  },
  {
@@ -122,7 +122,7 @@
  {
   "id": 505,
   "group": "replace",
-  "expect": "read, write_note(mode=replace) without the snippet",
+  "expect": "read_note(include_revision=true), write_note(mode=replace, expected_revision) without the snippet",
   "prompt": "In my UART ring buffer snippets note, remove the last code snippet and keep everything else."
  }
 ]

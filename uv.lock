@@ -4,7 +4,6 @@ requires-python = ">=3.14.7"
 
 [manifest]
 members = [
-    "access-logging",
     "core",
     "deep-think-mcp",
     "laya-mcp",
@@ -13,7 +12,7 @@ members = [
 
 [manifest.dependency-groups]
 dev = [
-    { name = "access-logging", editable = "tools/logging" },
+    { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
     { name = "core", editable = "nuru" },
     { name = "deep-think-mcp", editable = "servers/deep-think" },
     { name = "laya-mcp", editable = "servers/laya" },
@@ -25,14 +24,9 @@ dev = [
 [[package]]
 name = "access-logging"
 version = "0.1.0"
-source = { editable = "tools/logging" }
+source = { directory = "servers/obsidian/vendor/access-logging" }
 dependencies = [
     { name = "mcp" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -518,7 +512,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "access-logging", editable = "tools/logging" },
+    { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
     { name = "anthropic", specifier = ">=1.0.0" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
@@ -830,7 +824,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "access-logging", editable = "tools/logging" },
+    { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
     { name = "laya", specifier = "==0.3.21" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "obsidian-mcp", editable = "servers/obsidian" },
@@ -1169,11 +1163,12 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-cov" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "access-logging", editable = "tools/logging" },
+    { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-ulid", specifier = ">=4.0.1" },
@@ -1183,7 +1178,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+]
 
 [[package]]
 name = "opentelemetry-api"

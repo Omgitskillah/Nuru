@@ -24,7 +24,8 @@ THINK=low
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
 - `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
-- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. `low` (the default) or `high` picks a reasoning level for models that have them (Granite, since 2026-09-29: the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high); `false` turns it off, and any other value counts as enabled.
+- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. `low` (the default) or `high` picks a reasoning level for models that have them (Granite, since 2026-09-29: the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high); `false` turns it off, and any other value counts as enabled (so `THINK=off` turns thinking *on*).
+- `NURU_PLANNER_MODEL` / `NURU_PLANNER_THINK` - the model that writes plans in [plan mode](#plan-mode-a-test), and whether it thinks. Default: `MODEL`, thinking off.
 
 ## The custom model and its system prompt
 
@@ -40,8 +41,9 @@ THINK=low
 | [`granite4.2`](modelfiles/granite4.2.Modelfile) | Granite's shipped defaults: `temperature 1.0`, `top_p 0.95` |
 | [`llama3.1`](modelfiles/llama3.1.Modelfile) | Meta's reference values: `temperature 0.6`, `top_p 0.9` |
 | [`mistral-nemo`](modelfiles/mistral-nemo.Modelfile) | Mistral's low-temperature guidance for Nemo: `temperature 0.3`, `top_p 0.9` |
+| [`lfm2.5-thinking`](modelfiles/lfm2.5-thinking.Modelfile) | Liquid's shipped defaults: `temperature 0.05`, `top_k 50` |
 
-Every file carries the same `SYSTEM` prompt; only the `PARAMETER` block differs. They are separate copies, so a prompt change has to be made in all six or they drift - which would confound a bakeoff comparing them.
+Every file carries the same `SYSTEM` prompt; only the `PARAMETER` block differs. They are separate copies, so a prompt change has to be made in every one or they drift - which would confound a bakeoff comparing them.
 
 `core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit the family's Modelfile and it takes effect on the next run, no manual `ollama create` needed.
 
@@ -78,6 +80,15 @@ History is scoped to one conversation per run of `nuru` - each launch starts a n
    - **check_claim** - the reply is held until checked against what ran; a false claim is written again once, then shown with a warning.
 
    Always on, in code: `ask_an_expert` answers at most twice a turn. The second answer tells the model it was the last, and to ask you what's unclear if the answers don't settle it; the tool is then no longer offered, and a call made anyway ends the turn with that question to you, and its `file_paths` are resolved to real vault paths first, so a note named by its title attaches.
+
+## Plan mode (a test)
+
+A message starting with `PLAN:` gets a plan back instead of an answer: the steps that would carry the request out, as JSON. Nothing in it runs. It is the first half of a plan-then-act structure, where the harness runs the tool steps and the model only fills in narrow `pick` / `draft` steps; the second half (the executor) isn't built.
+
+- **Format** - `{"steps": [...]}`; a tool step is `{"step", "tool", "with"}`, a think step `{"step", "think": "pick" | "draft", "uses", "want"}`, and `"$sN"` in an argument stands for step sN's output. The harness adds the final `answer` step itself.
+- **How it's written** ([`planner.py`](src/core/planner.py)) - one call to `NURU_PLANNER_MODEL` with no tools offered and Ollama's `format` forcing the plan's schema, so the model can only plan. Code then checks what the schema can't (references point back, each tool gets its own arguments, `calculate` gets arithmetic), and a plan with problems goes back to the model once. The reply is the plan plus anything code still found wrong.
+- **Which model** - see [`evals/plan-mode-check-2026-10-03.md`](evals/plan-mode-check-2026-10-03.md). On its test prompt `qwen3:8b` and `mistral-nemo:12b` planned correctly 5/5 and `qwen3.5:4b` 2/5; Granite 3B, and every other model under 8B, 0/5. Asked to plan inside the normal turn, with tools offered, Granite calls them instead.
+- Ollama writes a `format` schema's keys in alphabetical order, whatever order the schema gives, so the key names are chosen to sort into reading order.
 
 ## Reviewing the decision layer
 
@@ -134,6 +145,8 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 `core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
+
+`core.planner` - [plan mode](#plan-mode-a-test): the planner prompt and schema, `check_plan`, and `make_plan`.
 
 `core.reply_markdown` - Qt-free helpers for the UI: `Reply` folds a turn's events into one markdown document, and `split_fences` separates fenced code from the prose around it.
 

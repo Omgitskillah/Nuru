@@ -29,6 +29,7 @@ from core.conversation_store import ConversationStore
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
+from core import planner
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -68,6 +69,9 @@ def _parse_think(raw: str) -> bool | str:
 
 
 THINK = _parse_think(os.environ.get("THINK", "low"))
+# Plan mode (a test: core.planner) - the model that writes plans, and how much it thinks.
+PLANNER_MODEL = os.environ.get("NURU_PLANNER_MODEL", MODEL)
+PLANNER_THINK = _parse_think(os.environ.get("NURU_PLANNER_THINK", "false"))
 
 MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
 
@@ -434,6 +438,10 @@ class Session:
                 f"which exceeds the {budget}-token budget for this model's context window. "
                 "Please shorten it and try again."
             )
+            return
+
+        if planner.is_plan_request(text):
+            yield from self._plan_turn(text)
             return
 
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
@@ -833,6 +841,38 @@ class Session:
             return None
         self.shadow.repeated_call(tool, arguments, count, enforced)
         return f"it called {tool} with the same arguments {count} times" if enforced else None
+
+    def _plan_turn(self, text: str) -> Iterator[Event]:
+        """A "PLAN:" message: the plan core.planner writes for the request, and what code found
+        wrong with it. No tool runs and the decision layer isn't asked."""
+        self.store.add_message(self.conversation_id, "user", text)
+        turn_id = self.logger.turn_start(text)
+        tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
+
+        def chat_json(messages: list[dict], schema: dict, think) -> str:
+            start, out, usage = time.monotonic(), "", {}
+            for piece in chat(PLANNER_MODEL, messages, num_ctx=_context_window(self.model_info), think=think, fmt=schema):
+                if isinstance(piece, str):
+                    out += piece
+                elif "stop_reason" in piece:
+                    usage = piece
+            self.logger.model_call(
+                turn_id=turn_id,
+                duration_ms=(time.monotonic() - start) * 1000,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                stop_reason=usage.get("stop_reason"),
+                tool_calls_requested=[],
+                output_text=out,
+            )
+            return out
+
+        plan, problems = planner.make_plan(planner.request_of(text), tools, chat_json, PLANNER_THINK)
+        reply = "```json\n" + json.dumps(plan, indent=1) + "\n```" if plan else "No plan was written."
+        reply += ("\n\nProblems code found:\n" + "\n".join(f"- {p}" for p in problems)) if problems else "\n\nCode found no problems."
+        yield Text(reply)
+        self.store.add_message(self.conversation_id, "nuru", reply)
+        self.logger.turn_end(turn_id)
 
     def _stop(self, turn_id: str, reason: str):
         """End the turn plainly, saying why and what had happened by then."""

@@ -1,0 +1,9 @@
+out/
+vault/
+vault-pristine/
+dec/
+cfg/
+db/
+logs/
+*.sqlite3
+progress*.txt

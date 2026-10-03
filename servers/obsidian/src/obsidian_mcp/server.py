@@ -1141,23 +1141,20 @@ def _extract_section(text: str, section: str, rel_path: str) -> str:
 
 
 @mcp.tool(
-    description="Read a note. name: a path, filename, title, alias or id - case and punctuation don't matter "
-    "('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the closest notes. part: 'content' "
-    "(default) returns the note's Markdown text; 'info' returns what surrounds it instead, without the text - "
-    "{note, tags, outgoing, backlinks, todos, todo_count, hint}: its tags, each [[link]] in it as {link, path} "
-    "(path null when no note has that name), the notes that link to it, and its open tasks (unticked "
-    "checkboxes and TODO lines) as {line, text}. section: with part 'content', optional heading text (e.g. "
-    "'Decisions') to return just that part of a long note; an unknown section lists the note's headings."
+    description="Return a note's Markdown content. name: a path, filename, title, alias or id - case and "
+    "punctuation don't matter ('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the "
+    "closest notes. section: optional heading text (e.g. 'Decisions') to return just that part of a long "
+    "note, through to the next heading of the same or higher level; an unknown section lists the note's "
+    "headings. For a note's tags, links and open tasks without its text, use note_info."
 )
 @_tool
-def read_note(name: str, section: str | None = None, part: str = "content") -> str | dict[str, Any]:
-    """Return a note by name: its Markdown (all of it, or one section), or with part="info"
-    what surrounds it - note_info's tags, links, backlinks and open tasks, without the text.
+def read_note(name: str, section: str | None = None) -> str:
+    """Return the contents of a note (Markdown file) by name - all of it, or one section.
 
-    One tool for both, so a model that reaches for read_note - as it does, even when the
-    question is about links or tasks - gets the right answer from it. The text stays plain
-    Markdown rather than a JSON string: escaped newlines and quotes would leak into quotes and
-    into a mode="replace" write.
+    The tags, links, backlinks and open tasks are note_info's. Folding them into read_note as a
+    `part` argument was tried on 2026-10-03 and measured worse: with the text as the default the
+    model asked for them on 2 of 8 prompts, with them as the default it asked for the text every
+    time (0 of 8) - against 5 of 8 for note_info as its own tool.
 
     Args:
         name: Which note. Tried in order: as a vault-relative path, as a
@@ -1176,10 +1173,6 @@ def read_note(name: str, section: str | None = None, part: str = "content") -> s
     ValueError, listing the note's headings, if `section` isn't one of them.
     """
     _check_accessible(VAULT_PATH)
-    if part == "info":
-        return note_info(name)
-    if part != "content":
-        raise ValueError(f"Unknown part '{part}'. Use 'content' for the note's text or 'info' for its tags, links and tasks.")
 
     target = _resolve_note(name)
 
@@ -1204,9 +1197,16 @@ def _link_targets(text: str) -> list[str]:
     return list(dict.fromkeys(t for t in targets if t))
 
 
+@mcp.tool(
+    description="What surrounds one note, without its text (read_note gives the text). name: a path, title "
+    "or id, as for read_note. Returns {note, tags, outgoing, backlinks, todos, todo_count, hint}: tags are its "
+    "frontmatter and inline #tags; outgoing is each [[link]] in it as {link, path}, path null when no note "
+    "has that name; backlinks are the notes that link to it; todos are its open tasks (unticked checkboxes "
+    "and TODO lines) as {line, text}. Each list is capped at 25."
+)
 @_tool
 def note_info(name: str) -> dict[str, Any]:
-    """get_links, note_tags and note_todos for one note, in one call - read_note's part="info".
+    """get_links, note_tags and note_todos for one note, in one call.
 
     The name is resolved once, by get_links; tags and todos are then read from
     that same path, so all three describe the same note even when a forgiving
@@ -1650,7 +1650,7 @@ def create_note(
         if supersedes is not None and not note_index.note_exists(conn, supersedes):
             raise ValueError(f"supersedes references unknown note id '{supersedes}'.")
         if targets is not None:
-            unknown_targets = [t for t in targets if not note_index.note_exists(conn, t)]
+            unknown_targets = [t for t in targets if not note_index.note_exists(conn, t) and not _matching_notes(t)]
             if unknown_targets:
                 raise ValueError(f"targets references unknown note id(s): {unknown_targets}.")
 
@@ -1800,6 +1800,40 @@ def _repeats_the_note(existing: str, content: str) -> bool:
     return len(body) >= 40 and body[:200] in content
 
 
+# Nuru's own folder: the one place a note can be rewritten (write_note mode="replace") on Nuru's server.
+_NURU_FOLDER = "nuru"
+
+
+def _replaced_copy_path(rel_path: str) -> Path:
+    """Where the version a replace overwrites is kept: trash/<its path>.<timestamp>.md - invisible to
+    every tool, like anything in trash/, but there in Obsidian if a rewrite went wrong."""
+    stamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
+    return VAULT_PATH / _TRASH_FOLDER / f"{rel_path.removesuffix('.md')}.{stamp}.md"
+
+
+def _correction_targets(content: str) -> list[str]:
+    """The notes a correction's [[links]] name, by id where they have one (an id survives a rename),
+    else by their filename. A correction must link at least one existing note."""
+    names = _NoteNames()
+    indexed = _indexed_notes()
+    targets: list[str] = []
+    for link in _link_targets(content):
+        found = names.resolve(link)
+        if not found:
+            continue
+        path = found[0]
+        note_id = indexed.get(_rel(path), {}).get("id") or _read_frontmatter(path.read_text(errors="ignore")).get("id")
+        target = str(note_id) if note_id else path.stem
+        if target not in targets:
+            targets.append(target)
+    if not targets:
+        raise ValueError(
+            "A correction must link the note it corrects: put [[that note's title]] in content, e.g. "
+            "\"[[FreeRTOS Task Management]] says 0.58; it should be 0.36.\""
+        )
+    return targets
+
+
 _TYPE_LINES = "; ".join(f"{name} = {what}" for name, what in template.TYPE_DESCRIPTIONS.items())
 
 
@@ -1809,10 +1843,13 @@ _TYPE_LINES = "; ".join(f"{name} = {what}" for name, what in template.TYPE_DESCR
         "a new note, a title (it goes in nuru/) or a path under nuru/ or shared/ such as 'nuru/People/Dana Lee' "
         "(folders are made as needed). content: Markdown. mode: 'append' (default) adds content to the end - send "
         "ONLY the new text, never the note's existing text; 'replace' makes content the note's whole new text "
-        "(frontmatter kept), so send the complete note. type (optional, for a new note; default topic): "
+        "(frontmatter kept), so send the complete note - only for notes in nuru/, and the old version is kept. "
+        "type (optional, for a new note; default topic): "
         f"{_TYPE_LINES}. type=daily (no note) writes to your own daily note for today - use it for reminders "
-        "too. author (optional): nuru (default) or both. tags, supersedes (id of a note this replaces), targets "
-        "(for a correction: ids of the notes it corrects) and session (YYYY-MM-DD-NN) only apply to a new note. "
+        "too. author (optional): nuru (default) or both. A correction is a new note whose content links the "
+        "note it corrects as [[its title]]. tags, supersedes (id of a note this replaces), targets (ids of the "
+        "notes a correction corrects - found from its [[links]] if left out) and session (YYYY-MM-DD-NN) only "
+        "apply to a new note. "
         "Nothing in user/ can be written, nor archived notes. Returns {done, path, id, created}: done says in "
         "words what happened."
     )
@@ -1909,6 +1946,8 @@ def write_note(
                     "Did you mean that note? Write to its path - or give the new note a clearly different name."
                 )
             note_type = type or template.DEFAULT_TYPE
+            if note_type == "correction" and not targets:
+                targets = _correction_targets(content)
             if note_type in template.TYPE_FOLDER:
                 _reject_user_folder_for_nuru(f"{folder or template.TYPE_FOLDER[note_type]}/{title}")
             made = create_note(
@@ -1951,13 +1990,30 @@ def write_note(
 
     title = _title_of(target, frontmatter)
     if mode == "replace":
+        if _PROTECT_USER_AUTHORED and Path(rel_path).parts[:1] != (_NURU_FOLDER,):
+            raise PermissionError(
+                f"'{rel_path}' isn't in {_NURU_FOLDER}/, so it can't be replaced: only Nuru's own notes can be "
+                "rewritten. Add to it with mode=\"append\", or write a correction note that links [[it]]."
+            )
         head = match.group(0) if (match := _FRONTMATTER.match(text)) else ""
+        if " ".join(text[len(head):].split()) == " ".join(content.split()):
+            return {
+                "done": f"Nothing changed: the new text for '{title}' at {rel_path} is the same as what the note "
+                "already says.",
+                "path": rel_path,
+                "id": _indexed_notes().get(rel_path, {}).get("id") or frontmatter.get("id"),
+                "created": False,
+            }
+        backup = _replaced_copy_path(rel_path)
 
         def _replace() -> None:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_text(text)
             target.write_text(head + ("\n" if head else "") + content)
 
         _run_with_timeout(_replace)
-        done = f"Replaced the text of the existing note '{title}' at {rel_path} (its frontmatter kept)."
+        done = (f"Replaced the text of the existing note '{title}' at {rel_path} (its frontmatter kept; the old "
+                "version is in trash/).")
     else:
         _append_text(target, content)
         done = f"Added to the end of the existing note '{title}' at {rel_path}."

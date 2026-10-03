@@ -81,3 +81,9 @@ def test_note_ids_are_found_in_prose_and_unknown_ones_reported():
 
 def test_ordinary_words_are_not_mistaken_for_ids():
     assert find_note_ids("ABCDEFGHJKMNPQRSTVWXYZ is 22 chars; 2026-09-28T10:00 is a time.") == set()
+
+
+def test_only_notes_in_nuru_can_be_replaced():
+    assert check_write("write_note", {"note": "nuru/x.md", "content": "c", "mode": "replace"}, set()) == []
+    assert "only Nuru's own notes can be replaced" in check_write(
+        "write_note", {"note": "shared/plan.md", "content": "c", "mode": "replace"}, set())[0]

@@ -75,6 +75,9 @@ def check_write(tool: str, arguments: dict[str, Any], known_ids: set[str]) -> li
         if arguments.get("mode", "append") not in ("append", "replace"):
             reasons.append(f"mode {arguments.get('mode')!r} is not append or replace")
         note = arguments.get("note")
+        if (arguments.get("mode") == "replace" and isinstance(note, str) and "/" in note
+                and PurePosixPath(note).parts[:1] != ("nuru",)):
+            reasons.append(f"'{note}' isn't in nuru/: only Nuru's own notes can be replaced")
         if isinstance(note, str) and PurePosixPath(note).parts[:1] == (PROTECTED_FOLDER,):
             reasons.append(f"'{note}' is in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes")
         if isinstance(note, str) and PurePosixPath(note).parts[:1] == (ARCHIVE_FOLDER,):

@@ -1744,20 +1744,10 @@ def test_note_info_on_an_unknown_note_names_the_closest(tmp_path, monkeypatch):
         server.note_info("Plann")
 
 
-# --- read_note(part=...): the text, or what surrounds it ---
+# --- read_note gives the text, note_info what surrounds it ---
 
 
-def test_read_note_part_info_is_note_info_without_the_text(tmp_path, monkeypatch):
-    _vault_with(tmp_path, monkeypatch, {"hub.md": "# Hub\nsecret body [[Alpha]] #router\n- [ ] call Bob", "Alpha.md": "# Alpha"})
-
-    info = server.read_note("hub", part="info")
-
-    assert info == server.note_info("hub")
-    assert info["tags"] == ["router"] and info["outgoing"] == [{"link": "Alpha", "path": "Alpha.md"}]
-    assert "secret body" not in json.dumps(info)
-
-
-def test_read_note_defaults_to_the_plain_markdown_text(tmp_path, monkeypatch):
+def test_read_note_gives_plain_markdown_not_a_json_string(tmp_path, monkeypatch):
     import asyncio
 
     _vault_with(tmp_path, monkeypatch, {"hub.md": 'line one\nsays "quoted"'})
@@ -1765,13 +1755,6 @@ def test_read_note_defaults_to_the_plain_markdown_text(tmp_path, monkeypatch):
     assert server.read_note("hub") == 'line one\nsays "quoted"'
     result = asyncio.run(server.mcp.call_tool("read_note", {"name": "hub"}))
     assert result.content[0].text == 'line one\nsays "quoted"'  # not a JSON string with escapes
-
-
-def test_read_note_refuses_an_unknown_part(tmp_path, monkeypatch):
-    _vault_with(tmp_path, monkeypatch, {"hub.md": "x"})
-
-    with pytest.raises(ToolError, match="Unknown part 'links'"):
-        server.read_note("hub", part="links")
 
 
 # --- read_note: forgiving name matching ---
@@ -2345,7 +2328,8 @@ def test_replace_rewrites_the_body_and_keeps_the_frontmatter(tmp_path, monkeypat
 
     result = server.write_note("# Plan\n\nnew line", note="Plan", mode="replace")
 
-    assert result["done"] == "Replaced the text of the existing note 'Plan' at nuru/plan.md (its frontmatter kept)."
+    assert result["done"] == ("Replaced the text of the existing note 'Plan' at nuru/plan.md (its frontmatter kept; "
+                              "the old version is in trash/).")
     assert (tmp_path / made["path"]).read_text() == frontmatter + "\n# Plan\n\nnew line"
     assert server.read_note(made["id"]).endswith("new line")
 
@@ -2471,6 +2455,63 @@ def test_a_type_given_for_an_existing_note_is_ignored_unless_it_is_correction(tm
     assert "type: topic\n" in server.read_note("Garden")
     with pytest.raises(ToolError, match="not a correction"):
         server.write_note("z", note="Garden", type="correction")
+
+
+# --- corrections: Nuru's own notes are fixed in place, the rest get an addendum ---
+
+
+def test_a_replace_keeps_the_old_version_in_trash_where_no_tool_sees_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = server.create_note(type="topic", title="Plan", author="nuru", body="old line")
+    old = (tmp_path / made["path"]).read_text()
+
+    server.write_note("# Plan\n\nnew line", note="Plan", mode="replace")
+
+    [copy] = (tmp_path / "trash" / "nuru").glob("plan.*.md")
+    assert copy.read_text() == old
+    assert _notes() == ["nuru/plan.md"] and server.search("old line")["exact_count"] == 0
+
+
+def test_a_replace_with_the_same_text_changes_nothing_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = server.create_note(type="topic", title="Plan", author="nuru", body="keep me")
+    body = (tmp_path / made["path"]).read_text().split("---\n", 2)[2]
+
+    result = server.write_note(body, note="Plan", mode="replace")
+
+    assert result["done"].startswith("Nothing changed: the new text for 'Plan'")
+    assert not (tmp_path / "trash").exists()
+
+
+def test_only_notes_in_nuru_can_be_replaced_on_nurus_server(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", True)
+    server.write_note("joint plan", note="shared/Garden Plan", type="project", author="both")
+
+    with pytest.raises(ToolError, match="isn't in nuru/, so it can't be replaced"):
+        server.write_note("rewritten", note="shared/garden-plan.md", mode="replace")
+    assert server.write_note("one more line", note="shared/garden-plan.md")["created"] is False
+
+
+def test_a_correction_finds_the_notes_it_corrects_from_its_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    wrong = server.create_note(type="topic", title="FreeRTOS Task Management", author="user", body="U = 0.58")
+    _vault_with(tmp_path, monkeypatch, {"nuru/obsidian-made.md": "---\nid: 01OBSIDIANMADEID000000000AB\n---\n# X"})
+
+    result = server.write_note("[[FreeRTOS Task Management]] says 0.58; the table adds up to 0.36. Also [[obsidian-made]].",
+                               note="Correction: FreeRTOS utilisation", type="correction")
+
+    text = (tmp_path / result["path"]).read_text()
+    assert f"Corrects: [[{wrong['id']}]], [[01OBSIDIANMADEID000000000AB]]" in text
+    assert result["path"] in server.note_info(wrong["id"])["backlinks"]
+
+
+def test_a_correction_that_links_no_note_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="A correction must link the note it corrects"):
+        server.write_note("the number is wrong", note="Correction: something", type="correction")
+    assert _files() == []
 
 
 # --- write_note(type="daily"): Nuru's own daily, in nuru/ ---

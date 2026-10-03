@@ -142,7 +142,7 @@ LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"
 MODEL_TOOLS = frozenset(
     {
         # obsidian, read
-        "browse", "find_in_notes", "read_note", "search", "tags",
+        "browse", "find_in_notes", "note_info", "read_note", "search", "tags",
         # obsidian, write
         "rename_or_move_file", "write_note",
         # math-4-llms
@@ -812,7 +812,7 @@ class Session:
         resolved = []
         for path in paths:
             try:
-                result = self.tools.call_harness_tool("read_note", {"name": path, "part": "info"})
+                result = self.tools.call_harness_tool("note_info", {"name": path})
                 resolved.append(json.loads(result.text)["note"] if not result.is_error else path)
             except Exception:
                 resolved.append(path)

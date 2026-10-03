@@ -1,0 +1,20 @@
+[
+ {"id": 701, "expect": "person", "prompt": "Make a note about Dana Lee: she's our new firmware intern, started in September, and sits next to Bob."},
+ {"id": 702, "expect": "person", "prompt": "Start a note on Marcus Weber from the supplier: he handles our modem orders, email marcus@supplier.example."},
+ {"id": 703, "expect": "person", "prompt": "Make a note for my landlord Herr Schulz: rent is due on the 3rd, phone 030 1234567."},
+ {"id": 704, "expect": "topic", "prompt": "Create a note about LoRaWAN duty cycle limits in the EU: 1% on most sub-bands, 10% on one."},
+ {"id": 705, "expect": "topic", "prompt": "Start a note collecting what I learn about Rust embedded HALs."},
+ {"id": 706, "expect": "topic", "prompt": "Create a note on decoupling capacitor placement tips: as close to the pin as possible, smallest value nearest."},
+ {"id": 707, "expect": "project", "prompt": "Create a project note for building a weather station on the balcony: goal is temperature and wind logging, deadline end of November."},
+ {"id": 708, "expect": "project", "prompt": "Set up a note for the Q4 firmware release: target date December 12, owners me and Priya, tasks: bootloader update and OTA tests."},
+ {"id": 709, "expect": "session", "prompt": "Write up today's working session: I debugged the PSM issue for two hours, found the T3412 timer was wrong, and decided to set it to one hour."},
+ {"id": 710, "expect": "session", "prompt": "Log this session: I paired with Alice on the PCB review and we agreed to move the test points."},
+ {"id": 711, "expect": "transcript", "prompt": "Save this call as a transcript: Me: Can you ship by Friday? Vendor: Probably Monday. Me: OK, Monday then."},
+ {"id": 712, "expect": "transcript", "prompt": "Record what was said at standup: Bob: blocked on the modem. Priya: finished OTA. Me: reviewing PRs."},
+ {"id": 713, "expect": "index", "prompt": "Make a note that links my battery notes together: [[Battery Life Modeling]], [[Battery Life Modeling Revised]] and [[Sensor Calibration Data]]."},
+ {"id": 714, "expect": "index", "prompt": "Create a hub note listing links to all my notes about Berlin."},
+ {"id": 715, "expect": "profile", "prompt": "Create a note about me: embedded engineer for 8 years, based in Berlin, originally from Nairobi."},
+ {"id": 716, "expect": "preferences", "prompt": "Note my preferences: answers short, units always, and no meetings before 10."},
+ {"id": 717, "expect": "preferences", "prompt": "Save how I like code reviews done: small PRs, comments phrased as questions, approve with nits."},
+ {"id": 718, "expect": "correction", "prompt": "My FreeRTOS note says the utilisation is 0.58, but its table adds up to 0.36. Write a correction."}
+]

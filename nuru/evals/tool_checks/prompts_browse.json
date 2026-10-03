@@ -1,0 +1,14 @@
+[
+ {"id": 201, "group": "recent", "expect": "browse()", "prompt": "What are my most recent notes?"},
+ {"id": 202, "group": "type", "expect": "browse(type=daily), read", "prompt": "What's my latest daily note, and what's in it?"},
+ {"id": 203, "group": "type", "expect": "browse(type=person)", "prompt": "Which people do I have notes about?"},
+ {"id": 204, "group": "folder", "expect": "browse(folder=nuru/People)", "prompt": "What's in my nuru/People folder?"},
+ {"id": 205, "group": "folder", "expect": "browse(folder=Transcripts)", "prompt": "List the notes in my Transcripts folder."},
+ {"id": 206, "group": "folder+type", "expect": "browse(folder=shared, type=project)", "prompt": "Which project notes are in the shared folder?"},
+ {"id": 207, "group": "whole vault", "expect": "browse(limit up to 50)", "prompt": "List every note in my vault."},
+ {"id": 208, "group": "type", "expect": "browse(type=session) or search", "prompt": "What was my most recent working session about?"},
+ {"id": 209, "group": "archive", "expect": "browse(folder=archive)", "prompt": "What have I archived?"},
+ {"id": 210, "group": "trash", "expect": "browse(folder=trash): nothing / can't see", "prompt": "What's in my trash folder?"},
+ {"id": 211, "group": "missing folder", "expect": "browse(folder=Recipes): hint, says none", "prompt": "What notes are in my Recipes folder?"},
+ {"id": 212, "group": "classify", "expect": "browse(folder=nuru/Topics) or classify_notes", "prompt": "Without reading them, sort the notes in nuru/Topics by subject: work or personal."}
+]

@@ -1,0 +1,10 @@
+[
+ {"id": 301, "group": "all", "expect": "tags()", "prompt": "Which tags do I use most?"},
+ {"id": 302, "group": "tag", "expect": "tags(tag=analysis-test)", "prompt": "Show me the notes tagged analysis-test."},
+ {"id": 303, "group": "tag", "expect": "tags(tag=#embedded)", "prompt": "Which notes are tagged #embedded?"},
+ {"id": 304, "group": "note", "expect": "search, tags(note=...)", "prompt": "What tags does my sensor calibration note have?"},
+ {"id": 305, "group": "note", "expect": "tags(note=...)", "prompt": "How is my FreeRTOS task management note tagged?"},
+ {"id": 306, "group": "miss", "expect": "tags(tag=recipes): hint, close tag recipe", "prompt": "Show me my notes tagged recipes."},
+ {"id": 307, "group": "nested", "expect": "tags(tag=...)", "prompt": "Do I have any notes tagged personal?"},
+ {"id": 308, "group": "combined", "expect": "tags(tag), read", "prompt": "Find my notes tagged power and tell me what the battery requirement is."}
+]

@@ -1,0 +1,10 @@
+[
+ {"id": 401, "group": "backlinks", "expect": "note_info", "prompt": "Which notes link to the Area Monitor Device Redesign project?"},
+ {"id": 402, "group": "outgoing", "expect": "note_info", "prompt": "What does my technical knowledge base note link to?"},
+ {"id": 403, "group": "todos", "expect": "note_info", "prompt": "What open tasks are left in the architecture review meeting transcript?"},
+ {"id": 404, "group": "tags", "expect": "note_info or tags(note)", "prompt": "What tags does my sensor calibration note have?"},
+ {"id": 405, "group": "all", "expect": "note_info", "prompt": "Give me an overview of my battery life modeling note without reading the whole thing: its tags, links and open tasks."},
+ {"id": 406, "group": "broken one note", "expect": "note_info, path null", "prompt": "Are any of the links in my technical knowledge base note broken?"},
+ {"id": 407, "group": "broken vault", "expect": "no tool for it: says so / partial", "prompt": "Are there any broken links anywhere in my vault?"},
+ {"id": 408, "group": "related", "expect": "note_info then read_note", "prompt": "What notes are related to my FreeRTOS task management note, and what are they about?"}
+]

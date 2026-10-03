@@ -1,0 +1,74 @@
+[
+ {
+  "id": 801,
+  "group": "backlinks",
+  "expect": "read_note(part=info)",
+  "prompt": "Which notes link to the Area Monitor Device Redesign project?"
+ },
+ {
+  "id": 802,
+  "group": "outgoing",
+  "expect": "read_note(part=info)",
+  "prompt": "What does my technical knowledge base note link to?"
+ },
+ {
+  "id": 803,
+  "group": "todos",
+  "expect": "read_note(part=info)",
+  "prompt": "What open tasks are left in the architecture review meeting transcript?"
+ },
+ {
+  "id": 804,
+  "group": "tags",
+  "expect": "read_note(part=info) or tags(note)",
+  "prompt": "What tags does my sensor calibration note have?"
+ },
+ {
+  "id": 805,
+  "group": "all",
+  "expect": "read_note(part=info)",
+  "prompt": "Give me an overview of my battery life modeling note without reading the whole thing: its tags, links and open tasks."
+ },
+ {
+  "id": 806,
+  "group": "broken one note",
+  "expect": "read_note(part=info), path null",
+  "prompt": "Are any of the links in my technical knowledge base note broken?"
+ },
+ {
+  "id": 807,
+  "group": "broken vault",
+  "expect": "no tool for it: says so / partial",
+  "prompt": "Are there any broken links anywhere in my vault?"
+ },
+ {
+  "id": 808,
+  "group": "related",
+  "expect": "read_note(part=info) then read_note",
+  "prompt": "What notes are related to my FreeRTOS task management note, and what are they about?"
+ },
+ {
+  "id": 811,
+  "group": "read",
+  "expect": "search, read_note",
+  "prompt": "What did I decide about the modem configuration?"
+ },
+ {
+  "id": 812,
+  "group": "section",
+  "expect": "read_note(section)",
+  "prompt": "Read me just the Reorder list section of my home lab inventory."
+ },
+ {
+  "id": 813,
+  "group": "quote",
+  "expect": "read_note, exact quote",
+  "prompt": "Quote the exact line in my gym log that gives my average sleep."
+ },
+ {
+  "id": 814,
+  "group": "replace",
+  "expect": "read_note(content), write_note(replace) with clean text",
+  "prompt": "In my UART ring buffer snippets note, remove the last code snippet and keep everything else."
+ }
+]

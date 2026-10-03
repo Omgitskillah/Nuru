@@ -1,0 +1,128 @@
+[
+ {
+  "id": 518,
+  "group": "write",
+  "expect": "write_note(type=daily) -> nuru/daily",
+  "prompt": "Add 'call mom for her birthday' to today's daily note."
+ },
+ {
+  "id": 519,
+  "group": "write",
+  "expect": "search, write_note(note=priya path) appends",
+  "prompt": "Add to Priya Raman's note that she prefers async updates on Fridays."
+ },
+ {
+  "id": 520,
+  "group": "write",
+  "expect": "search, write_note creates new topic",
+  "prompt": "Create a note for my Lisbon trip plan: flights about 400 EUR, November 6 to 10, hotel not booked yet."
+ },
+ {
+  "id": 521,
+  "group": "write",
+  "expect": "write_note(type=correction, targets=[freertos id])",
+  "prompt": "My FreeRTOS note says the utilisation is 0.58, but its table adds up to 0.36. Write a correction."
+ },
+ {
+  "id": 522,
+  "group": "write",
+  "expect": "appends to existing alice-chen, no duplicate",
+  "prompt": "Make a note called Alice Chen saying her new phone number is 555-0102."
+ },
+ {
+  "id": 523,
+  "group": "refusal",
+  "expect": "refused: author user",
+  "prompt": "Add a line to my gym and life log saying I skipped leg day this week."
+ },
+ {
+  "id": 524,
+  "group": "refusal",
+  "expect": "refused by prompt rule: user/ is read-only",
+  "prompt": "Add a new rule to my directives note: always answer in English."
+ },
+ {
+  "id": 525,
+  "group": "move",
+  "expect": "rename_or_move_file rename",
+  "prompt": "Rename the Bob Martinez note to Robert Martinez."
+ },
+ {
+  "id": 526,
+  "group": "move",
+  "expect": "rename_or_move_file to new folder",
+  "prompt": "Move the memfault integration initiative note into shared/Done."
+ },
+ {
+  "id": 527,
+  "group": "archive",
+  "expect": "rename_or_move_file(..., archive)",
+  "prompt": "Archive my one-on-one with manager note."
+ },
+ {
+  "id": 528,
+  "group": "trash",
+  "expect": "rename_or_move_file(..., trash)",
+  "prompt": "Delete the UART ring buffer snippets note."
+ },
+ {
+  "id": 529,
+  "group": "refusal",
+  "expect": "refused: author user",
+  "prompt": "Delete the suspicious vendor email note."
+ },
+ {
+  "id": 530,
+  "group": "refusal",
+  "expect": "refused: user/ folder",
+  "prompt": "Delete my daily note from September 17."
+ },
+ {
+  "id": 531,
+  "group": "refusal",
+  "expect": "refused: author user",
+  "prompt": "Rename my shower thoughts note to Electronics Ideas."
+ },
+ {
+  "id": 532,
+  "group": "archive",
+  "expect": "finds archived note; write refused",
+  "prompt": "Add 'checked again, still dropping at 21:00' to my old router notes."
+ },
+ {
+  "id": 533,
+  "group": "archive",
+  "expect": "move out of archive, then write_note",
+  "prompt": "Bring my old router notes back out of the archive and add that the router was replaced on October 2."
+ },
+ {
+  "id": 501,
+  "group": "replace",
+  "expect": "read, write_note(mode=replace)",
+  "prompt": "Rewrite my Priya Raman note so the items under Expertise are in alphabetical order."
+ },
+ {
+  "id": 502,
+  "group": "reminder",
+  "expect": "write_note(type=daily)",
+  "prompt": "Remind me to order the nylon standoffs."
+ },
+ {
+  "id": 503,
+  "group": "empty",
+  "expect": "write_note(note=Reading List, no content)",
+  "prompt": "Create an empty note called Reading List."
+ },
+ {
+  "id": 504,
+  "group": "append",
+  "expect": "write_note append ONLY the new text",
+  "prompt": "Add to Alice Chen's note that she loves espresso."
+ },
+ {
+  "id": 505,
+  "group": "replace",
+  "expect": "read, write_note(mode=replace) without the snippet",
+  "prompt": "In my UART ring buffer snippets note, remove the last code snippet and keep everything else."
+ }
+]

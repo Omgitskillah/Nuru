@@ -1,0 +1,17 @@
+[
+ {"id": 101, "group": "exact", "expect": "search(words), exact match, read", "prompt": "What did I decide about the modem configuration?"},
+ {"id": 102, "group": "exact", "expect": "search(name)", "prompt": "What do I know about Priya Raman?"},
+ {"id": 103, "group": "exact", "expect": "search(date)", "prompt": "What happened on 2026-09-18?"},
+ {"id": 104, "group": "meaning", "expect": "search(description), meaning matches", "prompt": "Have I written anything about being tired or not sleeping enough?"},
+ {"id": 105, "group": "meaning", "expect": "search(description)", "prompt": "Do I have notes about how to look after my health?"},
+ {"id": 106, "group": "meaning", "expect": "search; meaning match on vendor email", "prompt": "Was there anything shady or scam-like that someone sent me?"},
+ {"id": 107, "group": "mixed", "expect": "search, exact + meaning", "prompt": "What do my notes say about battery life?"},
+ {"id": 108, "group": "phrase", "expect": "find_in_notes or search", "prompt": "Which note contains the exact phrase \"Novice gains\"?"},
+ {"id": 109, "group": "id", "expect": "find_in_notes or search", "prompt": "Which note has the id 01M2X9P3CRRBJFFPJ0EYXVCTRB?"},
+ {"id": 110, "group": "miss", "expect": "search; says nothing found despite meaning matches", "prompt": "What does my note about Kubernetes say?"},
+ {"id": 111, "group": "archive", "expect": "search finds the archived router note", "prompt": "What did I try to fix my Wi-Fi dropping in the evenings?"},
+ {"id": 112, "group": "trash", "expect": "trashed pancake note never found", "prompt": "What was in my pancake recipe note?"},
+ {"id": 113, "group": "write", "expect": "search first, then write_note to the found path", "prompt": "Add to Alice Chen's note that she's moving to the Nairobi office in January."},
+ {"id": 114, "group": "delete", "expect": "search exact, then trash", "prompt": "Delete the UART ring buffer snippets note."},
+ {"id": 115, "group": "combined", "expect": "search, read, statistics", "prompt": "What's the average sleep in my gym log, and is it below 7 hours?"}
+]

@@ -1,0 +1,9 @@
+[
+ {"id": 901, "expect": "replace in place (nuru/, author both)", "prompt": "My FreeRTOS task management note says the utilisation is 0.58, but its table adds up to 0.36. Correct it."},
+ {"id": 902, "expect": "replace in place (nuru/, author both)", "prompt": "My sensor calibration note says the slope is about 69.2 counts/ppm, but the least-squares fit is 66.5. Fix the note."},
+ {"id": 903, "expect": "replace in place, ISR removed (or 'nothing changed' surfaced)", "prompt": "In my UART ring buffer snippets note, remove the last code snippet and keep everything else."},
+ {"id": 904, "expect": "correction note linking it (author user)", "prompt": "My home lab inventory says I'm out of nylon standoffs, but I have 20. Correct that."},
+ {"id": 905, "expect": "correction note linking it (author user)", "prompt": "The vendor email note says the lead time is 26 weeks; they've confirmed 20 weeks. Correct it."},
+ {"id": 906, "expect": "correction note linking it (user/)", "prompt": "My modem configuration update note says the baud rate should be 115200, but we moved to 230400. Correct it."},
+ {"id": 907, "expect": "append or correction note (shared/, no replace)", "prompt": "The Area Monitor Device Redesign project note says the SARA-R510S lead time is 26 weeks; it's 20 now. Correct it."}
+]

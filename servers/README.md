@@ -1,6 +1,6 @@
 # Servers
 
-Each MCP server lives in its own self-contained folder here (own `pyproject.toml`, deps, tests), and they're tied together by a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) rooted at the repo root, so `uv run pytest` from there discovers and runs every package's tests in one go.
+Each MCP server lives in its own self-contained folder here (own `pyproject.toml`, deps, tests), and they're tied together by a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) rooted at the repo root, so `uv run pytest` from there runs the tests owned by this repository. Submodules run their own tests in their own repositories.
 
 The servers: [obsidian](obsidian) (the vault, a git submodule from [obsidian-4-llms](https://github.com/Omgitskillah/obsidian-4-llms)), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [math-4-llms](math-4-llms) (a git submodule: `calculate` for strict expressions and `statistics` for a list of numbers, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
 
@@ -39,13 +39,13 @@ Each session (starting at `initialize`) gets its own log file, named `<count_up_
 
 ## Running tests
 
-From the repo root, `uv run pytest` runs every package's test suite (both `servers/obsidian` and `servers/tools/logging`):
+From the repo root, `uv run pytest` runs the Nuru, deep-think, Laya, and shared logging test suites. Obsidian and math-4-llms tests run in their own repositories:
 
 ```bash
 VAULT_PATH=/tmp/ci-vault uv run pytest
 ```
 
-`VAULT_PATH` only matters for the Obsidian tests that need it - any writable path works for CI. Each package can still be tested on its own by running `uv run pytest` from within its own folder.
+Nuru tests that exercise the Obsidian integration still need the Obsidian package installed. See [Obsidian standalone tests](obsidian/ci/README.md) to run its own suite separately.
 
 ## Testing a single function directly
 
@@ -64,8 +64,10 @@ Initialize Obsidian after cloning Nuru:
 git submodule update --init servers/obsidian
 ```
 
-Nuru tests the pinned Obsidian revision on every push and pull request. Obsidian
-also runs its own tests on every push and pull request in its repository.
+Nuru runs only its own packages' tests on every push and pull request. It checks
+out the pinned Obsidian revision as a dependency of Nuru and Laya, without
+running Obsidian's test suite. Obsidian runs its own tests on every push and
+pull request in its repository.
 For a private Obsidian repository, set the Nuru Actions secret
 `OBSIDIAN_REPO_TOKEN` to a fine-grained token with Contents read access to
 `Omgitskillah/obsidian-4-llms`. Public repositories need no extra secret.
@@ -73,5 +75,4 @@ For a private Obsidian repository, set the Nuru Actions secret
 Commit and push Obsidian changes in its own repository first, then commit the
 updated `servers/obsidian` submodule pointer in Nuru. The Obsidian repository
 includes a copy of `access-logging` for its standalone CI workspace; Nuru's workspace
-continues to use `tools/logging`. Nuru excludes the vendored logging tests
-because it already tests the shared logging package.
+continues to use `tools/logging`. Nuru's test discovery excludes submodules and their vendored dependencies.

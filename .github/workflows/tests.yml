@@ -14,7 +14,8 @@ jobs:
         id: obsidian
         run: echo "revision=$(git rev-parse HEAD:servers/obsidian)" >> "$GITHUB_OUTPUT"
 
-      - name: Check out Obsidian
+      # Nuru and Laya import Obsidian code; only Nuru-owned tests run below.
+      - name: Check out Obsidian dependency
         uses: actions/checkout@v5
         with:
           repository: Omgitskillah/obsidian-4-llms
@@ -32,7 +33,7 @@ jobs:
       - name: Run tests
         env:
           VAULT_PATH: /tmp/ci-vault
-        run: uv run --locked pytest -v --cov=servers --cov=nuru --cov=tools --cov-report=term-missing
+        run: uv run --locked pytest -v --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=tools/logging/src --cov-report=term-missing
 
       - name: Coverage summary
         if: always()

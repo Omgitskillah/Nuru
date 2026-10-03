@@ -14,8 +14,8 @@ from obsidian_mcp.frontmatter_template import TYPE_FOLDER
 
 WRITE_TOOLS = frozenset({"write_note", "rename_or_move_file"})
 
-# obsidian_mcp.server._PROTECTED_FOLDER: the user's own notes. Only write_note (creating one of
-# the user/ types with author "user", or adding to a note there) may write there.
+# obsidian_mcp.server._PROTECTED_FOLDER: the user's own notes. Nuru writes nothing there (its server
+# refuses it); Nuru's own daily notes and reminders live in nuru/.
 PROTECTED_FOLDER = "user"
 TEMPLATES_FOLDER = "Templates"
 # obsidian_mcp.server._ARCHIVE_FOLDER / _TRASH_FOLDER: archived notes can't be written to, and
@@ -70,10 +70,13 @@ def check_write(tool: str, arguments: dict[str, Any], known_ids: set[str]) -> li
         note_type = arguments.get("type")
         if note_type is not None and note_type not in TYPE_FOLDER:
             reasons.append(f"type {note_type!r} is not one of {sorted(TYPE_FOLDER)}")
-        elif (note_type and note_type != "daily" and TYPE_FOLDER[note_type] == PROTECTED_FOLDER
-              and arguments.get("author") not in (None, "user")):
-            reasons.append(f"a {note_type} note is the user's own and needs author 'user'")
+        elif note_type and TYPE_FOLDER[note_type] == PROTECTED_FOLDER:
+            reasons.append(f"a {note_type} note lives in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes")
+        if arguments.get("mode", "append") not in ("append", "replace"):
+            reasons.append(f"mode {arguments.get('mode')!r} is not append or replace")
         note = arguments.get("note")
+        if isinstance(note, str) and PurePosixPath(note).parts[:1] == (PROTECTED_FOLDER,):
+            reasons.append(f"'{note}' is in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes")
         if isinstance(note, str) and PurePosixPath(note).parts[:1] == (ARCHIVE_FOLDER,):
             reasons.append(f"'{note}' is archived; move it out of {ARCHIVE_FOLDER}/ before writing to it")
 

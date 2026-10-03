@@ -12,6 +12,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from obsidian_mcp import server
 
 
+def _no_done(result):
+    """A write/move result without its "done" sentence, for comparing the rest exactly."""
+    return {k: v for k, v in result.items() if k != "done"}
+
+
 def _notes():
     """Every note the tools can see, as vault-relative paths (what list_notes returned)."""
     return [server._rel(p) for p in server._all_notes()]
@@ -2217,7 +2222,8 @@ def test_write_note_defaults_leave_the_schema_required_set_unchanged():
 
     tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "write_note")
 
-    assert tool.input_schema["required"] == ["content"]
+    assert tool.input_schema.get("required", []) == []
+    assert tool.input_schema["properties"]["mode"]["default"] == "append"
 
 
 # --- write_note: create or append ---
@@ -2239,7 +2245,7 @@ def test_write_note_appends_to_a_note_found_by_its_title(tmp_path, monkeypatch):
 
     result = server.write_note("second", note="garden plan", type="topic", author="nuru")
 
-    assert result == {"path": created["path"], "id": created["id"], "created": False}
+    assert _no_done(result) == {"path": created["path"], "id": created["id"], "created": False}
     assert (tmp_path / created["path"]).read_text().endswith("first\n\nsecond")
     assert _notes() == ["nuru/garden-plan.md"]
 
@@ -2249,7 +2255,7 @@ def test_write_note_appends_to_a_note_made_in_obsidian_by_its_path(tmp_path, mon
 
     result = server.write_note("more", note="Projects/Plan.md")
 
-    assert result == {"path": "Projects/Plan.md", "id": None, "created": False}
+    assert _no_done(result) == {"path": "Projects/Plan.md", "id": None, "created": False}
 
 
 def test_write_note_refuses_a_name_that_matches_several_notes(tmp_path, monkeypatch):
@@ -2295,7 +2301,85 @@ def test_write_note_refuses_supersedes_on_an_existing_note(tmp_path, monkeypatch
         server.write_note("more", note="New", supersedes=old["id"])
 
 
-# --- add_to_daily ---
+# --- write_note: modes, empty notes and what the result says ---
+
+
+def test_replace_rewrites_the_body_and_keeps_the_frontmatter(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = server.create_note(type="topic", title="Plan", author="nuru", body="old line")
+    before = (tmp_path / made["path"]).read_text()
+    frontmatter = before[: before.index("---\n", 4) + 4]
+
+    result = server.write_note("# Plan\n\nnew line", note="Plan", mode="replace")
+
+    assert result["done"] == "Replaced the text of the existing note 'Plan' at nuru/plan.md (its frontmatter kept)."
+    assert (tmp_path / made["path"]).read_text() == frontmatter + "\n# Plan\n\nnew line"
+    assert server.read_note(made["id"]).endswith("new line")
+
+
+def test_replace_with_nothing_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="topic", title="Plan", author="nuru", body="keep me")
+
+    with pytest.raises(ToolError, match="nothing to add.*trash"):
+        server.write_note("", note="Plan", mode="replace")
+    assert server.read_note("Plan").endswith("keep me")
+
+
+def test_an_unknown_mode_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="Unknown mode 'overwrite'"):
+        server.write_note("x", note="Plan", mode="overwrite", type="topic", author="nuru")
+
+
+def test_replace_obeys_the_same_guards_as_append(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    monkeypatch.setattr(server, "_PROTECT_USER_AUTHORED", True)
+    server.create_note(type="topic", title="Mine", author="user", body="original")
+    _vault_with(tmp_path, monkeypatch, {"archive/nuru/old.md": "---\nauthor: nuru\n---\nold"})
+
+    with pytest.raises(ToolError, match="written by the user"):
+        server.write_note("gone", note="Mine", mode="replace")
+    with pytest.raises(ToolError, match="is archived"):
+        server.write_note("gone", note="old", mode="replace")
+
+
+def test_a_new_note_can_be_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    result = server.write_note(note="Reading List", type="topic", author="nuru")
+
+    assert result["created"] is True
+    assert result["done"] == "Created the topic note 'Reading List' at nuru/reading-list.md."
+    assert (tmp_path / result["path"]).read_text().endswith("# Reading List\n\n")
+
+
+def test_an_append_says_which_note_and_where(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.create_note(type="person", title="Alice Chen", author="nuru")
+
+    result = server.write_note("New number: 555-0102", note="Alice Chen", type="person", author="nuru")
+
+    assert result["done"] == "Added to the end of the existing note 'Alice Chen' at nuru/alice-chen.md."
+
+
+def test_a_move_says_what_happened(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"nuru/a.md": "a", "nuru/b.md": "b", "nuru/c.md": "c"})
+
+    assert server.rename_or_move_file("nuru/a.md", "nuru/z.md")["done"] == "Moved 'z' from nuru/a.md to nuru/z.md."
+    assert server.rename_or_move_file("nuru/b.md", "archive")["done"].startswith("Archived 'b': moved nuru/b.md to archive/nuru/b.md.")
+    assert server.rename_or_move_file("nuru/c.md", "trash")["done"].startswith("Deleted 'c': moved nuru/c.md to trash/nuru/c.md.")
+
+
+def test_a_missing_note_says_how_to_name_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match='note is missing - pass note="<a short title>"'):
+        server.write_note("Flights: 400 EUR", type="topic", author="nuru")
+
+
+# --- write_note(type="daily"): Nuru's own daily, in nuru/ ---
 
 
 def test_add_to_daily_creates_todays_daily_when_there_is_none(tmp_path, monkeypatch):
@@ -2305,11 +2389,11 @@ def test_add_to_daily_creates_todays_daily_when_there_is_none(tmp_path, monkeypa
     result = server.write_note("- 09:00 Coffee", type="daily")
 
     assert result["created"] is True
-    assert result["path"] == "user/daily-2026-09-20.md"
+    assert result["path"] == "nuru/daily-2026-09-20.md"
     text = (tmp_path / result["path"]).read_text()
     assert "type: daily\n" in text
     assert "date: '2026-09-20'\n" in text
-    assert "author: user\n" in text
+    assert "author: nuru\n" in text
     assert "# Daily 2026-09-20\n\n- 09:00 Coffee" in text
 
 
@@ -2329,9 +2413,9 @@ def test_add_to_daily_appends_to_an_existing_daily_instead_of_making_another(tmp
 
     second = server.write_note("second", type="daily")
 
-    assert second == {"path": first["path"], "id": first["id"], "created": False}
+    assert _no_done(second) == {"path": first["path"], "id": first["id"], "created": False}
     assert (tmp_path / first["path"]).read_text().endswith("first\n\nsecond")
-    assert len(list((tmp_path / "user").glob("*.md"))) == 1
+    assert len(list((tmp_path / "nuru").glob("*.md"))) == 1
 
 
 def test_add_to_daily_finds_a_daily_create_note_made_under_any_title(tmp_path, monkeypatch):
@@ -2342,7 +2426,7 @@ def test_add_to_daily_finds_a_daily_create_note_made_under_any_title(tmp_path, m
 
     result = server.write_note("later", type="daily")
 
-    assert result == {"path": made["path"], "id": made["id"], "created": False}
+    assert _no_done(result) == {"path": made["path"], "id": made["id"], "created": False}
     assert (tmp_path / made["path"]).read_text().endswith("earlier\n\nlater")
 
 
@@ -2367,16 +2451,29 @@ def test_add_to_daily_ignores_a_non_daily_note_that_mentions_todays_date(tmp_pat
 
 
 def test_add_to_daily_appends_to_a_daily_made_in_obsidian_with_an_unquoted_date(tmp_path, monkeypatch):
-    (tmp_path / "user").mkdir()
-    (tmp_path / "user" / "2026-09-20.md").write_text("---\ntype: daily\ndate: 2026-09-20\n---\n\n# 2026-09-20\n")
+    (tmp_path / "nuru").mkdir()
+    (tmp_path / "nuru" / "2026-09-20.md").write_text("---\ntype: daily\ndate: 2026-09-20\n---\n\n# 2026-09-20\n")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
     result = server.write_note("typed elsewhere", type="daily")
 
-    assert result == {"path": "user/2026-09-20.md", "id": None, "created": False}
-    assert (tmp_path / "user" / "2026-09-20.md").read_text().endswith("# 2026-09-20\n\ntyped elsewhere")
-    assert not (tmp_path / "user" / "daily-2026-09-20.md").exists()
+    assert _no_done(result) == {"path": "nuru/2026-09-20.md", "id": None, "created": False}
+    assert (tmp_path / "nuru" / "2026-09-20.md").read_text().endswith("# 2026-09-20\n\ntyped elsewhere")
+    assert not (tmp_path / "nuru" / "daily-2026-09-20.md").exists()
+
+
+def test_the_users_own_daily_in_user_is_never_written(tmp_path, monkeypatch):
+    (tmp_path / "user").mkdir()
+    users = tmp_path / "user" / "2026-09-20.md"
+    users.write_text("---\ntype: daily\ndate: 2026-09-20\nauthor: user\n---\n\n# 2026-09-20\n")
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
+
+    result = server.write_note("mine", type="daily")
+
+    assert result["created"] is True and result["path"] == "nuru/daily-2026-09-20.md"
+    assert users.read_text().endswith("# 2026-09-20\n")
 
 
 def test_add_to_daily_survives_a_note_with_broken_frontmatter_mentioning_the_date(tmp_path, monkeypatch):
@@ -2395,28 +2492,30 @@ def test_add_to_daily_uses_one_date_for_the_whole_call(tmp_path, monkeypatch):
 
     result = server.write_note("x", type="daily")
 
-    assert result["path"] == "user/daily-2026-09-20.md"
+    assert result["path"] == "nuru/daily-2026-09-20.md"
     assert "date: '2026-09-20'\n" in (tmp_path / result["path"]).read_text()
 
 
-@pytest.mark.parametrize("text", ["", "   ", "\n"])
-def test_add_to_daily_rejects_empty_text(tmp_path, monkeypatch, text):
+def test_an_empty_daily_can_be_created_but_not_added_to(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    _today_is(monkeypatch, "2026-09-20")
 
-    with pytest.raises(ToolError, match="content is empty"):
-        server.write_note(text, type="daily")
-    assert not (tmp_path / "user").exists()
+    made = server.write_note(type="daily")
+
+    assert made["created"] is True and (tmp_path / made["path"]).read_text().endswith("# Daily 2026-09-20\n\n")
+    with pytest.raises(ToolError, match="content is empty - nothing to add"):
+        server.write_note("  ", type="daily")
 
 
 def test_add_to_daily_reports_a_filename_clash_with_a_note_it_could_not_recognise_as_a_daily(tmp_path, monkeypatch):
-    (tmp_path / "user").mkdir()
-    (tmp_path / "user" / "daily-2026-09-20.md").write_text("no frontmatter at all")
+    (tmp_path / "nuru").mkdir()
+    (tmp_path / "nuru" / "daily-2026-09-20.md").write_text("no frontmatter at all")
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     _today_is(monkeypatch, "2026-09-20")
 
     with pytest.raises(ToolError, match="FileExistsError"):
         server.write_note("x", type="daily")
-    assert (tmp_path / "user" / "daily-2026-09-20.md").read_text() == "no frontmatter at all"
+    assert (tmp_path / "nuru" / "daily-2026-09-20.md").read_text() == "no frontmatter at all"
 
 
 def test_add_to_daily_is_callable_through_the_protocol(tmp_path, monkeypatch):
@@ -2428,7 +2527,7 @@ def test_add_to_daily_is_callable_through_the_protocol(tmp_path, monkeypatch):
     result = asyncio.run(server.mcp.call_tool("write_note", {"type": "daily", "content": "hello"}))
 
     assert result.is_error is not True
-    assert (tmp_path / "user" / "daily-2026-09-20.md").exists()
+    assert (tmp_path / "nuru" / "daily-2026-09-20.md").exists()
 
 
 # --- get_links ---
@@ -2670,7 +2769,7 @@ def test_archive_note_moves_a_note_under_archive_keeping_its_folder(tmp_path, mo
 
     result = server.rename_or_move_file("Old Idea", "archive")
 
-    assert result == {"from": "nuru/old-idea.md", "to": "archive/nuru/old-idea.md"}
+    assert _no_done(result) == {"from": "nuru/old-idea.md", "to": "archive/nuru/old-idea.md"}
     assert not (tmp_path / "nuru" / "old-idea.md").exists()
     assert "content" in (tmp_path / "archive" / "nuru" / "old-idea.md").read_text()
     assert created["path"] == result["from"]
@@ -2702,7 +2801,7 @@ def test_archive_note_is_reversible_by_moving_the_file_back(tmp_path, monkeypatc
 def test_archive_note_accepts_a_forgiving_name(tmp_path, monkeypatch):
     _vault_with(tmp_path, monkeypatch, {"projects/Nuru MCP.md": "x"})
 
-    assert server.rename_or_move_file("nuru mcp", "archive") == {
+    assert _no_done(server.rename_or_move_file("nuru mcp", "archive")) == {
         "from": "projects/Nuru MCP.md",
         "to": "archive/projects/Nuru MCP.md",
     }
@@ -2749,7 +2848,7 @@ def test_an_archived_note_cannot_be_written_until_it_is_moved_out(tmp_path, monk
     assert (tmp_path / "archive/nuru/old-idea.md").read_text().endswith("content")
 
     assert server.rename_or_move_file("archive/nuru/old-idea.md", "nuru/old-idea.md")["to"] == "nuru/old-idea.md"
-    assert server.write_note("more", note=created["id"]) == {"path": created["path"], "id": created["id"], "created": False}
+    assert _no_done(server.write_note("more", note=created["id"])) == {"path": created["path"], "id": created["id"], "created": False}
 
 
 # --- trash: rename_or_move_file(x, "trash") is a delete as far as any tool can tell ---
@@ -2760,7 +2859,7 @@ def _trash(tmp_path, monkeypatch):
     gone = server.create_note(type="topic", title="Gone", author="nuru", body="findable words [[Keeper]]", tags=["zzz"])
     server.create_note(type="topic", title="Keeper", author="nuru", body="links to [[Gone]]")
     (tmp_path / "nuru" / "pic.png").write_bytes(b"x")
-    assert server.rename_or_move_file("Gone", "trash") == {"from": "nuru/gone.md", "to": "trash/nuru/gone.md"}
+    assert _no_done(server.rename_or_move_file("Gone", "trash")) == {"from": "nuru/gone.md", "to": "trash/nuru/gone.md"}
     server.rename_or_move_file("nuru/pic.png", "trash")
     return gone
 
@@ -2815,7 +2914,7 @@ def test_an_archived_note_goes_to_trash_without_its_archive_prefix(tmp_path, mon
     assert server.rename_or_move_file("old", "trash")["to"] == "trash/nuru/old.md"
 
 
-@pytest.mark.parametrize("type_,extra", [("daily", {"date": "2026-09-14"}), ("directives", {})])
+@pytest.mark.parametrize("type_,extra", [("directives", {})])
 def test_archive_note_refuses_a_note_under_user(tmp_path, monkeypatch, type_, extra):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     created = server.create_note(type=type_, title="Protected", author="user", **extra)
@@ -3456,7 +3555,7 @@ def test_a_correction_lives_in_nuru_and_links_what_it_corrects(tmp_path, monkeyp
     assert result["path"] == "nuru/sara-lead-time.md"
     text = (tmp_path / result["path"]).read_text()
     assert f"Corrects: [[{first['id']}]], [[{second['id']}]]\n\nLead time is 20 weeks, not 26." in text
-    assert "version: 0.2.0\n" in text and "author: nuru\n" in text
+    assert "version: 0.3.0\n" in text and "author: nuru\n" in text
     backlinks = server.get_links(first["id"])["backlinks"]
     assert result["path"] in backlinks
 
@@ -3498,8 +3597,17 @@ def test_nuru_and_shared_notes_stay_writable(protected):
     assert server.rename_or_move_file(mine["path"], "archive")["to"] == "archive/nuru/mine.md"
 
 
-def test_todays_daily_still_takes_additions(protected):
-    assert server.write_note("gym at six", type="daily")["path"].startswith("user/")
+def test_nurus_daily_takes_additions_but_nothing_in_user_is_written(protected):
+    assert server.write_note("gym at six", type="daily")["path"].startswith("nuru/")
+    (protected / "user").mkdir()
+    (protected / "user" / "plan.md").write_text("---\nauthor: user\n---\n# Plan\n")
+    (protected / "user" / "untyped.md").write_text("# no frontmatter\n")
+    for name in ("user/plan.md", "user/untyped.md"):
+        with pytest.raises(ToolError, match="the user's own folder, and Nuru never writes there"):
+            server.write_note("more", note=name)
+    with pytest.raises(ToolError, match="the user's own folder"):
+        server.write_note("rule", note="New Directives", type="directives", author="user")
+    assert (protected / "user" / "untyped.md").read_text() == "# no frontmatter\n"
 
 
 def test_without_the_flag_other_clients_can_still_change_user_authored_notes(tmp_path, monkeypatch):

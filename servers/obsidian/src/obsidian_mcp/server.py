@@ -1441,9 +1441,20 @@ def _reject_user_authored(target: Path, rel_path: str) -> None:
         if note.suffix == ".md" and _read_frontmatter(note.read_text(errors="ignore")).get("author") == "user":
             shown = rel_path if note == target else str(note.relative_to(VAULT_PATH))
             raise PermissionError(
-                f"'{shown}' was written by the user (author: user), so Nuru may not change it. "
-                "Write a new note instead - a correction can point at it."
+                f"'{shown}' was written by the user (author: user), so Nuru may not change, move or delete it. "
+                "Tell the user it can't be changed. Don't make a copy or a new note in its place; only if they "
+                "asked to correct what it says, write a correction note that points at it."
             )
+
+
+def _reject_user_folder_for_nuru(rel_path: str) -> None:
+    """With OBSIDIAN_PROTECT_USER_AUTHORED on (Nuru's own server), nothing under user/ is written:
+    it is the user's folder. Nuru keeps its own daily notes and reminders in nuru/."""
+    if _PROTECT_USER_AUTHORED and Path(rel_path).parts[:1] == (_PROTECTED_FOLDER,):
+        raise PermissionError(
+            f"'{rel_path}' is in {_PROTECTED_FOLDER}/, the user's own folder, and Nuru never writes there. "
+            "Tell the user what you would have added instead."
+        )
 
 
 def _reject_protected_folder(target: Path, rel_path: str) -> None:
@@ -1451,7 +1462,8 @@ def _reject_protected_folder(target: Path, rel_path: str) -> None:
         parts = target.relative_to(VAULT_PATH).parts
         if parts and parts[0] == _PROTECTED_FOLDER:
             raise PermissionError(
-                f"'{rel_path}' is under '{_PROTECTED_FOLDER}/', which only write_note may write to."
+                f"'{rel_path}' is under '{_PROTECTED_FOLDER}/', the user's own folder: it can't be moved, archived or "
+                "deleted. Tell the user."
             )
 
 
@@ -1518,14 +1530,20 @@ def _next_session(type: str) -> str:
 
 
 def _find_daily(day: str) -> Path | None:
-    """The daily note for `day` ('YYYY-MM-DD'), whoever made it.
+    """The daily note for `day` ('YYYY-MM-DD') in the daily folder (template.TYPE_FOLDER).
 
     Found by its frontmatter (type daily, that date), not by guessing a
     filename: a daily made in Obsidian, or by create_note under a title like
-    "Daily Note", can be named anything.
+    "Daily Note", can be named anything. Only the daily folder counts: the
+    user's own dailies in user/ are theirs, and Nuru never writes there.
     """
+    folder = (template.TYPE_FOLDER["daily"],)
     for path, frontmatter in _frontmatters_mentioning(day):
-        if frontmatter.get("type") == "daily" and _date_str(frontmatter.get("date")) == day:
+        if (
+            Path(_rel(path)).parts[:1] == folder
+            and frontmatter.get("type") == "daily"
+            and _date_str(frontmatter.get("date")) == day
+        ):
             return path
     return None
 
@@ -1734,21 +1752,34 @@ def _looks_like_path_or_id(note: str) -> bool:
     return "/" in note or note.endswith(".md") or bool(_NOTE_ID.fullmatch(note.strip()))
 
 
+_WRITE_MODES = ("append", "replace")
+
+
+def _title_of(path: Path, frontmatter: dict[str, Any]) -> str:
+    """A note's title for a message: the index's, else its first alias, else its filename."""
+    aliases = frontmatter.get("aliases")
+    title = _indexed_notes().get(_rel(path), {}).get("title") or (aliases[0] if isinstance(aliases, list) and aliases else None)
+    return str(title or path.stem)
+
+
 @mcp.tool(
     description=(
-        "Write to a note: add content to it if it exists, create it if it doesn't. content: Markdown. "
-        "note: an existing note's path, title or id, or the title for a new note. type: needed to create "
-        "one of directives, daily, correction, profile, preferences, person, topic, index, transcript, "
-        "project, session; type=daily (no note) adds to today's daily. author: needed to create - user, "
-        "nuru or both. tags, supersedes (id of a note this replaces), targets (for a correction: ids of "
-        "the notes it corrects) and session (YYYY-MM-DD-NN, for transcript/session) only apply when "
-        "creating. Archived notes can't be written - move one out first. Returns {path, id, created}."
+        "Write to a note, creating it if it doesn't exist. note: an existing note's path, title or id, or the "
+        "title for a new note. content: Markdown. mode: 'append' (default) adds content to the end of the note - "
+        "send ONLY the new text, never the note's existing text; 'replace' makes content the note's whole new "
+        "text (its frontmatter is kept), so send the complete note. type (needed to create): one of correction, "
+        "profile, preferences, person, topic, index, transcript, project, session, daily; type=daily (no note) "
+        "writes to your own daily note for today, in nuru/ - use it for reminders too. author (needed to "
+        "create): nuru or both. tags, supersedes (id of a note this replaces), targets (for a correction: ids of "
+        "the notes it corrects) and session (YYYY-MM-DD-NN) only apply when creating. Nothing in user/ can be "
+        "written, nor archived notes. Returns {done, path, id, created}: done says in words what happened."
     )
 )
 @_tool
 def write_note(
-    content: str,
+    content: str = "",
     note: str | None = None,
+    mode: str = "append",
     type: str | None = None,
     author: str | None = None,
     tags: list[str] | None = None,
@@ -1756,49 +1787,59 @@ def write_note(
     targets: list[str] | None = None,
     session: str | None = None,
 ) -> dict[str, Any]:
-    """Add `content` to a note, creating the note first if there isn't one.
+    """Write `content` to a note, creating the note first if there isn't one.
 
     Replaces create_note, append_note and add_to_daily, so the model never
     has to decide whether a note exists before writing to it:
 
-    - type="daily" is today's daily ("today" is the server's clock): found by
-      its frontmatter (see _find_daily), so one made in Obsidian is appended
-      to rather than duplicated; otherwise created as "Daily YYYY-MM-DD",
-      author "user" (the only author a daily may have). `note` is ignored.
+    - type="daily" is today's daily in the daily folder ("today" is the
+      server's clock; see _find_daily): written to if it exists, otherwise
+      created as "Daily YYYY-MM-DD", author "nuru". `note` is ignored.
     - Otherwise `note` is resolved as read_note resolves a name (path,
       filename, title, alias or id; never anything in trash/). One match is
-      appended to. Several are refused, listing them - a guess would write to
-      the wrong note. None creates a new note titled `note` (see create_note).
+      written to. Several are refused, listing them - a guess would write to
+      the wrong note. None creates a new note titled `note` (see create_note);
+      a new note may be empty.
+
+    mode says how an existing note is written: "append" adds `content` to the
+    end (with a blank line before it); "replace" makes `content` the whole of
+    the note after its frontmatter, which stays as it was - the one way to
+    change existing text, so every guard below applies to it too. Replacing
+    with nothing is refused: that is a delete, which is a move to trash.
 
     Guards against the ways a write lands somewhere it shouldn't:
     - A `note` that is a path or an id but matches nothing is refused, with
       the closest notes, rather than turned into a new note's title - a
       mistyped path would otherwise quietly become a duplicate.
-    - An existing note can't be appended to with arguments that only make
-      sense for a new one: supersedes or targets, or a type other than the
-      note's own (a correction must never become an edit of the note it
-      corrects).
+    - An existing note can't be written with arguments that only make sense
+      for a new one: supersedes or targets, or a type other than the note's
+      own (a correction must never become an edit of the note it corrects).
     - An archived note is refused: move it out of archive/ first.
-    - A user-authored note is refused when OBSIDIAN_PROTECT_USER_AUTHORED is on.
+    - With OBSIDIAN_PROTECT_USER_AUTHORED on (Nuru's server): nothing under
+      user/, and no note the user wrote anywhere else.
 
-    Returns {"path", "id", "created"}: "created" says whether this call made
-    the note; "id" is null for a note the index doesn't know (one made in
-    Obsidian without an id in its frontmatter).
+    Returns {"done", "path", "id", "created"}: "done" is one sentence naming
+    the note, its path and what was done to it, for the reply; "created" says
+    whether this call made the note; "id" is null for a note the index
+    doesn't know (one made in Obsidian without an id in its frontmatter).
     """
     _check_accessible(VAULT_PATH)
-    if not content.strip():
-        raise ValueError("content is empty - give the Markdown to write.")
+    if mode not in _WRITE_MODES:
+        raise ValueError(f"Unknown mode '{mode}'. Use 'append' to add to the end, or 'replace' to rewrite the note.")
 
     if type == "daily":
         today = _today()
         existing = _find_daily(today)
         if existing is None:
-            made = create_note(type="daily", title=f"Daily {today}", author="user", body=content, date=today)
-            return {**made, "created": True}
+            made = create_note(type="daily", title=f"Daily {today}", author="nuru", body=content, date=today)
+            return {"done": f"Created today's daily note 'Daily {today}' at {made['path']}.", **made, "created": True}
         matches = [existing]
     else:
         if note is None or not note.strip():
-            raise ValueError("note is empty - give the title, path or id of the note to write to.")
+            raise ValueError(
+                "note is missing - pass note=\"<a short title>\" to create a note, or the path of an existing "
+                "note to write to it (search finds paths)."
+            )
         matches = _matching_notes(note)
         if len(matches) > 1:
             raise ValueError(
@@ -1818,15 +1859,18 @@ def write_note(
                     f"No note named '{note}' exists. To create it, pass type and author too; "
                     "to add to an existing note, use search to find its path."
                 )
+            if type in template.TYPE_FOLDER:
+                _reject_user_folder_for_nuru(f"{template.TYPE_FOLDER[type]}/{note}")
             made = create_note(
                 type=type, title=note, author=author, body=content, tags=tags,
                 supersedes=supersedes, targets=targets, session=session,
             )
-            return {**made, "created": True}
+            return {"done": f"Created the {type} note '{note}' at {made['path']}.", **made, "created": True}
 
     target = matches[0]
     rel_path = _rel(target)
-    frontmatter = _read_frontmatter(target.read_text(errors="ignore"))
+    text = target.read_text(errors="ignore")
+    frontmatter = _read_frontmatter(text)
     if supersedes is not None or targets is not None:
         raise ValueError(
             f"'{rel_path}' already exists; supersedes and targets only apply to a new note. "
@@ -1837,24 +1881,40 @@ def write_note(
             f"'{rel_path}' already exists and is a {frontmatter.get('type') or 'untyped'} note, not {type}. "
             "To make a new note, give it its own title."
         )
+    _reject_user_folder_for_nuru(rel_path)
     if _is_archived(target):
         raise PermissionError(
-            f"'{rel_path}' is archived and can't be written to. Move it out first: "
-            f"rename_or_move_file('{rel_path}', '{rel_path.removeprefix(_ARCHIVE_FOLDER + '/')}')."
+            f"'{rel_path}' is archived and can't be written to. Tell the user; only if they ask to restore it, "
+            f"move it out with rename_or_move_file('{rel_path}', '{rel_path.removeprefix(_ARCHIVE_FOLDER + '/')}')."
         )
     _reject_user_authored(target, rel_path)
+    if not content.strip():
+        raise ValueError(
+            "content is empty - nothing to add. (To delete a note, move it to trash with rename_or_move_file.)"
+        )
 
-    _append_text(target, content)
+    title = _title_of(target, frontmatter)
+    if mode == "replace":
+        head = match.group(0) if (match := _FRONTMATTER.match(text)) else ""
+
+        def _replace() -> None:
+            target.write_text(head + ("\n" if head else "") + content)
+
+        _run_with_timeout(_replace)
+        done = f"Replaced the text of the existing note '{title}' at {rel_path} (its frontmatter kept)."
+    else:
+        _append_text(target, content)
+        done = f"Added to the end of the existing note '{title}' at {rel_path}."
     note_id = _indexed_notes().get(rel_path, {}).get("id") or frontmatter.get("id")
-    return {"path": rel_path, "id": note_id, "created": False}
+    return {"done": done, "path": rel_path, "id": note_id, "created": False}
 
 
 @mcp.tool(
     description="Rename or move a file within the vault. source_path: a vault-relative path, or a note's "
     "title or id. destination_path: the new vault-relative path, or just 'archive' or 'trash' to move it "
     "there under its own folder path (nuru/x.md -> archive/nuru/x.md). Archive keeps a note visible but "
-    "read-only until it is moved out. Trash is final: use it to delete; nothing comes back out of trash. "
-    "Returns {from, to}."
+    "read-only; only move a note out of the archive when the user asks to restore it. Trash is final: use "
+    "it to delete; nothing comes back out of trash. Returns {done, from, to}: done says in words what happened."
 )
 @_tool
 def rename_or_move_file(source_path: str, destination_path: str) -> dict[str, str]:
@@ -1929,7 +1989,14 @@ def rename_or_move_file(source_path: str, destination_path: str) -> dict[str, st
                 raise
 
     _run_with_timeout(_move)
-    return {"from": source_rel, "to": destination_rel}
+    name = destination.stem
+    if _is_trashed(destination):
+        done = f"Deleted '{name}': moved {source_rel} to {destination_rel}. It can't be brought back from trash by Nuru."
+    elif _is_archived(destination):
+        done = f"Archived '{name}': moved {source_rel} to {destination_rel}. It stays readable but can't be written."
+    else:
+        done = f"Moved '{name}' from {source_rel} to {destination_rel}."
+    return {"done": done, "from": source_rel, "to": destination_rel}
 
 
 def main() -> None:

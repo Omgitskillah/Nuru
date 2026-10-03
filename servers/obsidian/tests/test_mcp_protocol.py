@@ -27,8 +27,8 @@ def test_write_note_schema_requires_only_content(tmp_path, monkeypatch):
     schema = next(t for t in tools if t.name == "write_note").input_schema
 
     assert "type_fields" not in schema["properties"]
-    assert schema["required"] == ["content"]
-    assert {"note", "type", "author", "targets", "session"} <= set(schema["properties"])
+    assert schema.get("required", []) == []
+    assert {"content", "note", "mode", "type", "author", "targets", "session"} <= set(schema["properties"])
 
 
 def test_write_note_is_callable_through_call_tool(tmp_path, monkeypatch):
@@ -98,12 +98,12 @@ def test_the_new_tools_work_end_to_end_through_call_tool(tmp_path, monkeypatch):
 
     call("write_note", {"type": "daily", "content": "- 09:00 [[Plan]] kicked off"})
     call("write_note", {"note": "Plan", "type": "project", "author": "both", "tags": ["mcp"], "content": "## Goal\n\nShip"})
-    assert "user/daily-2026-09-20.md" in str(call("browse", {"type": "daily"}))
+    assert "nuru/daily-2026-09-20.md" in str(call("browse", {"type": "daily"}))
     assert "mcp" in str(call("tags"))
     assert "shared/plan.md" in str(call("tags", {"tag": "#MCP"}))
     assert "project" in str(call("tags", {"note": "Plan"}))
     assert "Ship" in str(call("read_note", {"name": "plan", "section": "goal"}))
-    assert "user/daily-2026-09-20.md" in str(call("note_info", {"name": "Plan"}))
+    assert "nuru/daily-2026-09-20.md" in str(call("note_info", {"name": "Plan"}))
     assert "archive/shared/plan.md" in str(call("rename_or_move_file", {"source_path": "Plan", "destination_path": "archive"}))
 
 

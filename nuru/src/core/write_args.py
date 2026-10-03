@@ -12,7 +12,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -24,8 +24,9 @@ class _Args(BaseModel):
 
 
 class WriteNote(_Args):
-    content: str = Field(min_length=1)
+    content: str = ""
     note: str | None = None
+    mode: Literal["append", "replace"] = "append"
     type: str | None = None
     author: str | None = None
     tags: list[str] | None = None
@@ -62,7 +63,7 @@ def validate_arguments(tool: str, answer: Any, known_ids: set[str]) -> ForcedArg
     if isinstance(answer, dict) and set(answer) == {"cannot_do"}:
         return ForcedArguments(None, str(answer["cannot_do"]), [])
     try:
-        arguments = ARGUMENT_MODELS[tool].model_validate(answer).model_dump(exclude_none=True)
+        arguments = ARGUMENT_MODELS[tool].model_validate(answer).model_dump(exclude_none=True, exclude_unset=True)
     except ValidationError as e:
         return ForcedArguments(None, None, [f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()])
     problems = []

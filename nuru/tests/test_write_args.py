@@ -34,8 +34,8 @@ def test_cannot_do_is_the_way_out():
 
 
 @pytest.mark.parametrize("answer", [
-    {"note": KNOWN},  # missing content
-    {"note": KNOWN, "content": ""},  # empty content
+    {"note": KNOWN, "content": "x", "mode": "overwrite"},  # no such mode
+    {"note": KNOWN, "content": 7},  # wrong type
     {"note": KNOWN, "content": "x", "path": "user/x.md"},  # an extra field
     {"note": 7, "content": "x"},  # wrong type
 ])

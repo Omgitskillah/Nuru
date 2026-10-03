@@ -16,7 +16,7 @@ actually current when that note was written, so a future reader can branch on
 shape applies everywhere.
 """
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # The authoritative definition of what each VERSION means: the exact field
 # list, order, and semantics that version's frontmatter has. A note's
@@ -25,7 +25,11 @@ VERSION = "0.2.0"
 # looks its note's version up here to know how to parse it, rather than
 # assuming the current shape applies to every note in the vault.
 #
-# 0.2.0 (current): the same fields as 0.1.0. What changed is where one type
+# 0.3.0 (current): the same fields as 0.2.0. A daily note now lives in nuru/: it is Nuru's own
+#   daily (and its reminders), any author may make one, and the user's dailies stay in user/,
+#   which Nuru's server never writes.
+#
+# 0.2.0: the same fields as 0.1.0. What changed is where one type
 #   lives: a correction is no longer only the user's - it lives in nuru/, any
 #   author may make one, and create_note opens its body with a line linking
 #   every note it corrects ("Corrects: [[<id>]], ..."), so the corrected
@@ -54,7 +58,7 @@ VERSION = "0.2.0"
 # caller. Folder is keyed by type; the eleven types are exactly these keys.
 TYPE_FOLDER = {
     "directives": "user",
-    "daily": "user",
+    "daily": "nuru",
     "correction": "nuru",
     "profile": "nuru",
     "preferences": "nuru",

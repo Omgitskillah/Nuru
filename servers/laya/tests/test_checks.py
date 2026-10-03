@@ -21,9 +21,9 @@ def test_structural_tools_stay_out_of_the_users_folder(tool, arguments):
 
 
 def test_a_users_note_type_needs_the_user_as_author():
-    reasons = check_write("write_note", {"note": "x", "type": "directives", "author": "nuru", "content": "c"}, set())
-    assert reasons == ["a directives note is the user's own and needs author 'user'"]
-    assert check_write("write_note", {"note": "x", "type": "directives", "author": "user", "content": "c"}, set()) == []
+    reasons = check_write("write_note", {"note": "x", "type": "directives", "author": "user", "content": "c"}, set())
+    assert reasons == ["a directives note lives in user/, the user's own folder, which Nuru never writes"]
+    assert "the user's own folder" in check_write("write_note", {"note": "user/plan.md", "content": "c"}, set())[0]
 
 
 def test_todays_daily_needs_no_author():

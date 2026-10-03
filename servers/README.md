@@ -2,7 +2,7 @@
 
 Each MCP server lives in its own self-contained folder here (own `pyproject.toml`, deps, tests), and they're tied together by a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) rooted at the repo root, so `uv run pytest` from there discovers and runs every package's tests in one go.
 
-The servers: [obsidian](obsidian) (the vault), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [math-4-llms](math-4-llms) (a git submodule: `calculate` for strict expressions and `statistics` for a list of numbers, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
+The servers: [obsidian](obsidian) (the vault, a git submodule from [obsidian-4-llms](https://github.com/Omgitskillah/obsidian-4-llms)), [deep-think](deep-think) (`ask_an_expert`, the cloud expert), [math-4-llms](math-4-llms) (a git submodule: `calculate` for strict expressions and `statistics` for a list of numbers, so the local model doesn't do sums in its head) and [laya](laya) (Nuru's decision layer: a small local decision model the harness asks before it acts).
 
 ## Requirements
 
@@ -55,3 +55,23 @@ To quickly test one function without the Inspector, run it directly with Python.
 cd servers/obsidian
 uv run python -c "from obsidian_mcp.server import list_notes; print(list_notes())"
 ```
+
+## Obsidian submodule
+
+Initialize Obsidian after cloning Nuru:
+
+```bash
+git submodule update --init servers/obsidian
+```
+
+Nuru tests the pinned Obsidian revision on every push and pull request. Obsidian
+also runs its own tests on every push and pull request in its repository.
+For a private Obsidian repository, set the Nuru Actions secret
+`OBSIDIAN_REPO_TOKEN` to a fine-grained token with Contents read access to
+`Omgitskillah/obsidian-4-llms`. Public repositories need no extra secret.
+
+Commit and push Obsidian changes in its own repository first, then commit the
+updated `servers/obsidian` submodule pointer in Nuru. The Obsidian repository
+includes a copy of `access-logging` for its standalone CI workspace; Nuru's workspace
+continues to use `tools/logging`. Nuru excludes the vendored logging tests
+because it already tests the shared logging package.

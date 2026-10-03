@@ -1,3 +1,6 @@
 [submodule "servers/math-4-llms"]
 	path = servers/math-4-llms
 	url = git@github.com:Omgitskillah/math-4-llms.git
+[submodule "servers/obsidian"]
+	path = servers/obsidian
+	url = git@github.com:Omgitskillah/obsidian-4-llms.git

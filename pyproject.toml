@@ -3,6 +3,7 @@ members = ["servers/obsidian", "servers/deep-think", "servers/laya", "tools/logg
 
 [tool.pytest.ini_options]
 testpaths = ["servers", "nuru", "tools"]
+addopts = "--ignore=servers/obsidian/vendor"
 
 [dependency-groups]
 dev = [

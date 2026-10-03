@@ -57,11 +57,12 @@ def log_lines(executed: list[dict]) -> str:
 
 
 class Enforcement:
-    def __init__(self, config: DecisionConfig, base_model: str, planner: ExpertPlanner | None):
+    def __init__(self, config: DecisionConfig, think_map: dict | None, planner: ExpertPlanner | None):
         self.config = config
         self.planner = planner
-        # A model with no tier map can't have its thinking level enforced; it stays as configured.
-        self.think_map = config.tiers.models.get(base_model)
+        # The model's tier -> Ollama `think` map (its profile, core.model_profile). A model without
+        # one can't have its thinking level enforced; it stays as configured.
+        self.think_map = think_map
 
     def on(self, point: str) -> bool:
         return self.config.mode(point) == "enforce"

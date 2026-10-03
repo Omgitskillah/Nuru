@@ -7,7 +7,7 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 
 | File | Read by | Holds |
 |---|---|---|
-| `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`), `THINK`, context size |
+| `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`), context size |
 | `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
 | `.env.deep-think` | deep-think (`ask_an_expert`), and Nuru's expert tier | `CLAUDE_API_KEY`, `DEEP_THINK_BASE_DIR` |
 

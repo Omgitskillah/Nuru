@@ -77,7 +77,6 @@ def test_an_option_without_its_own_threshold_uses_the_questions_any():
 def test_off_stays_a_string_not_a_yaml_boolean():
     config = load_config()
     assert config.tiers.order[0] == "off"
-    assert config.tiers.models["granite4.2:3b"]["off"] is False
     assert config.threshold("assess_effort", "tier", "off") == 0.90
 
 

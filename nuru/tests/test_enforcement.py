@@ -10,6 +10,7 @@ from ulid import ULID
 from core import session
 from core.enforcement import Enforcement, log_lines
 from core.expert import ExpertPlanner
+from core.model_profile import ModelProfile
 from core.providers.mcp_tools import ToolResult
 from core.session import Session, Text, Thinking, ToolCall
 from laya_mcp import server as laya_server
@@ -104,7 +105,6 @@ def enforce_config(tmp_path, points, **overrides):
     raw["decision_points"] = {point: "shadow" for point in raw["decision_points"]}
     for point in points:
         raw["decision_points"][point] = "enforce"
-    raw["tiers"]["models"][session.BASE_MODEL] = {"off": False, "low": "low", "high": "high"}
     for key, value in overrides.items():
         raw[key] = {**raw[key], **value}
     return type(load_config()).model_validate(raw)
@@ -115,6 +115,8 @@ def setup(monkeypatch, tmp_path):
     def make(points, responses, script=DEFAULT_SCRIPT, results=None, expert_client=None, **config_overrides):
         config = enforce_config(tmp_path, points, **config_overrides)
         monkeypatch.setattr(session, "THINK", True)
+        # A model with real thinking levels, whatever the developer's .env names.
+        monkeypatch.setattr(session, "PROFILE", ModelProfile({"off": False, "low": "low", "high": "high"}))
         monkeypatch.setattr(session, "load_decision_config", lambda: config)
         layer = DecisionLayer(config, load_question_sets(), ScriptedPredictor(script), DecisionLog(config.database_path))
         monkeypatch.setattr(laya_server, "_layer", layer)
@@ -302,7 +304,7 @@ def test_log_lines_read_plainly():
 
 
 def test_enforcement_is_off_until_a_point_is_enforced(tmp_path):
-    enforcement = Enforcement(enforce_config(tmp_path, []), session.BASE_MODEL, None)
+    enforcement = Enforcement(enforce_config(tmp_path, []), None, None)
     assert enforcement.any is False and enforcement.offer_tools({"mode": "answer"}) is True
 
 

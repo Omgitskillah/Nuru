@@ -185,6 +185,7 @@ def chat(
     think: bool | str = True,
     tools: list[dict] | None = None,
     fmt: dict | None = None,
+    options: dict | None = None,
 ):
     """Yields text chunks, then a dict with tool_calls (if the model made any), then a dict with its
     thinking (if it did any), then a final usage dict. While the model reasons, each piece of its
@@ -196,13 +197,16 @@ def chat(
 
     `fmt` is a JSON schema the reply must match (Ollama's `format`): the model can then only emit
     JSON that fits it. Thinking models think first; the schema applies to the reply.
+
+    `options` are sampling settings for this request (temperature, top_p, ...), on top of the
+    model's Modelfile PARAMETERs.
     """
     payload = {
         "model": model,
         "messages": messages,
         "stream": True,
         "think": think,
-        "options": {"num_ctx": num_ctx},
+        "options": {**(options or {}), "num_ctx": num_ctx},
     }
     if tools:
         payload["tools"] = tools

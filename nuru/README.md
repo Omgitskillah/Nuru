@@ -7,7 +7,7 @@ A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal C
 Requires [Ollama](https://ollama.com) installed (`ollama` on your `PATH`) and at least one model pulled, e.g.:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull granite4.2:3b
 ```
 
 Nuru's settings live in `.env.nuru` in the repo root (see [Settings](../README.md#settings)). From the root, copy the template and adjust if you want a different default model:
@@ -17,17 +17,18 @@ cp .env.nuru.example .env.nuru
 ```
 
 ```
-NURU_BASE_MODEL=qwen3:8b
+NURU_BASE_MODEL=granite4.2:3b
+# NURU_BASE_MODEL=qwen3.5:4b
 MODEL=nuru
-THINK=low
 ```
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
 - `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
-- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. `low` (the default) or `high` picks a reasoning level for models that have them (Granite, since 2026-09-29: the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high); `false` turns it off, and any other value counts as enabled (so `THINK=off` turns thinking *on*).
 - `NURU_PLANNER_MODEL` / `NURU_PLANNER_THINK` - the model that writes plans in [plan mode](#plan-mode-a-test), and whether it thinks. Default: `MODEL`, thinking off.
 
-## The custom model and its system prompt
+Switching models is changing `NURU_BASE_MODEL`: everything else that has to change with it comes from the family's files (see [the model's settings](#the-custom-model-and-its-settings)), including how much it thinks - there is no `THINK` setting any more.
+
+## The custom model and its settings
 
 [`modelfiles/`](modelfiles) holds one Modelfile per model family, each a template (`FROM __BASE_MODEL__`, a `PARAMETER` block, and a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
 
@@ -35,15 +36,24 @@ THINK=low
 
 | Family | `PARAMETER` block |
 | --- | --- |
-| [`qwen3.5`](modelfiles/qwen3.5.Modelfile) | Qwen's thinking-mode preset: `temperature 1.0`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `presence_penalty 1.5`, `repeat_penalty 1.0` |
+| [`qwen3.5`](modelfiles/qwen3.5.Modelfile) | Qwen's thinking-mode preset: `temperature 1.0`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `presence_penalty 1.5`, `repeat_penalty 1.0`, `num_predict 8192` - overridden per request by its profile (below) |
 | [`qwen3`](modelfiles/qwen3.Modelfile) | Qwen3's thinking-mode preset: `temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `repeat_penalty 1.0` |
 | [`gemma4`](modelfiles/gemma4.Modelfile) | Gemma's shipped defaults: `temperature 1.0`, `top_p 0.95`, `top_k 64` |
-| [`granite4.2`](modelfiles/granite4.2.Modelfile) | Granite's shipped defaults: `temperature 1.0`, `top_p 0.95` |
+| [`granite4.2`](modelfiles/granite4.2.Modelfile) | Tuned for tool calls: `temperature 0.2`, `top_p 0.9`, `top_k 40`, `min_p 0.05`, `repeat_penalty 1.0`, `num_ctx 16384`, `num_predict 8192` |
 | [`llama3.1`](modelfiles/llama3.1.Modelfile) | Meta's reference values: `temperature 0.6`, `top_p 0.9` |
 | [`mistral-nemo`](modelfiles/mistral-nemo.Modelfile) | Mistral's low-temperature guidance for Nemo: `temperature 0.3`, `top_p 0.9` |
 | [`lfm2.5-thinking`](modelfiles/lfm2.5-thinking.Modelfile) | Liquid's shipped defaults: `temperature 0.05`, `top_k 50` |
 
-Every file carries the same `SYSTEM` prompt; only the `PARAMETER` block differs. They are separate copies, so a prompt change has to be made in every one or they drift - which would confound a bakeoff comparing them.
+Granite and Qwen3.5 carry the current `SYSTEM` prompt (the 10 tools since the 2026-10 tools purge); the other families' files still describe the old tools until they're ported. The copies are separate, so a prompt change has to be made in each, or they drift - which would confound a bakeoff comparing them.
+
+**Profiles.** What a Modelfile can't express lives in [`modelfiles/profiles.yaml`](modelfiles/profiles.yaml), per family ([`model_profile.py`](src/core/model_profile.py)):
+
+| Family | Thinking levels `off` / `low` / `high` as Ollama's `think` | Runs at | Sampling sent with each request |
+| --- | --- | --- | --- |
+| `granite4.2` | `false` / `"low"` / `"high"` | `low` (the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high, 2026-09-29) | none - the Modelfile's |
+| `qwen3.5` | `false` / `true` / `true` - it has no levels | `off` (on, it thought 13 s over "what is 2+3") | thinking: `temperature 0.6`, `top_p 0.95`; not: `temperature 0.7`, `top_p 0.8`; both `top_k 20`, no presence penalty - a starting point, not yet measured |
+
+A family without a profile runs at `low`, passed to Ollama as written. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
 
 `core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit the family's Modelfile and it takes effect on the next run, no manual `ollama create` needed.
 
@@ -73,7 +83,7 @@ History is scoped to one conversation per run of `nuru` - each launch starts a n
    - **step_cap** - a turn stops after 10 rounds of tool calls (after one expert attempt if the budget allows), with the log of what ran.
    - **write_checks** - a write naming a note ID no search returned, a blocked tool or a protected path doesn't run; the model is told why.
 
-   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at `THINK` (low). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
+   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at its model's default level (its [profile](#the-custom-model-and-its-settings)). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
    - **tool_gate** - a read or write request starts with the harness running the search itself (the request as its query); `answer` / `ask_user` get no tools.
    - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
    - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
@@ -145,6 +155,8 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 `core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
+
+`core.model_profile` - [profiles](#the-custom-model-and-its-settings): a family's thinking translation, default level and sampling, from `modelfiles/profiles.yaml`.
 
 `core.planner` - [plan mode](#plan-mode-a-test): the planner prompt and schema, `check_plan`, and `make_plan`.
 

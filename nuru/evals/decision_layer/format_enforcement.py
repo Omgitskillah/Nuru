@@ -13,7 +13,7 @@ import json
 from common import ARGUMENT_STEPS, argument_messages, build_nuru_model, chat_once, save, tool_schemas
 
 from core.forced_schema import arguments_schema, validate
-from laya_mcp.config import load_config
+from core.model_profile import LEVELS, for_model
 
 
 def main():
@@ -22,7 +22,8 @@ def main():
     args = parser.parse_args()
 
     model, base = build_nuru_model()
-    tiers = load_config().tiers.models[base]
+    profile = for_model(base)
+    tiers = {level: profile.think(level) for level in LEVELS}
     schemas = tool_schemas()
     runs = []
     for step in ARGUMENT_STEPS:

@@ -1,0 +1,29 @@
+# What goes with a model family besides its Modelfile (the system prompt and base sampling), so
+# that changing NURU_BASE_MODEL in .env.nuru is all it takes to switch models:
+#
+# - think:    Nuru's thinking levels (off / low / high) as the Ollama `think` value this family
+#             takes. Granite has real levels; Qwen3.5 only on/off, so low and high both mean on.
+# - default:  the level Nuru runs at.
+# - sampling: optional, sent with every request because it depends on whether the model thinks -
+#             which a Modelfile can't express. Without it, the Modelfile's PARAMETERs apply.
+#
+# A family with no entry here keeps the old behaviour: the level goes to Ollama as written, at low.
+# Quote "off": unquoted, YAML reads it as false.
+
+# No medium: measured 2026-09-28 on Ollama 0.34.0 (nuru/evals/decision_layer, eval 1), granite4.2
+# given think="medium" sends the same prompt as "high" but answers differently - slower (107 s vs
+# 65 s per argument step), one runaway to the token limit, and no more correct.
+granite4.2:
+  think: {"off": false, low: low, high: high}
+  default: low
+
+qwen3.5:
+  think: {"off": false, low: true, high: true}
+  # Off until measured: on, it thought for 13 s over "what is 2+3" (2026-10-03).
+  default: "off"
+  # Qwen's chat preset (temperature 1.0, presence_penalty 1.5 - the Modelfile's) suits open chat;
+  # a presence penalty works against tool-call JSON, which repeats its keys. These are a starting
+  # point for tool use, not measured yet.
+  sampling:
+    thinking: {temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0}
+    no_thinking: {temperature: 0.7, top_p: 0.8, top_k: 20, min_p: 0.0, presence_penalty: 0.0}

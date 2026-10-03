@@ -30,7 +30,7 @@ from core.conversation_store import ConversationStore
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import executor, planner
+from core import executor, model_profile, planner
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -54,25 +54,18 @@ load_dotenv(ENV_DIR / ".env.nuru")
 # the derived, custom model - built fresh from its family's Modelfile on every startup -
 # that actually gets loaded and chatted with, carrying the tool-use SYSTEM
 # prompt baked in.
-BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3:8b")
+BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "granite4.2:3b")
 MODEL = os.environ.get("MODEL", "nuru")
 
 
-def _parse_think(raw: str) -> bool | str:
-    """THINK is off, on, or one of Ollama's named reasoning levels.
-
-    A level is passed through to the API as-is; granite and other reasoning models take
-    "low"/"medium"/"high" in place of a bare true, trading latency for depth. Anything
-    else is the old boolean, so existing "true"/"false" settings keep working.
-    """
-    value = raw.strip().lower()
-    return value if value in ("low", "medium", "high") else value != "false"
-
-
-THINK = _parse_think(os.environ.get("THINK", "low"))
+# What goes with BASE_MODEL's family besides its Modelfile (modelfiles/profiles.yaml): how thinking
+# levels translate to Ollama's `think`, the level to run at, and sampling that depends on thinking.
+PROFILE = model_profile.for_model(BASE_MODEL)
+# The Ollama `think` value every model call starts from: the family's default level, translated.
+THINK = PROFILE.think(PROFILE.default)
 # Plan mode (a test: core.planner) - the model that writes plans, and how much it thinks.
 PLANNER_MODEL = os.environ.get("NURU_PLANNER_MODEL", MODEL)
-PLANNER_THINK = _parse_think(os.environ.get("NURU_PLANNER_THINK", "false"))
+PLANNER_THINK = model_profile.for_model(PLANNER_MODEL).think(os.environ.get("NURU_PLANNER_THINK", "off"))
 
 MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
 
@@ -87,7 +80,7 @@ def _modelfile_for(base_model: str) -> Path:
     PARAMETER blocks are tuned per model, so quietly reusing another family's
     would sample the model wrongly and skew any bakeoff run against it.
     """
-    family = base_model.split("/")[-1].split(":")[0]
+    family = model_profile.family(base_model)
     path = MODELFILES_DIR / f"{family}.Modelfile"
     if not path.exists():
         available = ", ".join(sorted(p.stem for p in MODELFILES_DIR.glob("*.Modelfile")))
@@ -380,7 +373,7 @@ class Session:
             shadow.effort_off = decision_config.mode("assess_effort") == "off"
             shadow.note_type_off = decision_config.mode("note_type") == "off"
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
-            enforcement = Enforcement(decision_config, BASE_MODEL, planner)
+            enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 
             session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement)
             session.load_model()
@@ -525,7 +518,7 @@ class Session:
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
             start = time.monotonic()
             try:
-                stream = chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=tools_offered)
+                stream = chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=tools_offered, **PROFILE.options(think))
                 for out in stream:
                     if _cancelled(cancel):
                         self._end_cancelled(turn_id, output_text)
@@ -756,7 +749,8 @@ class Session:
         schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
 
         def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:
-            return "".join(out for out in chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt) if isinstance(out, str))
+            return "".join(out for out in chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt,
+                                                **PROFILE.options(think_value)) if isinstance(out, str))
 
         def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
             self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
@@ -818,7 +812,8 @@ class Session:
         retry = [*messages, {"role": "assistant", "content": draft},
                  {"role": "user", "content": REGENERATE.format(failures="; ".join(claim["failures"]), log=log)}]
         try:
-            second = "".join(out for out in chat(MODEL, retry, num_ctx=num_ctx, think=think) if isinstance(out, str))
+            second = "".join(out for out in chat(MODEL, retry, num_ctx=num_ctx, think=think, **PROFILE.options(think))
+                             if isinstance(out, str))
         except requests.exceptions.RequestException:
             second = ""
         second_claim = self.shadow.check_reply(second, "shown") if second.strip() else None
@@ -922,7 +917,7 @@ class Session:
             think = THINK
             while True:
                 start, out, thinking, usage = time.monotonic(), "", "", {}
-                for piece in chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt):
+                for piece in chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt, **PROFILE.options(think)):
                     if isinstance(piece, str):
                         out += piece
                     elif "thinking" in piece:

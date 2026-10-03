@@ -444,6 +444,20 @@ def test_chat_sends_think_and_num_ctx_options(monkeypatch):
     assert seen["json"]["stream"] is True
 
 
+def test_chat_sends_sampling_options_alongside_num_ctx(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, stream, timeout):
+        seen["json"] = json
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    list(ollama.chat("qwen3.5:4b", [], num_ctx=4096, options={"temperature": 0.7, "num_ctx": 1}))
+
+    assert seen["json"]["options"] == {"temperature": 0.7, "num_ctx": 4096}  # num_ctx is the session's
+
+
 def test_chat_sends_tools_when_given(monkeypatch):
     seen = {}
 

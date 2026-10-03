@@ -21,14 +21,11 @@ from core import session
 from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
-def think_value(raw: str):
-    return False if raw == "off" else True if raw == "true" else raw
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", required=True)
-    parser.add_argument("--think", required=True, help="off | low | high | true | medium")
+    parser.add_argument("--think", required=True, help="default (the model's own level) | off | low | high - "
+                        "translated by the model's profile (modelfiles/profiles.yaml)")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--plan", type=Path, help="a plan (core.planner's format) for the harness to carry out "
                         "with Session.run_plan, instead of the model's own turn")
@@ -41,7 +38,7 @@ def main():
         command="uv", args=["run", "obsidian-mcp"], cwd=session.OBSIDIAN_DIR, env=env
     )
     session.LAYA_SERVER_PARAMS.env["NURU_DECISION_CONFIG"] = os.environ["NURU_DECISION_CONFIG"]
-    session.THINK = think_value(args.think)
+    session.THINK = session.PROFILE.think(session.PROFILE.default if args.think == "default" else args.think)
 
     started = time.monotonic()
     s = session.Session.start()

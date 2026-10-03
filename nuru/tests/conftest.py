@@ -1,6 +1,7 @@
 import pytest
 
 from core import session
+from core.model_profile import ModelProfile
 
 
 class _NoIndexer:
@@ -32,3 +33,11 @@ def no_real_expert_key(monkeypatch):
 def no_background_indexer(monkeypatch):
     """Session.start() would otherwise start embedding the real vault through the real Ollama."""
     monkeypatch.setattr(session, "VaultIndexer", _NoIndexer)
+
+
+@pytest.fixture(autouse=True)
+def neutral_model_profile(monkeypatch):
+    """Whatever model the developer's .env names, a test sees a profile with no thinking map and no
+    sampling of its own - so chat() gets exactly the arguments the test expects. Tests of the
+    profiles set one themselves."""
+    monkeypatch.setattr(session, "PROFILE", ModelProfile())

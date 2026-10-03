@@ -34,7 +34,8 @@ from common import DUMMY_VAULT, HERE, REPO, RUNS
 # Scores are 2026-09-19 and 2026-09-21. The full 34 stay the occasional regression check.
 QUICK = [3, 4, 10, 24, 26, 28, 29, 34]
 
-SKIPPED = (".obsidian", ".obsidian-mcp-index.sqlite3", ".obsidian-mcp-semantic.sqlite3", ".trash")
+SKIPPED = (".obsidian", ".obsidian-mcp-index.sqlite3", ".obsidian-mcp-semantic.sqlite3", ".trash",
+           ".obsidian-mcp-write.lock")
 
 
 def suite_prompts() -> dict[int, str]:

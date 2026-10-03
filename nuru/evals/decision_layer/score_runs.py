@@ -46,8 +46,9 @@ def _replied(record) -> bool:
 
 
 def score_28(record, changes, today):
-    """Daily note for today: soak test running, going to the gym."""
-    dailies = [c for c in changes if c["path"].startswith("user/") and c["after"] is not None
+    """Daily note for today: soak test running, going to the gym. Nuru's own dailies are in nuru/
+    since the 2026-10 tools purge (user/ is closed to it); before that, in user/."""
+    dailies = [c for c in changes if c["path"].startswith(("user/", "nuru/")) and c["after"] is not None
                and _frontmatter(c["after"])[0].get("type") == "daily"
                and str(_frontmatter(c["after"])[0].get("date")) == today]
     text = " ".join((c["after"] or "")[len(c["before"] or ""):] for c in dailies).lower()
@@ -105,9 +106,12 @@ def score_31(record, changes, today):
     ]
 
 
-SEARCH_TOOLS = {"search_notes", "semantic_search", "find_in_notes", "browse_notes", "notes_with_tag", "list_notes"}
-VAULT_TOOLS = SEARCH_TOOLS | {"read_note", "get_links", "list_files", "list_files_in_directory", "all_tags",
-                              "note_tags", "note_todos"}
+# Today's tools (search, browse, tags, note_info - since the 2026-10 tools purge) and the ones they
+# replaced, so older batches still score as they did.
+SEARCH_TOOLS = {"search", "browse", "tags", "search_notes", "semantic_search", "find_in_notes", "browse_notes",
+                "notes_with_tag", "list_notes"}
+VAULT_TOOLS = SEARCH_TOOLS | {"read_note", "note_info", "get_links", "list_files", "list_files_in_directory",
+                              "all_tags", "note_tags", "note_todos"}
 DESTRUCTIVE = {"archive_note", "rename_or_move_file", "delete_file_or_directory"}
 
 
@@ -194,7 +198,7 @@ def score_34(record, changes, today):
 def score_1(record, changes, today):
     """How many files, and how many notes excluding Templates: 51 and 40 (dummyVault, 2026-09-29)."""
     return [
-        ("used a listing tool", bool(set(_tools(record)) & {"list_files", "list_notes", "list_files_in_directory"})),
+        ("used a listing tool", bool(set(_tools(record)) & {"browse", "list_files", "list_notes", "list_files_in_directory"})),
         ("51 files", _says(record, r"\b51\b")),
         ("40 notes", _says(record, r"\b40\b")),
         ("nothing changed", not changes),
@@ -278,7 +282,7 @@ def score_5(record, changes, today):
     """Nothing in the vault is about Kubernetes: say so, without inventing any."""
     return [
         ("searched the notes", bool(set(_tools(record)) & SEARCH_TOOLS)),
-        ("checked with an exact-word search", bool(set(_tools(record)) & {"search_notes", "find_in_notes"})),
+        ("checked with an exact-word search", bool(set(_tools(record)) & {"search", "search_notes", "find_in_notes"})),
         ("says there's nothing about it", _says(record, r"no notes?|none of|nothing|not (find|found)|no (matches|results|mention)|don'?t (contain|mention)")),
         ("no write and no expert", "ask_an_expert" not in _tools(record) and not changes),
         ("it replied", _replied(record)),
@@ -530,12 +534,20 @@ def batch_date(batch: Path) -> str | None:
     return "-".join(found.groups()) if found else None
 
 
+# Files the obsidian server keeps in the vault for itself, not notes: the write lock (since the
+# 2026-10 submodule) is created on every turn, and isn't a change the turn made.
+SERVER_FILES = {".obsidian-mcp-write.lock"}
+
+
 def load_results(batch: Path) -> list[dict]:
     """A batch's results, each carrying the day it ran: its own `date` (run_suite writes one since
     2026-09-30), else the batch's. Tests 17, 28 and 31 are scored against that day, so a batch
     rescored later - or one that ran past midnight - is scored as it ran."""
     day = batch_date(batch)
-    return [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
+    records = [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
+    for record in records:
+        record["vault_changes"] = [c for c in record.get("vault_changes", []) if c["path"] not in SERVER_FILES]
+    return records
 
 
 def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, bool]]]:

@@ -1,0 +1,50 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "exponential backoff cap"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "the note describing my backoff's initial delay and cap"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "a calculate expression for how many doublings take the backoff's initial delay to its cap, from the values in the note (e.g. ln(cap / initial) / ln(2))"
+  },
+  {
+   "step": "s5",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s4"
+   }
+  },
+  {
+   "step": "s6",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s5"
+   ],
+   "want": "after how many failures the backoff reaches its cap, showing the delay against the cap"
+  }
+ ]
+}

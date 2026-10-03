@@ -1,0 +1,57 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "mom birthday"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "the note that mentions my mom's birthday"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "tool": "search",
+   "with": {
+    "query": "dentist appointment"
+   }
+  },
+  {
+   "step": "s5",
+   "think": "pick",
+   "uses": [
+    "s4"
+   ],
+   "want": "the note that mentions my dentist appointment"
+  },
+  {
+   "step": "s6",
+   "tool": "read_note",
+   "with": {
+    "name": "$s5"
+   }
+  },
+  {
+   "step": "s7",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s6"
+   ],
+   "want": "my mom's birthday, and the date and time of my dentist appointment"
+  }
+ ]
+}

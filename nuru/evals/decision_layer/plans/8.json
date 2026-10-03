@@ -1,0 +1,50 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "PDP drop runs"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "the note with the 9 PDP-drop runs"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "the durations of the 9 PDP-drop runs, as a list of numbers"
+  },
+  {
+   "step": "s5",
+   "tool": "statistics",
+   "with": {
+    "numbers": "$s4"
+   }
+  },
+  {
+   "step": "s6",
+   "think": "answer",
+   "uses": [
+    "s2",
+    "s5"
+   ],
+   "want": "the mean and standard deviation of the 9 runs, and which note they come from"
+  }
+ ]
+}

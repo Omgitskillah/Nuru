@@ -1,0 +1,66 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "parts inventory"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "my parts inventory note"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "a calculate expression summing the value of every item in the inventory (quantity times unit price)"
+  },
+  {
+   "step": "s5",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s4"
+   }
+  },
+  {
+   "step": "s6",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "a calculate expression summing the value of only the items that are mine - leaving out anything borrowed or not mine"
+  },
+  {
+   "step": "s7",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s6"
+   }
+  },
+  {
+   "step": "s8",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s5",
+    "s7"
+   ],
+   "want": "the inventory's total value, how much of it is mine, and what isn't mine"
+  }
+ ]
+}

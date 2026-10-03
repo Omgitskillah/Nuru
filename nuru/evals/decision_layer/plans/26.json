@@ -1,0 +1,20 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "find_in_notes",
+   "with": {
+    "pattern": "moon",
+    "literal": true
+   }
+  },
+  {
+   "step": "s2",
+   "think": "answer",
+   "uses": [
+    "s1"
+   ],
+   "want": "which notes mention the moon; deleting them is planned only once they are known"
+  }
+ ]
+}

@@ -76,7 +76,7 @@ def vault_changes(vault: Path) -> list[dict]:
     return changes
 
 
-def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int) -> dict:
+def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None) -> dict:
     out = batch / "turn.json"
     out.unlink(missing_ok=True)
     logs = Path(env["NURU_LOG_DIR"])
@@ -90,7 +90,8 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int) -> d
 
     with open(batch / "turn.stdout", "w") as stdout, open(batch / "turn.stderr", "w") as stderr:
         proc = subprocess.Popen(
-            [sys.executable, str(HERE / "drive_turn.py"), "--prompt", prompt, "--think", think, "--out", str(out)],
+            [sys.executable, str(HERE / "drive_turn.py"), "--prompt", prompt, "--think", think, "--out", str(out),
+             *(["--plan", str(plan)] if plan else [])],
             env=env, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO,
         )
         try:
@@ -112,12 +113,18 @@ def main():
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--label", default="run")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--plans", type=Path, help="a folder of plans, <test>.json each: every turn is then the "
+                        "harness carrying out the test's plan (Session.run_plan) instead of the model's own turn")
     parser.add_argument("--enforce", default="", help="decision points to enforce IN THIS BATCH ONLY (comma-separated, "
                         "or 'all'); its config marks thresholds calibrated so it loads - a test of the enforce "
                         "paths, not of calibrated thresholds")
     args = parser.parse_args()
 
     prompts = suite_prompts()
+    if args.plans:
+        missing = [t for t in parse_tests(args.tests) if not (args.plans / f"{t}.json").exists()]
+        if missing:
+            sys.exit(f"no plan in {args.plans} for test(s) {missing}")
     batch = RUNS / f"suite-{args.label}-{datetime.now():%Y%m%d-%H%M%S}"
     vault, index, pristine_index = batch / "vault", batch / "semantic.sqlite3", batch / "semantic.pristine.sqlite3"
     batch.mkdir(parents=True)
@@ -158,7 +165,8 @@ def main():
                     shutil.copytree(DUMMY_VAULT, vault, symlinks=True)
                     shutil.copy2(pristine_index, index)
                     started, day = time.monotonic(), date.today().isoformat()
-                    record = run_turn(batch, env, prompts[test], think, args.timeout)
+                    plan = args.plans / f"{test}.json" if args.plans else None
+                    record = run_turn(batch, env, prompts[test], think, args.timeout, plan)
                     record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompts[test], "date": day,
                                    "wall_seconds": round(time.monotonic() - started, 1),
                                    "vault_changes": vault_changes(vault)})

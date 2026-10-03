@@ -15,6 +15,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import requests
 from dotenv import dotenv_values, load_dotenv
@@ -29,7 +30,7 @@ from core.conversation_store import ConversationStore
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import planner
+from core import executor, planner
 from core.providers.mcp_tools import MCPTools
 from core.providers.ollama import (
     chat,
@@ -657,24 +658,9 @@ class Session:
                     messages.append({"role": "tool", "content": content})
                     last_results.append((len(messages) - 1, fn["name"]))
                     continue
-                typed = self.shadow.note_type(args) if self.shadow and fn["name"] == "write_note" else None
-                if (typed and typed.get("type") and typed["type"] != "correction" and not args.get("type")
-                        and enforcing and enforcing.on("note_type")):
-                    # Laya decides a new note's type when the model gave none (an existing note keeps its own;
-                    # the server ignores it). Never a correction: that needs targets only the model can give.
-                    args = {**args, "type": typed["type"]}
-                    self.shadow.gate_action(typed, f"filled:{typed['type']}")
-                write_gate = self.shadow.before_tool(fn["name"], args) if self.shadow else None
-                gate_id = write_gate["decision_id"] if write_gate else None
-                tool_start = time.monotonic()
-                if write_gate and write_gate.get("source") == "code" and self.enforcement and self.enforcement.on("write_checks"):
-                    # Code found a hard problem (an invented note ID, a blocked tool, a protected path):
-                    # the write doesn't run, whatever Laya would say.
-                    reason = "; ".join(write_gate.get("reasons") or [])
-                    content = f"[Nuru] {fn['name']} was not run: {reason}."
-                    self.logger.tool_call(turn_id, fn["name"], args, "refused", reason, 0.0)
-                    self.shadow.after_tool(fn["name"], args, None, 0.0, gate_id, error=f"blocked: {reason}")
-                    self.shadow.gate_action(write_gate, "blocked")
+                args, write_gate, gate_id = self._before_tool(fn["name"], args, enforcing)
+                if self._write_blocked(write_gate):
+                    content = self._refuse_tool(turn_id, fn["name"], args, write_gate, gate_id)
                 elif fn["name"] == _EXPERT_TOOL and expert_answers >= _EXPERT_ANSWERS_PER_TURN:
                     # Called although it's no longer offered: ask the user rather than loop.
                     self.logger.tool_call(turn_id, fn["name"], args, "refused", "expert limit reached", 0.0)
@@ -682,22 +668,7 @@ class Session:
                     yield from self._stop(turn_id, _EXPERT_CLARIFY)
                     return
                 else:
-                    try:
-                        result = self.tools.call_tool_result(fn["name"], args)
-                    except Exception as e:
-                        duration_ms = (time.monotonic() - tool_start) * 1000
-                        self.logger.tool_call(turn_id, fn["name"], args, "error", str(e), duration_ms)
-                        if self.shadow:
-                            self.shadow.after_tool(fn["name"], args, None, duration_ms, gate_id, error=str(e))
-                        raise
-                    content = result.text
-                    duration_ms = (time.monotonic() - tool_start) * 1000
-                    self.logger.tool_call(turn_id, fn["name"], args, "error" if result.is_error else "ok",
-                                          result.text[:300] if result.is_error else None, duration_ms)
-                    if self.shadow:
-                        reranked = self.shadow.after_tool(fn["name"], args, result, duration_ms, gate_id)
-                        if reranked and enforcing and enforcing.on("rerank"):
-                            content = reranked
+                    content, _ = self._call_tool(turn_id, fn["name"], args, gate_id, enforcing)
                     if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
                         expert_answers += 1
                         if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
@@ -709,6 +680,57 @@ class Session:
                     return
             if self.shadow:
                 decisions = self.shadow.before_next_call()
+
+    # ------------------------------------------------------------------ running one tool
+    def _before_tool(self, name: str, args: dict, enforcing: Enforcement | None) -> tuple[dict, dict | None, int | None]:
+        """Before a tool runs: Laya's note type for a write_note (filled in when note_type is
+        enforced) and gate_write for a write. Returns the arguments to run with, the write gate's
+        verdict and its decision id."""
+        typed = self.shadow.note_type(args) if self.shadow and name == "write_note" else None
+        if (typed and typed.get("type") and typed["type"] != "correction" and not args.get("type")
+                and enforcing and enforcing.on("note_type")):
+            # Laya decides a new note's type when the model gave none (an existing note keeps its own;
+            # the server ignores it). Never a correction: that needs targets only the model can give.
+            args = {**args, "type": typed["type"]}
+            self.shadow.gate_action(typed, f"filled:{typed['type']}")
+        write_gate = self.shadow.before_tool(name, args) if self.shadow else None
+        return args, write_gate, write_gate["decision_id"] if write_gate else None
+
+    def _write_blocked(self, write_gate: dict | None) -> bool:
+        """Code found a hard problem with a write (an invented note ID, a blocked tool, a protected
+        path) and write_checks is enforced: the write doesn't run, whatever Laya would say."""
+        return bool(write_gate and write_gate.get("source") == "code" and self.enforcement
+                    and self.enforcement.on("write_checks"))
+
+    def _refuse_tool(self, turn_id: str, name: str, args: dict, write_gate: dict, gate_id: int | None) -> str:
+        reason = "; ".join(write_gate.get("reasons") or [])
+        self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
+        self.shadow.after_tool(name, args, None, 0.0, gate_id, error=f"blocked: {reason}")
+        self.shadow.gate_action(write_gate, "blocked")
+        return f"[Nuru] {name} was not run: {reason}."
+
+    def _call_tool(self, turn_id: str, name: str, args: dict, gate_id: int | None,
+                   enforcing: Enforcement | None) -> tuple[str, bool]:
+        """Run one tool, log it, and record it with the decision layer. Returns what the model
+        sees as the result (reranked, when rerank is enforced) and whether the tool succeeded."""
+        tool_start = time.monotonic()
+        try:
+            result = self.tools.call_tool_result(name, args)
+        except Exception as e:
+            duration_ms = (time.monotonic() - tool_start) * 1000
+            self.logger.tool_call(turn_id, name, args, "error", str(e), duration_ms)
+            if self.shadow:
+                self.shadow.after_tool(name, args, None, duration_ms, gate_id, error=str(e))
+            raise
+        content = result.text
+        duration_ms = (time.monotonic() - tool_start) * 1000
+        self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok",
+                              result.text[:300] if result.is_error else None, duration_ms)
+        if self.shadow:
+            reranked = self.shadow.after_tool(name, args, result, duration_ms, gate_id)
+            if reranked and enforcing and enforcing.on("rerank"):
+                content = reranked
+        return content, not result.is_error
 
     # ------------------------------------------------------------------ enforcement
     def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
@@ -872,6 +894,134 @@ class Session:
         reply += ("\n\nProblems code found:\n" + "\n".join(f"- {p}" for p in problems)) if problems else "\n\nCode found no problems."
         yield Text(reply)
         self.store.add_message(self.conversation_id, "nuru", reply)
+        self.logger.turn_end(turn_id)
+
+    def run_plan(self, text: str, plan: dict, cancel: threading.Event | None = None) -> Iterator[Event]:
+        """Carry out `plan` (core.planner's format) for the request `text`, the harness running every
+        tool step through the same gates and logs as ask(); the model only picks, drafts and answers
+        (core.executor). A step that fails stops the plan - nothing after it runs, so no write follows
+        a failure - and the answer says what happened. Yields the same events as ask()."""
+        self.load_model()
+        num_ctx = _context_window(self.model_info)
+        self.store.add_message(self.conversation_id, "user", text)
+        turn_id = self.logger.turn_start(text)
+        if self.shadow:
+            self.shadow.begin(text, turn_id)
+        enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
+        steps = list(plan["steps"])
+        if not steps or steps[-1].get("think") != "answer":
+            steps.append({"step": f"s{len(steps) + 1}", "think": "answer", "uses": [], "want": "the reply"})
+        by_name = {step.get("step"): step for step in steps}
+        values: dict[str, Any] = {}
+        log: list[dict] = []
+        stopped: str | None = None
+        reply = ""
+
+        def call(messages: list[dict], fmt: dict | None):
+            """One model call; a call that only thought is asked again with thinking off, as in ask()."""
+            think = THINK
+            while True:
+                start, out, thinking, usage = time.monotonic(), "", "", {}
+                for piece in chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt):
+                    if isinstance(piece, str):
+                        out += piece
+                    elif "thinking" in piece:
+                        thinking = piece["thinking"].strip()
+                    elif "stop_reason" in piece:
+                        usage = piece
+                self.logger.model_call(
+                    turn_id=turn_id, duration_ms=(time.monotonic() - start) * 1000,
+                    prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
+                    stop_reason=usage.get("stop_reason"), tool_calls_requested=[], output_text=out,
+                )
+                if thinking:
+                    yield Thinking(thinking)
+                if out.strip() or not think:
+                    return out
+                think = False
+                yield RetryWithoutThinking()
+
+        labels: dict[str, str] = {}  # what each step's output is, in words - never its name
+
+        def inputs_of(step: dict) -> dict[str, str]:
+            return {labels[u]: v if isinstance(v, str) else json.dumps(v)
+                    for u in step.get("uses", []) if (v := values.get(u)) is not None}
+
+        def draft(step: dict, rejected: str = ""):
+            want = step.get("want", "") + (f"\nYour last attempt was rejected: {rejected}" if rejected else "")
+            schema = executor.consumer_schema(step["step"], steps, self.tool_definitions)
+            out = yield from call(executor.draft_messages(text, want, inputs_of(step)),
+                                  {"type": "object", "properties": {"value": schema}, "required": ["value"]})
+            try:
+                return json.loads(out)["value"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                return None
+
+        for step in steps:
+            name, kind = step.get("step"), step.get("think")
+            if _cancelled(cancel):
+                self._end_cancelled(turn_id, reply)
+                return
+            if stopped and kind != "answer":
+                continue
+            if "tool" in step:
+                tool = step["tool"]
+                for attempt in (1, 2):
+                    try:
+                        args = executor.resolve(step.get("with") or {}, values)
+                    except KeyError as missing:
+                        stopped = f"{name} needs the output of {missing.args[0]}, which has none"
+                        break
+                    yield ToolCall(tool, args)
+                    args, write_gate, gate_id = self._before_tool(tool, args, enforcing)
+                    if self._write_blocked(write_gate):
+                        content, ok = self._refuse_tool(turn_id, tool, args, write_gate, gate_id), False
+                    else:
+                        content, ok = self._call_tool(turn_id, tool, args, gate_id, enforcing)
+                    failed = executor.tool_failed(tool, content, ok)
+                    source = executor.refs_in(step.get("with", {}).get("expression", "")) if tool == "calculate" else []
+                    if failed and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
+                        # A rejected expression: write it again once, told why.
+                        values[source[0]] = yield from draft(by_name[source[0]], f"{args.get('expression')!r}: {failed}")
+                        continue
+                    values[name] = executor.step_value(tool, content, ok)
+                    labels[name] = f"The result of {tool} {json.dumps(args)[:300]}"
+                    log.append({"step": name, "what": labels[name], "output": values[name]})
+                    if failed:
+                        stopped = f"{name} ({tool}) failed: {failed}"
+                    break
+            elif kind == "pick":
+                options = list(dict.fromkeys(p for u in step.get("uses", []) for p in executor.candidates(values.get(u, ""))))
+                if not options:
+                    stopped = f"{name}: the results had nothing to choose from for {step.get('want')!r}"
+                    continue
+                out = yield from call(executor.pick_messages(text, step.get("want", ""), inputs_of(step)),
+                                      {"type": "object", "properties": {"choice": {"enum": options + ["none"]}},
+                                       "required": ["choice"]})
+                try:
+                    choice = json.loads(out)["choice"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    choice = None
+                if choice in (None, "none"):
+                    stopped = f"{name}: nothing in the results was {step.get('want')!r}"
+                    continue
+                values[name] = choice
+                labels[name] = f"Chosen as {step.get('want')!r}"
+                log.append({"step": name, "what": labels[name], "output": choice})
+            elif kind == "draft":
+                value = yield from draft(step)
+                if value is None:
+                    stopped = f"{name}: the draft couldn't be written"
+                    continue
+                values[name] = value
+                labels[name] = f"Written as {step.get('want')!r}"
+                log.append({"step": name, "what": labels[name], "output": value})
+            elif kind == "answer":
+                reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped), None)).strip()
+                yield Text(reply)
+        self.store.add_message(self.conversation_id, "nuru", reply)
+        if self.shadow:
+            self.shadow.end(reply)
         self.logger.turn_end(turn_id)
 
     def _stop(self, turn_id: str, reason: str):

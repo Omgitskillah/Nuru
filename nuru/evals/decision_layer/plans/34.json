@@ -1,0 +1,19 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "calculate",
+   "with": {
+    "expression": "5.35 * 24"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "answer",
+   "uses": [
+    "s1"
+   ],
+   "want": "the result in mAh, with the expression"
+  }
+ ]
+}

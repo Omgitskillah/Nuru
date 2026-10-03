@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--think", required=True, help="off | low | high | true | medium")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--plan", type=Path, help="a plan (core.planner's format) for the harness to carry out "
+                        "with Session.run_plan, instead of the model's own turn")
     args = parser.parse_args()
 
     env = get_default_environment()
@@ -57,7 +59,8 @@ def main():
     ready = time.monotonic()
     reply, tool_calls, thinking, retried, failure = "", [], 0, False, None
     try:
-        for event in s.ask(args.prompt):
+        plan = json.loads(args.plan.read_text()) if args.plan else None
+        for event in (s.run_plan(args.prompt, plan) if plan else s.ask(args.prompt)):
             if isinstance(event, Text):
                 reply += event.text
             elif isinstance(event, ToolCall):
@@ -82,7 +85,7 @@ def main():
                 model_calls.append({k: entry[k] for k in ("duration_ms", "prompt_tokens", "completion_tokens",
                                                           "stop_reason", "tool_calls_requested")})
     args.out.write_text(json.dumps({
-        "prompt": args.prompt, "think": args.think, "session_id": session_id, "laya_state": laya_state, "reply": reply,
+        "prompt": args.prompt, "think": args.think, "plan": str(args.plan) if args.plan else None, "session_id": session_id, "laya_state": laya_state, "reply": reply,
         "tool_calls": tool_calls, "thinking_events": thinking, "retried_without_thinking": retried,
         "failure": failure, "startup_seconds": round(ready - started, 1), "turn_seconds": round(finished - ready, 1),
         "model_seconds": round(sum(c["duration_ms"] for c in model_calls) / 1000, 1),

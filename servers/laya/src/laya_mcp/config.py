@@ -37,6 +37,7 @@ DECISION_POINT_SETS = {
     "rerank": ("rerank",),
     "watch_thinking": (),
     "watch_laya": ("watch_thinking",),
+    "note_type": ("note_type",),
 }
 
 

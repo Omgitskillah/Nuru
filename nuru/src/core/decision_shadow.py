@@ -21,6 +21,7 @@ server gone, a bad answer - so a shadow problem can never break or change a turn
 """
 
 import json
+from pathlib import PurePosixPath
 from collections.abc import Callable
 from typing import Any
 
@@ -114,6 +115,7 @@ class DecisionShadow:
         self.last_search_ids: list[str] = []  # the IDs the most recent search returned
         self.watch_enforced = False  # set by the session: whether a watch signal stops the call
         self.effort_off = False  # set by the session: assess_effort is `off`, so it isn't asked
+        self.note_type_off = False  # set by the session: note_type is `off`, so it isn't asked
         self._watch_ids: list[int] = []  # watch_thinking decisions of the call in progress
         self.failures = 0  # decision-layer calls that failed; the turns went on regardless
         self._reset("", None)
@@ -264,6 +266,18 @@ class DecisionShadow:
             "gate_write",
             {"request": self._request, "tool": name, "arguments": arguments, "known_ids": sorted(self.known_ids)},
         )
+
+    def note_type(self, arguments: dict) -> dict | None:
+        """Laya's type for a write_note that may create a note (anything but today's daily), with the
+        model's own choice recorded against it as the action - "model:<type>", or "model:none"."""
+        if self.note_type_off or arguments.get("type") == "daily" or not arguments.get("note"):
+            return None
+        title = PurePosixPath(str(arguments["note"]).removesuffix(".md")).name
+        typed = self._ask("note_type", {"title": title, "content": str(arguments.get("content") or "")[:8000]})
+        if typed:
+            model = arguments.get("type") or "none"
+            self._safely(lambda: self._log.set_action_taken(typed["decision_id"], f"model:{model}"))
+        return typed
 
     def gate_action(self, gate: dict | None, action: str, outcome: str | None = None) -> None:
         """Record what the session did with a gate_write verdict it enforced (blocked, asked, ...)."""

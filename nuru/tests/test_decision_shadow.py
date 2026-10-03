@@ -139,6 +139,7 @@ def test_every_decision_point_is_logged_next_to_what_nuru_did(monkeypatch, decis
         ("assess_effort", "assess_effort", "high", "shadow"),
         ("tool_gate", "tool_gate_next", "continue", "shadow"),
         ("assess_effort", "assess_effort", "high", "shadow"),
+        ("note_type", "note_type", "model:none", "shadow"),  # the model gave no type for the note it wrote
         ("gate_write", "gate_write", "executed", "shadow"),
         ("tool_gate", "tool_gate_next", "answer", "shadow"),
         ("assess_effort", "assess_effort", "high", "shadow"),
@@ -282,6 +283,7 @@ def test_think_values_map_to_tier_names(think, tier):
     assert think_tier(think) == tier
 
 
-def test_the_laya_server_is_started_without_a_vault():
+def test_the_laya_server_is_started_without_a_vault_but_with_an_env_evals_can_extend():
     assert session.LAYA_SERVER_PARAMS.args[-1] == "laya-mcp"
-    assert session.LAYA_SERVER_PARAMS.env is None  # it reads no notes since classify_notes went
+    assert "VAULT_PATH" not in session.LAYA_SERVER_PARAMS.env  # it reads no notes since classify_notes went
+    session.LAYA_SERVER_PARAMS.env.get("NURU_DECISION_CONFIG")  # drive_turn.py sets this key

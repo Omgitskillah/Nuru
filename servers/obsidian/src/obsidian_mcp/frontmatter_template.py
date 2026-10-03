@@ -16,7 +16,7 @@ actually current when that note was written, so a future reader can branch on
 shape applies everywhere.
 """
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # The authoritative definition of what each VERSION means: the exact field
 # list, order, and semantics that version's frontmatter has. A note's
@@ -25,7 +25,11 @@ VERSION = "0.3.0"
 # looks its note's version up here to know how to parse it, rather than
 # assuming the current shape applies to every note in the vault.
 #
-# 0.3.0 (current): the same fields as 0.2.0. A daily note now lives in nuru/: it is Nuru's own
+# 0.4.0 (current): the same fields as 0.3.0. A type no longer fixes a note's folder: TYPE_FOLDER
+#   is only where a note goes when no folder is given (every type but directives now defaults to
+#   nuru/), and a new note may be created in any folder under nuru/ or shared/ (NEW_NOTE_ROOTS).
+#
+# 0.3.0: the same fields as 0.2.0. A daily note now lives in nuru/: it is Nuru's own
 #   daily (and its reminders), any author may make one, and the user's dailies stay in user/,
 #   which Nuru's server never writes.
 #
@@ -66,8 +70,8 @@ TYPE_FOLDER = {
     "topic": "nuru",
     "index": "nuru",
     "transcript": "nuru",
-    "project": "shared",
-    "session": "shared",
+    "project": "nuru",
+    "session": "nuru",
 }
 
 VALID_AUTHORS = {"user", "nuru", "both"}
@@ -79,4 +83,26 @@ TYPE_FIELD = {
     "correction": "targets",
     "transcript": "session",
     "session": "session",
+}
+
+# Where a new note may be created: any folder under these. (directives stay in user/, which
+# Nuru's server never writes.)
+NEW_NOTE_ROOTS = ("nuru", "shared")
+
+# The type a new note gets when none is given.
+DEFAULT_TYPE = "topic"
+
+# One line on what each type is for: the model's write_note description and Laya's note_type
+# question both read these, so the two can't drift. daily and directives are left out - daily is
+# asked for by name, and directives are the user's.
+TYPE_DESCRIPTIONS = {
+    "topic": "a subject being learned, tracked or thought about",
+    "person": "about one person: who they are, their role, how to reach them, what they are like",
+    "project": "work with a goal and tasks, often shared",
+    "session": "a record of one working session: what was done and decided",
+    "transcript": "the record of a conversation or meeting, close to what was said",
+    "index": "a list of links to other notes on one theme",
+    "profile": "who the user is: background, skills, history",
+    "preferences": "how the user likes things done",
+    "correction": "says another note is wrong and gives the right information",
 }

@@ -1141,14 +1141,23 @@ def _extract_section(text: str, section: str, rel_path: str) -> str:
 
 
 @mcp.tool(
-    description="Return a note's Markdown content. name: a path, filename, title, alias or id - case and "
-    "punctuation don't matter ('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the "
-    "closest notes. section: optional heading text (e.g. 'Decisions') to return just that part of a long "
-    "note, through to the next heading of the same or higher level; an unknown section lists the note's headings."
+    description="Read a note. name: a path, filename, title, alias or id - case and punctuation don't matter "
+    "('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the closest notes. part: 'content' "
+    "(default) returns the note's Markdown text; 'info' returns what surrounds it instead, without the text - "
+    "{note, tags, outgoing, backlinks, todos, todo_count, hint}: its tags, each [[link]] in it as {link, path} "
+    "(path null when no note has that name), the notes that link to it, and its open tasks (unticked "
+    "checkboxes and TODO lines) as {line, text}. section: with part 'content', optional heading text (e.g. "
+    "'Decisions') to return just that part of a long note; an unknown section lists the note's headings."
 )
 @_tool
-def read_note(name: str, section: str | None = None) -> str:
-    """Return the contents of a note (Markdown file) by name - all of it, or one section.
+def read_note(name: str, section: str | None = None, part: str = "content") -> str | dict[str, Any]:
+    """Return a note by name: its Markdown (all of it, or one section), or with part="info"
+    what surrounds it - note_info's tags, links, backlinks and open tasks, without the text.
+
+    One tool for both, so a model that reaches for read_note - as it does, even when the
+    question is about links or tasks - gets the right answer from it. The text stays plain
+    Markdown rather than a JSON string: escaped newlines and quotes would leak into quotes and
+    into a mode="replace" write.
 
     Args:
         name: Which note. Tried in order: as a vault-relative path, as a
@@ -1167,6 +1176,10 @@ def read_note(name: str, section: str | None = None) -> str:
     ValueError, listing the note's headings, if `section` isn't one of them.
     """
     _check_accessible(VAULT_PATH)
+    if part == "info":
+        return note_info(name)
+    if part != "content":
+        raise ValueError(f"Unknown part '{part}'. Use 'content' for the note's text or 'info' for its tags, links and tasks.")
 
     target = _resolve_note(name)
 
@@ -1191,16 +1204,9 @@ def _link_targets(text: str) -> list[str]:
     return list(dict.fromkeys(t for t in targets if t))
 
 
-@mcp.tool(
-    description="What surrounds one note, without its text (read_note gives the text). name: a path, title "
-    "or id, as for read_note. Returns {note, tags, outgoing, backlinks, todos, todo_count, hint}: tags are its "
-    "frontmatter and inline #tags; outgoing is each [[link]] in it as {link, path}, path null when no note "
-    "has that name; backlinks are the notes that link to it; todos are its open tasks (unticked checkboxes "
-    "and TODO lines) as {line, text}. Each list is capped at 25."
-)
 @_tool
 def note_info(name: str) -> dict[str, Any]:
-    """get_links, note_tags and note_todos for one note, in one call.
+    """get_links, note_tags and note_todos for one note, in one call - read_note's part="info".
 
     The name is resolved once, by get_links; tags and todos are then read from
     that same path, so all three describe the same note even when a forgiving
@@ -1559,6 +1565,7 @@ def create_note(
     date: str | None = None,
     targets: list[str] | None = None,
     session: str | None = None,
+    folder: str | None = None,
 ) -> dict[str, str]:
     """Create a new note, with server-owned frontmatter, in the vault - write_note's
     create path, not a tool of its own.
@@ -1647,7 +1654,17 @@ def create_note(
             if unknown_targets:
                 raise ValueError(f"targets references unknown note id(s): {unknown_targets}.")
 
-    rel_path = f"{template.TYPE_FOLDER[type]}/{slug}.md"
+    folder = (folder or "").strip().strip("/") or template.TYPE_FOLDER[type]
+    if folder != template.TYPE_FOLDER[type]:
+        parts = Path(folder).parts
+        if parts[:1] not in [(root,) for root in template.NEW_NOTE_ROOTS] or ".." in parts or any(
+            part.startswith(".") for part in parts
+        ):
+            raise ValueError(
+                f"A new note can't go in '{folder}/': new notes go in a folder under "
+                f"{' or '.join(r + '/' for r in template.NEW_NOTE_ROOTS)}."
+            )
+    rel_path = f"{folder}/{slug}.md"
     target = _resolve_target(rel_path)
 
     created = datetime.now().strftime("%Y-%m-%dT%H:%M")
@@ -1747,12 +1764,11 @@ def _append_text(target: Path, content: str) -> None:
 _NOTE_ID = re.compile(r"[0-9A-Z]{26}")
 
 
-def _looks_like_path_or_id(note: str) -> bool:
-    """A name that points at one particular note rather than naming a new one."""
-    return "/" in note or note.endswith(".md") or bool(_NOTE_ID.fullmatch(note.strip()))
-
-
 _WRITE_MODES = ("append", "replace")
+
+# Two names this alike are probably one note mistyped, not two notes - unless they differ only in
+# digits (a date, a number), which is how a series of notes is named.
+_NEAR_NAME_RATIO = 0.88
 
 
 def _title_of(path: Path, frontmatter: dict[str, Any]) -> str:
@@ -1762,17 +1778,43 @@ def _title_of(path: Path, frontmatter: dict[str, Any]) -> str:
     return str(title or path.stem)
 
 
+def _near_names(slug: str) -> list[Path]:
+    """Existing notes whose filename is all but the same as `slug` - a likely typo of one of them."""
+    near = []
+    for path in _all_notes():
+        stem = path.stem.lower()
+        if stem == slug or (
+            difflib.SequenceMatcher(None, stem, slug).ratio() >= _NEAR_NAME_RATIO
+            and re.sub(r"\d", "", stem) != re.sub(r"\d", "", slug)
+        ):
+            near.append(path)
+    return near
+
+
+def _repeats_the_note(existing: str, content: str) -> bool:
+    """Does an append's content contain the note's own text? Then it is a whole-note rewrite sent
+    as an append, which would leave the note containing itself twice."""
+    body = existing[match.end():] if (match := _FRONTMATTER.match(existing)) else existing
+    squash = lambda text: " ".join(text.split())  # noqa: E731
+    body, content = squash(body), squash(content)
+    return len(body) >= 40 and body[:200] in content
+
+
+_TYPE_LINES = "; ".join(f"{name} = {what}" for name, what in template.TYPE_DESCRIPTIONS.items())
+
+
 @mcp.tool(
     description=(
-        "Write to a note, creating it if it doesn't exist. note: an existing note's path, title or id, or the "
-        "title for a new note. content: Markdown. mode: 'append' (default) adds content to the end of the note - "
-        "send ONLY the new text, never the note's existing text; 'replace' makes content the note's whole new "
-        "text (its frontmatter is kept), so send the complete note. type (needed to create): one of correction, "
-        "profile, preferences, person, topic, index, transcript, project, session, daily; type=daily (no note) "
-        "writes to your own daily note for today, in nuru/ - use it for reminders too. author (needed to "
-        "create): nuru or both. tags, supersedes (id of a note this replaces), targets (for a correction: ids of "
-        "the notes it corrects) and session (YYYY-MM-DD-NN) only apply when creating. Nothing in user/ can be "
-        "written, nor archived notes. Returns {done, path, id, created}: done says in words what happened."
+        "Write to a note, creating it if it doesn't exist. note: an existing note's path, title or id; or, for "
+        "a new note, a title (it goes in nuru/) or a path under nuru/ or shared/ such as 'nuru/People/Dana Lee' "
+        "(folders are made as needed). content: Markdown. mode: 'append' (default) adds content to the end - send "
+        "ONLY the new text, never the note's existing text; 'replace' makes content the note's whole new text "
+        "(frontmatter kept), so send the complete note. type (optional, for a new note; default topic): "
+        f"{_TYPE_LINES}. type=daily (no note) writes to your own daily note for today - use it for reminders "
+        "too. author (optional): nuru (default) or both. tags, supersedes (id of a note this replaces), targets "
+        "(for a correction: ids of the notes it corrects) and session (YYYY-MM-DD-NN) only apply to a new note. "
+        "Nothing in user/ can be written, nor archived notes. Returns {done, path, id, created}: done says in "
+        "words what happened."
     )
 )
 @_tool
@@ -1798,8 +1840,10 @@ def write_note(
     - Otherwise `note` is resolved as read_note resolves a name (path,
       filename, title, alias or id; never anything in trash/). One match is
       written to. Several are refused, listing them - a guess would write to
-      the wrong note. None creates a new note titled `note` (see create_note);
-      a new note may be empty.
+      the wrong note. None creates a new note: a bare title goes in nuru/; a
+      path puts it in that folder, which must be under nuru/ or shared/
+      (template.NEW_NOTE_ROOTS). A new note may be empty. Its type defaults to
+      template.DEFAULT_TYPE and its author to "nuru".
 
     mode says how an existing note is written: "append" adds `content` to the
     end (with a blank line before it); "replace" makes `content` the whole of
@@ -1808,12 +1852,17 @@ def write_note(
     with nothing is refused: that is a delete, which is a move to trash.
 
     Guards against the ways a write lands somewhere it shouldn't:
-    - A `note` that is a path or an id but matches nothing is refused, with
-      the closest notes, rather than turned into a new note's title - a
-      mistyped path would otherwise quietly become a duplicate.
-    - An existing note can't be written with arguments that only make sense
-      for a new one: supersedes or targets, or a type other than the note's
-      own (a correction must never become an edit of the note it corrects).
+    - An id that matches nothing is refused, with the closest notes.
+    - A new note whose name is all but an existing note's (see _near_names) is
+      refused with "did you mean": a mistyped name or path would otherwise
+      quietly become a duplicate.
+    - An append whose content contains the note's own text is refused (see
+      _repeats_the_note): the model meant to rewrite it, which is
+      mode="replace", and an append would leave the note twice over.
+    - An existing note can't take supersedes or targets, which only make sense
+      for a new one, nor type="correction" unless it is one (a correction must
+      never become an edit of the note it corrects). Any other type passed
+      for an existing note is ignored: the note keeps its own.
     - An archived note is refused: move it out of archive/ first.
     - With OBSIDIAN_PROTECT_USER_AUTHORED on (Nuru's server): nothing under
       user/, and no note the user wrote anywhere else.
@@ -1847,25 +1896,26 @@ def write_note(
                 "Pass the path of the one to write to."
             )
         if not matches:
-            if _looks_like_path_or_id(note):
-                message = f"No note found at '{note}'."
+            if _NOTE_ID.fullmatch(note.strip()):
+                message = f"No note has the id '{note}'."
                 if close := _NoteNames().closest(note):
                     message += f" Closest matches: {', '.join(_rel(p) for p in close)}."
-                raise FileNotFoundError(
-                    f"{message} To make a new note, pass its title (not a path or id) as note, with type and author."
+                raise FileNotFoundError(f"{message} To make a new note, pass a title or a path as note.")
+            name = note.strip().removesuffix(".md")
+            folder, title = (str(Path(name).parent), Path(name).name) if "/" in name else (None, name)
+            if near := _near_names(_slugify(title)):
+                raise FileExistsError(
+                    f"No note is at '{note}', but {', '.join(_rel(p) for p in near[:3])} has nearly the same name. "
+                    "Did you mean that note? Write to its path - or give the new note a clearly different name."
                 )
-            if type is None or author is None:
-                raise ValueError(
-                    f"No note named '{note}' exists. To create it, pass type and author too; "
-                    "to add to an existing note, use search to find its path."
-                )
-            if type in template.TYPE_FOLDER:
-                _reject_user_folder_for_nuru(f"{template.TYPE_FOLDER[type]}/{note}")
+            note_type = type or template.DEFAULT_TYPE
+            if note_type in template.TYPE_FOLDER:
+                _reject_user_folder_for_nuru(f"{folder or template.TYPE_FOLDER[note_type]}/{title}")
             made = create_note(
-                type=type, title=note, author=author, body=content, tags=tags,
-                supersedes=supersedes, targets=targets, session=session,
+                type=note_type, title=title, author=author or "nuru", body=content, tags=tags,
+                supersedes=supersedes, targets=targets, session=session, folder=folder,
             )
-            return {"done": f"Created the {type} note '{note}' at {made['path']}.", **made, "created": True}
+            return {"done": f"Created the {note_type} note '{title}' at {made['path']}.", **made, "created": True}
 
     target = matches[0]
     rel_path = _rel(target)
@@ -1876,10 +1926,10 @@ def write_note(
             f"'{rel_path}' already exists; supersedes and targets only apply to a new note. "
             "Give the new note its own title."
         )
-    if type is not None and type != frontmatter.get("type"):
+    if type == "correction" and frontmatter.get("type") != "correction":
         raise ValueError(
-            f"'{rel_path}' already exists and is a {frontmatter.get('type') or 'untyped'} note, not {type}. "
-            "To make a new note, give it its own title."
+            f"'{rel_path}' already exists and is a {frontmatter.get('type') or 'untyped'} note, not a correction. "
+            "A correction is a new note: give it its own title, with targets."
         )
     _reject_user_folder_for_nuru(rel_path)
     if _is_archived(target):
@@ -1891,6 +1941,12 @@ def write_note(
     if not content.strip():
         raise ValueError(
             "content is empty - nothing to add. (To delete a note, move it to trash with rename_or_move_file.)"
+        )
+    if mode == "append" and _repeats_the_note(text, content):
+        raise ValueError(
+            f"content repeats the text already in '{rel_path}', so appending it would put the note in twice. "
+            "To change the note, call again with mode=\"replace\" and the complete new text; to add to it, "
+            "send only the new text."
         )
 
     title = _title_of(target, frontmatter)

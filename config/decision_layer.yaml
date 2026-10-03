@@ -31,6 +31,8 @@ decision_points:
   rerank: shadow           # Laya: reorder search's matches by meaning
   watch_thinking: enforce  # code: thinking budget, repeated sentences, repeated tool calls
   watch_laya: shadow       # Laya: the watch's own reading of the thinking
+  note_type: shadow        # Laya: a new note's type, from its title and text (enforced: fills it in
+                           # when the model gives none)
 
 # Watching the model's reasoning as it streams (core.thinking_watch). Code checks every
 # `check_every_tokens`: past the tier's budget, or a sentence of `repeat_min_chars`+ seen
@@ -103,3 +105,6 @@ thresholds:
       repeating: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
       ready: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
       stuck: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
+  note_type:
+    note_type:
+      any: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}

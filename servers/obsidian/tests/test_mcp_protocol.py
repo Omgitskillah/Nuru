@@ -72,7 +72,8 @@ def test_new_tools_are_registered_and_only_their_named_params_are_required(tmp_p
     assert set(schemas["browse"]["properties"]) == {"type", "limit", "folder"}
     assert schemas["tags"].get("required", []) == []
     assert set(schemas["tags"]["properties"]) == {"tag", "note"}
-    assert schemas["note_info"]["required"] == ["name"]
+    assert schemas["read_note"]["required"] == ["name"]
+    assert schemas["read_note"]["properties"]["part"]["default"] == "content"
     assert schemas["rename_or_move_file"]["required"] == ["source_path", "destination_path"]
     assert schemas["read_note"]["required"] == ["name"]
     assert "section" in schemas["read_note"]["properties"]
@@ -100,11 +101,11 @@ def test_the_new_tools_work_end_to_end_through_call_tool(tmp_path, monkeypatch):
     call("write_note", {"note": "Plan", "type": "project", "author": "both", "tags": ["mcp"], "content": "## Goal\n\nShip"})
     assert "nuru/daily-2026-09-20.md" in str(call("browse", {"type": "daily"}))
     assert "mcp" in str(call("tags"))
-    assert "shared/plan.md" in str(call("tags", {"tag": "#MCP"}))
+    assert "nuru/plan.md" in str(call("tags", {"tag": "#MCP"}))
     assert "project" in str(call("tags", {"note": "Plan"}))
     assert "Ship" in str(call("read_note", {"name": "plan", "section": "goal"}))
-    assert "nuru/daily-2026-09-20.md" in str(call("note_info", {"name": "Plan"}))
-    assert "archive/shared/plan.md" in str(call("rename_or_move_file", {"source_path": "Plan", "destination_path": "archive"}))
+    assert "nuru/daily-2026-09-20.md" in str(call("read_note", {"name": "Plan", "part": "info"}))
+    assert "archive/nuru/plan.md" in str(call("rename_or_move_file", {"source_path": "Plan", "destination_path": "archive"}))
 
 
 def test_a_read_note_miss_reaches_the_caller_with_its_closest_candidates(tmp_path, monkeypatch):

@@ -633,8 +633,8 @@ def test_create_note_writes_frontmatter_heading_and_body(tmp_path, monkeypatch):
 
     result = server.create_note(type="project", title="My Project", author="both", body="Body text.")
 
-    assert result["path"] == "shared/my-project.md"
-    text = (tmp_path / "shared" / "my-project.md").read_text()
+    assert result["path"] == "nuru/my-project.md"
+    text = (tmp_path / "nuru" / "my-project.md").read_text()
     assert text.startswith("---\n")
     assert "\n---\n\n# My Project\n\nBody text." in text
     assert f"id: {result['id']}\n" in text
@@ -664,7 +664,8 @@ def test_create_note_maps_type_to_folder(tmp_path, monkeypatch):
 
     assert server.create_note(type="directives", title="A", author="user")["path"] == "user/a.md"
     assert server.create_note(type="profile", title="B", author="nuru")["path"] == "nuru/b.md"
-    assert server.create_note(type="project", title="C", author="both")["path"] == "shared/c.md"
+    assert server.create_note(type="project", title="C", author="both")["path"] == "nuru/c.md"
+    assert server.create_note(type="project", title="D", author="both", folder="shared/Projects")["path"] == "shared/Projects/d.md"
 
 
 def test_create_note_slugifies_title_for_filename(tmp_path, monkeypatch):
@@ -894,7 +895,7 @@ def test_create_note_is_atomic_against_a_racing_duplicate_create(tmp_path, monke
 
     with pytest.raises(ToolError, match="FileExistsError"):
         server.create_note(type="project", title="X", author="both")
-    assert (tmp_path / "shared" / "x.md").read_text() == "landed from the other call"
+    assert (tmp_path / "nuru" / "x.md").read_text() == "landed from the other call"
 
 
 def test_create_note_rolls_back_the_file_if_the_index_insert_fails(tmp_path, monkeypatch):
@@ -907,7 +908,7 @@ def test_create_note_rolls_back_the_file_if_the_index_insert_fails(tmp_path, mon
 
     with pytest.raises(RuntimeError, match="boom"):
         server.create_note(type="project", title="X", author="both")
-    assert not (tmp_path / "shared" / "x.md").exists()
+    assert not (tmp_path / "nuru" / "x.md").exists()
 
 
 def test_create_note_reports_an_index_integrity_error_clearly(tmp_path, monkeypatch):
@@ -925,7 +926,7 @@ def test_create_note_reports_an_index_integrity_error_clearly(tmp_path, monkeypa
     with pytest.raises(ToolError, match="ValueError") as exc_info:
         server.create_note(type="project", title="X", author="both")
     assert "already has an entry" in str(exc_info.value)
-    assert not (tmp_path / "shared" / "x.md").exists()
+    assert not (tmp_path / "nuru" / "x.md").exists()
 
 
 def test_create_note_recreating_a_title_after_the_vault_was_cleared_externally(tmp_path, monkeypatch):
@@ -1743,6 +1744,36 @@ def test_note_info_on_an_unknown_note_names_the_closest(tmp_path, monkeypatch):
         server.note_info("Plann")
 
 
+# --- read_note(part=...): the text, or what surrounds it ---
+
+
+def test_read_note_part_info_is_note_info_without_the_text(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "# Hub\nsecret body [[Alpha]] #router\n- [ ] call Bob", "Alpha.md": "# Alpha"})
+
+    info = server.read_note("hub", part="info")
+
+    assert info == server.note_info("hub")
+    assert info["tags"] == ["router"] and info["outgoing"] == [{"link": "Alpha", "path": "Alpha.md"}]
+    assert "secret body" not in json.dumps(info)
+
+
+def test_read_note_defaults_to_the_plain_markdown_text(tmp_path, monkeypatch):
+    import asyncio
+
+    _vault_with(tmp_path, monkeypatch, {"hub.md": 'line one\nsays "quoted"'})
+
+    assert server.read_note("hub") == 'line one\nsays "quoted"'
+    result = asyncio.run(server.mcp.call_tool("read_note", {"name": "hub"}))
+    assert result.content[0].text == 'line one\nsays "quoted"'  # not a JSON string with escapes
+
+
+def test_read_note_refuses_an_unknown_part(tmp_path, monkeypatch):
+    _vault_with(tmp_path, monkeypatch, {"hub.md": "x"})
+
+    with pytest.raises(ToolError, match="Unknown part 'links'"):
+        server.read_note("hub", part="links")
+
+
 # --- read_note: forgiving name matching ---
 
 
@@ -2270,17 +2301,19 @@ def test_write_note_refuses_a_path_that_matches_nothing_instead_of_creating_it(t
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
     server.create_note(type="person", title="Priya Raman", author="nuru")
 
-    with pytest.raises(ToolError, match="Closest matches: nuru/priya-raman.md"):
+    with pytest.raises(ToolError, match="nuru/priya-raman.md has nearly the same name"):
         server.write_note("more", note="nuru/People/priya-ramen.md", type="person", author="nuru")
     assert _notes() == ["nuru/priya-raman.md"]
 
 
-def test_write_note_needs_type_and_author_to_create(tmp_path, monkeypatch):
+def test_a_new_note_defaults_to_a_topic_by_nuru_in_nuru(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
 
-    with pytest.raises(ToolError, match="pass type and author too"):
-        server.write_note("more", note="New Thing", type="topic")
-    assert _files() == []
+    result = server.write_note("more", note="New Thing")
+
+    assert result["path"] == "nuru/new-thing.md" and result["done"] == "Created the topic note 'New Thing' at nuru/new-thing.md."
+    text = (tmp_path / result["path"]).read_text()
+    assert "type: topic\n" in text and "author: nuru\n" in text
 
 
 def test_a_correction_never_appends_to_the_note_it_corrects(tmp_path, monkeypatch):
@@ -2377,6 +2410,67 @@ def test_a_missing_note_says_how_to_name_one(tmp_path, monkeypatch):
 
     with pytest.raises(ToolError, match='note is missing - pass note="<a short title>"'):
         server.write_note("Flights: 400 EUR", type="topic", author="nuru")
+
+
+# --- write_note: free paths under nuru/ and shared/, and the guards that come with them ---
+
+
+def test_a_new_note_goes_where_its_path_says_under_nuru_or_shared(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    a = server.write_note("hi", note="nuru/People/Dana Lee", type="person")
+    b = server.write_note("plan", note="shared/Garden/Raised Beds.md", type="project", author="both")
+
+    assert a["path"] == "nuru/People/dana-lee.md" and "type: person\n" in (tmp_path / a["path"]).read_text()
+    assert b["path"] == "shared/Garden/raised-beds.md"
+    assert server.read_note("Dana Lee").endswith("hi")
+
+
+@pytest.mark.parametrize("path", ["Recipes/Pancakes", "archive/nuru/Old", "trash/nuru/Gone", "Templates/X", ".obsidian/x"])
+def test_a_new_note_outside_nuru_and_shared_is_refused(tmp_path, monkeypatch, path):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+
+    with pytest.raises(ToolError, match="new notes go in a folder under nuru/ or shared/"):
+        server.write_note("x", note=path)
+    assert _files() == []
+
+
+def test_a_name_differing_only_in_digits_is_a_new_note_not_a_typo(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.write_note("x", note="Standup 2026-10-02", type="session")
+
+    assert server.write_note("y", note="Standup 2026-10-03", type="session")["created"] is True
+
+
+def test_a_near_name_is_refused_as_a_likely_typo(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.write_note("x", note="Alice Chen", type="person")
+
+    with pytest.raises(ToolError, match="nuru/alice-chen.md has nearly the same name"):
+        server.write_note("y", note="Alice Chenn", type="person")
+
+
+def test_an_append_that_repeats_the_note_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    made = server.create_note(type="topic", title="Snippets", author="nuru",
+                              body="First snippet explains the ring buffer.\n\nSecond snippet is the ISR.")
+    before = (tmp_path / made["path"]).read_text()
+
+    with pytest.raises(ToolError, match='mode="replace" and the complete new text'):
+        server.write_note("# Snippets\n\nFirst snippet explains the ring buffer.\n\nSecond snippet is the ISR.\n\nNew line",
+                          note="Snippets")
+    assert (tmp_path / made["path"]).read_text() == before
+    assert server.write_note("New line", note="Snippets")["created"] is False
+
+
+def test_a_type_given_for_an_existing_note_is_ignored_unless_it_is_correction(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "VAULT_PATH", tmp_path)
+    server.write_note("x", note="Garden", type="topic")
+
+    assert server.write_note("y", note="Garden", type="project")["created"] is False
+    assert "type: topic\n" in server.read_note("Garden")
+    with pytest.raises(ToolError, match="not a correction"):
+        server.write_note("z", note="Garden", type="correction")
 
 
 # --- write_note(type="daily"): Nuru's own daily, in nuru/ ---
@@ -3555,7 +3649,7 @@ def test_a_correction_lives_in_nuru_and_links_what_it_corrects(tmp_path, monkeyp
     assert result["path"] == "nuru/sara-lead-time.md"
     text = (tmp_path / result["path"]).read_text()
     assert f"Corrects: [[{first['id']}]], [[{second['id']}]]\n\nLead time is 20 weeks, not 26." in text
-    assert "version: 0.3.0\n" in text and "author: nuru\n" in text
+    assert "version: 0.4.0\n" in text and "author: nuru\n" in text
     backlinks = server.get_links(first["id"])["backlinks"]
     assert result["path"] in backlinks
 

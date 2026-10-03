@@ -206,3 +206,19 @@ def test_watch_thinking_signals_only_past_its_threshold(make_layer, log):
 def test_watch_thinking_lets_the_model_go_on_when_laya_is_down(make_layer):
     layer, _ = make_layer(available=False)
     assert layer.watch_thinking("r", [], "x")["signal"] == "progressing"
+
+
+# ---------------------------------------------------------------- note_type
+def test_note_type_decides_when_its_choice_clears_the_threshold(make_layer, log):
+    layer, predictor = make_layer({"note_type": {"person": 0.8, "topic": 0.2}})
+    result = layer.note_type("Dana Lee", "Firmware engineer, joined in May.")
+    assert (result["type"], result["choice"], result["source"]) == ("person", "person", "laya")
+    assert "Dana Lee" in predictor.calls[0][1]["note"]
+    assert rows(log)[0]["decision_point"] == "note_type"
+
+
+def test_note_type_is_undecided_below_the_threshold_or_when_laya_is_down(make_layer):
+    layer, _ = make_layer({"note_type": {"person": 0.4, "topic": 0.35, "project": 0.25}})
+    assert layer.note_type("x", "y")["type"] is None
+    layer, _ = make_layer(available=False)
+    assert layer.note_type("x", "y")["source"] == "fallback"

@@ -128,7 +128,12 @@ MATH_SERVER_PARAMS = StdioServerParameters(
 )
 
 LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
-LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR)
+# Laya reads no notes, so it gets no vault. NURU_DECISION_CONFIG, when set (an eval run's own
+# config, logging to the run's own decision database), is passed on so both ends use it.
+_laya_env = get_default_environment()
+if _decision_config := os.environ.get("NURU_DECISION_CONFIG"):
+    _laya_env["NURU_DECISION_CONFIG"] = _decision_config
+LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
 
 # The only tools the local model is offered or allowed to call - an allowlist, so a tool a server
 # adds later reaches the model only once it is added here. Left out on purpose:
@@ -137,7 +142,7 @@ LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"
 MODEL_TOOLS = frozenset(
     {
         # obsidian, read
-        "browse", "find_in_notes", "note_info", "read_note", "search", "tags",
+        "browse", "find_in_notes", "read_note", "search", "tags",
         # obsidian, write
         "rename_or_move_file", "write_note",
         # math-4-llms
@@ -368,6 +373,7 @@ class Session:
             opened.callback(decision_log.close)
             shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id)
             shadow.effort_off = decision_config.mode("assess_effort") == "off"
+            shadow.note_type_off = decision_config.mode("note_type") == "off"
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, BASE_MODEL, planner)
 
@@ -643,6 +649,13 @@ class Session:
                     messages.append({"role": "tool", "content": content})
                     last_results.append((len(messages) - 1, fn["name"]))
                     continue
+                typed = self.shadow.note_type(args) if self.shadow and fn["name"] == "write_note" else None
+                if (typed and typed.get("type") and typed["type"] != "correction" and not args.get("type")
+                        and enforcing and enforcing.on("note_type")):
+                    # Laya decides a new note's type when the model gave none (an existing note keeps its own;
+                    # the server ignores it). Never a correction: that needs targets only the model can give.
+                    args = {**args, "type": typed["type"]}
+                    self.shadow.gate_action(typed, f"filled:{typed['type']}")
                 write_gate = self.shadow.before_tool(fn["name"], args) if self.shadow else None
                 gate_id = write_gate["decision_id"] if write_gate else None
                 tool_start = time.monotonic()
@@ -799,7 +812,7 @@ class Session:
         resolved = []
         for path in paths:
             try:
-                result = self.tools.call_harness_tool("note_info", {"name": path})
+                result = self.tools.call_harness_tool("read_note", {"name": path, "part": "info"})
                 resolved.append(json.loads(result.text)["note"] if not result.is_error else path)
             except Exception:
                 resolved.append(path)

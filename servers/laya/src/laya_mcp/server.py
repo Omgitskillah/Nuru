@@ -26,7 +26,9 @@ from laya_mcp.question_sets import load_question_sets
 
 LOG_DIR = Path(os.environ.get("LAYA_MCP_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 
-HARNESS_TOOLS = frozenset({"assess_effort", "tool_gate", "gate_write", "check_claim", "rerank", "watch_thinking", "health"})
+HARNESS_TOOLS = frozenset(
+    {"assess_effort", "tool_gate", "gate_write", "check_claim", "rerank", "watch_thinking", "note_type", "health"}
+)
 MODEL_TOOLS: frozenset[str] = frozenset()
 
 mcp = MCPServer("laya-mcp", middleware=[AccessLogMiddleware(LOG_DIR)])
@@ -153,6 +155,18 @@ def rerank(
     step: int | None = None,
 ) -> dict[str, Any]:
     return _get_layer().rerank(query, matches, _context(session_id, task_id, step))
+
+
+@mcp.tool(description="Harness only. A new note's type, judged from its title and text.")
+@_tool
+def note_type(
+    title: str,
+    content: str = "",
+    session_id: str | None = None,
+    task_id: str | None = None,
+    step: int | None = None,
+) -> dict[str, Any]:
+    return _get_layer().note_type(title, content, _context(session_id, task_id, step))
 
 
 def build_layer() -> DecisionLayer:

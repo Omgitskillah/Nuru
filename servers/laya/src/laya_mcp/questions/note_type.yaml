@@ -1,0 +1,15 @@
+# Which type a new note is, judged from its title and text, so the type need not be the model's
+# call. Asked by Nuru before each write_note (decision point note_type). Options are
+# obsidian_mcp.frontmatter_template.TYPE_DESCRIPTIONS - type -> one line on what it is for -
+# filled in at request time, so they can't drift from the server's own definitions.
+# Replaces classify_note_type (2026-10-03): the same question, asked at the write, not by the model.
+name: note_type
+version: 1
+checkpoint: multilingual
+max_len: 4096
+max_state_tokens: 3800
+questions:
+  note_type:
+    type: choice
+    instructions: "Which kind of note is this `note`? Judge from its title and its text."
+    criteria_from: note_types

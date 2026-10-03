@@ -11,6 +11,8 @@ method still answers - with the conservative default - and says `source: "fallba
 from typing import Any
 
 
+from obsidian_mcp.frontmatter_template import TYPE_DESCRIPTIONS
+
 from laya_mcp import checks
 from laya_mcp.config import DecisionConfig
 from laya_mcp.decision_log import DecisionLog, canonical, sha256
@@ -270,6 +272,23 @@ class DecisionLayer:
             "reranked": True,
             "status": "ok",
         }
+
+    # ------------------------------------------------------------------ note_type
+    def note_type(self, title: str, content: str, context: Context | None = None) -> dict[str, Any]:
+        """A new note's type, judged from its title and text. `decided` says whether the choice clears
+        its threshold; when it doesn't (or Laya can't be asked), `type` is None and the caller keeps
+        its default."""
+        qset = "note_type"
+        state = {"note": f"# {title}\n\n{content}".strip()}
+        questions, prediction, status, detail = self._ask(qset, state, {"note_types": TYPE_DESCRIPTIONS})
+        choice, p, probabilities = (None, None, {})
+        if prediction:
+            choice, p, probabilities = self._choice(prediction, "note_type")
+        decided = choice is not None and self._clears(qset, "note_type", choice, p)
+        decision_id = self._record("note_type", qset, state, questions, prediction, status, detail,
+                                   choice if decided else "undecided", context)
+        return {"decision_id": decision_id, "type": choice if decided else None, "choice": choice, "p": p,
+                "probabilities": probabilities, "source": "laya" if prediction else "fallback", "status": status}
 
     # ------------------------------------------------------------------ watch_thinking
     def watch_thinking(

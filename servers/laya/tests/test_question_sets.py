@@ -13,7 +13,7 @@ def test_the_shipped_sets_load_and_fit_their_checkpoints():
     sets = load_question_sets()
     assert set(sets) == {
         "tool_gate_start", "tool_gate_next", "assess_effort", "gate_write",
-        "check_claim", "rerank", "watch_thinking",
+        "check_claim", "rerank", "watch_thinking", "note_type",
     }
     for s in sets.values():
         assert s.max_state_tokens < s.context_length

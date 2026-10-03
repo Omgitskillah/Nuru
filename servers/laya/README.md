@@ -32,6 +32,7 @@ Harness only - Nuru calls these and acts on the answer in code; they are never i
 | `gate_write(request, tool, arguments, known_ids)` | `verdict`: `block` (a code check failed - `reasons` says which), `proceed` (both Laya answers cleared their thresholds) or `ask`. |
 | `check_claim(reply, log, known_ids)` | `passed`, `verified` and `failures`. A note ID in the reply that isn't in the log or `known_ids` fails straight away, without Laya. Otherwise Laya reads the reply alone and says what it claims (`made_change` / `reports_failure` / `no_change`), and code checks that against the log: a claimed change with no successful write behind it fails. |
 | `rerank(query, matches)` | `search`'s matches by meaning reordered by Laya's `relevant` probability, top `rerank.top_k` kept. |
+| `note_type(title, content)` | A new note's type, judged from its title and text against `TYPE_DESCRIPTIONS`; `type` is set only when the choice clears its threshold. Nuru asks before each `write_note` that names a note and logs the model's own type as the action (`model:<type>`); enforced, it fills in the type when the model gave none (never `correction`). Shadow until calibrated: [note-type check](../../nuru/evals/note-type-check-2026-10-03.md). |
 | `health()` | Laya's load state, device, loaded checkpoints, question-set versions, decision-point modes. |
 
 Every answer carries `probabilities` and `source` (`laya`, `code` or `fallback`), and a `decision_id` the harness uses to record what it actually did.

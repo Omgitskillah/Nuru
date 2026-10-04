@@ -151,3 +151,26 @@ Raw batches (`decision_layer/.runs/`):
 - `suite-full-granite4.2-20261003-232233/` and `suite-full-qwen3.5-20261004-012255/`
 - `format_enforcement-20261004-031717.json` (Granite)
 - Qwen's crashed run kept only its log
+
+## The "never escalate math" rule, 2026-10-04
+
+**The rule** (commit `ed736f3`): "math, calculations" left the escalation list. The prompt and `ask_an_expert`'s description now send all arithmetic, unit conversions and statistics to `calculate` / `statistics`, and refuse impossible conversions instead of escalating them.
+
+**The test:** the 10 math tests (7, 8, 9, 12, 14, 15, 19, 22, 27, 34) and the escalation tests (25, 30–33), 3 runs per model. Compared with the same tests in the full-suite runs above.
+
+| Model | Run | 15 tests | 10 math tests | Expert calls | on math tests | `calculate`/`statistics` calls | Median turn |
+|---|---|---|---|---|---|---|---|
+| Granite 3B | before | 52.7/75 | 34.0/50 | 5 | 0 | 14 | 51 s |
+| Granite 3B | after | 53.3/75 | 34.7/50 | 10 | 2 | 16 | 54 s |
+| Qwen3.5 4B | before | 52.3/75 | 40.3/50 | 23 | 8 | 44 | 44 s |
+| Qwen3.5 4B | after | 51.0/75 | 40.0/50 | 21 | 6 | 53 | 53 s |
+
+- **Scores didn't move** beyond noise. Only one test per model moved a point or more: Granite's 12 (2.3 → 3.3) and Qwen's 30 (4.0 → 2.7).
+- **Qwen uses the math tools more** (44 → 53 calls), and its parsecs escalations fell from 8 calls in 3 runs to 3 in one run. But it still escalated math on tests 27 and 22 (the schedulability arithmetic, the same question 3 times in one turn).
+- **Granite escalated math where it hadn't before** (test 12, twice).
+- **Test 33 calls went up** (Granite 5 → 8, Qwen 9 → 11). The test asks Nuru to consult the expert, so some calls are right, but more than 2 a turn means repeats or failed calls.
+
+**What it shows:** a prompt rule alone doesn't stop math escalations reliably. Next steps, in code:
+1. **Refuse a repeated expert question** within a turn, as repeated searches are already refused.
+2. **A daily cap for `ask_an_expert`,** shared with the expert planner.
+3. **A gate on math-only questions,** if escalations persist. For example, a Laya yes/no question ("is this only arithmetic or a unit conversion?") checked before the call, in shadow mode first.

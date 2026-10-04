@@ -76,7 +76,8 @@ def vault_changes(vault: Path) -> list[dict]:
     return changes
 
 
-def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None) -> dict:
+def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None,
+             planner: str | None = None) -> dict:
     out = batch / "turn.json"
     out.unlink(missing_ok=True)
     logs = Path(env["NURU_LOG_DIR"])
@@ -91,7 +92,7 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
     with open(batch / "turn.stdout", "w") as stdout, open(batch / "turn.stderr", "w") as stderr:
         proc = subprocess.Popen(
             [sys.executable, str(HERE / "drive_turn.py"), "--prompt", prompt, "--think", think, "--out", str(out),
-             *(["--plan", str(plan)] if plan else [])],
+             *(["--plan", str(plan)] if plan else []), *(["--planner", planner] if planner else [])],
             env=env, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO,
         )
         try:
@@ -116,6 +117,9 @@ def main():
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--plans", type=Path, help="a folder of plans, <test>.json each: every turn is then the "
                         "harness carrying out the test's plan (Session.run_plan) instead of the model's own turn")
+    parser.add_argument("--planner", help="a planner Modelfile (modelfiles/planner/), swapped onto the model to write "
+                        "each turn's plan live (live_plan.py); the harness carries it out, or the model takes the turn "
+                        "if the plan is empty or invalid")
     parser.add_argument("--enforce", default="", help="decision points to enforce IN THIS BATCH ONLY (comma-separated, "
                         "or 'all'); its config marks thresholds calibrated so it loads - a test of the enforce "
                         "paths, not of calibrated thresholds")
@@ -167,7 +171,7 @@ def main():
                     shutil.copy2(pristine_index, index)
                     started, day = time.monotonic(), date.today().isoformat()
                     plan = args.plans / f"{test}.json" if args.plans else None
-                    record = run_turn(batch, env, prompts[test], think, args.timeout, plan)
+                    record = run_turn(batch, env, prompts[test], think, args.timeout, plan, args.planner)
                     record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompts[test], "date": day,
                                    "wall_seconds": round(time.monotonic() - started, 1),
                                    "vault_changes": vault_changes(vault)})

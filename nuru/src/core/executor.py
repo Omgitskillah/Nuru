@@ -18,7 +18,7 @@ _REF = re.compile(r"\$(s\d+)")
 _WHOLE_REF = re.compile(r"^\$(s\d+)$")
 # What a think step sees of each input, and the answer of each step's output.
 INPUT_CHARS = 6000
-ANSWER_CHARS = 3000
+ANSWER_CHARS = 6000
 
 PICK_SYSTEM = (
     "You carry out one step of a plan in my Obsidian vault: choose one value from a tool's result. "

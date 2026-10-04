@@ -30,34 +30,33 @@ AREA_MONITOR = "01M2NT6HP8THJKVENCBHBQBN5W"  # shared/Projects/area-monitor-devi
 # The note IDs the model may use are the ones that search returned. `check` says whether the
 # arguments are right, not just well-formed.
 ARGUMENT_STEPS = [
+    # Since the 2026-10 tools purge every write is write_note. The old "impossible append" step (a
+    # line for a person with no note) is gone: write_note now creates a missing note, so there is no
+    # longer one right answer to it.
     {
-        "name": "append_priya", "tool": "append_note", "query": "Priya",
+        "name": "append_priya", "tool": "write_note", "query": "Priya",
         "request": "Add a line to Priya's note saying she prefers async messages on Fridays.",
-        "check": lambda a: a.get("id") == PRIYA and "async" in a.get("content", "").lower()
-        and "friday" in a.get("content", "").lower(),
+        "check": lambda a: ("priya" in str(a.get("note", "")).lower() or a.get("note") == PRIYA)
+        and a.get("mode", "append") == "append"
+        and "async" in str(a.get("content", "")).lower() and "friday" in str(a.get("content", "")).lower(),
     },
     {
-        "name": "correction_sara", "tool": "create_note", "query": "SARA-R510S",
+        "name": "correction_sara", "tool": "write_note", "query": "SARA-R510S",
         "request": "File a correction: the SARA-R510S lead time is 20 weeks, not 26.",
-        "check": lambda a: a.get("type") == "correction" and a.get("author") == "user"
-        and bool(set(a.get("targets") or []) & {VENDOR_EMAIL, AREA_MONITOR}) and "20" in (a.get("body") or ""),
+        "check": lambda a: a.get("type") == "correction" and "20" in str(a.get("content", ""))
+        and (bool(set(a.get("targets") or []) & {VENDOR_EMAIL, AREA_MONITOR}) or "[[" in str(a.get("content", ""))),
     },
     {
-        "name": "transcript_standup", "tool": "create_note", "query": None,
+        "name": "transcript_standup", "tool": "write_note", "query": None,
         "request": "Create a transcript of today's standup: we discussed the soak test and the supercap.",
-        "check": lambda a: a.get("type") == "transcript" and "soak" in (a.get("body") or "").lower()
-        and "supercap" in (a.get("body") or "").lower(),
+        "check": lambda a: a.get("type") == "transcript" and "soak" in str(a.get("content", "")).lower()
+        and "supercap" in str(a.get("content", "")).lower(),
     },
     {
-        "name": "daily_gym", "tool": "add_to_daily", "query": None,
+        "name": "daily_gym", "tool": "write_note", "query": None,
         "request": "Create a daily note for today saying the soak test is running and I'm going to the gym.",
-        "check": lambda a: "soak" in a.get("text", "").lower() and "gym" in a.get("text", "").lower(),
-    },
-    {
-        # The search finds nothing, so no ID is allowed: the schema leaves only the way out.
-        "name": "impossible_append", "tool": "append_note", "query": "Zed Quux",
-        "request": "Add a line to Zed Quux's note saying hi.",
-        "check": lambda a: "cannot_do" in a,
+        "check": lambda a: a.get("type") == "daily" and "soak" in str(a.get("content", "")).lower()
+        and "gym" in str(a.get("content", "")).lower(),
     },
 ]
 
@@ -74,11 +73,11 @@ def tool_schemas() -> dict[str, dict]:
 
 
 def search(query: str) -> dict:
-    """The obsidian server's own search_notes, run read-only on dummyVault."""
+    """The obsidian server's own search, run read-only on dummyVault."""
     os.environ.setdefault("VAULT_PATH", str(DUMMY_VAULT))
     from obsidian_mcp import server
 
-    return server.search_notes(query)
+    return server.search(query)
 
 
 def argument_messages(step: dict, description: str) -> tuple[list[dict], list[str]]:
@@ -90,7 +89,7 @@ def argument_messages(step: dict, description: str) -> tuple[list[dict], list[st
         found = search(step["query"])
         known_ids = [m["id"] for m in found["matches"] if m.get("id")]
         messages += [
-            {"role": "assistant", "tool_calls": [{"function": {"name": "search_notes", "arguments": {"query": step["query"]}}}]},
+            {"role": "assistant", "tool_calls": [{"function": {"name": "search", "arguments": {"query": step["query"]}}}]},
             {"role": "tool", "content": json.dumps(found)},
         ]
     messages.append({"role": "user", "content": (

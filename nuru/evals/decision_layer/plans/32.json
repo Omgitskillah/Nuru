@@ -1,0 +1,107 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "battery life modeling"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "my battery life modeling note"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "tool": "search",
+   "with": {
+    "query": "PSM timer decoding"
+   }
+  },
+  {
+   "step": "s5",
+   "think": "pick",
+   "uses": [
+    "s4"
+   ],
+   "want": "my note on decoding the PSM timers"
+  },
+  {
+   "step": "s6",
+   "tool": "read_note",
+   "with": {
+    "name": "$s5"
+   }
+  },
+  {
+   "step": "s7",
+   "tool": "search",
+   "with": {
+    "query": "NAT keepalive fix"
+   }
+  },
+  {
+   "step": "s8",
+   "think": "pick",
+   "uses": [
+    "s7"
+   ],
+   "want": "my note on the NAT keepalive fix"
+  },
+  {
+   "step": "s9",
+   "tool": "read_note",
+   "with": {
+    "name": "$s8"
+   }
+  },
+  {
+   "step": "s10",
+   "tool": "search",
+   "with": {
+    "query": "correction keepalive PSM timer battery life"
+   }
+  },
+  {
+   "step": "s11",
+   "think": "draft",
+   "uses": [
+    "s3",
+    "s6",
+    "s9",
+    "s10"
+   ],
+   "want": "a calculate expression for the expected battery life in years with the PSM timers and keepalive interval the notes (and any correction) settle on: the battery capacity divided by the resulting average current, converted to years"
+  },
+  {
+   "step": "s12",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s11"
+   }
+  },
+  {
+   "step": "s13",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s6",
+    "s9",
+    "s10",
+    "s12"
+   ],
+   "want": "whether the 3-year battery life requirement still holds once every interaction between the three notes (and any correction) is accounted for, with the numbers behind it, and the single biggest remaining risk"
+  }
+ ]
+}

@@ -86,3 +86,22 @@ This should be tested the same way before anything is restructured.
 - **The tool-running code in `Session.ask` is now shared helpers** (`_before_tool`, `_write_blocked`, `_refuse_tool`, `_call_tool`), so B's writes face the same gates as A's.
 
 Raw batches: `decision_layer/.runs/suite-free-20261003-194318/`, `suite-plan-20261003-202039/` (B before the fixes) and `suite-plan2-20261003-204839/`.
+
+## Rerun on Qwen3.5 4B (same day, later)
+
+The same 12 tests × 3 repeats, the same 12 plans, with `NURU_BASE_MODEL=qwen3.5:4b`. Qwen ran at its profile's default (thinking off), with the profile's sampling: temperature 0.7, top_p 0.8, no presence penalty ([profiles.yaml](../modelfiles/profiles.yaml)).
+
+| | Mean score | Passes | Median / p90 turn | Tokens per turn |
+|---|---|---|---|---|
+| Granite 3B, own turn | 4.61 | 31/36 | 38 s / 95 s | 20.5k |
+| Granite 3B + plans | 4.81 | 36/36 | 19 s / 63 s | 4.5k |
+| **Qwen3.5 4B, own turn** | **4.86** | **36/36** | 28 s / **52 s** | 20.4k |
+| Qwen3.5 4B + plans | 4.81 | 34/36 | 22 s / 69 s | 4.5k |
+
+- **Qwen's own turn is the best result of the four.** It's the most accurate and never failed. Its median is 10 s faster than Granite's own turn, and its slowest turns much faster (52 s against 95 s). It got there without plans or a second model. It ran with thinking off, so it never hit the thinking watch's stop-and-retry cycles that slowed Granite (test 7: 54 s against 168 s).
+- **Plans help Qwen far less than Granite.** Tokens dropped 4.5x and the median dropped 7 s, but accuracy dipped and the slowest turns got slower. With planning time added (~11 s for Qwen3 8B), Qwen + plans would be slower than Qwen alone.
+- **Where Qwen + plans lost points:**
+  - **Test 7 (3.3/5):** `pick` chose the wrong note twice (a one-on-one note, not the project note with the power budget). Qwen's `draft`s, forced into JSON, came out as `}`, `{0.13}`, `{ 30.4 / 5.35 }`, which `calculate` rejects. Granite didn't wrap values like this.
+  - **Test 24:** the reply was right ("MOQ) is **100**"); the scorer's `moq\D{0,6}100` pattern is too narrow.
+
+**What it means:** switching the base model to Qwen3.5 4B gives most of what the plan-then-act restructure was for, more accurate and faster, without restructuring. The costs: 3.4 GB against 2.2 GB, sampling not yet tuned, and only 12 plan-friendly tests at 3 repeats. The full 34-test suite on Qwen is the next check.

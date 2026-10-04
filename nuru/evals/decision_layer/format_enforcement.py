@@ -23,16 +23,26 @@ def main():
 
     model, base = build_nuru_model()
     profile = for_model(base)
-    tiers = {level: profile.think(level) for level in LEVELS}
+    # One run per distinct think value: Qwen3.5's low and high are both `true`.
+    tiers = {}
+    for level in LEVELS:
+        if profile.think(level) not in tiers.values():
+            tiers[level] = profile.think(level)
     schemas = tool_schemas()
     runs = []
     for step in ARGUMENT_STEPS:
         tool = schemas[step["tool"]]
         messages, known_ids = argument_messages(step, tool["description"])
         fmt = arguments_schema(step["tool"], tool["input_schema"], known_ids)
+        # write_note's content is optional since the 2026-10 tools purge (empty notes are allowed), so
+        # the format would let a model leave it out - and every step here is about what gets written.
+        # Require it, as the old append_note / create_note / add_to_daily did.
+        written = fmt["anyOf"][0]
+        written["required"] = sorted(set(written.get("required", [])) | {"content"})
         for tier, think in tiers.items():
             for repeat in range(args.repeats):
-                result = chat_once(model, messages, think, fmt=fmt)
+                # Nuru's own per-request sampling for this thinking setting (its profile), if any.
+                result = chat_once(model, messages, think, fmt=fmt, options=profile.options(think).get("options"))
                 parsed, problems, correct = False, ["empty content"], False
                 if result["content"].strip():
                     try:

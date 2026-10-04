@@ -123,7 +123,8 @@ def _expert_prompt(question: str, best_guess: str, file_paths: list[str], user_r
     "of local file paths to attach (the expert reads them whole, so attach rather than paste). "
     "user_request: the user's original message, verbatim (a client may fill this in itself). "
     "Returns {answer, stop_reason, hint}: answer is written to be passed on to the user; hint says "
-    "when it is empty or was cut off."
+    "when it is empty or was cut off. Never for math - arithmetic, unit conversions, averages or other "
+    "statistics: use calculate or statistics."
 )
 @_tool
 def ask_an_expert(

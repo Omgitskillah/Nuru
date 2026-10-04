@@ -3,6 +3,14 @@ FROM __BASE_MODEL__
 # has no thinking levels, and its best sampling depends on whether it thinks, which a Modelfile
 # can't express - Nuru sends those settings with every request, on top of these.
 
+# What Nuru uses the model for (Ollama 0.35.1+ records these; the base model already has them, plus
+# vision, which Nuru doesn't use), and the Ollama version Nuru relies on: 0.34.4 made forced formats on
+# thinking models reliable. REQUIRES is recorded, not enforced. No draft_num_predict: speculative
+# decoding needs MTP tensors this model doesn't have - with it, 6.4 tok/s against 30 (2026-10-04).
+CAPABILITY tools
+CAPABILITY thinking
+REQUIRES 0.34.4
+
 # Qwen's recommended sampling for thinking mode (its general chat preset); profiles.yaml overrides
 # it for Nuru's requests.
 PARAMETER temperature 1.0
@@ -102,9 +110,13 @@ Escalate instead of answering yourself when the task needs any of these:
 - Reasoning: advice, decisions, trade-offs, plans, critique, pros and cons, "what do you think".
 - Synthesis across more than 3 notes, or summarizing a note longer than a few screens.
 - Writing new content beyond a short, direct transcription: essays, drafts, emails, rewrites.
-- Math, calculations, code, or anything where a wrong answer would look plausible.
+- Code, or anything else where a wrong answer would look plausible and no tool can check it.
 - You are unsure, you would have to guess, or you failed the same step twice.
 Do NOT escalate simple lookups, reading a note, listing, tagging, appending text I gave you, or moving/archiving a note I named.
+Never escalate math - arithmetic, percentages, unit conversions, averages, spreads, sums of a table: always use
+calculate or statistics, whatever the numbers or units. Put a conversion factor you know into the expression
+(24 hours in a day, 1000 mA in an A). If the units can't be converted at all (a time into a distance), say so
+instead of converting - and don't escalate that either.
 
 How to escalate:
 1. First gather context with your tools: find and read the relevant notes.

@@ -11,6 +11,13 @@ FROM __BASE_MODEL__
 # - keep_alive is also a request/env setting (OLLAMA_KEEP_ALIVE=30m), not a
 #   Modelfile parameter; keeping the model resident avoids reload latency.
 
+# What Nuru uses the model for (Ollama 0.35.1+ records these; the base model already has them), and the
+# Ollama version Nuru relies on: 0.34.4 made forced formats on thinking models reliable. REQUIRES is
+# recorded, not enforced (a model requiring 9.9.9 still ran on 0.35.1, 2026-10-04).
+CAPABILITY tools
+CAPABILITY thinking
+REQUIRES 0.34.4
+
 # --- Sampling: tuned for tool calls, not creative chat ---------------------
 # Base default is temperature 1.0 / top_p 0.95, which is too loose for
 # exact ids, paths and JSON arguments on a 3B model.
@@ -120,9 +127,13 @@ Escalate instead of answering yourself when the task needs any of these:
 - Reasoning: advice, decisions, trade-offs, plans, critique, pros and cons, "what do you think".
 - Synthesis across more than 3 notes, or summarizing a note longer than a few screens.
 - Writing new content beyond a short, direct transcription: essays, drafts, emails, rewrites.
-- Math, calculations, code, or anything where a wrong answer would look plausible.
+- Code, or anything else where a wrong answer would look plausible and no tool can check it.
 - You are unsure, you would have to guess, or you failed the same step twice.
 Do NOT escalate simple lookups, reading a note, listing, tagging, appending text I gave you, or moving/archiving a note I named.
+Never escalate math - arithmetic, percentages, unit conversions, averages, spreads, sums of a table: always use
+calculate or statistics, whatever the numbers or units. Put a conversion factor you know into the expression
+(24 hours in a day, 1000 mA in an A). If the units can't be converted at all (a time into a distance), say so
+instead of converting - and don't escalate that either.
 
 How to escalate:
 1. First gather context with your tools: find and read the relevant notes.

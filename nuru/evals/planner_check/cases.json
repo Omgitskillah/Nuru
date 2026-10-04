@@ -1,0 +1,527 @@
+[
+ {
+  "id": "01",
+  "title": "Read a named section",
+  "prompt": "What does the Packing section of Travel/Kyoto.md say?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md",
+      "section": "Packing"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "02",
+  "title": "Find a note by meaning",
+  "prompt": "Find my note about reducing interruptions while working from home and summarize it.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name about reducing interruptions while working from home"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin example (search\u2192pick\u2192read\u2192answer), same shape"
+ },
+ {
+  "id": "03",
+  "title": "Search for literal code",
+  "prompt": "Which notes contain the exact text config.timeout[0]?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout[0]",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "INV-2048 example, same shape"
+ },
+ {
+  "id": "04",
+  "title": "Search using a regular expression",
+  "prompt": "Find lines in my notes matching the regular expression ORD-[0-9]{4}.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "05",
+  "title": "Browse recent notes",
+  "prompt": "List my three newest meeting notes in the Work folder. Use the note type meeting.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "type": "meeting",
+      "limit": 3,
+      "folder": "Work"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "'five newest notes in Projects' example, same shape"
+ },
+ {
+  "id": "06",
+  "title": "List tag counts",
+  "prompt": "Show all tags in my vault with the number of notes using each tag.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "07",
+  "title": "Find notes with a tag",
+  "prompt": "List the notes tagged gardening.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "08",
+  "title": "Get tags for one note",
+  "prompt": "What tags are on Home/Seedlings.md?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "note": "Home/Seedlings.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "",
+  "alternatives": [
+   {
+    "steps": [
+     {
+      "id": "s1",
+      "tool": "note_info",
+      "args": {
+       "name": "Home/Seedlings.md"
+      }
+     },
+     {
+      "id": "s2",
+      "think": "answer",
+      "inputs": [
+       "s1"
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "09",
+  "title": "Inspect note metadata",
+  "prompt": "Show the backlinks and open tasks for Work/Website.md without reading its text.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "Atlas note_info example, near copy"
+ },
+ {
+  "id": "10",
+  "title": "Calculate an expression",
+  "prompt": "What is (145.50 + 29.95) * 1.19?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "11",
+  "title": "Compute statistics from supplied numbers",
+  "prompt": "Give me the mean, median and sample standard deviation of 12, 18, 21, 21 and 28.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "12",
+  "title": "Extract numbers before computing",
+  "prompt": "Find the median delivery time from the Delivery times section of Operations/May.md.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md",
+      "section": "Delivery times"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the recorded delivery times as a JSON array of numbers in the same unit, excluding dates, IDs and summary statistics"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "Finance/April mean example, near copy (adds section)"
+ },
+ {
+  "id": "13",
+  "title": "Compare two known notes",
+  "prompt": "Compare the proposed timelines in Projects/Orion.md and Projects/Lyra.md.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Lyra.md"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin/Paris compare example, near copy"
+ },
+ {
+  "id": "14",
+  "title": "Append exact content",
+  "prompt": "Append the exact line \"Order replacement filters\" to Home/Maintenance.md.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "note": "Home/Maintenance.md",
+      "mode": "append"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "15",
+  "title": "Write to the daily note",
+  "prompt": "Add \"Walked for 25 minutes\" to today's daily note.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Walked for 25 minutes",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "'Book the train tickets' daily example, near copy"
+ },
+ {
+  "id": "16",
+  "title": "Replace an entire note",
+  "prompt": "Replace the entire contents of Scratch/Reminder.md with exactly \"Call the dentist on Monday\".",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "17",
+  "title": "Move a note to trash",
+  "prompt": "Delete Scratch/Old checklist.md by moving it to trash/Old checklist.md.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "Atlas move example, same shape"
+ },
+ {
+  "id": "18",
+  "title": "Ask an expert with attachments",
+  "prompt": "Ask the expert whether the rollout described in Plans/Migration.md is feasible. Attach that note and Risks/Dependencies.md.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible, considering Risks/Dependencies.md?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": ""
+ },
+ {
+  "id": "19",
+  "title": "Detect a missing destination",
+  "prompt": "Move Work/Website.md into the archive folder I have in mind.",
+  "reference": {
+   "steps": []
+  },
+  "near_example": "'Email my Berlin note' empty-plan example, same outcome"
+ },
+ {
+  "id": "20",
+  "title": "Recognize an unrepresentable workflow",
+  "prompt": "Summarize Research/Heat pumps.md and write the new summary into Summaries/Heat pumps.md.",
+  "reference": {
+   "steps": []
+  },
+  "near_example": ""
+ }
+]

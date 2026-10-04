@@ -1,0 +1,1550 @@
+[
+ {
+  "model": "qwen35-planner:9b",
+  "case": "01",
+  "repeat": 1,
+  "wall_s": 6.069288015365601,
+  "done_reason": "stop",
+  "prompt_tokens": 1941,
+  "output_tokens": 45,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md",
+      "section": "Packing"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "02",
+  "repeat": 1,
+  "wall_s": 8.221840858459473,
+  "done_reason": "stop",
+  "prompt_tokens": 1942,
+  "output_tokens": 89,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the exact note name for reducing interruptions while working from home'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for reducing interruptions while working from home"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "03",
+  "repeat": 1,
+  "wall_s": 5.89696478843689,
+  "done_reason": "stop",
+  "prompt_tokens": 1939,
+  "output_tokens": 47,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s1 find_in_notes.pattern='config.timeout\\\\[0\\\\]' vs reference 'config.timeout[0]'"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout\\[0\\]",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "04",
+  "repeat": 1,
+  "wall_s": 6.140812158584595,
+  "done_reason": "stop",
+  "prompt_tokens": 1945,
+  "output_tokens": 48,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "05",
+  "repeat": 1,
+  "wall_s": 5.890420198440552,
+  "done_reason": "stop",
+  "prompt_tokens": 1945,
+  "output_tokens": 42,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s1 browse args {'folder': 'Work,type:meeting,limit:3'} vs reference {'type': 'meeting', 'limit': 3, 'folder': 'Work'}"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "folder": "Work,type:meeting,limit:3"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "06",
+  "repeat": 1,
+  "wall_s": 4.545635938644409,
+  "done_reason": "stop",
+  "prompt_tokens": 1943,
+  "output_tokens": 18,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "07",
+  "repeat": 1,
+  "wall_s": 5.500892877578735,
+  "done_reason": "stop",
+  "prompt_tokens": 1934,
+  "output_tokens": 36,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "08",
+  "repeat": 1,
+  "wall_s": 5.742148160934448,
+  "done_reason": "stop",
+  "prompt_tokens": 1938,
+  "output_tokens": 39,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "note": "Home/Seedlings.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "09",
+  "repeat": 1,
+  "wall_s": 5.7886247634887695,
+  "done_reason": "stop",
+  "prompt_tokens": 1945,
+  "output_tokens": 39,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "10",
+  "repeat": 1,
+  "wall_s": 7.0883660316467285,
+  "done_reason": "stop",
+  "prompt_tokens": 1952,
+  "output_tokens": 55,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "11",
+  "repeat": 1,
+  "wall_s": 6.748725891113281,
+  "done_reason": "stop",
+  "prompt_tokens": 1959,
+  "output_tokens": 48,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "12",
+  "repeat": 1,
+  "wall_s": 8.624367952346802,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 88,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the delivery times as a JSON array of numbers'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md",
+      "section": "Delivery times"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the delivery times as a JSON array of numbers"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "13",
+  "repeat": 1,
+  "wall_s": 7.27118706703186,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 63,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Lyra.md"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "14",
+  "repeat": 1,
+  "wall_s": 7.057100057601929,
+  "done_reason": "stop",
+  "prompt_tokens": 1943,
+  "output_tokens": 55,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s1 write_note args {'content': 'Order replacement filters', 'type': 'daily', 'supersedes': 'Home/Maintenance.md'} vs reference {'content': 'Order replacement filters', 'note': 'Home/Maintenance.md'}"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "mode": "append",
+      "type": "daily",
+      "supersedes": "Home/Maintenance.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "15",
+  "repeat": 1,
+  "wall_s": 6.769177198410034,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 50,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Walked for 25 minutes",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "16",
+  "repeat": 1,
+  "wall_s": 7.017843961715698,
+  "done_reason": "stop",
+  "prompt_tokens": 1946,
+  "output_tokens": 52,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "17",
+  "repeat": 1,
+  "wall_s": 7.062853813171387,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 53,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "18",
+  "repeat": 1,
+  "wall_s": 7.664592981338501,
+  "done_reason": "stop",
+  "prompt_tokens": 1953,
+  "output_tokens": 63,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s1 ask_an_expert.question: 'Is the rollout described in Plans/Migration.md feasible?' vs reference 'Is the rollout described in Plans/Migration.md feasible, considering Risks/Dependencies.md?'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "19",
+  "repeat": 1,
+  "wall_s": 6.344577074050903,
+  "done_reason": "stop",
+  "prompt_tokens": 1942,
+  "output_tokens": 39,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "20",
+  "repeat": 1,
+  "wall_s": 8.54451584815979,
+  "done_reason": "stop",
+  "prompt_tokens": 1949,
+  "output_tokens": 78,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Research/Heat pumps.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "write_note",
+     "args": {
+      "content": "[Summary of Research/Heat pumps.md]",
+      "note": "Summaries/Heat pumps.md",
+      "mode": "replace"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y03",
+  "repeat": 1,
+  "wall_s": 10.230057954788208,
+  "done_reason": "stop",
+  "prompt_tokens": 1939,
+  "output_tokens": 104,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "tools ['search', 'search'] vs reference ['read_note', 'read_note', 'search', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "mom's birthday"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "search",
+     "args": {
+      "query": "dentist appointment"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "pick",
+     "from": "s1",
+     "want": "the date of mom's birthday"
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s2",
+     "want": "the date of the dentist appointment"
+    },
+    {
+     "id": "s5",
+     "think": "answer",
+     "inputs": [
+      "s3",
+      "s4"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y04",
+  "repeat": 1,
+  "wall_s": 6.702533006668091,
+  "done_reason": "stop",
+  "prompt_tokens": 1938,
+  "output_tokens": 44,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "tools ['find_in_notes'] vs reference ['read_note', 'search']",
+   "arguments: find_in_notes{'pattern': 'September 17', 'literal': True}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "September 17",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y07",
+  "repeat": 1,
+  "wall_s": 14.852027893066406,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 181,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "power budget table"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the power budget table"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the power values and battery life data as a JSON array of objects, each with power and battery_life fields"
+    },
+    {
+     "id": "s5",
+     "tool": "calculate",
+     "args": {
+      "expression": "sum($s4.power)/count($s4.power)"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "calculate",
+     "args": {
+      "expression": "sum($s4.battery_life)/count($s4.battery_life)"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s5",
+      "s6"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y08",
+  "repeat": 1,
+  "wall_s": 12.771333932876587,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 141,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "tools ['find_in_notes', 'read_note', 'statistics'] vs reference ['read_note', 'search', 'statistics']",
+   "arguments: find_in_notes{'pattern': 'PDP-drop runs', 'literal': True}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "PDP-drop runs",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the note name containing the 9 PDP-drop runs data"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the 9 PDP-drop run values as a JSON array of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "think": "answer",
+     "inputs": [
+      "s5"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y10",
+  "repeat": 1,
+  "wall_s": 10.11801791191101,
+  "done_reason": "stop",
+  "prompt_tokens": 1950,
+  "output_tokens": 91,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s1 search.query: 'temperature coefficient 100 ppm' vs reference 'temperature coefficient 100 ppm datasheet'",
+   "s2 pick want: 'the exact note name containing the temperature coefficient at 100 ppm'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "temperature coefficient 100 ppm"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name containing the temperature coefficient at 100 ppm"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y14",
+  "repeat": 1,
+  "wall_s": 7.888641119003296,
+  "done_reason": "stop",
+  "prompt_tokens": 1940,
+  "output_tokens": 51,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "backoff cap failures"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the backoff cap failures"
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y15",
+  "repeat": 1,
+  "wall_s": 15.284947872161865,
+  "done_reason": "stop",
+  "prompt_tokens": 1946,
+  "output_tokens": 146,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "parts inventory"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "search",
+     "args": {
+      "query": "owned parts inventory"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the parts inventory"
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s2",
+     "want": "the exact note name for the owned parts inventory"
+    },
+    {
+     "id": "s5",
+     "tool": "read_note",
+     "args": {
+      "name": "$s3"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "read_note",
+     "args": {
+      "name": "$s4"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s5",
+      "s6"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y24",
+  "repeat": 1,
+  "wall_s": 12.460124015808105,
+  "done_reason": "stop",
+  "prompt_tokens": 1943,
+  "output_tokens": 94,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s1 search.query: 'SARA-R510S vendor email' vs reference 'vendor email SARA-R510S'",
+   "s2 pick want: 'the exact note name for the SARA-R510S vendor email'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "SARA-R510S vendor email"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the SARA-R510S vendor email"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y26",
+  "repeat": 1,
+  "wall_s": 5.699920177459717,
+  "done_reason": "stop",
+  "prompt_tokens": 1936,
+  "output_tokens": 5,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y28",
+  "repeat": 1,
+  "wall_s": 9.755859136581421,
+  "done_reason": "stop",
+  "prompt_tokens": 1948,
+  "output_tokens": 55,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "The soak test is running and I'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y29",
+  "repeat": 1,
+  "wall_s": 13.4911470413208,
+  "done_reason": "stop",
+  "prompt_tokens": 1944,
+  "output_tokens": 100,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s3 write_note args {'content': 'she prefers async messages on Fridays', 'type': 'daily', 'supersedes': '$s2'} vs reference {'content': 'Prefers async messages on Fridays.', 'note': '$s2'}"
+  ],
+  "review": [
+   "s2 pick want: \"the exact note name for Priya's note\""
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "Priya"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for Priya's note"
+    },
+    {
+     "id": "s3",
+     "tool": "write_note",
+     "args": {
+      "content": "she prefers async messages on Fridays",
+      "mode": "append",
+      "type": "daily",
+      "supersedes": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "Y34",
+  "repeat": 1,
+  "wall_s": 8.900760889053345,
+  "done_reason": "stop",
+  "prompt_tokens": 1945,
+  "output_tokens": 41,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35*24"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "qwen35-planner:9b",
+  "case": "YPM",
+  "repeat": 1,
+  "wall_s": 18.5568950176239,
+  "done_reason": "stop",
+  "prompt_tokens": 1952,
+  "output_tokens": 157,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: s6 has a non-whole reference 'Total grocery amount: $s5.mean'"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a JSON array of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "write_note",
+     "args": {
+      "content": "Total grocery amount: $s5.mean",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s6"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ }
+]

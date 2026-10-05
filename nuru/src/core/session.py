@@ -145,8 +145,8 @@ MODEL_TOOLS = frozenset(
         "rename_or_move_file", "write_note",
         # math-4-llms
         "calculate", "statistics",
-        # deep-think
-        "ask_an_expert",
+        # deep-think's ask_an_expert is hidden from the model (2026-10-04): the expert is the
+        # harness's planner instead (deep-think's write_plan), never a tool the model calls.
     }
 )
 

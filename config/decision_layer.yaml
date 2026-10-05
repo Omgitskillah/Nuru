@@ -63,6 +63,7 @@ tiers:
 expert:
   model: claude-opus-5
   daily_cap: 10             # calls per local day; the API key comes only from ANTHROPIC_API_KEY
+  at_step_cap: false        # 2026-10-05: measure Nuru without the expert's help at the step cap
 
 rerank:
   top_k: 5

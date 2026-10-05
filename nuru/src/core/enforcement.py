@@ -107,6 +107,10 @@ class Enforcement:
         return self._think(tier, current_think)
 
     def at_step_cap(self, policy: TierPolicy, current_think):
+        """The cap was hit: the expert's plan when config allows and the expert is there, else STOP -
+        which the session turns into one last answer without tools."""
+        if not self.config.expert.at_step_cap:
+            return STOP, STOP
         return self._think(policy.at_step_cap(self.expert_available()), current_think)
 
     def _think(self, tier: str, current_think):

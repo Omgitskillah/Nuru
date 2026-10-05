@@ -207,6 +207,15 @@ _TOO_LONG_NOTE = (
 )
 
 
+# The step cap's last call: no tools, an answer from what the turn has. Without it, a turn that ran
+# out of steps (test 32: three notes, a correction and the arithmetic) ended with only a log.
+_FINAL = "final"
+_FINAL_ANSWER = (
+    "[Nuru] That was the last tool round this turn (the {limit}-step limit), so no more tools. Answer now "
+    "from the results above: give what you found and worked out, with the numbers and note paths, and say "
+    "plainly what is still unresolved or unchecked."
+)
+
 # ask_an_expert's user_request is the user's message verbatim. The session has it, so it fills
 # the field in itself: a small model asked to copy it paraphrased it, errors included.
 _EXPERT_TOOL = "ask_an_expert"
@@ -533,6 +542,7 @@ class Session:
         first_read = enforcing.first_tool(decisions.gate) if enforcing and decisions else None
         failure = False  # a failure signal since the last model call (enforced tiers move up on it)
         tool_rounds = 0
+        final_answer = False  # the step cap's last call, without tools, has been asked for
         messages = None
         prompt_tokens_recorded = False
         think = THINK
@@ -570,8 +580,12 @@ class Session:
                     tool_rounds += 1
                     decisions = self.shadow.before_next_call()
                 capped = enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap
-                if capped:
+                if capped and final_answer:
+                    next_think, tier = think, _FINAL  # the last answer's own retry (an empty reply)
+                elif capped:
                     next_think, tier = enforcing.at_step_cap(policy, think)
+                    if tier == STOP:  # no expert, or not at the cap: answer from what the turn has
+                        next_think, tier = think, _FINAL
                 else:
                     next_think, tier = enforcing.think_for(policy, decisions.effort if decisions else None, failure, think)
                 failure = False
@@ -586,12 +600,18 @@ class Session:
                     try:
                         plan = enforcing.expert_plan(text, self.tool_definitions, self.shadow.notes, self.shadow.steps)
                     except ExpertUnavailable as e:
-                        yield from self._stop(turn_id, f"it needed the expert, and the expert couldn't help: {e}")
-                        return
-                    yield Thinking(f"Plan from the expert:\n{plan}")
-                    messages.append({"role": "user", "content": f"[Nuru] A plan from the expert. Carry it out with your tools, then reply:\n{plan}"})
+                        if not capped:
+                            yield from self._stop(turn_id, f"it needed the expert, and the expert couldn't help: {e}")
+                            return
+                        next_think, tier = think, _FINAL
+                    else:
+                        yield Thinking(f"Plan from the expert:\n{plan}")
+                        messages.append({"role": "user", "content": f"[Nuru] A plan from the expert. Carry it out with your tools, then reply:\n{plan}"})
+                if tier == _FINAL and not final_answer:
+                    messages.append({"role": "user", "content": _FINAL_ANSWER.format(limit=enforcing.step_cap)})
+                    final_answer = True
                 think = False if steered else next_think
-                if tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None):
+                if final_answer or (tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None)):
                     tools_offered = None
                 hold_reply = enforcing.on("check_claim")
 
@@ -683,6 +703,10 @@ class Session:
                 resume_think = think
                 think, steered = False, True
                 continue
+
+            if final_answer and tool_calls:  # tools were withdrawn, and it asked for one anyway
+                yield from self._stop(turn_id, f"it reached the {enforcing.step_cap}-step limit")
+                return
 
             if not tool_calls:
                 if thinking and not output_text.strip() and think:

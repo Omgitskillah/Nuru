@@ -170,12 +170,65 @@ def test_a_confident_answer_gets_no_tools(setup):
     assert seen[0]["tools"] is False and tools.calls == []
 
 
-def test_the_step_cap_stops_the_turn_when_there_is_no_expert(setup):
+def test_at_the_step_cap_without_an_expert_the_model_answers_from_what_it_has_without_tools(setup):
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Found a and b; c is still unchecked."]]
+    s, seen, tools = setup(["step_cap"], responses, tool_gate={"step_cap": 2})
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Found a and b; c is still unchecked.")
+    assert seen[-1]["tools"] is False
+    assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round this turn (the 2-step limit)")
+
+
+def test_a_tool_call_in_the_final_answer_ends_the_turn_as_before(setup):
     s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abc"],
                            tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))
     assert isinstance(events[-1], Text) and events[-1].text.startswith("I stopped here: it reached the 2-step limit")
-    assert "expert isn't available" in events[-1].text
+    assert [name for name, _ in tools.calls] == ["search", "search"]  # the third call never ran
+
+
+def _expert_client(fail=False):
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(calls=[])
+
+    def create(**kwargs):
+        client.calls.append(kwargs)
+        if fail:  # the expert declines: ExpertPlanner raises ExpertUnavailable, as for a failed API call
+            return SimpleNamespace(stop_reason="refusal", content=[])
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="1. search c")])
+
+    client.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
+    return client
+
+
+def test_with_the_expert_off_at_the_cap_an_available_expert_is_not_asked(setup):
+    client = _expert_client()
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Here is what I found."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": False},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert client.calls == []
+    assert events[-1] == Text("Here is what I found.")
+
+
+def test_with_the_expert_on_at_the_cap_it_plans_first(setup):
+    client = _expert_client()
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Done with the plan."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": True},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert len(client.calls) == 1 and Thinking("Plan from the expert:\n1. search c") in events
+
+
+def test_a_failed_expert_at_the_cap_still_ends_with_an_answer(setup):
+    client = _expert_client(fail=True)
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Partial answer; the rest is unresolved."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": True},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Partial answer; the rest is unresolved.")
+    assert seen[-1]["tools"] is False
 
 
 # ---------------------------------------------------------------- assess_effort

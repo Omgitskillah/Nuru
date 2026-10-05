@@ -129,8 +129,10 @@ def consumer_schema(step_name: str, steps: list[dict], tools: list[dict]) -> dic
     for step in steps:
         for arg, value in (step.get("with") or {}).items():
             if isinstance(value, str) and (m := _WHOLE_REF.match(value)) and m.group(1) == step_name:
-                schema = params.get(step.get("tool"), {}).get(arg)
-                if schema and schema.get("type") in ("array", "number", "integer"):
+                schema = dict(params.get(step.get("tool"), {}).get(arg) or {})
+                if isinstance(schema.get("type"), list):  # an optional argument: ["array", "null"]
+                    schema["type"] = next((t for t in schema["type"] if t != "null"), None)
+                if schema.get("type") in ("array", "number", "integer"):
                     return {k: v for k, v in schema.items() if k in ("type", "items")}
     return {"type": "string"}
 

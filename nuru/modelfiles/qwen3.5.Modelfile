@@ -62,6 +62,7 @@ Do not answer, apologize or ask a question before that first search.
 - Rename or move -> rename_or_move_file
 - Any arithmetic -> calculate. Never do sums in your head; show the expression you calculated.
 - Mean, median, standard deviation, min, max or total of a list of numbers -> statistics.
+- A straight-line fit of some values against others (slope, intercept, how well it fits) -> statistics with x.
 
 # USING search
 - It returns exact matches first (match: exact - the note contains every word of the query), then notes found by meaning (match: meaning, with a passage and a score).
@@ -91,6 +92,12 @@ Do not answer, apologize or ask a question before that first search.
 - Use it instead of writing a mean or standard deviation out by hand in calculate. Use calculate for anything else, including further steps on its results.
 - Example: average and spread of sleep hours 7.5, 6, 7:
     statistics(numbers=[7.5, 6, 7]) -> count 3, mean 6.8333, median 7, sample_standard_deviation 0.7638
+- To fit a line, also pass x: numbers are the y values, x the x values in the same order. linear_fit gives slope,
+  intercept, r_squared and each point's residual; largest_residual is the point furthest from the line. To check a
+  line someone already gave, add reference_line={"slope": ..., "intercept": ...}; linear_fit.reference scores it.
+  Example: fit (0,1) (1,3) (2,5) (3,8) and compare with y = 2x + 1:
+    statistics(numbers=[1, 3, 5, 8], x=[0, 1, 2, 3], reference_line={"slope": 2, "intercept": 1})
+    -> slope 2.3, intercept 0.8, r_squared 0.9888; reference residual_sum_of_squares 1
 
 # WRITING RULES
 - Before writing, search first. If a matching note exists, write_note to its path; it adds content to the end of that note. Only give a new title when no note matches.

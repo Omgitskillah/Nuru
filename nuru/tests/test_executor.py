@@ -17,7 +17,8 @@ TOOLS = [
     tool("search", {"query": {"type": "string"}}, ["query"]),
     tool("read_note", {"name": {"type": "string"}}, ["name"]),
     tool("calculate", {"expression": {"type": "string"}}, ["expression"]),
-    tool("statistics", {"numbers": {"type": "array", "items": {"type": "number"}}}, ["numbers"]),
+    tool("statistics", {"numbers": {"type": "array", "items": {"type": "number"}},
+                        "x": {"type": ["array", "null"], "items": {"type": "number"}}}, ["numbers"]),
     tool("write_note", {"note": {"type": "string"}, "content": {"type": "string"}, "type": {"type": "string"}}, ["content"]),
 ]
 SEARCH_RESULT = json.dumps({"query": "budget", "matches": [{"path": "nuru/march-budget.md", "match": "exact"},
@@ -64,6 +65,13 @@ def test_a_draft_takes_the_type_of_the_argument_it_fills_whole():
 
     assert executor.consumer_schema("s1", steps, TOOLS) == {"type": "array", "items": {"type": "number"}}
     assert executor.consumer_schema("s3", steps, TOOLS) == {"type": "string"}
+
+
+def test_a_draft_filling_an_optional_argument_takes_its_non_null_type():
+    steps = [{"step": "s1", "think": "draft"}, {"step": "s2", "think": "draft"},
+             {"step": "s3", "tool": "statistics", "with": {"numbers": "$s1", "x": "$s2"}}]
+
+    assert executor.consumer_schema("s2", steps, TOOLS) == {"type": "array", "items": {"type": "number"}}
 
 
 # --- Session.run_plan ---

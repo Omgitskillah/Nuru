@@ -210,6 +210,28 @@
         "items": {
           "type": "number"
         }
+      },
+      "x": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "reference_line": {
+        "type": "object",
+        "properties": {
+          "slope": {
+            "type": "number"
+          },
+          "intercept": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "slope",
+          "intercept"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [

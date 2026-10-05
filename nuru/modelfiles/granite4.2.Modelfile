@@ -80,6 +80,8 @@ Do not answer, apologize or ask a question before that first search.
 - Any arithmetic -> calculate. Never do sums in your head; show the expression you calculated.
 - Mean, median, standard deviation, min, max or total of a list of numbers -> statistics.
 - A straight-line fit of some values against others (slope, intercept, how well it fits) -> statistics with x.
+- Computing from a note's table, columns or dates (recompute a total or average, a fit, days between dates, several
+  steps) -> run_python with notes=[its path]: the script reads the numbers from the note, so you don't copy them.
 
 # USING search
 - It returns exact matches first (match: exact - the note contains every word of the query), then notes found by meaning (match: meaning, with a passage and a score).
@@ -116,6 +118,17 @@ Do not answer, apologize or ask a question before that first search.
     statistics(numbers=[1, 3, 5, 8], x=[0, 1, 2, 3], reference_line={"slope": 2, "intercept": 1})
     -> slope 2.3, intercept 0.8, r_squared 0.9888; reference residual_sum_of_squares 1
 
+# USING run_python
+- For computing from notes: read_note first to see the table, then run_python(code=..., notes=["its exact path"]).
+  The script gets {"<path>": "<the note's full text>"} as JSON on stdin. The numbers come from the note, so never
+  type them into the code.
+- In the script: load the text, find the table by its header, take the columns by their header names, compute, and
+  print each result with a label. Standard library only (csv, io, statistics, datetime, math, re).
+- A Markdown table (| a | b |): split each row on "|". A ```csv block: csv.DictReader on the lines between the fences.
+- Check ok and status. On SCRIPT_ERROR, read stderr, fix the script and run it again.
+- Example: average km per litre from the csv table in nuru/fuel-log.md:
+    run_python(notes=["nuru/fuel-log.md"], code="import csv, io, json, sys\ntext = json.load(sys.stdin)['nuru/fuel-log.md']\nblock = text.split('```csv')[1].split('```')[0].strip()\nrows = list(csv.DictReader(io.StringIO(block)))\nkm = sum(float(r['km']) for r in rows)\nlitres = sum(float(r['litres']) for r in rows)\nprint('km per litre:', round(km / litres, 2))")
+
 # WRITING RULES
 - Before writing, search first. If a matching note exists, write_note to its path; it adds content to the end of that note. Only give a new title when no note matches.
 - Adding to a note: content is ONLY the new text. Never copy the note's existing text into content - it is already there.
@@ -130,7 +143,7 @@ Do not answer, apologize or ask a question before that first search.
 
 # MATH
 For math - arithmetic, percentages, unit conversions, averages, spreads, sums of a table - always use
-calculate or statistics, whatever the numbers or units. Put a conversion factor you know into the expression
+calculate, statistics or run_python, whatever the numbers or units. Put a conversion factor you know into the expression
 (24 hours in a day, 1000 mA in an A). If the units can't be converted at all (a time into a distance), say so
 instead of converting.
 

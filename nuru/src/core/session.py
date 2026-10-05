@@ -7,6 +7,7 @@ down again. A turn is a generator of events, so cli.py prints them and ui.py ren
 
 import json
 import os
+import subprocess
 import threading
 import time
 from collections import Counter
@@ -125,6 +126,27 @@ MATH_SERVER_PARAMS = StdioServerParameters(
     command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"], cwd=MATH_DIR
 )
 
+PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "python-4-llms")
+
+
+def python_server_params() -> StdioServerParameters | None:
+    """run_python's server (python-4-llms: a script in a fresh Docker sandbox), or None when it can't
+    run - no .env.python, or Docker not answering. The server exits at startup when its sandbox
+    checks fail, which would stop Nuru starting at all; without it Nuru starts without the tool."""
+    env_file = ENV_DIR / ".env.python"
+    settings = {k: v for k, v in dotenv_values(env_file).items() if v} if env_file.exists() else {}
+    docker, socket = settings.get("PYTHON_MCP_DOCKER"), settings.get("PYTHON_MCP_DOCKER_SOCKET")
+    if not (docker and socket and settings.get("PYTHON_MCP_IMAGE")):
+        return None
+    try:
+        subprocess.run([docker, "--host", f"unix://{socket}", "info", "--format", "{{.ServerVersion}}"],
+                       capture_output=True, timeout=5, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return StdioServerParameters(command="cargo", args=["run", "--quiet", "--release", "--locked", "--bin", "python-mcp"],
+                                 cwd=PYTHON_DIR, env={**get_default_environment(), **settings})
+
+
 LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
 # Laya reads no notes, so it gets no vault. NURU_DECISION_CONFIG, when set (an eval run's own
 # config, logging to the run's own decision database), is passed on so both ends use it.
@@ -145,6 +167,8 @@ MODEL_TOOLS = frozenset(
         "rename_or_move_file", "write_note",
         # math-4-llms
         "calculate", "statistics",
+        # python-4-llms - offered only when its server started (python_server_params: Docker running)
+        "run_python",
         # deep-think's ask_an_expert is hidden from the model (2026-10-04): the expert is the
         # harness's planner instead (deep-think's write_plan), never a tool the model calls.
     }
@@ -219,8 +243,68 @@ def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
             if "required" in parameters:
                 parameters["required"] = [r for r in parameters["required"] if r != _INJECTED_EXPERT_ARG]
             tool = {**tool, "function": {**fn, "parameters": parameters}}
+        if fn["name"] == _PYTHON_TOOL:
+            tool = {**tool, "function": {**fn, "description": _PYTHON_DESCRIPTION, "parameters": _PYTHON_PARAMETERS}}
         hidden.append(tool)
     return hidden
+
+
+# run_python as the model sees it: code plus the notes the script works on. Nuru reads the notes
+# itself and gives the script their text as stdin JSON, so the model never retypes a note's numbers
+# (on test 9 it dropped, shifted and invented values copying a table into statistics). stdin and
+# timeout_ms are the session's to fill; the output is cut to what a 16k context has room for.
+_PYTHON_TOOL = "run_python"
+PYTHON_OUTPUT_CHARS = 6000
+_PYTHON_DESCRIPTION = (
+    "Run a Python script (standard library only: csv, statistics, datetime, math, re, json) in a sandbox "
+    "and return what it prints. For computing from notes: pass their exact paths in notes, and the script "
+    "gets their full text on stdin as JSON {path: text} - read it with json.load(sys.stdin) and parse the "
+    "values there; never copy a note's numbers into the code. No file, network or vault access otherwise. "
+    "Print every result with a label. Check ok and status; on SCRIPT_ERROR read stderr, fix the script and run it again."
+)
+_PYTHON_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "code": {"type": "string", "description": "The whole Python script. Each call starts fresh."},
+        "notes": {"type": "array", "items": {"type": "string"},
+                  "description": "Exact paths of the notes the script needs; their text arrives on stdin as JSON {path: text}."},
+    },
+    "required": ["code"],
+}
+
+
+def _python_request(args: dict, read_note: Callable[[str], Any]) -> tuple[dict | None, str | None]:
+    """run_python's server arguments for the model's {code, notes}: the notes' full text, read by
+    Nuru (`read_note`: the obsidian tool, so its folder rules hold), goes to the script as stdin JSON.
+    Returns (arguments, None), or (None, why the script wasn't run)."""
+    notes = args.get("notes") or []
+    if isinstance(notes, str):
+        notes = [notes]
+    texts = {}
+    for note in notes:
+        result = read_note(note)
+        if result.is_error:
+            return None, f"the note {note!r} could not be read: {result.text[:200]}"
+        texts[note] = result.text
+    request = {"code": args.get("code") or ""}
+    if texts:
+        request["stdin"] = json.dumps(texts, ensure_ascii=False)
+    return request, None
+
+
+def _python_result(text: str) -> str:
+    """run_python's result with stdout and stderr cut to PYTHON_OUTPUT_CHARS each."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return text[:PYTHON_OUTPUT_CHARS]
+    if not isinstance(data, dict):
+        return text[:PYTHON_OUTPUT_CHARS]
+    for key in ("stdout", "stderr"):
+        value = data.get(key)
+        if isinstance(value, str) and len(value) > PYTHON_OUTPUT_CHARS:
+            data[key] = value[:PYTHON_OUTPUT_CHARS] + f"\n[... {len(value) - PYTHON_OUTPUT_CHARS} more characters]"
+    return json.dumps(data, ensure_ascii=False)
 
 
 def _expert_answered(content: str) -> bool:
@@ -351,8 +435,10 @@ class Session:
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
         with ExitStack() as opened:
+            python_server = python_server_params()
             tools = MCPTools(
-                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS],
+                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS,
+                 *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
             tools.connect()
@@ -363,7 +449,8 @@ class Session:
                 LOG_DIR,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp; uv run laya-mcp",
+                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp; uv run laya-mcp"
+                + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             store = ConversationStore(DB_PATH)
             opened.callback(store.close)
@@ -707,15 +794,24 @@ class Session:
         """Run one tool, log it, and record it with the decision layer. Returns what the model
         sees as the result (reranked, when rerank is enforced) and whether the tool succeeded."""
         tool_start = time.monotonic()
+        call_args = args
+        if name == _PYTHON_TOOL:
+            call_args, refused = _python_request(args, lambda note: self.tools.call_harness_tool("read_note", {"name": note}))
+            if refused:
+                duration_ms = (time.monotonic() - tool_start) * 1000
+                self.logger.tool_call(turn_id, name, args, "error", refused, duration_ms)
+                if self.shadow:
+                    self.shadow.after_tool(name, args, None, duration_ms, gate_id, error=refused)
+                return json.dumps({"ok": False, "status": "NOTE_NOT_READ", "message": refused}), False
         try:
-            result = self.tools.call_tool_result(name, args)
+            result = self.tools.call_tool_result(name, call_args)
         except Exception as e:
             duration_ms = (time.monotonic() - tool_start) * 1000
             self.logger.tool_call(turn_id, name, args, "error", str(e), duration_ms)
             if self.shadow:
                 self.shadow.after_tool(name, args, None, duration_ms, gate_id, error=str(e))
             raise
-        content = result.text
+        content = _python_result(result.text) if name == _PYTHON_TOOL else result.text
         duration_ms = (time.monotonic() - tool_start) * 1000
         self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok",
                               result.text[:300] if result.is_error else None, duration_ms)

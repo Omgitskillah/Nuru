@@ -28,7 +28,7 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[1] / "planner_check" / "pl
 OLLAMA = "http://localhost:11434"
 _WHOLE_REF = re.compile(r"^\$(s[1-9][0-9]*)$")
 # Arguments that take a note path: a pick feeding one of these chooses a path from the results.
-PATH_ARGS = {"name", "note", "source_path", "destination_path", "file_paths", "supersedes", "targets"}
+PATH_ARGS = {"name", "note", "notes", "source_path", "destination_path", "file_paths", "supersedes", "targets"}
 ANSWER_WANT = "a complete answer to my request"
 
 

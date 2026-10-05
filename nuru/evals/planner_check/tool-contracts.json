@@ -268,5 +268,23 @@
       "question"
     ],
     "additionalProperties": false
+  },
+  "run_python": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "additionalProperties": false
   }
 }

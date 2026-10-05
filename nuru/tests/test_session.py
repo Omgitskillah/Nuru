@@ -955,10 +955,29 @@ def test_start_connects_the_obsidian_deep_think_math_and_laya_servers(monkeypatc
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
     monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
     monkeypatch.setattr(session, "MCPTools", recording_mcp_tools)
+    monkeypatch.setattr(session, "python_server_params", lambda: None)  # no Docker: no run_python
 
     Session.start()
 
     assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "math-mcp", "laya-mcp"]
+
+
+def test_start_adds_the_python_server_when_it_can_run(monkeypatch):
+    seen = {}
+
+    def recording_mcp_tools(server_params, **kwargs):
+        seen["params"] = server_params
+        return FakeMCPTools()
+
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "MCPTools", recording_mcp_tools)
+    monkeypatch.setattr(session, "python_server_params",
+                        lambda: session.StdioServerParameters(command="cargo", args=["run", "--bin", "python-mcp"]))
+
+    Session.start()
+
+    assert [p.args[-1] for p in seen["params"]][-1] == "python-mcp"
 
 
 def test_index_change_reports_the_indexers_passes(monkeypatch):

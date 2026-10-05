@@ -530,6 +530,53 @@
               "tool": {
                 "type": "string",
                 "enum": [
+                  "run_python"
+                ]
+              },
+              "args": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\$s[1-9][0-9]*$"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "tool",
+              "args"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^s[1-9][0-9]*$"
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
                   "ask_an_expert"
                 ]
               },

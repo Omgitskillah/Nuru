@@ -3,6 +3,7 @@ translate to Ollama's `think`, the level to run at, and sampling that depends on
 thinks - read from modelfiles/profiles.yaml, so switching NURU_BASE_MODEL switches them too.
 """
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import yaml
 
 PROFILES = Path(__file__).resolve().parents[2] / "modelfiles" / "profiles.yaml"
 LEVELS = ("off", "low", "high")
+_SAMPLING_OPTIONS = {"temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty"}
 
 
 def family(model: str) -> str:
@@ -25,8 +27,7 @@ class ModelProfile:
     sampling: dict[str, dict] = field(default_factory=dict)  # "thinking" / "no_thinking" -> options
 
     def think(self, level: str | bool) -> bool | str:
-        """The Ollama `think` value for a thinking level. Without a map, or for anything that isn't
-        a level (an old true/false, "medium"), the value goes through as before."""
+        """Translate a level; a configured thinking map rejects unknown levels."""
         if isinstance(level, bool):
             return level
         level = level.strip().lower()
@@ -36,6 +37,8 @@ class ModelProfile:
             return False
         if level == "true":
             return True
+        if self.think_map is not None:
+            raise ValueError(f"Unsupported thinking level {level!r}; use one of {LEVELS}")
         return level
 
     def options(self, think: bool | str) -> dict:
@@ -46,13 +49,43 @@ class ModelProfile:
 
 
 def for_model(model: str, path: Path = PROFILES) -> ModelProfile:
-    entry = (yaml.safe_load(path.read_text()) or {}).get(family(model)) if path.exists() else None
-    if not entry:
-        return ModelProfile()
+    profiles = yaml.safe_load(path.read_text())
+    if not isinstance(profiles, dict):
+        raise ValueError(f"{path}: expected a mapping of model families")
+    entry = profiles.get(family(model))
+    if entry is None:
+        raise ValueError(f"{path}: no explicit profile for model {model!r}")
+    if not isinstance(entry, dict) or type(entry.get("supported")) is not bool:
+        raise ValueError(f"{path}: {family(model)} needs an explicit supported: true/false")
+    if not entry["supported"]:
+        raise ValueError(f"Unsupported model family {family(model)!r}: {entry.get('reason') or 'not validated'}")
+    unknown = set(entry) - {"supported", "think", "default", "sampling"}
+    if unknown:
+        raise ValueError(f"{path}: {family(model)} has unknown profile fields: {sorted(unknown)}")
     think_map = entry.get("think")
-    if think_map is not None and set(think_map) != set(LEVELS):
-        raise ValueError(f"{path}: {family(model)}'s think needs exactly {LEVELS}, got {sorted(think_map)}")
-    default = entry.get("default", "low")
-    if default not in LEVELS:
+    if not isinstance(think_map, dict) or set(think_map) != set(LEVELS):
+        raise ValueError(f"{path}: {family(model)}'s think needs exactly {LEVELS}")
+    if any(type(value) is not bool and value not in ("low", "high") for value in think_map.values()):
+        raise ValueError(f"{path}: {family(model)}'s think values must be booleans, low or high")
+    default = entry.get("default")
+    if not isinstance(default, str) or default not in LEVELS:
         raise ValueError(f"{path}: {family(model)}'s default must be one of {LEVELS}, got {default!r}")
-    return ModelProfile(think_map, default, entry.get("sampling") or {})
+    sampling = entry.get("sampling", {})
+    if not isinstance(sampling, dict) or set(sampling) - {"thinking", "no_thinking"}:
+        raise ValueError(f"{path}: {family(model)}'s sampling needs thinking/no_thinking mappings")
+    for mode, options in sampling.items():
+        if not isinstance(options, dict) or set(options) - _SAMPLING_OPTIONS:
+            raise ValueError(f"{path}: {family(model)} has invalid sampling options for {mode}")
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in options.values()):
+            raise ValueError(f"{path}: {family(model)}'s sampling values must be finite numbers")
+        if "top_k" in options and (type(options["top_k"]) is not int or options["top_k"] < 0):
+            raise ValueError(f"{path}: {family(model)}'s top_k must be a nonnegative integer")
+    return ModelProfile(think_map, default, sampling)
+
+
+def for_runtime_model(model: str, *, derived_model: str, base_model: str, path: Path = PROFILES) -> ModelProfile:
+    """The rebuilt alias inherits its base profile; an independent planner needs its own."""
+    def tagged(name: str) -> str:
+        return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+
+    return for_model(base_model if tagged(model) == tagged(derived_model) else model, path)

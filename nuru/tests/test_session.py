@@ -91,6 +91,30 @@ def test_start_builds_the_custom_model_from_the_modelfile_before_loading(monkeyp
     assert calls == [(session.MODEL, session.BASE_MODEL, session._modelfile_for(session.BASE_MODEL))]
 
 
+def test_plan_turn_uses_the_planners_profile_and_sampling(monkeypatch):
+    profile = session.model_profile.for_model("qwen3.5")
+    monkeypatch.setattr(session, "PLANNER_PROFILE", profile)
+    monkeypatch.setattr(session, "PLANNER_THINK", profile.think("off"))
+    seen = []
+
+    def plan_chat(model, messages, **kwargs):
+        seen.append((model, kwargs))
+        return iter(['{"steps": [{"step": "s1", "tool": "calculate", "with": {"expression": "7 * 8"}}]}'])
+
+    tools = FakeMCPTools(tools=[{"type": "function", "function": {
+        "name": "calculate", "parameters": {"type": "object", "properties": {"expression": {"type": "string"}},
+                                               "required": ["expression"]}}}])
+    s = start_session(monkeypatch, chat=plan_chat, tools=tools)
+    try:
+        list(s._plan_turn("PLAN: Calculate 7 * 8"))
+    finally:
+        s.close()
+    assert len(seen) == 1
+    assert seen[0][0] == session.PLANNER_MODEL
+    assert seen[0][1]["think"] is False
+    assert seen[0][1]["options"] == profile.options(False)["options"]
+
+
 # --- _modelfile_for ---
 
 

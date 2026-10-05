@@ -30,7 +30,9 @@ Switching models is changing `NURU_BASE_MODEL`: everything else that has to chan
 
 ## The custom model and its settings
 
-[`modelfiles/`](modelfiles) holds one Modelfile per model family, each a template (`FROM __BASE_MODEL__`, a `PARAMETER` block, and a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
+Qwen3.5 and Granite4.2 build from one assistant prompt, [`modelfiles/system.md`](modelfiles/system.md). Their family Modelfiles keep their own `FROM`, capabilities, comments and sampling parameters, with `SYSTEM """__SYSTEM_PROMPT__"""` filled in by [`core.modelfile`](src/core/modelfile.py) before `ollama create`. Use Nuru's build path to resolve this template; passing the family template directly to Ollama would leave the placeholder as the prompt.
+
+In the shared source, `{{tool:search}}` renders to `search`, so explicit tool references can be checked against [`MODEL_TOOLS`](src/core/tool_contract.py) without changing the words the model sees. Unknown references and exact retired tool names fail before a model is built. `run_python` is permitted in the prompt but offered only when its optional server starts; its absence does not prevent model construction. The harness's expert tools are excluded from the model's contract.
 
 `session._modelfile_for(base_model)` picks the file by family - `NURU_BASE_MODEL` with any registry namespace and `:tag` stripped, so `qwen3.5:9b` builds from [`modelfiles/qwen3.5.Modelfile`](modelfiles/qwen3.5.Modelfile). A base model with no file of its own raises `FileNotFoundError` listing the families that do have one, rather than falling back: the `PARAMETER` blocks are tuned per model, so reusing another family's would sample the model wrongly and skew any bakeoff run against it. To run a new model, add `<family>.Modelfile`.
 
@@ -44,7 +46,7 @@ Switching models is changing `NURU_BASE_MODEL`: everything else that has to chan
 | [`mistral-nemo`](modelfiles/mistral-nemo.Modelfile) | Mistral's low-temperature guidance for Nemo: `temperature 0.3`, `top_p 0.9` |
 | [`lfm2.5-thinking`](modelfiles/lfm2.5-thinking.Modelfile) | Liquid's shipped defaults: `temperature 0.05`, `top_k 50` |
 
-Granite and Qwen3.5 carry the current `SYSTEM` prompt (the 10 tools since the 2026-10 tools purge); the other families' files still describe the old tools until they're ported. The copies are separate, so a prompt change has to be made in each, or they drift - which would confound a bakeoff comparing them.
+Only Qwen3.5 and Granite4.2 are supported. The other five files above retain legacy prompts and are explicitly disabled in `profiles.yaml` until their prompt and thinking settings are ported and tested. Edit `system.md` to change both supported families' assistant prompt. The golden rendering tests preserve their complete Modelfiles at `plan-executor` commit `80171de`; intentional prompt changes must update those baselines. Planner Modelfiles remain separate because they describe a different role.
 
 **Profiles.** What a Modelfile can't express lives in [`modelfiles/profiles.yaml`](modelfiles/profiles.yaml), per family ([`model_profile.py`](src/core/model_profile.py)):
 
@@ -53,9 +55,9 @@ Granite and Qwen3.5 carry the current `SYSTEM` prompt (the 10 tools since the 20
 | `granite4.2` | `false` / `"low"` / `"high"` | `low` (the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high, 2026-09-29) | none - the Modelfile's |
 | `qwen3.5` | `false` / `true` / `true` - it has no levels | `off` (on, it thought 13 s over "what is 2+3") | thinking: `temperature 0.6`, `top_p 0.95`; not: `temperature 0.7`, `top_p 0.8`; both `top_k 20`, no presence penalty - a starting point, not yet measured |
 
-A family without a profile runs at `low`, passed to Ollama as written. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
+A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. An independently configured `NURU_PLANNER_MODEL` needs its own supported profile and uses its own thinking and request sampling settings. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
 
-`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit the family's Modelfile and it takes effect on the next run, no manual `ollama create` needed.
+`core.providers.ollama.create_model(model, base_model, modelfile_path)` resolves the shared SYSTEM text and `__BASE_MODEL__`, validates tool references, and runs `ollama create` with a temporary rendered file. `Session.start()` calls this on every startup before connecting to any MCP server. Eval manifests include the rendered Modelfile's hash, so edits to the shared source change the recorded prompt identity.
 
 Install dependencies and run either front end:
 

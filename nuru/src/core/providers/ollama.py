@@ -12,11 +12,9 @@ from pathlib import Path
 
 import requests
 
-BASE = "http://localhost:11434"
+from core.modelfile import render_modelfile
 
-# Placeholder in the Modelfile template that create_model() substitutes with
-# the actual base model to build from.
-_BASE_MODEL_PLACEHOLDER = "__BASE_MODEL__"
+BASE = "http://localhost:11434"
 
 # Local generation over a large context can legitimately take a long time on
 # modest hardware - default generously rather than have a slow-but-working
@@ -63,14 +61,14 @@ def ensure_server_running(timeout: float = 15) -> bool:
 
 def create_model(model: str, base_model: str, modelfile_path: Path) -> None:
     """(Re)builds `model` in Ollama from the Modelfile template at `modelfile_path`,
-    with its __BASE_MODEL__ placeholder filled in with `base_model`.
+    with its shared SYSTEM prompt and __BASE_MODEL__ placeholder resolved.
 
     `ollama create` overwrites an existing model of the same name, so this is
     safe (and intended) to call on every startup - it keeps `model`'s baked-in
     system prompt in sync with the template without ever needing a manual
     `ollama create` step.
     """
-    rendered = modelfile_path.read_text().replace(_BASE_MODEL_PLACEHOLDER, base_model)
+    rendered = render_modelfile(modelfile_path, base_model)
     with tempfile.NamedTemporaryFile("w", suffix=".Modelfile", delete=False) as f:
         f.write(rendered)
         rendered_path = f.name

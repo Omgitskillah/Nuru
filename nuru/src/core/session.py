@@ -44,6 +44,7 @@ from core.providers.ollama import (
 )
 from core.vault_indexer import VaultIndexer
 from core.thinking_watch import ThinkingWatch
+from core.tool_contract import MODEL_TOOLS
 from core.write_args import ask_for_arguments, validate_arguments
 
 # Every subsystem's settings live in the repo root, one file each (.env.nuru, .env.obsidian,
@@ -66,7 +67,8 @@ PROFILE = model_profile.for_model(BASE_MODEL)
 THINK = PROFILE.think(PROFILE.default)
 # Plan mode (a test: core.planner) - the model that writes plans, and how much it thinks.
 PLANNER_MODEL = os.environ.get("NURU_PLANNER_MODEL", MODEL)
-PLANNER_THINK = model_profile.for_model(PLANNER_MODEL).think(os.environ.get("NURU_PLANNER_THINK", "off"))
+PLANNER_PROFILE = model_profile.for_runtime_model(PLANNER_MODEL, derived_model=MODEL, base_model=BASE_MODEL)
+PLANNER_THINK = PLANNER_PROFILE.think(os.environ.get("NURU_PLANNER_THINK", "off"))
 
 MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
 
@@ -154,25 +156,6 @@ _laya_env = get_default_environment()
 if _decision_config := os.environ.get("NURU_DECISION_CONFIG"):
     _laya_env["NURU_DECISION_CONFIG"] = _decision_config
 LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
-
-# The only tools the local model is offered or allowed to call - an allowlist, so a tool a server
-# adds later reaches the model only once it is added here. Left out on purpose:
-# - the decision layer's harness tools (tool_gate, assess_effort, gate_write, check_claim, rerank,
-#   health): Nuru calls those itself; the model never does.
-MODEL_TOOLS = frozenset(
-    {
-        # obsidian, read
-        "browse", "find_in_notes", "note_info", "read_note", "search", "tags",
-        # obsidian, write
-        "rename_or_move_file", "write_note",
-        # math-4-llms
-        "calculate", "statistics",
-        # python-4-llms - offered only when its server started (python_server_params: Docker running)
-        "run_python",
-        # deep-think's ask_an_expert is hidden from the model (2026-10-04): the expert is the
-        # harness's planner instead (deep-think's write_plan), never a tool the model calls.
-    }
-)
 
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
 DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / ".db" / "conversation.db"))
@@ -988,7 +971,8 @@ class Session:
 
         def chat_json(messages: list[dict], schema: dict, think) -> str:
             start, out, usage = time.monotonic(), "", {}
-            for piece in chat(PLANNER_MODEL, messages, num_ctx=_context_window(self.model_info), think=think, fmt=schema):
+            for piece in chat(PLANNER_MODEL, messages, num_ctx=_context_window(self.model_info), think=think, fmt=schema,
+                              **PLANNER_PROFILE.options(think)):
                 if isinstance(piece, str):
                     out += piece
                 elif "stop_reason" in piece:

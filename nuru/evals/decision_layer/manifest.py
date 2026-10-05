@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 from dotenv import dotenv_values
 
+from core.modelfile import render_modelfile
 from common import DUMMY_VAULT, OLLAMA, REPO
 
 
@@ -67,6 +68,8 @@ def build(args: dict, decision_config: Path) -> dict:
                                 for line in _git("submodule", "status").splitlines() if line.strip()}},
         "model": {"base": session.BASE_MODEL, **_ollama_model(session.BASE_MODEL),
                   "modelfile": str(modelfile.relative_to(REPO)), "modelfile_sha256": _sha256(modelfile),
+                  "rendered_modelfile_sha256": hashlib.sha256(
+                      render_modelfile(modelfile, session.BASE_MODEL).encode()).hexdigest(),
                   "profile": {"think_map": session.PROFILE.think_map, "default": session.PROFILE.default,
                               "sampling": session.PROFILE.sampling},
                   "max_num_ctx": session.MAX_NUM_CTX},

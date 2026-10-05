@@ -30,6 +30,14 @@ def no_real_expert_key(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_model_build_or_sandbox(monkeypatch):
+    """Session.start() would otherwise run a real `ollama create` (failing where Ollama isn't
+    installed, as on CI) and ask the real Docker whether run_python can start."""
+    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+    monkeypatch.setattr(session, "python_server_params", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def no_background_indexer(monkeypatch):
     """Session.start() would otherwise start embedding the real vault through the real Ollama."""
     monkeypatch.setattr(session, "VaultIndexer", _NoIndexer)

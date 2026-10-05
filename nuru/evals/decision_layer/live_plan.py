@@ -121,13 +121,30 @@ def make(prompt: str, modelfile: Path, model: str, num_ctx: int) -> dict:
     return _judge(record, EXPERT_SCHEMA)
 
 
+def _extract(raw: str) -> tuple[dict | None, str]:
+    """The first {"steps": ...} object in `raw`, even with text around it (Haiku wrote its plan then a
+    reason, Sonnet a reason then its plan), and that surrounding text - or (None, raw)."""
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(raw):
+        if ch != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(raw, i)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and "steps" in value:
+            return value, f"{raw[:i]} {raw[end:]}".strip()
+    return None, raw
+
+
 def _judge(record: dict, schema: dict = SCHEMA) -> dict:
     """`record` with its raw plan parsed, checked and translated - or the reason to fall back."""
-    try:
-        plan = json.loads(record["raw"])
-    except json.JSONDecodeError:
+    plan, extra = _extract(record["raw"])
+    if plan is None:
         record.update(plan=None, run=None, fallback="not JSON")
         return record
+    if extra:
+        record["extra_text"] = extra  # kept for the report: a planner's reason for an empty plan
     record["plan"] = plan
     found = problems(plan, schema)
     record["problems"] = found
@@ -155,7 +172,9 @@ def make_expert(prompt: str, tools, model: str | None = None) -> dict:
     record = {"model": f"deep-think write_plan {model or ''}".strip(), "modelfile": str(EXPERT_PROMPT)}
     try:
         # No schema: structured outputs refuse this one ("compiled grammar is too large", even without
-        # its patterns), so the prompt's step language carries the format and _judge checks it.
+        # its patterns), and a flattened one breaks their limits (24 optional fields, 16 union-typed:
+        # the tools' argument names alone are 21). So the prompt asks for JSON only, _extract finds the
+        # plan if text comes with it anyway, and _judge checks it.
         result = tools.call_harness_tool("write_plan", {"request": prompt, "instructions": system,
                                                         **({"model": model} if model else {})})
         if result.is_error:

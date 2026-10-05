@@ -903,6 +903,7 @@ class Session:
         if self.shadow:
             self.shadow.begin(text, turn_id)
         enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
+        now = _timestamp_line(datetime.now().astimezone())  # what ask() puts ahead of the request
         steps = list(plan["steps"])
         if not steps or steps[-1].get("think") != "answer":
             steps.append({"step": f"s{len(steps) + 1}", "think": "answer", "uses": [], "want": "the reply"})
@@ -945,7 +946,7 @@ class Session:
         def draft(step: dict, rejected: str = ""):
             want = step.get("want", "") + (f"\nYour last attempt was rejected: {rejected}" if rejected else "")
             schema = executor.consumer_schema(step["step"], steps, self.tool_definitions)
-            out = yield from call(executor.draft_messages(text, want, inputs_of(step)),
+            out = yield from call(executor.draft_messages(text, want, inputs_of(step), now),
                                   {"type": "object", "properties": {"value": schema}, "required": ["value"]})
             try:
                 return json.loads(out)["value"]
@@ -990,7 +991,7 @@ class Session:
                 if not options:
                     stopped = f"{name}: the results had nothing to choose from for {step.get('want')!r}"
                     continue
-                out = yield from call(executor.pick_messages(text, step.get("want", ""), inputs_of(step)),
+                out = yield from call(executor.pick_messages(text, step.get("want", ""), inputs_of(step), now),
                                       {"type": "object", "properties": {"choice": {"enum": options + ["none"]}},
                                        "required": ["choice"]})
                 try:
@@ -1012,7 +1013,7 @@ class Session:
                 labels[name] = f"Written as {step.get('want')!r}"
                 log.append({"step": name, "what": labels[name], "output": value})
             elif kind == "answer":
-                reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped), None)).strip()
+                reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped, now), None)).strip()
                 yield Text(reply)
         self.store.add_message(self.conversation_id, "nuru", reply)
         if self.shadow:

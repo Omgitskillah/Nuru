@@ -117,7 +117,8 @@ def make(prompt: str, modelfile: Path, model: str, num_ctx: int) -> dict:
     record.update(seconds=round(time.monotonic() - start, 2), load_seconds=round(reply.get("load_duration", 0) / 1e9, 2),
                   prompt_tokens=reply.get("prompt_eval_count"), output_tokens=reply.get("eval_count"),
                   raw=reply.get("message", {}).get("content", ""))
-    return _judge(record)
+    # ask_an_expert is hidden from the model (2026-10-04), so a plan that uses it can't run either.
+    return _judge(record, EXPERT_SCHEMA)
 
 
 def _judge(record: dict, schema: dict = SCHEMA) -> dict:

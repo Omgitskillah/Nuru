@@ -155,3 +155,12 @@ def test_a_rejected_expression_is_drafted_again_once_and_calculated_again(monkey
         ("calculate", {"expression": "sum of groceries"}), ("calculate", {"expression": "12.5 + 30"})]
     assert "rejected" in model_calls[2]["messages"][-1]["content"]
     assert ("write_note", {"type": "daily", "content": "- Grocery total: 42.5"}) in fake.calls
+
+
+def test_think_steps_are_told_the_current_date_ahead_of_the_request():
+    now = "[Current date and time: Monday 2026-10-05 09:30 CEST]"
+    for messages in (executor.pick_messages("When?", "the note", {}, now),
+                     executor.draft_messages("When?", "the date", {}, now),
+                     executor.answer_messages("When?", "the reply", [], None, now)):
+        assert messages[1]["content"].startswith(now + "\n\nMy request: When?")
+    assert executor.answer_messages("When?", "the reply", [], None)[1]["content"].startswith("My request: When?")

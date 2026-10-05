@@ -139,23 +139,29 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"\n[... {len(text) - limit} more characters]"
 
 
-def pick_messages(request: str, want: str, inputs: dict[str, str]) -> list[dict]:
+def _dated(now: str) -> str:
+    """The current date and time line (Session's own, as ask() sends it) ahead of a think step's
+    request - without it the model takes "today" from whatever date a note mentions."""
+    return f"{now}\n\n" if now else ""
+
+
+def pick_messages(request: str, want: str, inputs: dict[str, str], now: str = "") -> list[dict]:
     """`inputs` maps a label saying what each input is (never a step's name) to its text."""
     shown = "\n\n".join(f"{label}:\n{_clip(text, INPUT_CHARS)}" for label, text in inputs.items())
     return [{"role": "system", "content": PICK_SYSTEM},
-            {"role": "user", "content": f"My request: {request}\n\nChoose: {want}\n\n{shown}"}]
+            {"role": "user", "content": f"{_dated(now)}My request: {request}\n\nChoose: {want}\n\n{shown}"}]
 
 
-def draft_messages(request: str, want: str, inputs: dict[str, str]) -> list[dict]:
+def draft_messages(request: str, want: str, inputs: dict[str, str], now: str = "") -> list[dict]:
     shown = "\n\n".join(f"{label}:\n{_clip(text, INPUT_CHARS)}" for label, text in inputs.items())
     return [{"role": "system", "content": DRAFT_SYSTEM},
-            {"role": "user", "content": f"My request: {request}\n\nWrite: {want}\n\n{shown or '(no inputs)'}"}]
+            {"role": "user", "content": f"{_dated(now)}My request: {request}\n\nWrite: {want}\n\n{shown or '(no inputs)'}"}]
 
 
-def answer_messages(request: str, want: str, log: list[dict], stopped: str | None) -> list[dict]:
+def answer_messages(request: str, want: str, log: list[dict], stopped: str | None, now: str = "") -> list[dict]:
     lines = [f"{entry['what']}:\n{_clip(_as_text(entry['output']), ANSWER_CHARS)}" for entry in log]
     if stopped:
         lines.append(f"The plan stopped early: {stopped}. Nothing after that ran.")
     return [{"role": "system", "content": ANSWER_SYSTEM},
-            {"role": "user", "content": f"My request: {request}\n\nThe reply should give: {want}\n\nWhat was done:\n\n"
-             + "\n\n".join(lines)}]
+            {"role": "user", "content": f"{_dated(now)}My request: {request}\n\nThe reply should give: {want}\n\n"
+             "What was done:\n\n" + "\n\n".join(lines)}]

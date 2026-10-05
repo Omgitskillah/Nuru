@@ -11,6 +11,8 @@ import mimetypes
 import os
 from pathlib import Path
 
+import functools
+
 import anthropic
 from dotenv import load_dotenv
 
@@ -18,6 +20,9 @@ from deep_think_mcp.contract import Provider
 
 # deep-think's settings (the key, the base dir) live in the repo root's .env.deep-think.
 load_dotenv(Path(__file__).resolve().parents[5] / ".env.deep-think")
+
+
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 def _build_client() -> anthropic.Anthropic:
@@ -68,16 +73,25 @@ class ClaudeProvider(Provider):
         system: str | None = None,
         max_tokens: int = 1024,
         tools: list[dict] | None = None,
+        thinking: dict | None = None,
+        output_config: dict | None = None,
+        fallbacks: str | None = None,
     ) -> dict:
         if not messages:
             raise ValueError("messages must not be empty")
 
-        response = self._client.messages.create(
+        # Server-side refusal fallback ("default": the API picks the substitute by refusal category)
+        # is a beta, so it goes through the beta endpoint with its header.
+        create = (functools.partial(self._client.beta.messages.create, betas=[_FALLBACK_BETA], fallbacks=fallbacks)
+                  if fallbacks else self._client.messages.create)
+        response = create(
             model=model,
             max_tokens=max_tokens,
             messages=messages,
             **({"system": system} if system else {}),
             **({"tools": tools} if tools else {}),
+            **({"thinking": thinking} if thinking else {}),
+            **({"output_config": output_config} if output_config else {}),
         )
         return response.to_dict()
 

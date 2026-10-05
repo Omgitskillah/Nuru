@@ -31,7 +31,8 @@ def main():
     parser.add_argument("--plan", type=Path, help="a plan (core.planner's format) for the harness to carry out "
                         "with Session.run_plan, instead of the model's own turn")
     parser.add_argument("--planner", type=Path, help="a planner Modelfile (modelfiles/planner/), swapped onto the "
-                        "model to write the turn's plan live (live_plan); an empty or invalid plan leaves the turn to it")
+                        "model to write the turn's plan live (live_plan), or 'expert[:model]' for deep-think's "
+                        "write_plan (default Claude Haiku); an empty or invalid plan leaves the turn to the model")
     args = parser.parse_args()
 
     env = get_default_environment()
@@ -63,7 +64,9 @@ def main():
         if args.planner:
             # Planning counts as part of the turn: it starts after `ready`, like the question.
             s.load_model()
-            planned = live_plan.make(args.prompt, args.planner, session.MODEL, session._context_window(s.model_info))
+            expert, _, expert_model = str(args.planner).partition(":")  # expert[:model]
+            planned = (live_plan.make_expert(args.prompt, s.tools, expert_model or None) if expert == "expert" else
+                       live_plan.make(args.prompt, args.planner, session.MODEL, session._context_window(s.model_info)))
             plan = planned["run"]
         for event in (s.run_plan(args.prompt, plan) if plan else s.ask(args.prompt)):
             if isinstance(event, Text):

@@ -42,11 +42,11 @@ def _refs(value) -> list[str]:
     return []
 
 
-def problems(plan) -> list[str]:
+def problems(plan, schema: dict = SCHEMA) -> list[str]:
     """Why `plan` can't be carried out as written - empty if it can. A missing final answer step
     is not a problem: run_plan adds one."""
     try:
-        jsonschema.validate(plan, SCHEMA)
+        jsonschema.validate(plan, schema)
     except jsonschema.ValidationError as e:
         return [f"schema: {e.message[:200]}"]
     found, steps = [], plan["steps"]
@@ -117,13 +117,18 @@ def make(prompt: str, modelfile: Path, model: str, num_ctx: int) -> dict:
     record.update(seconds=round(time.monotonic() - start, 2), load_seconds=round(reply.get("load_duration", 0) / 1e9, 2),
                   prompt_tokens=reply.get("prompt_eval_count"), output_tokens=reply.get("eval_count"),
                   raw=reply.get("message", {}).get("content", ""))
+    return _judge(record)
+
+
+def _judge(record: dict, schema: dict = SCHEMA) -> dict:
+    """`record` with its raw plan parsed, checked and translated - or the reason to fall back."""
     try:
         plan = json.loads(record["raw"])
     except json.JSONDecodeError:
         record.update(plan=None, run=None, fallback="not JSON")
         return record
     record["plan"] = plan
-    found = problems(plan)
+    found = problems(plan, schema)
     record["problems"] = found
     if found:
         record.update(run=None, fallback="invalid plan")
@@ -132,3 +137,36 @@ def make(prompt: str, modelfile: Path, model: str, num_ctx: int) -> dict:
     else:
         record.update(run=translate(plan), fallback=None)
     return record
+
+
+# The expert planner: deep-think's write_plan (Claude Haiku 4.5), reached through the session's MCP
+# servers - ask_an_expert is hidden from the model, and the expert is no longer a plan step.
+EXPERT_PROMPT = Path(__file__).resolve().parents[2] / "modelfiles" / "planner" / "expert-planner.Modelfile"
+EXPERT_SCHEMA = json.loads(json.dumps(SCHEMA))
+EXPERT_SCHEMA["properties"]["steps"]["items"]["anyOf"] = [
+    branch for branch in SCHEMA["properties"]["steps"]["items"]["anyOf"]
+    if branch["properties"].get("tool", {}).get("enum") != ["ask_an_expert"]]
+def make_expert(prompt: str, tools, model: str | None = None) -> dict:
+    """Ask the expert planner (`tools`: the session's MCPTools; `model`: one of write_plan's, else its
+    default) for a plan for `prompt`, then judge it as make() does."""
+    system, _ = modelfile_parts(EXPERT_PROMPT)
+    start = time.monotonic()
+    record = {"model": f"deep-think write_plan {model or ''}".strip(), "modelfile": str(EXPERT_PROMPT)}
+    try:
+        # No schema: structured outputs refuse this one ("compiled grammar is too large", even without
+        # its patterns), so the prompt's step language carries the format and _judge checks it.
+        result = tools.call_harness_tool("write_plan", {"request": prompt, "instructions": system,
+                                                        **({"model": model} if model else {})})
+        if result.is_error:
+            raise RuntimeError(result.text)
+        reply = json.loads(result.text)
+    except Exception as e:  # the turn goes on as Nuru's own
+        record.update(seconds=round(time.monotonic() - start, 2), error=repr(e)[:500], plan=None, run=None,
+                      fallback="planner call failed")
+        return record
+    raw = reply.get("plan", "").strip()
+    if raw.startswith("```"):  # a fenced block, despite the prompt
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    record.update(seconds=round(time.monotonic() - start, 2), stop_reason=reply.get("stop_reason"),
+                  hint=reply.get("hint"), answered_by=reply.get("model"), raw=raw)
+    return _judge(record, EXPERT_SCHEMA)

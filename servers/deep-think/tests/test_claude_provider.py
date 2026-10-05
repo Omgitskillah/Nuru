@@ -190,3 +190,37 @@ def test_list_files_flattens_the_paginated_response(provider, client):
 )
 def test_upload_mime_type_sends_text_formats_as_plain_text(name, expected):
     assert claude._upload_mime_type(Path(name)) == expected
+
+
+def test_send_message_forwards_thinking_and_output_config(provider, client):
+    client.messages.create.return_value = _fake_response({})
+    thinking = {"type": "enabled", "budget_tokens": 1024}
+    output_config = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+
+    provider.send_message(
+        model="claude-haiku-4-5", messages=[{"role": "user", "content": "hi"}], thinking=thinking,
+        output_config=output_config,
+    )
+
+    client.messages.create.assert_called_once_with(
+        model="claude-haiku-4-5",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": "hi"}],
+        thinking=thinking,
+        output_config=output_config,
+    )
+
+
+def test_send_message_with_fallbacks_uses_the_beta_endpoint(provider, client):
+    client.beta.messages.create.return_value = _fake_response({})
+
+    provider.send_message(model="claude-sonnet-5-5", messages=[{"role": "user", "content": "hi"}], fallbacks="default")
+
+    client.beta.messages.create.assert_called_once_with(
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        model="claude-sonnet-5-5",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    client.messages.create.assert_not_called()

@@ -114,3 +114,36 @@ Sampled every ~0.5 s over the 107 minutes of the 36 + 102 runs. M4, 16 GB.
   - **Keep Nuru's own turn** as the default.
   - **Use plans only where they're complete and simple:** single lookups, arithmetic, exact writes. That could be fixed templates as suggested yesterday, or this planner with a rule that only plans ending in an answer step after a read or tool step run.
   - **A better planner** (Qwen 4B with thinking on scored 92/100 in the planner check). It would cost about 7 s more per turn, which roughly cancels the speed gain.
+
+## Added afterwards: Claude Haiku as the planner, on the hardest test
+
+**The change:** the expert stops being a tool the model can call and becomes the planner.
+- **Hidden from the model:** `ask_an_expert` was taken out of `MODEL_TOOLS` in [session.py](../src/core/session.py), so no model is offered it.
+- **Modelfiles:** its section was removed from the [qwen3.5](../modelfiles/qwen3.5.Modelfile) and [granite4.2](../modelfiles/granite4.2.Modelfile) Modelfiles. That's the escalation rules, the expert clause in the opening line, "or escalate" in the retry rule, and the expert example. The math rule that sat inside the escalation section stays, as a short "MATH" section.
+- **New planner tool:** deep-think gained `write_plan` (harness-only), on the same server as `ask_an_expert`.
+  - Model: `claude-haiku-4-5` with thinking `{"type": "enabled", "budget_tokens": 1024}`. Haiku 4.5 takes no effort setting, and 1024 is the smallest budget the API accepts.
+  - Prompt: [expert-planner.Modelfile](../modelfiles/planner/expert-planner.Modelfile). That's the Qwen planner prompt with `ask_an_expert` removed from the plan tools.
+  - Wiring: `live_plan.make_expert` calls it through the session's MCP servers. `run_suite.py --planner expert` turns it on.
+- **No forced schema:** structured outputs refuse the plan schema with "compiled grammar is too large", even with its regex patterns removed. So Haiku follows the prompt's step language, and the plan is checked locally against the schema without the expert step. A plan in a ```json fence is unwrapped.
+
+**Test 17**, run 3 times. It's the lowest-scoring test across the recent full runs: 1.0/5 for Qwen alone, Qwen with the Qwen planner, and Granite. The prompt: "When do I have to cancel my internet contract, and how many days is that from today?"
+
+| Repeat | Haiku's plan | What happened | Score | Turn time | Planner time |
+|---|---|---|---|---|---|
+| 0 | search "internet contract cancel" → pick note → read → answer | pick found no matching note, so the plan stopped. Reply: "nothing found" | 1/5 | 33.7 s | 8.0 s |
+| 1 | search → pick "the cancellation deadline date" → answer | the pick became a draft from search snippets, which invented "2026-09-17", with "today (2026-09-18)" | 1/5 | 26.1 s | 7.9 s |
+| 2 | search "internet contract cancellation" → pick → read → answer | as repeat 0 | 1/5 | 24.2 s | 7.4 s |
+
+**Why it fails: the search, not the planner.**
+- **The note is in German:** `nuru/berlin-admin-chaos-notes.md`, "Internet: Vertrag läuft bis 2027-03-31. Kündigungsfrist 3 Monate → spätestens bis 2026-12-31 kündigen".
+- **English queries miss it.** Against the test vault, "internet contract cancel" and "internet contract cancellation" both leave it out of the top 8 results (daily notes and project notes, all scoring 0.52–0.56).
+- **A German query finds it.** "Internet Vertrag Kündigung" returns it first, as an exact match.
+- Two of Haiku's three plans were sensible (search → pick → read → answer). No plan can succeed while the search can't find the note.
+
+**Two more gaps showed up:**
+- **The executor doesn't know today's date.** Repeat 1's answer guessed "today (2026-09-18)". The answer and draft prompts need the date.
+- **Date arithmetic.** "How many days from today" needs a date difference. The step language has no way to say that unless `calculate` takes dates. Not checked.
+
+**Cost:**
+- A Haiku plan took 7.4–8.0 s, against about 6 s for the Qwen planner on the same loaded model.
+- Each call is one request: the ~2k-token prompt plus a short plan.

@@ -133,7 +133,8 @@ Do not answer, apologize or ask a question before that first search.
 - Before writing any message, email or update for me (a draft I will send), find my directives with
   browse(type="directives"), read_note them and follow them: tone, sign-off, what must stay confidential.
   Then search my notes for the topic and the recipient (e.g. "status", their name) and read what is relevant.
-- Write the draft in the chat itself. Do not create a vault note unless I ask.
+- Write the draft in the chat itself, and end it with the sign-off my directives give. Do not create a
+  vault note unless I ask.
 
 # WRITING RULES
 - Adding to a note that exists (I name it, or say "add to", "update"): search first. If a matching note exists,

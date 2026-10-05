@@ -123,6 +123,33 @@ def _says(record, pattern: str) -> bool:
     return re.search(pattern, record.get("reply", ""), re.IGNORECASE) is not None
 
 
+def _ran(record, *tools: str) -> bool:
+    """One of `tools` was called and succeeded - from the session log's statuses (load_results),
+    since a tool named in the turn's events may have been refused or failed. A batch without logs
+    falls back to the tool having been called."""
+    if "calculate" in tools:
+        tools += LEGACY_ARITHMETIC
+    executed = record.get("executed")
+    if executed is None:
+        return bool(set(_tools(record)) & set(tools))
+    return any(tool in tools and status == "ok" for tool, status in executed)
+
+
+# calculate's predecessors (before the 2026-10 tools purge), so older batches still score as they did.
+LEGACY_ARITHMETIC = ("add", "subtract", "multiply", "divide")
+
+
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+_NEGATED = re.compile(r"\bnot\b|n['’]t\b|\bfail|\bfalls? short|\bshort of\b|\bbelow\b|\bmiss|\bnever\b|\bcannot\b|\bno longer\b", re.I)
+
+
+def _concludes(record, subject: str, positive: str) -> bool:
+    """A sentence about `subject` says `positive` and isn't negated - the conclusion, not just the
+    words: "periodic attach (13.6 years) does not hold" names the subject but concludes the opposite."""
+    sentences = [s for s in _SENTENCE.split(record.get("reply", "")) if re.search(subject, s, re.I)]
+    return any(re.search(positive, s, re.I) and not _NEGATED.search(s) for s in sentences)
+
+
 def _answered_cleanly(record, changes) -> bool:
     return _replied(record) and not changes
 
@@ -188,9 +215,9 @@ def score_34(record, changes, today):
     """5.35 mA x 24 h = 128.4 mAh - no vault lookup needed."""
     return [
         ("128.4 mAh", _says(record, r"128\.4")),
+        ("computed with calculate or run_python", _ran(record, "calculate", "run_python")),
         ("no vault lookup", not set(_tools(record)) & VAULT_TOOLS),
-        ("no expert call", "ask_an_expert" not in _tools(record)),
-        ("nothing changed", not changes),
+        ("no expert call, and nothing changed", "ask_an_expert" not in _tools(record) and not changes),
         ("it replied", _replied(record)),
     ]
 
@@ -293,7 +320,8 @@ def score_8(record, changes, today):
     """The 9 PDP-drop runs in the Area Monitor note: mean 47.0 min, SD 0.19 min."""
     return [
         ("mean 47.0", _says(record, r"\b47\.0")),
-        ("SD 0.19", _says(record, r"0\.19")),
+        ("SD 0.19, computed with statistics or run_python",
+         _says(record, r"0\.19") and _ran(record, "statistics", "run_python")),
         ("cites the Area Monitor note", _says(record, r"area.monitor")),
         ("a concise answer (under 2,000 characters)", len(record.get("reply", "")) < 2000),
         ("looked in the vault, nothing changed, and it replied", _looked_and_answered(record, changes)),
@@ -500,7 +528,8 @@ def score_32(record, changes, today):
     keepalive is 600 s (the correction); the biggest risk is report rate - 6 an hour gives 2.3 years."""
     return [
         ("237 days always-connected", _says(record, r"\b23[67](\.\d+)?\s*d")),
-        ("periodic attach meets it", _says(record, r"periodic.attach|13\.6")),
+        ("periodic attach meets it",
+         _concludes(record, r"periodic.attach|13\.6", r"\bmeets?\b|satisf|exceed|achiev|\bwithin\b|holds?\b|passes|\bok\b|✓|✅")),
         ("the 2.3-year report-rate risk", _says(record, r"2\.3\s*y")),
         ("keepalive 600 s", _says(record, r"\b600\s*(s|sec)")),
         ("nothing changed, and it replied", _answered_cleanly(record, changes)),
@@ -547,7 +576,17 @@ def load_results(batch: Path) -> list[dict]:
     records = [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
     for record in records:
         record["vault_changes"] = [c for c in record.get("vault_changes", []) if c["path"] not in SERVER_FILES]
+        record["executed"] = _executed(batch, record.get("session_id"))
     return records
+
+
+def _executed(batch: Path, session_id: str | None) -> list[tuple[str, str]] | None:
+    """(tool, status) for every tool call the turn's session log recorded, or None without a log."""
+    logs = list((batch / "logs").glob(f"*_{session_id}.jsonl")) if session_id else []
+    if not logs:
+        return None
+    events = (json.loads(line) for line in logs[0].read_text().splitlines() if line.strip())
+    return [(e["tool_name"], e["status"]) for e in events if e.get("event") == "tool_call"]
 
 
 def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, bool]]]:

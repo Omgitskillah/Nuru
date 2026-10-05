@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from common import DUMMY_VAULT, HERE, REPO, RUNS
+import manifest
 
 # The quick suite: one test per behaviour worth watching, each ~1-2 minutes, and each one has failed
 # in at least one earlier scored run (so it tells setups apart) - except 34, the no-tool control.
@@ -148,6 +149,9 @@ def main():
         header = ("# TEST ONLY - written by run_suite.py --enforce for one batch. The thresholds are NOT\n"
                   "# calibrated; they are marked so only so that this config loads with enforce on.\n")
     (batch / "decision_layer.yaml").write_text(header + yaml.safe_dump(config, sort_keys=False))
+    (batch / "manifest.json").write_text(json.dumps(
+        manifest.build({k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+                       batch / "decision_layer.yaml"), indent=2))
 
     env = {**os.environ, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": str(index),
            "NURU_DB_PATH": str(batch / "conversation.db"), "NURU_LOG_DIR": str(batch / "logs"),

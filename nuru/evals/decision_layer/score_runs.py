@@ -609,13 +609,13 @@ def score_32(record, changes, today):
 
 
 def score_33(record, changes, today):
-    """Both notes attached to the expert; its check reported: U is really 0.36, and how the backoff
-    jitter task fits."""
-    attached = [str(call["arguments"].get("file_paths", "")).lower()
-                for call in record.get("tool_calls", []) if call["name"] == "ask_an_expert"]
+    """Both notes read (reworded 2026-10-06: the expert is no longer a model tool, so the check is Nuru's
+    own); the check reported: U is really 0.36, and how the backoff jitter task fits."""
+    read = [json.dumps(call.get("arguments", {})).lower()
+            for call in record.get("tool_calls", []) if call["name"] not in ("search", "find_in_notes")]
     return [
-        ("attached the FreeRTOS note", any("freertos" in a for a in attached)),
-        ("attached the architecture review", any("architecture-review" in a for a in attached)),
+        ("read the FreeRTOS note", any("freertos" in a for a in read)),
+        ("read the architecture review", any("architecture-review" in a or "architecture review" in a for a in read)),
         ("reports U = 0.36", _says(record, r"0\.36")),
         ("addresses the backoff jitter task", _says(record, r"backoff|jitter")),
         ("nothing changed, and it replied", _answered_cleanly(record, changes)),

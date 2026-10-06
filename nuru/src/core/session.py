@@ -13,12 +13,14 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import requests
+import anyio
+from mcp.shared.exceptions import MCPError
 from dotenv import dotenv_values, load_dotenv
 from laya_mcp.config import load_config as load_decision_config
 from laya_mcp.checks import WRITE_TOOLS
@@ -33,7 +35,9 @@ from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
 from core import executor, model_profile, planner
-from core.providers.mcp_tools import MCPTools
+from core.providers.mcp_tools import MCPTools, ToolResult
+from core import tool_dispatch
+from core.tool_dispatch import ToolOutcome, MUTATIONS
 from core.providers.ollama import (
     chat,
     create_model,
@@ -254,6 +258,7 @@ _PYTHON_PARAMETERS = {
                   "description": "Exact paths of the notes the script needs; their text arrives on stdin as JSON {path: text}."},
     },
     "required": ["code"],
+    "additionalProperties": False,
 }
 
 
@@ -396,6 +401,7 @@ class Session:
         shadow: DecisionShadow | None = None,
         enforcement: Enforcement | None = None,
         system_text: str = "",
+        server_tools: list[dict] | None = None,
     ) -> None:
         self.tools = tools
         self.tool_definitions = tool_definitions
@@ -410,6 +416,11 @@ class Session:
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
         self._cached_system_text = system_text
+        self._tool_validators = tool_dispatch.validators(tool_definitions)
+        self._server_validators = tool_dispatch.validators(server_tools or tool_definitions)
+        self._vault_scope = str(Path(os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH") or ".").resolve())
+        self._turn_writes: list[tuple[str, dict, ToolOutcome]] = []
+        self._repair_rounds = 0
 
     @classmethod
     def start(cls) -> "Session":
@@ -430,7 +441,8 @@ class Session:
             )
             tools.connect()
             opened.callback(tools.close)
-            tool_definitions = _hide_injected_args(tools.list_tools())
+            server_tools = tools.list_tools()
+            tool_definitions = _hide_injected_args(server_tools)
 
             logger = CLILogger(
                 LOG_DIR,
@@ -449,7 +461,7 @@ class Session:
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 
-            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement, system_text)
+            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement, system_text, server_tools)
             session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
@@ -551,6 +563,8 @@ class Session:
             yield Failure(f"message too long: {e}")
             return
 
+        self._turn_writes = []
+        self._repair_rounds = 0
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         decisions = self.shadow.begin(text, turn_id) if self.shadow else None
@@ -559,6 +573,9 @@ class Session:
         first_read = enforcing.first_tool(decisions.gate) if enforcing and decisions else None
         failure = False  # a failure signal since the last model call (enforced tiers move up on it)
         tool_rounds = 0
+        answer_after_failure = False
+        repair_pending: ToolOutcome | None = None
+        repair_tool: str | None = None
         final_answer = False  # the step cap's last call, without tools, has been asked for
         messages = None
         prompt_tokens_recorded = False
@@ -591,7 +608,12 @@ class Session:
             hold_reply = False  # check_claim enforced: nothing is shown until the reply is checked
             if enforcing:
                 if first_read:
-                    yield from self._run_first_read(first_read, text, messages, turn_id, enforcing)
+                    first_outcome = yield from self._run_first_read(first_read, text, messages, turn_id, enforcing)
+                    if first_outcome.must_stop or (not first_outcome.success and not first_outcome.repairable):
+                        yield from self._abort_turn(turn_id, first_outcome.user_message(first_read))
+                        return
+                    if not first_outcome.success:
+                        repair_pending, repair_tool = first_outcome, first_read
                     first_read = None
                     tool_rounds += 1
                     decisions = self.shadow.before_next_call()
@@ -630,6 +652,14 @@ class Session:
                 if final_answer or (tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None)):
                     tools_offered = None
                 hold_reply = enforcing.on("check_claim")
+
+            if answer_after_failure:
+                tools_offered = None
+            if repair_pending and not final_answer:
+                # One correction, never a dependent write using failed evidence.
+                tools_offered = [t for t in self.tool_definitions if t["function"]["name"] == repair_tool]
+                if repair_tool not in self._tool_validators:
+                    tools_offered = [t for t in self.tool_definitions if t["function"]["name"] not in MUTATIONS]
 
             tool_calls = None
             usage: dict = {}
@@ -672,13 +702,7 @@ class Session:
                     stream.close()  # stops the model mid-thought
                     usage = {"stop_reason": f"steered: {steer.kind}"}
             except ContextBudgetExceeded as e:
-                reason = str(e) + " The turn stopped; earlier tool actions, if any, remain completed."
-                self.logger.turn_error(turn_id, reason)
-                self.store.add_message(self.conversation_id, "nuru", reason)
-                if self.shadow:
-                    self.shadow.finish()
-                self.logger.turn_end(turn_id)
-                yield Failure(reason)
+                yield from self._abort_turn(turn_id, str(e) + " The turn stopped.")
                 return
             except requests.exceptions.RequestException as e:
                 if last_results and not cut_a_result and _context_overflow(e):
@@ -689,6 +713,9 @@ class Session:
                     messages[index]["content"] = _TOO_LONG_NOTE.format(name=name, tokens=tokens)
                     cut_a_result = True
                     continue
+                if self._turn_writes:
+                    yield from self._abort_turn(turn_id, f"Model request failed: {e}. Earlier writes must not be repeated.")
+                    return
                 self.logger.turn_error(turn_id, str(e))
                 self.store.delete_message(user_message_id)
                 yield Failure(
@@ -727,6 +754,10 @@ class Session:
                 resume_think = think
                 think, steered = False, True
                 continue
+
+            if answer_after_failure and tool_calls:
+                yield from self._abort_turn(turn_id, "The tool was refused; no further calls were allowed.")
+                return
 
             if final_answer and tool_calls:  # tools were withdrawn, and it asked for one anyway
                 yield from self._stop(turn_id, f"it reached the {enforcing.step_cap}-step limit")
@@ -769,40 +800,65 @@ class Session:
             tool_rounds += 1
             messages.append({"role": "assistant", "tool_calls": tool_calls})
             last_results = []
-            for call in tool_calls:
-                fn = call["function"]
-                args = fn.get("arguments") or {}
-                if isinstance(args, str):
-                    args = json.loads(args)
-                yield ToolCall(fn["name"], args)
-                if (stop := self._repeated_call(fn["name"], args, calls_seen)) is not None:
+            correcting = repair_pending is not None
+            for index, call in enumerate(tool_calls):
+                fn = call.get("function") or {}
+                name = fn.get("name", "")
+                raw_args = fn.get("arguments", {})
+                args, invalid = tool_dispatch.validate(name, raw_args, self._tool_validators)
+                shown_args = args if args is not None else {"invalid_arguments": str(raw_args)[:300]}
+                yield ToolCall(name, shown_args)
+                if correcting and index > 0:
+                    outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
+                        refusal=tool_dispatch.failure("repair", "REPAIR_LIMIT", "Only one correction call is allowed."))
+                elif correcting and repair_tool in self._tool_validators and name != repair_tool:
+                    outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
+                        refusal=tool_dispatch.failure("repair", "DEPENDENT_CALL_BLOCKED", "Repair the failed tool before doing anything else."))
+                elif invalid:
+                    outcome = self._call_tool(turn_id, name, raw_args, None, enforcing)
+                elif (stop := self._repeated_call(name, args, calls_seen)) is not None:
                     yield from self._stop(turn_id, stop)
                     return
-                if fn["name"] == _EXPERT_TOOL:
-                    args = {**self._resolve_attachments(args), _INJECTED_EXPERT_ARG: text}
-                if enforcing and enforcing.on("gate_write") and fn["name"] in WRITE_TOOLS:
-                    content, failed = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id)
-                    failure = failure or failed
-                    messages.append({"role": "tool", "content": content})
-                    last_results.append((len(messages) - 1, fn["name"]))
-                    continue
-                args, write_gate, gate_id = self._before_tool(fn["name"], args, enforcing)
-                if self._write_blocked(write_gate):
-                    content = self._refuse_tool(turn_id, fn["name"], args, write_gate, gate_id)
-                elif fn["name"] == _EXPERT_TOOL and expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                    # Called although it's no longer offered: ask the user rather than loop.
-                    self.logger.tool_call(turn_id, fn["name"], args, "refused", "expert limit reached", 0.0)
-                    self.shadow.after_tool(fn["name"], args, None, 0.0, gate_id, error="refused: expert limit reached")
-                    yield from self._stop(turn_id, _EXPERT_CLARIFY)
-                    return
+                elif enforcing and enforcing.on("gate_write") and name in WRITE_TOOLS:
+                    before_repair = self._repair_rounds
+                    outcome = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id,
+                        allow_repair=not (enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap))
+                    tool_rounds += self._repair_rounds - before_repair
                 else:
-                    content, _ = self._call_tool(turn_id, fn["name"], args, gate_id, enforcing)
-                    if fn["name"] == _EXPERT_TOOL and _expert_answered(content):
+                    if name == _EXPERT_TOOL:
+                        args = {**self._resolve_attachments(args), _INJECTED_EXPERT_ARG: text}
+                    if name == _EXPERT_TOOL and expert_answers >= _EXPERT_ANSWERS_PER_TURN:
+                        yield from self._stop(turn_id, _EXPERT_CLARIFY)
+                        return
+                    outcome = self._call_tool(turn_id, name, args, None, enforcing)
+                    if name == _EXPERT_TOOL and _expert_answered(outcome.text):
                         expert_answers += 1
                         if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                            content += _EXPERT_LAST_ANSWER
-                messages.append({"role": "tool", "content": content})
-                last_results.append((len(messages) - 1, fn["name"]))
+                            outcome = replace(outcome, text=outcome.text + _EXPERT_LAST_ANSWER)
+                messages.append({"role": "tool", "content": outcome.text})
+                last_results.append((len(messages) - 1, name))
+                if outcome.must_stop:
+                    yield from self._abort_turn(turn_id, outcome.user_message(name))
+                    return
+                if not outcome.success:
+                    if outcome.kind == "policy":
+                        answer_after_failure = True
+                    elif correcting or not outcome.repairable:
+                        yield from self._abort_turn(turn_id, "Tool correction failed. " + outcome.user_message(name))
+                        return
+                    else:
+                        repair_pending, repair_tool = outcome, name
+                    failure = True
+                    # Do not dispatch siblings whose arguments may depend on failed evidence.
+                    for skipped in tool_calls[index + 1:]:
+                        skipped_name = (skipped.get("function") or {}).get("name", "")
+                        skipped_args = (skipped.get("function") or {}).get("arguments", {})
+                        skipped_outcome = self._call_tool(turn_id, skipped_name, skipped_args, None, enforcing,
+                            refusal=tool_dispatch.failure("dependency", "EARLIER_CALL_FAILED", "An earlier call failed; this call was not run."))
+                        messages.append({"role": "tool", "content": skipped_outcome.text})
+                    break
+                if correcting:
+                    repair_pending, repair_tool = None, None
                 if _cancelled(cancel):
                     self._end_cancelled(turn_id, output_text)
                     return
@@ -830,88 +886,146 @@ class Session:
         return bool(write_gate and write_gate.get("source") == "code" and self.enforcement
                     and self.enforcement.on("write_checks"))
 
-    def _refuse_tool(self, turn_id: str, name: str, args: dict, write_gate: dict, gate_id: int | None) -> str:
-        reason = "; ".join(write_gate.get("reasons") or [])
-        self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
-        self.shadow.after_tool(name, args, None, 0.0, gate_id, error=f"blocked: {reason}")
-        self.shadow.gate_action(write_gate, "blocked")
-        return f"[Nuru] {name} was not run: {reason}."
-
-    def _call_tool(self, turn_id: str, name: str, args: dict, gate_id: int | None,
-                   enforcing: Enforcement | None) -> tuple[str, bool]:
-        """Run one tool, log it, and record it with the decision layer. Returns what the model
-        sees as the result (reranked, when rerank is enforced) and whether the tool succeeded."""
-        tool_start = time.monotonic()
+    def _call_tool(self, turn_id: str, name: str, args, gate_id: int | None,
+                   enforcing: Enforcement | None, *, harness: bool = False, gate_checked: bool = False, refusal: ToolOutcome | None = None) -> ToolOutcome:
+        """One validated, logged dispatch for ordinary, forced, planned and injected calls."""
+        started = time.monotonic()
+        original_args = args
+        args, outcome = tool_dispatch.validate(name, args, self._tool_validators)
+        outcome = refusal or outcome
+        attempt_id = None
+        if outcome is None and not gate_checked:
+            args, write_gate, gate_id = self._before_tool(name, args, enforcing)
+            if self._write_blocked(write_gate):
+                reason = "; ".join(write_gate.get("reasons") or [])
+                outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: {reason}")
+                self.shadow.gate_action(write_gate, "blocked")
+            else:
+                args, outcome = tool_dispatch.validate(name, args, self._tool_validators)
+            if outcome is None and name in MUTATIONS and enforcing and enforcing.on("gate_write"):
+                verdict = write_gate["verdict"] if write_gate else "ask"
+                if verdict == "block":
+                    outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: write gate blocked it.")
+                elif verdict == "ask" and (self.confirm_write is None or not self.confirm_write(name, args)):
+                    outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: confirmation was not given.")
+                if outcome and self.shadow:
+                    self.shadow.gate_action(write_gate, "blocked")
+        if outcome is None and name in MUTATIONS:
+            attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args)
+            if attempt_id is None:
+                pending = self.store.pending_writes(self._vault_scope)
+                outcome = tool_dispatch.failure("replay", "UNRESOLVED_WRITE", f"Write attempt {pending[0]['id'] if pending else 'from another session'} was unresolved at admission. "
+                    "Inspect the vault and reconcile it with /resolve-write before any further writes.", certainty="not_dispatched")
         call_args = args
-        if name == _PYTHON_TOOL:
-            call_args, refused = _python_request(args, lambda note: self.tools.call_harness_tool("read_note", {"name": note}))
+        if outcome is None and name == _PYTHON_TOOL:
+            failed_read = None
+            def read(note):
+                nonlocal failed_read
+                result = self._call_tool(turn_id, "read_note", {"name": note}, None, enforcing, harness=True)
+                if not result.success:
+                    failed_read = result
+                return ToolResult(result.text, not result.success)
+            call_args, refused = _python_request(args, read)
             if refused:
-                duration_ms = (time.monotonic() - tool_start) * 1000
-                self.logger.tool_call(turn_id, name, args, "error", refused, duration_ms)
-                if self.shadow:
-                    self.shadow.after_tool(name, args, None, duration_ms, gate_id, error=refused)
-                return json.dumps({"ok": False, "status": "NOTE_NOT_READ", "message": refused}), False
-        try:
-            result = self.tools.call_tool_result(name, call_args)
-        except Exception as e:
-            duration_ms = (time.monotonic() - tool_start) * 1000
-            self.logger.tool_call(turn_id, name, args, "error", str(e), duration_ms)
-            if self.shadow:
-                self.shadow.after_tool(name, args, None, duration_ms, gate_id, error=str(e))
-            raise
-        content = _python_result(result.text) if name == _PYTHON_TOOL else result.text
-        duration_ms = (time.monotonic() - tool_start) * 1000
-        self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok",
-                              result.text[:300] if result.is_error else None, duration_ms)
+                outcome = tool_dispatch.failure("internal" if failed_read and failed_read.must_stop else "prerequisite",
+                    "NOTE_NOT_READ", refused, repairable=bool(failed_read and failed_read.repairable))
+            else:
+                _, outcome = tool_dispatch.validate(name, call_args, self._server_validators)
+                if outcome is not None:
+                    outcome = tool_dispatch.failure("internal", "INJECTED_SCHEMA_MISMATCH", outcome.hint)
+        if outcome is None:
+            try:
+                result = (self.tools.call_harness_tool if harness else self.tools.call_tool_result)(name, call_args)
+                if name == _PYTHON_TOOL:
+                    result = ToolResult(_python_result(result.text), result.is_error)
+                outcome = tool_dispatch.classify(name, result)
+            except Exception as e:
+                # Do not confuse a programming error with repairable model arguments.
+                transport = isinstance(e, (OSError, TimeoutError, requests.exceptions.RequestException,
+                                           MCPError, anyio.EndOfStream, anyio.BrokenResourceError))
+                outcome = tool_dispatch.failure("transport" if transport else "internal", type(e).__name__, str(e),
+                    certainty="uncertain" if name in MUTATIONS else "failed", repairable=transport and name not in MUTATIONS)
+        if attempt_id is not None:
+            outcome = replace(outcome, attempt_id=attempt_id)
+            self.store.finish_write(attempt_id, "completed" if outcome.success else "uncertain", outcome.hint)
+            self._turn_writes.append((name, args, outcome))
+        if name == _PYTHON_TOOL:
+            outcome = replace(outcome, text=_python_result(outcome.text))
+        duration_ms = (time.monotonic() - started) * 1000
+        shown_args = args if args is not None else {"invalid_arguments": str(original_args)[:300]}
+        self.logger.tool_call(turn_id, name, shown_args, "ok" if outcome.success else "refused" if outcome.kind in {"policy", "repair", "dependency", "replay"} else "error",
+                              outcome.hint, duration_ms, outcome=outcome)
         if self.shadow:
-            reranked = self.shadow.after_tool(name, args, result, duration_ms, gate_id)
-            if reranked and enforcing and enforcing.on("rerank"):
-                content = reranked
-        return content, not result.is_error
+            reranked = self.shadow.after_tool(name, shown_args, ToolResult(outcome.text, not outcome.success),
+                                             duration_ms, gate_id, error=outcome.hint)
+            if outcome.success and reranked and enforcing and enforcing.on("rerank"):
+                outcome = replace(outcome, text=reranked)
+        return outcome
+
+    def _partial_actions(self) -> str:
+        if not self._turn_writes:
+            return ""
+        lines = []
+        for name, args, outcome in self._turn_writes:
+            target = args.get("note") or args.get("source_path") or "new note"
+            status = "confirmed completed" if outcome.success else "outcome uncertain; do not retry"
+            lines.append(f"- {name} ({target}): {status} (attempt {outcome.attempt_id}).")
+        return "\nEarlier write actions:\n" + "\n".join(lines)
+
+    def _abort_turn(self, turn_id: str, reason: str):
+        reply = reason + self._partial_actions()
+        self.logger.turn_error(turn_id, reply)
+        self.store.add_message(self.conversation_id, "nuru", reply)
+        if self.shadow:
+            self.shadow.finish()
+        self.logger.turn_end(turn_id)
+        yield Failure(reply)
 
     # ------------------------------------------------------------------ enforcement
     def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
         """tool_gate enforced: the harness runs the first search itself, as if the model had."""
         args = {"query": query}
         yield ToolCall(tool, args)
-        tool_start = time.monotonic()
-        result = self.tools.call_tool_result(tool, args)
-        duration_ms = (time.monotonic() - tool_start) * 1000
-        self.logger.tool_call(turn_id, tool, args, "error" if result.is_error else "ok", None, duration_ms)
-        reranked = self.shadow.after_tool(tool, args, result, duration_ms)
-        content = reranked if reranked and enforcing.on("rerank") else result.text
+        outcome = self._call_tool(turn_id, tool, args, None, enforcing)
         messages += [
             {"role": "assistant", "tool_calls": [{"function": {"name": tool, "arguments": args}}]},
-            {"role": "tool", "content": content},
+            {"role": "tool", "content": outcome.text},
         ]
+        return outcome
 
-    def _forced_write(self, fn: dict, args: dict, context: list[dict], num_ctx: int, think, turn_id: str):
+    def _forced_write(self, fn: dict, args: dict, context: list[dict], num_ctx: int, think, turn_id: str, *, allow_repair: bool = True):
         """gate_write enforced: the write's arguments come from a forced schema (IDs only from the
-        last search), are validated, and go through gate_write. Returns (tool result text, whether
-        this was a failure signal)."""
+        last search), are validated, and go through gate_write. Returns the shared tool outcome."""
         name = fn["name"]
         schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
 
         def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:
+            self._repair_rounds += 1
+            started, output, usage = time.monotonic(), "", {}
             try:
-                return "".join(out for out in self._chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt,
-                                                       **PROFILE.options(think_value)) if isinstance(out, str))
+                for out in self._chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt, **PROFILE.options(think_value)):
+                    if isinstance(out, str):
+                        output += out
+                    elif "stop_reason" in out:
+                        usage = out
             except ContextBudgetExceeded:
                 return ""
+            self.logger.model_call(turn_id, (time.monotonic() - started) * 1000,
+                usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), usage.get("stop_reason"), [], output)
+            return output
 
         def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
-            self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
-            self.shadow.after_tool(name, args, None, 0.0, error=reason)
+            outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: {reason}", repairable=failed)
             if action:
                 self.shadow.gate_action(gate, action)
-            return f"[Nuru] {name} was not run: {reason}.", failed
+            return self._call_tool(turn_id, name, args, None, self.enforcement, refusal=outcome)
 
         # The model's own arguments first, under the same rules; the forced schema only if they fail.
         # Re-asking arguments that were already right made the model take the cannot_do way out
         # (enforced quick suite, 2026-09-28) - validation alone is what keeps invented IDs out.
         forced = validate_arguments(name, args, set(self.shadow.last_search_ids))
-        if forced.problems:
-            forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
+        if forced.problems and not allow_repair:
+            return not_run("the step limit left no room for argument repair", False)
         if forced.problems:
             forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
         if forced.problems:
@@ -932,12 +1046,7 @@ class Session:
             if not self.confirm_write(name, args):
                 return not_run("you declined it", False, gate, "declined")
         yield ToolCall(name, args)
-        tool_start = time.monotonic()
-        result = self.tools.call_tool_result(name, args)
-        duration_ms = (time.monotonic() - tool_start) * 1000
-        self.logger.tool_call(turn_id, name, args, "error" if result.is_error else "ok", None, duration_ms)
-        self.shadow.after_tool(name, args, result, duration_ms, gate["decision_id"] if gate else None)
-        return result.text, False
+        return self._call_tool(turn_id, name, args, gate["decision_id"] if gate else None, self.enforcement, gate_checked=True)
 
     def _checked_reply(self, draft: str, messages: list[dict], num_ctx: int, think, policy, enforcing: Enforcement):
         """check_claim enforced: show the reply only once it's checked. A failed one is written again
@@ -952,7 +1061,7 @@ class Session:
             return final
         self.shadow.record_claim_action(claim, "regenerated")
         self.shadow.note_failure("claim_failures")
-        log = log_lines(self.shadow.executed)
+        log = log_lines(self.shadow.executed if self.shadow else [])
         if enforcing.tiers_enforced:  # a failure signal: one tier up for the rewrite, but no further
             up, tier = enforcing.think_for(policy, None, True, think)
             think = up if tier not in (STOP, "expert") else think
@@ -1009,6 +1118,8 @@ class Session:
     def _plan_turn(self, text: str) -> Iterator[Event]:
         """A "PLAN:" message: the plan core.planner writes for the request, and what code found
         wrong with it. No tool runs and the decision layer isn't asked."""
+        self._turn_writes = []
+        self._repair_rounds = 0
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
@@ -1069,6 +1180,8 @@ class Session:
         except ContextBudgetExceeded as e:
             yield Failure(f"message too long: {e}")
             return
+        self._turn_writes = []
+        self._repair_rounds = 0
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         if self.shadow:
@@ -1081,6 +1194,7 @@ class Session:
         values: dict[str, Any] = {}
         log: list[dict] = []
         stopped: str | None = None
+        tool_attempts = 0
         reply = ""
 
         prompt_tokens_recorded = False
@@ -1146,24 +1260,36 @@ class Session:
                     continue
                 if "tool" in step:
                     tool = step["tool"]
+                    repaired_args = None
                     for attempt in (1, 2):
                         try:
-                            args = executor.resolve(step.get("with") or {}, values)
+                            args = repaired_args if repaired_args is not None else executor.resolve(step.get("with") or {}, values)
                         except KeyError as missing:
                             stopped = f"{name} needs the output of {missing.args[0]}, which has none"
                             break
                         yield ToolCall(tool, args)
-                        args, write_gate, gate_id = self._before_tool(tool, args, enforcing)
-                        if self._write_blocked(write_gate):
-                            content, ok = self._refuse_tool(turn_id, tool, args, write_gate, gate_id), False
-                        else:
-                            content, ok = self._call_tool(turn_id, tool, args, gate_id, enforcing)
-                        failed = executor.tool_failed(tool, content, ok)
-                        source = executor.refs_in(step.get("with", {}).get("expression", "")) if tool == "calculate" else []
-                        if failed and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
+                        if enforcing and enforcing.on("step_cap") and tool_attempts >= enforcing.step_cap:
+                            stopped = f"the {enforcing.step_cap}-step limit was reached"
+                            break
+                        tool_attempts += 1
+                        outcome = self._call_tool(turn_id, tool, args, None, enforcing)
+                        if outcome.must_stop:
+                            yield from self._abort_turn(turn_id, outcome.user_message(tool))
+                            return
+                        content, ok = outcome.text, outcome.success
+                        failed = None if ok else outcome.hint or content
+                        source = list(dict.fromkeys(executor.refs_in(step.get("with", {}))))
+                        can_repair = not (enforcing and enforcing.on("step_cap") and tool_attempts >= enforcing.step_cap)
+                        if failed and can_repair and outcome.repairable and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
                             # A rejected expression: write it again once, told why.
-                            values[source[0]] = yield from draft(by_name[source[0]], f"{args.get('expression')!r}: {failed}")
+                            values[source[0]] = yield from draft(by_name[source[0]], f"{json.dumps(args)[:300]}: {failed}")
                             continue
+                        if failed and can_repair and outcome.repairable and attempt == 1 and tool in self._tool_validators:
+                            out = yield from call(executor.repair_messages(text, tool, args, failed, now),
+                                                  self._tool_validators[tool].schema)
+                            repaired_args, invalid = tool_dispatch.validate(tool, out, self._tool_validators)
+                            if invalid is None:
+                                continue
                         values[name] = executor.step_value(tool, content, ok)
                         labels[name] = f"The result of {tool} {json.dumps(args)[:300]}"
                         log.append({"step": name, "what": labels[name], "output": values[name]})
@@ -1198,9 +1324,11 @@ class Session:
                     log.append({"step": name, "what": labels[name], "output": value})
                 elif kind == "answer":
                     reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped, now), None)).strip()
+                    if self._turn_writes and stopped:
+                        reply += self._partial_actions()
                     yield Text(reply)
-        except ContextBudgetExceeded as e:
-            reply = str(e) + " The plan stopped; earlier tool actions, if any, remain completed."
+        except (ContextBudgetExceeded, requests.exceptions.RequestException) as e:
+            reply = str(e) + " The plan stopped." + self._partial_actions()
             yield Text(reply)
         self.store.add_message(self.conversation_id, "nuru", reply)
         if self.shadow:
@@ -1209,17 +1337,18 @@ class Session:
 
     def _stop(self, turn_id: str, reason: str):
         """End the turn plainly, saying why and what had happened by then."""
-        text = STOPPED.format(reason=reason, log=log_lines(self.shadow.executed))
+        text = STOPPED.format(reason=reason, log=log_lines(self.shadow.executed if self.shadow else []))
         yield Text(text)
         self.store.add_message(self.conversation_id, "nuru", text)
         self.logger.turn_end(turn_id)
-        self.shadow.finish()
+        if self.shadow:
+            self.shadow.finish()
 
     def _end_cancelled(self, turn_id: str, output_text: str) -> None:
         """Ends a turn the user stopped. What the model had said so far is kept as its reply so the
         history stays user/nuru alternating and the model knows what it said. No usage figures
         arrive for a cut-short call, so the messages keep a NULL tokens_used."""
-        self.store.add_message(self.conversation_id, "nuru", output_text)
+        self.store.add_message(self.conversation_id, "nuru", output_text + self._partial_actions())
         self.logger.turn_end(turn_id)
 
     def shutdown(self, reason: str) -> None:

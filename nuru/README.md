@@ -181,3 +181,30 @@ uv run pytest
 ```
 
 No live Ollama server is required - the tests fake out `requests` so they run standalone. The UI tests run headless on Qt's `offscreen` platform (no display needed); if the machine's Qt libraries can't be loaded, that file is skipped rather than failed. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.
+
+
+## Validated tool dispatch and uncertain writes
+
+Every model-facing tool call is checked against connected tools and their advertised
+JSON Schema before execution. Arguments must be JSON objects. Python accepts only
+`code` and `notes`; Nuru injects note text and validates the resulting server request.
+Tool errors carry a common kind, code, hint and completion certainty in logs and model
+results. Math/Python domain failures override a successful protocol flag; note content
+is not interpreted as a tool-status envelope. Recoverable failures get one correction;
+failed evidence cannot feed a dependent write.
+
+A write attempt is committed to the conversation database before dispatch. If its
+response is lost or reports an error, Nuru cannot assume nothing changed: it preserves
+the request, reports uncertainty and blocks further writes to that vault/database.
+This holds with Laya unavailable and after reopening. Reads remain available. A model
+failure after a confirmed write reports that completed action instead of deleting the
+request and inviting an indistinguishable retry.
+
+After stopping other sessions on the vault and inspecting its actual state, use
+`/writes` in the CLI to inspect pending attempts, then `/resolve-write ID completed`
+or `/resolve-write ID not_completed` to record a verified conclusion. Neither command
+executes a write; the model cannot resolve attempts. Leave uncertainty unresolved if
+you cannot establish what happened. The UI can inspect notes but uses the CLI for
+reconciliation in this revision. Separate conversation databases do not share the
+journal; canonical authorization and target provenance remain the next work package.
+See [PR 3 findings](evals/validated-dispatch-pr3-2026-10-06.md) for coverage and limits.

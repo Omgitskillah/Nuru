@@ -63,6 +63,7 @@ class Tools:
 
     def list_tools(self):
         return [{"type": "function", "function": {"name": n, "description": "x", "parameters": p}} for n, p in [
+            ("read_note", {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
             ("search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
             ("write_note", {"properties": {"content": {"type": "string"},
                                            "note": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}},
@@ -474,3 +475,62 @@ def test_step_limit_final_answer_remains_reachable_under_context_pressure(setup)
     assert len(seen) == 2 and seen[-1]["tools"] is False
     assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round")
     assert any(m.get("content", "").startswith("[left out:") for m in seen[-1]["messages"])
+
+
+def test_forced_write_lost_response_cannot_replay(setup):
+    from core.session import Failure
+    s, seen, tools = setup(['gate_write'], [[call('search', {'query': 'Priya'})],
+        [call('write_note', {'note': PRIYA, 'content': 'line'})]])
+    original = tools.call_tool_result
+    def uncertain(name, args):
+        if name == 'write_note':
+            tools.calls.append((name, args))
+            raise TimeoutError('lost receipt')
+        return original(name, args)
+    tools.call_tool_result = uncertain
+    events = list(s.ask(REQUEST))
+    assert isinstance(events[-1], Failure) and 'uncertain' in events[-1].message
+    assert len([name for name, _ in tools.calls if name == 'write_note']) == 1
+    assert s.store.pending_writes(s._vault_scope)[0]['state'] == 'uncertain'
+
+
+def test_automatic_first_read_exception_uses_bounded_recovery(setup):
+    from core.providers.mcp_tools import ToolResult
+    s, seen, tools = setup(['tool_gate'], [[call('search', {'query': 'Priya'})], ['Found Priya.']])
+    original = tools.call_tool_result
+    attempts = []
+    def transient(name, args):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise TimeoutError('first read disconnected')
+        return original(name, args)
+    tools.call_tool_result = transient
+    assert list(s.ask(REQUEST))[-1] == Text('Found Priya.')
+    assert attempts == ['search', 'search']
+
+
+def test_planned_write_honors_the_same_confirmation_gate(setup):
+    s, seen, tools = setup(['gate_write'], [['I could not write it.']],
+        script={**DEFAULT_SCRIPT, 'verdict': {'confirm': 0.95}})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 'Priya'}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'note': PRIYA, 'content': 'line'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not write it.')
+    assert [name for name, _ in tools.calls] == ['search']
+    assert not s.store.pending_writes(s._vault_scope)
+
+
+def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['gate_write', 'step_cap'],
+        [[call('write_note', {'note': INVENTED, 'content': 'line'})], ['I could not write it.']],
+        tool_gate={'step_cap': 1})
+    assert list(s.ask(REQUEST))[-1] == Text('I could not write it.')
+    assert len(seen) == 2 and not tools.calls
+    assert not any(call['fmt'] for call in seen)
+
+
+def test_plan_repair_respects_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['step_cap'], [['I could not search.']], tool_gate={'step_cap': 1})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 5}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not search.')
+    assert len(seen) == 1 and not tools.calls

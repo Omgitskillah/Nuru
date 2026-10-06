@@ -53,7 +53,7 @@ caffeinate -i uv run python run_suite.py --tests quick --label quick
 
 ## How the suite runs are isolated
 
-`run_suite.py` runs one fresh Nuru process per case (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with the batch's own conversation history, session logs and decision log. The semantic index is built once from the pristine copy and restored between cases. A case gets 10 minutes by default (`--timeout`); past that its whole process tree is killed and it counts as a failure. Sequence turns keep the same Session, vault and index until the case finishes. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).
+`run_suite.py` runs one fresh Nuru process per case (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with a case-specific conversation history and write-attempt journal, plus the batch's session logs and decision log. The semantic index is built once from the pristine copy and restored between cases. A case gets 10 minutes by default (`--timeout`); past that its whole process tree is killed and it counts as a failure. Sequence turns keep the same Session, vault and index until the case finishes. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).
 
 ## Multi-turn memory cases
 
@@ -88,3 +88,10 @@ does not rebuild the shared interactive index. Expert planning requires separate
 deep-think credentials; keep it off when `.env.deep-think` is absent. Schedule live
 model runs after implementation and unit checks, and coordinate reruns when CPU/GPU
 resources are occupied.
+
+
+`tool_contract_probe.py --out .runs/contracts.json` verifies Math and Python MCP
+success/error transport flags without Ollama or vault writes. It requires the local
+Rust tool builds and configured Docker sandbox. It checks success, bad arithmetic,
+an empty dataset, and Python partial stdout followed by an exception. See
+[PR 3 findings](../validated-dispatch-pr3-2026-10-06.md).

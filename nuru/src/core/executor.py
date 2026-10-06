@@ -72,7 +72,7 @@ def tool_failed(tool: str, content: str, ok: bool) -> str | None:
     ok: false inside a normal result."""
     if not ok:
         return content[:300]
-    if tool in ("calculate", "statistics"):
+    if tool in ("calculate", "statistics", "run_python"):
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
@@ -169,3 +169,10 @@ def answer_messages(request: str, want: str, log: list[dict], stopped: str | Non
     return [{"role": "system", "content": ANSWER_SYSTEM},
             {"role": "user", "content": f"{_dated(now)}My request: {request}\n\nThe reply should give: {want}\n\n"
              "What was done:\n\n" + "\n\n".join(lines)}]
+
+
+def repair_messages(request: str, tool: str, args: dict, hint: str, now: str = "") -> list[dict]:
+    return [{"role": "system", "content": "Correct the arguments of one failed tool call. Return only JSON. "
+             "Use the supplied request and diagnostics; do not invent note contents or facts."},
+            {"role": "user", "content": f"{_dated(now)}Request: {request}\nTool: {tool}\n"
+             f"Arguments: {_clip(json.dumps(args), INPUT_CHARS)}\nFailure: {hint[:1000]}"}]

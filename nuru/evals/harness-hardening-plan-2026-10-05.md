@@ -18,7 +18,10 @@ PR 1 landed on `plan-executor` through GitHub PR #2 (`b532930`). PR 2 is
 implemented on `feat/history-context-budgets`: separate content estimates, atomic
 legacy migration, complete-exchange selection, per-call context budgets, and
 single-session sequence evaluation. See [the PR 2 validation report](history-context-pr2-2026-10-06.md)
-for measured results and remaining limitations. The findings below describe the
+for measured results and remaining limitations. PR 2 has merged through GitHub PR #3.
+PR 3 is implemented on `feat/validated-tool-dispatch`; see
+[its validation report](validated-dispatch-pr3-2026-10-06.md) for normalized dispatch,
+bounded repair and durable write-attempt handling. The findings below describe the
 original review snapshot; the manifest and traps document have since landed.
 
 ## Recommendation

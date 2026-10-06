@@ -2,6 +2,8 @@
 later fed back to the model as context.
 """
 
+import hashlib
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,21 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at TEXT NOT NULL,
     title TEXT
 );
+
+CREATE TABLE IF NOT EXISTS write_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+    turn_id TEXT NOT NULL,
+    vault TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL,
+    diagnostic TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS write_attempts_pending ON write_attempts(vault, state);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +90,47 @@ class ConversationStore:
                 last_id = rows[-1][0]
             self._conn.execute("INSERT INTO conversation_migrations VALUES (1)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, id)")
+
+    def pending_writes(self, vault: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, tool, arguments, state, diagnostic FROM write_attempts "
+            "WHERE vault = ? AND state IN ('in_flight', 'uncertain') ORDER BY id", (vault,)
+        ).fetchall()
+        return [{"id": rid, "tool": tool, "arguments": json.loads(args), "state": state, "diagnostic": diagnostic}
+                for rid, tool, args, state, diagnostic in rows]
+
+    def begin_write(self, conversation_id: int, turn_id: str, vault: str, tool: str, args: dict) -> int | None:
+        # Serialize the pending check and intent record across concurrent sessions on this database.
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if self.pending_writes(vault):
+                return None
+            serialized = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            fingerprint = hashlib.sha256((tool + "\0" + serialized).encode()).hexdigest()
+            cursor = self._conn.execute(
+                "INSERT INTO write_attempts (conversation_id, turn_id, vault, tool, arguments, fingerprint, state, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'in_flight', ?)",
+                (conversation_id, turn_id, vault, tool, serialized, fingerprint, _now_iso()),
+            )
+        return cursor.lastrowid
+
+    def finish_write(self, attempt_id: int, state: str, diagnostic: str | None = None) -> None:
+        if state not in {'completed', 'uncertain'}:
+            raise ValueError("invalid dispatched-write state")
+        with self._conn:
+            self._conn.execute("UPDATE write_attempts SET state = ?, diagnostic = ? WHERE id = ?",
+                               (state, diagnostic, attempt_id))
+
+    def resolve_write(self, attempt_id: int, vault: str, state: str) -> None:
+        """Operator reconciliation only; never called by the model or inferred from note prose."""
+        if state not in {'completed', 'not_completed'}:
+            raise ValueError("resolution must be completed or not_completed")
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE write_attempts SET state = ?, diagnostic = 'operator reconciled' "
+                "WHERE id = ? AND vault = ? AND state IN ('in_flight', 'uncertain')", (state, attempt_id, vault))
+            if cursor.rowcount != 1:
+                raise ValueError("no pending write with that ID in this vault")
 
     def create_conversation(self, title: str | None = None) -> int:
         with self._conn:

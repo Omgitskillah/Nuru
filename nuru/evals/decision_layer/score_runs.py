@@ -550,10 +550,21 @@ _SPLIT = r"(?<=[.!?])[*_]*\s+|\n+"
 _RISK_32 = r"report(s|ing)?[ -]?(rate|interval|frequency)|reports?\s*/\s*h|per hour|\d\s*/\s*h(ou)?r|2\.3\s*y|latency|\balarm"
 
 
+_CLAUSE = r",?\s*\b(?:whereas|while|but|although|unlike)\b|;"
+
+
+def _without_architecture_a(sentence: str) -> str:
+    """The sentence minus its clauses about always-connected (A) alone: "B meets it, whereas A does not meet it"
+    affirms B. A clause naming both stays, and so does one with no architecture of its own, so "B meets it,
+    but it relies on PSM" doesn't."""
+    return " ".join(c for c in re.split(_CLAUSE, sentence, flags=re.I)
+                    if not (re.search(_ABOUT_A, c, re.I) and not re.search(_ARCH_B, c, re.I)))
+
+
 def _periodic_attach_verdict(reply: str) -> bool:
     """Yes, via periodic attach - said, not denied, not made to depend on PSM, and no overall "no" about the
     requirement (a "no" about always-connected alone is right). A "Yes, if:" list counts as one statement."""
-    sentences = re.split(_SPLIT, reply)
+    sentences = [_without_architecture_a(x) for x in re.split(_SPLIT, reply)]
     conditions = [m.group(0) for m in re.finditer(r"[^\n]*\bif:\s*\n(?:[ \t]*[-*][^\n]*\n?)+", reply, re.I)]
     says_yes = any(re.search(_ARCH_B, x, re.I) and re.search(_B_MEETS, x, re.I) and not re.search(_B_DENIED, x, re.I)
                    for x in sentences)
@@ -575,7 +586,9 @@ def _biggest_risk_32(reply: str) -> bool:
     if len(re.sub(r"[\W_]", "", re.sub(r"(?i)^\W*(remaining|is|was|:)\W*", "", statement))) < 8:  # a heading
         following = rest.split("\n", 1)[1] if "\n" in rest else ""
         statement = re.split(r"(?<=[.;])\s|;|\n", following.lstrip("\n"), maxsplit=1)[0]
-    return bool(re.search(_RISK_32, statement, re.I))
+    # "is not the report rate", "rather than alarm latency" name what the risk isn't.
+    asserted = re.sub(r"\b(not|isn't|aren't|rather than|instead of|other than)\b[^,;.]*", "", statement, flags=re.I)
+    return bool(re.search(_RISK_32, asserted, re.I))
 
 
 def score_32(record, changes, today):

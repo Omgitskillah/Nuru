@@ -46,9 +46,12 @@ it failed all three of Sonnet's correct, hedged answers.
 The patterns were fitted on 22 replies labelled by hand (6 Sonnet, all right; 16 Qwen, all wrong, including
 the 9B's "Yes, if: ... PSM eventually works") and match all 22. Across every saved batch, 3 earlier runs are
 credited (two Granite low runs from 09-30, one Granite run from 10-03). I read each one and all three are
-genuine. Seventeen unit tests in `nuru/tests/test_score_32.py`, including the counterexamples from the
-PR #4 review: an explicit "does not meet", a qualified "theoretical estimate", and a wrong audit whose
-risk check used to pick up the 2.3-year figure from a later sentence (it scored 5/5 and now scores 3).
+genuine. Twenty-two unit tests in `nuru/tests/test_score_32.py`, including the counterexamples from the
+PR #4 review: an explicit "does not meet", a qualified "theoretical estimate", a wrong audit whose risk
+check used to pick up the 2.3-year figure from a later sentence (it scored 5/5 and now scores 3), a negated
+risk ("the biggest risk is not the report rate..."), and a comparison in one sentence ("periodic attach
+meets it, whereas always-connected does not"). A clause about always-connected alone no longer counts
+against B; a clause naming both, or neither, still does.
 
 ## Rescored (test 32, points out of 5 per run)
 

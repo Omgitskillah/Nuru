@@ -72,3 +72,24 @@ def test_a_wrong_audit_that_mentions_the_right_numbers_does_not_score_full_marks
     assert dict(checks)["periodic attach meets it, without PSM"] is False
     assert dict(checks)["biggest risk: report rate or alarm latency"] is False
     assert points == 3
+
+
+# Second round from the PR #4 review.
+def test_a_negated_risk_is_not_the_stated_risk(score_runs):
+    assert not score_runs._biggest_risk_32(
+        "The biggest risk is not the report rate or alarm latency; it is unmeasured standby current.")
+    assert score_runs._biggest_risk_32("The biggest risk is the report rate, not PSM.")
+
+
+@pytest.mark.parametrize("reply", [
+    "Periodic attach meets the requirement, whereas always-connected does not meet it.",
+    "Periodic attach meets the requirement; always-connected does not meet it.",
+    "Architecture B meets 3 years with margin, while architecture A fails it by 5x.",
+])
+def test_a_denial_about_always_connected_does_not_deny_periodic_attach(score_runs, reply):
+    assert score_runs._periodic_attach_verdict(reply)
+
+
+def test_a_denial_about_periodic_attach_in_a_later_clause_still_counts(score_runs):
+    assert not score_runs._periodic_attach_verdict(
+        "Periodic attach meets the target on paper, but it relies on PSM working, which it doesn't.")

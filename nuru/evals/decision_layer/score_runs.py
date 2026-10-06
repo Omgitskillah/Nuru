@@ -524,14 +524,82 @@ def score_27(record, changes, today):
     ]
 
 
+# Test 32's verdict (2026-10-06): every model tried said "No - PSM isn't engaging, so periodic attach is
+# invalid", though architecture B switches the modem off and needs no PSM; a word match credited some of
+# those and failed Claude Sonnet's correct, hedged "yes on paper, via periodic attach". These patterns
+# were fitted on 6 Sonnet and 16 Qwen replies, all labelled by hand (22/22).
+_ARCH_B = r"(periodic[ -]?attach|architecture\s*\(?b\)?|\(b\)|\bin b\b|\bb at\b|modem (fully )?off)"
+_B_MEETS = (r"\b(meets?|met|reachable|achievable|holds|passes|exceeds?|yes)\b|\bmargin\b|\babove 3\b|on paper|"
+            r"only (in|with|under|by)[^.\n]{0,20}(periodic|architecture|\(?b\b)")
+# A qualifier ("a theoretical estimate", "not yet demonstrated") is not a denial; "does not meet" is.
+_B_DENIED = (r"unachievable|not (currently )?(achievable|reachable|met|possible)|\binvalid\b|fiction|false positive|"
+             r"cannot (enter|be realized|be met|meet|hit|reach)|can't (meet|hit|reach)|"
+             r"\b(does|do|did|will|would|could)\s*(not|n't)\s+(meet|reach|hit|satisfy|exceed)|"
+             r"\b(doesn't|don't|won't|wouldn't)\s+(meet|reach|hit|satisfy)|\bfails? to (meet|reach|hit)|\bnever (meets?|reaches)")
+_B_NEEDS_PSM = (r"(relies|depends|assumes|assuming|requires|needs)\b[^.\n]{0,40}\bPSM|"
+                r"only (works|holds|valid)[^.\n]{0,20}if[^.\n]{0,20}PSM|\bif PSM\b|unless PSM|"
+                r"PSM[^.\n]{0,40}\b(eventually )?works\b|because PSM|since PSM|"
+                r"PSM is (not|dead|disabled|broken)[^.\n]{0,60}(periodic|\bB\b)|"
+                r"with PSM\W*(working|functioning|engaged|enabled)|PSM[^.\n]{0,40}(required|needed) (by|for)")
+_OVERALL_NO = (r"(^|\n)\W*(\*\*)?no\b[.!*]|cannot (hit|meet|reach) the 3.year|"
+               r"can ?not (be met|meet|hit|reach)(?![^.\n]{0,40}always)|"
+               r"\b(requirement|target) (is|was)? ?(un|not )(achievable|met|reachable)|we \**cannot\**|"
+               r"fails? the 3.year (target|requirement)(?![^.\n]{0,40}always)")
+_ABOUT_A = r"always.connected|architecture a\b|\(a\)"
+_SPLIT = r"(?<=[.!?])[*_]*\s+|\n+"
+_RISK_32 = r"report(s|ing)?[ -]?(rate|interval|frequency)|reports?\s*/\s*h|per hour|\d\s*/\s*h(ou)?r|2\.3\s*y|latency|\balarm"
+
+
+_CLAUSE = r",?\s*\b(?:whereas|while|but|although|unlike)\b|;"
+
+
+def _without_architecture_a(sentence: str) -> str:
+    """The sentence minus its clauses about always-connected (A) alone: "B meets it, whereas A does not meet it"
+    affirms B. A clause naming both stays, and so does one with no architecture of its own, so "B meets it,
+    but it relies on PSM" doesn't."""
+    return " ".join(c for c in re.split(_CLAUSE, sentence, flags=re.I)
+                    if not (re.search(_ABOUT_A, c, re.I) and not re.search(_ARCH_B, c, re.I)))
+
+
+def _periodic_attach_verdict(reply: str) -> bool:
+    """Yes, via periodic attach - said, not denied, not made to depend on PSM, and no overall "no" about the
+    requirement (a "no" about always-connected alone is right). A "Yes, if:" list counts as one statement."""
+    sentences = [_without_architecture_a(x) for x in re.split(_SPLIT, reply)]
+    conditions = [m.group(0) for m in re.finditer(r"[^\n]*\bif:\s*\n(?:[ \t]*[-*][^\n]*\n?)+", reply, re.I)]
+    says_yes = any(re.search(_ARCH_B, x, re.I) and re.search(_B_MEETS, x, re.I) and not re.search(_B_DENIED, x, re.I)
+                   for x in sentences)
+    denied = any(re.search(_ARCH_B, x, re.I) and re.search(_B_DENIED, x, re.I) for x in sentences)
+    needs_psm = any(re.search(_ARCH_B, x, re.I) and re.search(_B_NEEDS_PSM, x, re.I) for x in sentences + conditions)
+    overall_no = any(re.search(_OVERALL_NO, x, re.I) and not re.search(_ABOUT_A, x, re.I) for x in sentences)
+    return says_yes and not denied and not needs_psm and not overall_no
+
+
+def _biggest_risk_32(reply: str) -> bool:
+    """The reply's biggest-risk statement names the report rate (2.3 years at 6 an hour) or the alarm-latency
+    requirement - the two risks the battery note itself names. Only the statement itself counts: up to its
+    first full stop, semicolon or line end, or the next line when the phrase is a heading ("## Biggest risk")."""
+    m = re.search(r"(biggest|largest|main|primary|single)[^.\n]{0,25}risk", reply, re.I)
+    if not m:
+        return False
+    rest = reply[m.end():]
+    statement = re.split(r"(?<=[.;])\s|;|\n", rest, maxsplit=1)[0]
+    if len(re.sub(r"[\W_]", "", re.sub(r"(?i)^\W*(remaining|is|was|:)\W*", "", statement))) < 8:  # a heading
+        following = rest.split("\n", 1)[1] if "\n" in rest else ""
+        statement = re.split(r"(?<=[.;])\s|;|\n", following.lstrip("\n"), maxsplit=1)[0]
+    # "is not the report rate", "rather than alarm latency" name what the risk isn't.
+    asserted = re.sub(r"\b(not|isn't|aren't|rather than|instead of|other than)\b[^,;.]*", "", statement, flags=re.I)
+    return bool(re.search(_RISK_32, asserted, re.I))
+
+
 def score_32(record, changes, today):
-    """The audit: always-connected 237 days fails; periodic attach meets 3 years (13.6 y, ~10 y cap);
-    keepalive is 600 s (the correction); the biggest risk is report rate - 6 an hour gives 2.3 years."""
+    """The audit: always-connected 237 days fails; periodic attach (modem off between reports, no PSM needed)
+    meets 3 years (13.6 y, ~10 y cap); keepalive is 600 s (the correction); the biggest risk is the report
+    rate (6 an hour gives 2.3 years) or the alarm-latency requirement the note calls the real tension."""
+    reply = record.get("reply", "")
     return [
         ("237 days always-connected", _says(record, r"\b23[67](\.\d+)?\s*d")),
-        ("periodic attach meets it",
-         _concludes(record, r"periodic.attach|13\.6", r"\bmeets?\b|satisf|exceed|achiev|\bwithin\b|holds?\b|passes|\bok\b|✓|✅")),
-        ("the 2.3-year report-rate risk", _says(record, r"2\.3\s*y")),
+        ("periodic attach meets it, without PSM", _periodic_attach_verdict(reply)),
+        ("biggest risk: report rate or alarm latency", _biggest_risk_32(reply)),
         ("keepalive 600 s", _says(record, r"\b600\s*(s|sec)")),
         ("nothing changed, and it replied", _answered_cleanly(record, changes)),
     ]

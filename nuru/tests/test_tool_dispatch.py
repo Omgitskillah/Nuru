@@ -399,13 +399,12 @@ def test_duplicate_recovery_call_requests_answer_instead_of_ending_turn(monkeypa
     assert list(s.ask('compute'))[-1] == Text('Could not calculate; no note written.')
 
 
-def test_exhausted_recovery_keeps_tools_off_on_empty_answer_retry(monkeypatch):
+def test_exhausted_recovery_finishes_reasoning_only_answer_without_retry(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)
     script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 3})]}],
-                   [{'thinking': 'The calculation remains unresolved.'}],
-                   ['No verified calculation; no note written.']])
+                   [{'thinking': 'The calculation remains unresolved.'}]])
     seen = []
     def chat(*a, **k):
         seen.append(k.get('tools'))
@@ -413,6 +412,6 @@ def test_exhausted_recovery_keeps_tools_off_on_empty_answer_retry(monkeypatch):
     s = start_session(monkeypatch, tools=tools, chat=chat)
     s.enforcement = None
     monkeypatch.setattr(session, 'THINK', True)
-    assert list(s.ask('compute'))[-1] == Text('No verified calculation; no note written.')
-    assert seen[:3] == [s.tool_definitions] * 3 and seen[3:] == [None, None]
+    assert list(s.ask('compute'))[-1] == Text(session._NO_REPLY_NOTE)
+    assert seen[:3] == [s.tool_definitions] * 3 and seen[3:] == [None]
     assert not tools.calls

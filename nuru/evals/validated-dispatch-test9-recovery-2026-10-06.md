@@ -38,6 +38,15 @@ answer retry also keeps tools disabled. Its deterministic test passes; all five
 recorded model repeats returned normally without entering recovery, so this guard
 does not alter their executed paths. The manifest head above remains unchanged.
 
+A subsequent fake-model regression reproduced an endless reasoning-only loop
+when `assess_effort` was enforced, both after exhausted recovery and at the step
+limit. Final-answer calls now force `think=False` after tier selection. Even a
+model that ignores that setting and returns only reasoning finishes through the
+existing no-reply fallback without another model call. Both new cases failed
+before the guard and pass with it; the focused dispatch/enforcement suite now
+passes **86 tests**. No additional model evals were run; the five recorded repeats
+did not enter either final-answer path.
+
 ## Per-repeat findings
 
 | Repeat | Score | Turn (s) | Fit tool | Failure | Changed files |

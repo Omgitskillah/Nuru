@@ -667,6 +667,8 @@ class Session:
                     messages.append({"role": "user", "content": "[Nuru] Recovery budget exhausted. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
                     final_answer = True
 
+            if final_answer or answer_after_failure:
+                think = False
             tool_calls = None
             usage: dict = {}
             thinking = ""

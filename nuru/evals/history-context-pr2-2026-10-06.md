@@ -28,7 +28,7 @@ Branch: `feat/history-context-budgets`, from `plan-executor` at `b532930`.
 
 ## Verification
 
-Workspace suite: **620 passed**. Focused coverage includes the 100-content-token /
+Workspace suite: **625 passed**. Focused coverage includes the 100-content-token /
 6,000-usage-token history regression under a 5,000-token budget, legacy migration
 and rollback, orphan/empty exchanges, admission after a changed effective window,
 SYSTEM/schema overhead, continuation eviction, oversized evidence, and planned
@@ -74,14 +74,35 @@ the harness stopped before another model request and preserved the turn with an
 explicit context limitation. The aggregate score is 4/5, but `acceptance_passed`
 is **false**; the average does not hide the failure. An earlier 8,192-token run
 answered all six turns correctly on manual review, illustrating model variability.
-A default-window ordinary-mode repeat remains pending resource availability; the
-user requested that model runs be scheduled after implementation and coordinated
+The default-window ordinary-mode repeat ran after the user confirmed resources
+were available. Model runs are scheduled after implementation and coordinated
 when CPU/GPU resources are already occupied.
 
 The initial 32,768-token planned probe answered all three deployment-themed turns
 correctly, without mutations, but took 355.1 seconds. None of these runs called an
-expert planner. A draft PR is appropriate while ordinary-mode live acceptance
-remains incomplete.
+expert planner. These are limited smoke checks; broader behavioral acceptance remains separate.
+
+### Default-window verification and explicit re-scoring
+
+`evals/decision_layer/.runs/suite-pr2-default-memory-20261006-091526`, same model
+and sampling, effective window **32,768**: ordinary case 35 answered all three
+turns correctly, with scores **5/5, 5/5, 5/5**, in **42.6 seconds**, with no vault
+changes. Its last answer was `The codeword you gave me is "Juniper."`.
+
+The collection-time regex incorrectly rejected that quoted answer. The final
+rubric accepts quotation marks and Markdown around an affirmative answer, and
+still rejects merely mentioning the word in a failed search report. Five scorer
+regressions cover formatting and explicit re-scoring. Raw runtime records remain
+unchanged: `load_results(batch, cases_path=Path(".../cases.json"))` applies an
+explicit revised rubric, requires exactly the same recorded prompts, and records
+its SHA-256 on the returned results. Default scoring still uses the collected
+rubric for reproducibility.
+
+Using the final cases hash
+`e41a1b6596586eda259de952c310ba31efcde0dbd4c003c423f1adf7528bcd41`, re-scoring
+confirms default-window case 35 and tight-window planned case 36 both pass every
+check. Tight-window ordinary case 35 remains failed: no rubric change masks its
+empty reply/context failure. No additional model calls were needed for re-scoring.
 
 ## Limits
 

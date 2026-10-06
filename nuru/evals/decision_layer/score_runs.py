@@ -9,6 +9,7 @@ notes each test is about. A test *passes* at 4/5 or better. The rubric is below,
 """
 
 import json
+import hashlib
 import re
 from datetime import date
 from pathlib import Path
@@ -568,15 +569,26 @@ def batch_date(batch: Path) -> str | None:
 SERVER_FILES = {".obsidian-mcp-write.lock"}
 
 
-def load_results(batch: Path) -> list[dict]:
+def load_results(batch: Path, *, cases_path: Path | None = None) -> list[dict]:
     """A batch's results, each carrying the day it ran: its own `date` (run_suite writes one since
     2026-09-30), else the batch's. Tests 17, 28 and 31 are scored against that day, so a batch
     rescored later - or one that ran past midnight - is scored as it ran."""
+    overrides = {}
+    if cases_path is not None:
+        from cases import load_cases
+        overrides = load_cases(cases_path)
     day = batch_date(batch)
     records = [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
     for record in records:
         record["vault_changes"] = [c for c in record.get("vault_changes", []) if c["path"] not in SERVER_FILES]
         record["executed"] = _executed(batch, record.get("session_id"))
+        if "turns" in record and record["test"] in overrides:
+            rubric = overrides[record["test"]]["turns"]
+            if [t["prompt"] for t in rubric] != [t["prompt"] for t in record["turns"]]:
+                raise ValueError("scoring override must preserve the recorded prompt sequence")
+            for turn, fixture in zip(record["turns"], rubric):
+                turn["checks"] = fixture["checks"]
+            record["scoring_cases_sha256"] = hashlib.sha256(cases_path.read_bytes()).hexdigest()
         for i, turn in enumerate(record.get("turns", []), 1):
             turn["date"] = turn.get("date") or record["date"]
             turn["executed"] = _executed(batch, record.get("session_id"), f"t-{i}")

@@ -102,3 +102,34 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     assert starts == [True] and prompts == ["first", "follow up"]
     records = json.loads(out.read_text())["turns"]
     assert [r["shadow_failures"] for r in records] == [0, 0]
+
+
+@pytest.mark.parametrize("reply,passed", [
+    ('The codeword you gave me is "Juniper."', True),
+    ('The codeword was **Juniper**.', True),
+    ('"Juniper."', True),
+    ('I did not find any note mentioning Juniper.', False),
+])
+def test_memory_rubric_checks_affirmation_and_allows_formatting(modules, reply, passed):
+    cases, _, scorer, _ = modules
+    fixture = cases.load_cases(EVALS / "cases.json")[35]["turns"][2]
+    _, checks = scorer.score_sequence_turn({**fixture, "reply": reply})
+    assert dict(checks)["remembers earlier subject"] is passed
+
+
+def test_explicit_rescoring_keeps_raw_results_and_requires_same_prompts(modules, tmp_path):
+    cases, _, scorer, _ = modules
+    fixture = cases.load_cases(EVALS / "cases.json")[35]
+    turns = [{**t, "checks": {"old broken rubric": "impossible"}, "reply": reply}
+             for t, reply in zip(fixture["turns"], ['Juniper 35', '5 weeks', '"Juniper."'])]
+    raw = json.dumps({"test": 35, "turns": turns})
+    path = tmp_path / "results.jsonl"
+    path.write_text(raw)
+    result = scorer.load_results(tmp_path, cases_path=EVALS / "cases.json")[0]
+    assert result["acceptance_passed"]
+    assert result["scoring_cases_sha256"]
+    assert path.read_text() == raw
+    turns[0]["prompt"] = "different"
+    path.write_text(json.dumps({"test": 35, "turns": turns}))
+    with pytest.raises(ValueError, match="preserve"):
+        scorer.load_results(tmp_path, cases_path=EVALS / "cases.json")

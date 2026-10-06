@@ -65,6 +65,8 @@ MODEL=nuru-pr2-eval NURU_PLANNER_MODEL=nuru-pr2-eval uv run python run_suite.py 
 
 Single-prompt result records keep their existing format. Sequence records contain `turns`, with each turn's prompt, reply, regex checks, failure, model usage and vault diff. `score_runs.load_results()` adds per-turn scores and executed calls; `score()` also returns an aggregate score on the existing 0–5 scale. Each memory turn must answer successfully and leave the scratch vault unchanged. `load_results()` also records `acceptance_passed`: every check must pass, even if the aggregate reaches the legacy pass threshold. A timeout or crash fails the whole case.
 
+For an explicit rubric correction, `load_results(batch, cases_path=Path("cases.json"))` re-scores saved replies without model calls. It requires the same prompt sequence, records the replacement fixture hash, and leaves raw runtime records untouched. Omitting `cases_path` retains the collected rubric.
+
 For live planned sequences, use `--planner <Modelfile>`: live planning receives bounded conversation context and each executor call independently receives complete prior exchanges. Static `--plans` fixtures support only single-prompt cases. Legacy decision autolabelling skips sequence cases because its intent rules are specific to the original 34 prompts.
 
 ## Current limitations

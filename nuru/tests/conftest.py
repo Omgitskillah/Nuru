@@ -1,3 +1,4 @@
+from core.modelfile import render_modelfile
 import pytest
 
 from core import session
@@ -33,7 +34,7 @@ def no_real_expert_key(monkeypatch):
 def no_real_model_build_or_sandbox(monkeypatch):
     """Session.start() would otherwise run a real `ollama create` (failing where Ollama isn't
     installed, as on CI) and ask the real Docker whether run_python can start."""
-    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
     monkeypatch.setattr(session, "python_server_params", lambda: None)
 
 
@@ -49,3 +50,10 @@ def neutral_model_profile(monkeypatch):
     sampling of its own - so chat() gets exactly the arguments the test expects. Tests of the
     profiles set one themselves."""
     monkeypatch.setattr(session, "PROFILE", ModelProfile())
+
+
+@pytest.fixture(autouse=True)
+def isolate_conversation_files(monkeypatch, tmp_path):
+    """Every Session test uses scratch history/logs, including executor tests."""
+    monkeypatch.setattr(session, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")

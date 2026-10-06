@@ -9,6 +9,7 @@ notes each test is about. A test *passes* at 4/5 or better. The rubric is below,
 """
 
 import json
+import hashlib
 import re
 from datetime import date
 from pathlib import Path
@@ -568,25 +569,53 @@ def batch_date(batch: Path) -> str | None:
 SERVER_FILES = {".obsidian-mcp-write.lock"}
 
 
-def load_results(batch: Path) -> list[dict]:
+def load_results(batch: Path, *, cases_path: Path | None = None) -> list[dict]:
     """A batch's results, each carrying the day it ran: its own `date` (run_suite writes one since
     2026-09-30), else the batch's. Tests 17, 28 and 31 are scored against that day, so a batch
     rescored later - or one that ran past midnight - is scored as it ran."""
+    overrides = {}
+    if cases_path is not None:
+        from cases import load_cases
+        overrides = load_cases(cases_path)
     day = batch_date(batch)
     records = [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
     for record in records:
         record["vault_changes"] = [c for c in record.get("vault_changes", []) if c["path"] not in SERVER_FILES]
         record["executed"] = _executed(batch, record.get("session_id"))
+        if "turns" in record and record["test"] in overrides:
+            rubric = overrides[record["test"]]["turns"]
+            if [t["prompt"] for t in rubric] != [t["prompt"] for t in record["turns"]]:
+                raise ValueError("scoring override must preserve the recorded prompt sequence")
+            for turn, fixture in zip(record["turns"], rubric):
+                turn["checks"] = fixture["checks"]
+            record["scoring_cases_sha256"] = hashlib.sha256(cases_path.read_bytes()).hexdigest()
+        for i, turn in enumerate(record.get("turns", []), 1):
+            turn["date"] = turn.get("date") or record["date"]
+            turn["executed"] = _executed(batch, record.get("session_id"), f"t-{i}")
+            turn["score"], turn["scored_checks"] = score_sequence_turn(turn)
+            turn["acceptance_passed"] = all(ok for _, ok in turn["scored_checks"])
+        if "turns" in record:
+            record["acceptance_passed"] = (all(t["acceptance_passed"] for t in record["turns"])
+                                           and not record.get("vault_changes"))
     return records
 
 
-def _executed(batch: Path, session_id: str | None) -> list[tuple[str, str]] | None:
+def _executed(batch: Path, session_id: str | None, turn_id: str | None = None) -> list[tuple[str, str]] | None:
     """(tool, status) for every tool call the turn's session log recorded, or None without a log."""
     logs = list((batch / "logs").glob(f"*_{session_id}.jsonl")) if session_id else []
     if not logs:
         return None
     events = (json.loads(line) for line in logs[0].read_text().splitlines() if line.strip())
-    return [(e["tool_name"], e["status"]) for e in events if e.get("event") == "tool_call"]
+    return [(e["tool_name"], e["status"]) for e in events if e.get("event") == "tool_call"
+            and (turn_id is None or e.get("turn_id") == turn_id)]
+
+
+def score_sequence_turn(record: dict) -> tuple[int, list[tuple[str, bool]]]:
+    checks = [(label, bool(re.search(pattern, record.get("reply", ""))))
+              for label, pattern in record["checks"].items()]
+    checks += [("turn finished with a reply", _replied(record) and not record.get("failure")),
+               ("no vault changes", not record.get("vault_changes"))]
+    return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
 
 
 def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, bool]]]:
@@ -594,6 +623,11 @@ def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, 
     "Today" is `today` if given, else the day the run happened (load_results), else today."""
     if record.get("timed_out") or record.get("crashed"):
         return 0, [("the turn finished", False)]
+    if "turns" in record:
+        checks = [(f"turn {i}: {label}", ok)
+                  for i, turn in enumerate(record["turns"], 1) for label, ok in score_sequence_turn(turn)[1]]
+        checks.append(("case changed no vault files", not record.get("vault_changes")))
+        return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
     day = today or record.get("date") or date.today().isoformat()
     checks = SCORERS[record["test"]](record, record["vault_changes"], day)
     return sum(ok for _, ok in checks), checks

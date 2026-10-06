@@ -59,14 +59,14 @@ def ensure_server_running(timeout: float = 15) -> bool:
     raise RuntimeError(f"ollama serve did not come up within {timeout}s")
 
 
-def create_model(model: str, base_model: str, modelfile_path: Path) -> None:
+def create_model(model: str, base_model: str, modelfile_path: Path) -> str:
     """(Re)builds `model` in Ollama from the Modelfile template at `modelfile_path`,
     with its shared SYSTEM prompt and __BASE_MODEL__ placeholder resolved.
 
     `ollama create` overwrites an existing model of the same name, so this is
     safe (and intended) to call on every startup - it keeps `model`'s baked-in
     system prompt in sync with the template without ever needing a manual
-    `ollama create` step.
+    `ollama create` step. Returns the exact rendering baked into the model.
     """
     rendered = render_modelfile(modelfile_path, base_model)
     with tempfile.NamedTemporaryFile("w", suffix=".Modelfile", delete=False) as f:
@@ -76,6 +76,7 @@ def create_model(model: str, base_model: str, modelfile_path: Path) -> None:
         subprocess.run(["ollama", "create", model, "-f", rendered_path], check=True, capture_output=True, text=True)
     finally:
         os.remove(rendered_path)
+    return rendered
 
 
 def unload_all_models() -> None:

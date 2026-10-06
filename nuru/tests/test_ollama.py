@@ -103,8 +103,9 @@ def test_create_model_renders_the_base_model_placeholder_and_calls_ollama_create
 
     monkeypatch.setattr(ollama.subprocess, "run", fake_run)
 
-    ollama.create_model("nuru", "qwen3:8b", modelfile)
+    rendered = ollama.create_model("nuru", "qwen3:8b", modelfile)
 
+    assert rendered == rendered_contents[0]
     assert len(calls) == 1
     cmd = calls[0]
     assert cmd[:3] == ["ollama", "create", "nuru"]

@@ -1,3 +1,4 @@
+from core.modelfile import render_modelfile
 """The shadow, end to end in-process: Session -> DecisionShadow -> laya_mcp's tool functions ->
 DecisionLayer -> the decision log, with a stub in place of Laya's weights. What must hold: a turn
 is exactly what it was without the shadow, and the log records Laya's choice next to Nuru's."""
@@ -99,7 +100,7 @@ def start(monkeypatch, responses, tools):
     def chat(model, messages, num_ctx=8192, think=True, tools=None):
         yield from next(responses)
 
-    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
     monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
     monkeypatch.setattr(session, "chat", chat)

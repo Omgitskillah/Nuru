@@ -56,7 +56,7 @@ def main():
     for row in rows:
         record = by_session.get(row["session_id"])
         qset = row["question_set"]
-        if record is None or VERSIONS.get(qset) != row["question_set_version"]:
+        if record is None or "turns" in record or VERSIONS.get(qset) != row["question_set_version"]:
             skipped[qset] += 1
             continue
         test, passed = record["test"], scored.get(row["session_id"], 0) >= PASS_MARK
@@ -71,7 +71,7 @@ def main():
             label = {"matches_request": "true", "verdict": "proceed"}
         elif qset == "check_claim":
             reply = json.loads(row["state_text"])["reply"]
-            wrote = any(c["name"] in ("append_note", "create_note", "add_to_daily") for c in record["tool_calls"])
+            wrote = any(c["name"] in ("write_note", "rename_or_move_file") for c in record["tool_calls"])
             if test not in WRITE_TESTS and not record["vault_changes"] and not CHANGE_WORDS.search(reply):
                 label = {"claim": "no_change"}
             elif test in WRITE_TESTS and passed and wrote and CHANGE_WORDS.search(reply):

@@ -2,10 +2,17 @@ import hashlib
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from core import session
 
 
-def test_manifest_hash_tracks_shared_prompt_content_without_changing_family_header(monkeypatch, tmp_path):
+@pytest.mark.parametrize("file_model,override,expected", [
+    (None, None, "nomic-embed-text:v1.5"),
+    ("nomic-embed-text-v2-moe", None, "nomic-embed-text-v2-moe"),
+    ("nomic-embed-text-v2-moe", "nomic-embed-text:v1.5", "nomic-embed-text:v1.5"),
+])
+def test_manifest_tracks_shared_prompt_and_effective_embedding_model(monkeypatch, tmp_path, file_model, override, expected):
     evals = Path(__file__).resolve().parents[1] / "evals" / "decision_layer"
     monkeypatch.syspath_prepend(str(evals))
     spec = importlib.util.spec_from_file_location("prompt_manifest_test", evals / "manifest.py")
@@ -24,7 +31,14 @@ def test_manifest_hash_tracks_shared_prompt_content_without_changing_family_head
     monkeypatch.setattr(manifest, "_git", lambda *args: "")
     monkeypatch.setattr(manifest, "_ollama_model", lambda name: {})
     monkeypatch.setattr(session, "_modelfile_for", lambda name: modelfile)
-    first = manifest.build({}, config)["model"]
+    monkeypatch.delenv("OBSIDIAN_EMBED_MODEL", raising=False)
+    if file_model:
+        (tmp_path / ".env.obsidian").write_text(f"OBSIDIAN_EMBED_MODEL={file_model}\n")
+    if override:
+        monkeypatch.setenv("OBSIDIAN_EMBED_MODEL", override)
+    built = manifest.build({}, config)
+    assert built["embedding_model"] == expected
+    first = built["model"]
     source.write_text("Call {{tool:calculate}} once.")
     second = manifest.build({}, config)["model"]
     assert first["modelfile_sha256"] == second["modelfile_sha256"]

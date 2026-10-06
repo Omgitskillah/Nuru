@@ -12,6 +12,15 @@ out as prerequisites below. The assessment remains a snapshot of `30e3f9e`.
 PR1 now focuses on Qwen3.5 and Granite4.2, with explicit unsupported entries for
 the remaining legacy families.
 
+## Current implementation status (2026-10-06)
+
+PR 1 landed on `plan-executor` through GitHub PR #2 (`b532930`). PR 2 is
+implemented on `feat/history-context-budgets`: separate content estimates, atomic
+legacy migration, complete-exchange selection, per-call context budgets, and
+single-session sequence evaluation. See [the PR 2 validation report](history-context-pr2-2026-10-06.md)
+for measured results and remaining limitations. The findings below describe the
+original review snapshot; the manifest and traps document have since landed.
+
 ## Recommendation
 
 Proceed with all three objectives. The document identifies concrete defects, but its
@@ -22,9 +31,8 @@ eval support with the relevant PR rather than treating the documented runner as
 already complete. Allow approximately 4–6 developer days plus live evaluation time;
 this is a planning estimate, not a measured delivery commitment.
 
-The attached document is a proposal to assess. Its commands, coordination requests,
-and merge instructions do not independently authorize implementation, cloud calls,
-  or a merge. This branch contains the assessment and plan.
+The original assessment did not implement the proposal. Later user requests authorized
+PR 1 and PR 2 implementation; a merge remains a separate action.
 
 ## What the checkout confirms
 

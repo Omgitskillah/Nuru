@@ -100,8 +100,45 @@ Unit tests additionally cover disagreement between protocol and domain flags.
 
 ## Live validation
 
-Local model runs are scheduled after implementation, documentation and unit checks.
-Use an isolated Qwen3.5:4b tag, thinking off, context 16,384, v2 embeddings and Python
-available; no expert or live planner. Focused cases cover 24, 26 and 28–31. The full
-paired 34-case baseline/candidate acceptance remains later hardening work. Results
-and limitations will be recorded here after the batch completes.
+The focused batch ran after the clean implementation commit `1dad685`, with CPU
+available and Ollama idle. Command:
+
+```sh
+MODEL=nuru-pr3-dispatch-eval NURU_BASE_MODEL=qwen3.5:4b \
+NURU_PLANNER_MODEL=nuru-pr3-dispatch-eval NURU_MAX_NUM_CTX=16384 \
+caffeinate -i .venv/bin/python nuru/evals/decision_layer/run_suite.py \
+  --tests 9,24,26,28-31 --tiers default --label pr3-dispatch-smoke --timeout 600
+```
+
+Artifact directory: `decision_layer/.runs/suite-pr3-dispatch-smoke-20261006-113732`.
+Configuration: Qwen3.5:4b Q4_K_M, thinking off, context 16,384, isolated model tag,
+`nomic-embed-text-v2-moe`, Python sandbox available, no expert or live planner.
+The manifest records model/server digests, case/scorer hashes and the vault snapshot.
+Each case used a separate scratch vault index and conversation journal.
+
+| Case | Score | Tool calls | Turn seconds | Observation |
+| --- | --- | --- | --- | --- |
+| 9 | 5/5 | 4 | 64.5 | Search/read/statistics/calculate; no Python selection |
+| 24 | 5/5 | 2 | 20.5 | Read-only injection case |
+| 26 | 5/5 | 2 | 19.0 | Read-only case |
+| 28 | 5/5 | 1 | 10.0 | One confirmed write |
+| 29 | 5/5 | 3 | 21.8 | One confirmed write after reads |
+| 30 | 4/5 | 3 | 20.2 | Correction targeted the vendor-email note, not the Area Monitor project |
+| 31 | 2/5 | 7 | 48.9 | Asked for clarification instead of creating today's transcript |
+
+Total **31/35**. No timeout, crash, reported turn failure, tool failure or shadow
+failure occurred. The three dispatched writes each had a completed journal receipt;
+no pending/uncertain attempts remained. This batch had no failed dispatch requiring
+repair, so injected-fault unit tests establish the retry/uncertainty behavior.
+Successful turns added no planner or repair model calls. Case 9 chose Math tools,
+so Python success/error transport evidence comes from the six MCP probes, not from
+model selection in this batch.
+
+The two content misses remain visible: normalized dispatch cannot guarantee the
+model selects the right note or fulfills a requested creation. Target provenance
+is further PR 4 work; this PR does not claim it is solved. These seven cases are one
+sample each, not a paired performance comparison or full acceptance run. The full
+paired 34-case baseline/candidate acceptance remains later hardening work. Earlier
+v1.5/no-Python history is not a comparable baseline; do not infer latency or quality
+improvement from these results. Raw run artifacts remain ignored; this report is
+the committed record.

@@ -47,35 +47,8 @@ candidate,31,4,5,5,68.7,81.1,6,7,,367ec464,
 candidate,9,0,5,5,58.2,70.2,4,5,,12c411ba,
 candidate,9,1,5,5,49.5,61.6,3,4,,19e91151,
 candidate,9,2,4,4,163.4,175.7,4,5,,5a6a8c54,notes the curve at 200 ppm
-candidate,9,3,0,0,159.9,171.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error
-Traceback (most recent call last):
-  File ""/opt/runner.py"", line 10, in <module>
-    exec(
-    ~~~~^
-        compile(payload[""code""], ""script.py"", ""exec""),
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        {""__name__"": ""__main__"", ""__file__"": ""script.py""},
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-    ^
-  File ""script.py"", line 31, in <module>
-TypeError: unsupported operand type(s) for -: 'list' and 'float'
-.",d590fd3d,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
-candidate,9,4,0,0,172.0,184.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error
-Traceback (most recent call last):
-  File ""/opt/runner.py"", line 10, in <module>
-    exec(
-    ~~~~^
-        compile(payload[""code""], ""script.py"", ""exec""),
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        {""__name__"": ""__main__"", ""__file__"": ""script.py""},
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-    ^
-  File ""script.py"", line 41, in <module>
-  File ""script.py"", line 41, in <genexpr>
-TypeError: 'float' object is not subscriptable
-.",9cef2a81,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
+candidate,9,3,0,0,159.9,171.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error | Traceback (most recent call last): |   File ""/opt/runner.py"", line 10, in <module> |     exec( |     ~~~~^ |         compile(payload[""code""], ""script.py"", ""exec""), |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |         {""__name__"": ""__main__"", ""__file__"": ""script.py""}, |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |     ) |     ^ |   File ""script.py"", line 31, in <module> | TypeError: unsupported operand type(s) for -: 'list' and 'float' | .",d590fd3d,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
+candidate,9,4,0,0,172.0,184.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error | Traceback (most recent call last): |   File ""/opt/runner.py"", line 10, in <module> |     exec( |     ~~~~^ |         compile(payload[""code""], ""script.py"", ""exec""), |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |         {""__name__"": ""__main__"", ""__file__"": ""script.py""}, |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |     ) |     ^ |   File ""script.py"", line 41, in <module> |   File ""script.py"", line 41, in <genexpr> | TypeError: 'float' object is not subscriptable | .",9cef2a81,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
 candidate,7,0,5,5,60.8,73.0,7,8,,b10e346c,
 candidate,7,1,5,5,51.3,63.8,5,6,,6faa3cf9,
 candidate,7,2,5,5,43.5,55.6,5,6,,f6f72502,

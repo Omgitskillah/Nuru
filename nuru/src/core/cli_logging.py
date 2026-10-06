@@ -139,9 +139,13 @@ class CLILogger:
         status: str,
         error: str | None,
         duration_ms: float,
+        outcome=None,
     ) -> None:
         self._log(
             {
+                **({"error_kind": outcome.kind, "error_code": outcome.code,
+                    "completion_certainty": outcome.certainty, "repairable": outcome.repairable,
+                    "attempt_id": outcome.attempt_id} if outcome is not None else {}),
                 "event": "tool_call",
                 "turn_id": turn_id,
                 "tool_name": tool_name,

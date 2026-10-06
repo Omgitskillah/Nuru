@@ -18,7 +18,10 @@ PR 1 landed on `plan-executor` through GitHub PR #2 (`b532930`). PR 2 is
 implemented on `feat/history-context-budgets`: separate content estimates, atomic
 legacy migration, complete-exchange selection, per-call context budgets, and
 single-session sequence evaluation. See [the PR 2 validation report](history-context-pr2-2026-10-06.md)
-for measured results and remaining limitations. The findings below describe the
+for measured results and remaining limitations. PR 2 has merged through GitHub PR #3.
+PR 3 is implemented on `feat/validated-tool-dispatch`; see
+[its validation report](validated-dispatch-pr3-2026-10-06.md) for normalized dispatch,
+bounded repair and durable write-attempt handling. The findings below describe the
 original review snapshot; the manifest and traps document have since landed.
 
 ## Recommendation
@@ -258,10 +261,17 @@ Approximate effort: 0.5–1 day.
    existing successful payload consumers, including executor `step_value()` and
    search provenance extraction, rather than blindly wrapping every successful
    tool result in a new JSON format.
-5. Allow one model correction for invalid arguments or repairable failed reads/
-   computations. Count it against existing call/step limits. For plans, allow a
+5. Allow two bounded recovery calls per turn for invalid arguments or repairable
+   failed reads/computations, including cross-tool recovery reads (revised after PR3
+   review of historical recoveries). Do not clear failed evidence after an unrelated
+   successful read. Keep the advertised tool list unchanged during recovery and
+   enforce write eligibility at dispatch. Once recovery is exhausted, ask for a
+   tool-free answer from successful evidence with unresolved failures explained.
+   Internal errors and uncertain mutations still stop immediately. Count recovery
+   against existing call/step limits. For plans, allow a
    bounded repair of the failed step, then finalize instead of running dependents.
-   A mutation rejected before dispatch can be corrected; one dispatched with an
+   A mutation rejected before dispatch or explicitly confirmed rejected before mutation
+   can be corrected; one dispatched with an
    uncertain outcome cannot be replayed. Stop subsequent writes, reconcile using
    safe reads when possible, and report uncertainty if it cannot be established.
    If a subsequent model call fails after a successful mutation, persist a partial

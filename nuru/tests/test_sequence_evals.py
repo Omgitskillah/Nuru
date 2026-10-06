@@ -165,3 +165,24 @@ def test_plain_suite_retains_34_prompt_baseline(modules, monkeypatch):
     with pytest.raises(RuntimeError, match="selection captured"):
         runner.main()
     assert selected == list(range(1, 35))
+
+
+def test_suite_uses_distinct_journals_for_fresh_case_vaults(modules, tmp_path, monkeypatch):
+    _, runner, _, _ = modules
+    source = tmp_path / 'fixture'
+    source.mkdir()
+    (source / 'note.md').write_text('fixture')
+    monkeypatch.setattr(runner, 'DUMMY_VAULT', source)
+    monkeypatch.setattr(runner, 'RUNS', tmp_path / 'runs')
+    monkeypatch.setattr(runner.manifest, 'build', lambda *args: {})
+    def index(command, *, env, **kwargs):
+        Path(env['OBSIDIAN_SEMANTIC_DB']).write_bytes(b'scratch index')
+    monkeypatch.setattr(runner.subprocess, 'run', index)
+    histories = []
+    def turn(batch, env, *args):
+        histories.append(env['NURU_DB_PATH'])
+        return {'reply': 'done', 'tool_calls': [], 'turn_seconds': 0}
+    monkeypatch.setattr(runner, 'run_turn', turn)
+    monkeypatch.setattr('sys.argv', ['run_suite', '--tests', '28,29', '--repeats', '2'])
+    runner.main()
+    assert len(histories) == len(set(histories)) == 4

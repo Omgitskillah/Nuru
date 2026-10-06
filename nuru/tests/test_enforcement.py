@@ -63,6 +63,7 @@ class Tools:
 
     def list_tools(self):
         return [{"type": "function", "function": {"name": n, "description": "x", "parameters": p}} for n, p in [
+            ("read_note", {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
             ("search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
             ("write_note", {"properties": {"content": {"type": "string"},
                                            "note": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}},
@@ -244,6 +245,32 @@ def test_an_empty_reply_moves_the_tier_up_instead_of_turning_thinking_off(setup)
     s, seen, _ = setup(["assess_effort"], [[{"thinking": "the answer is 42"}], ["42"]])
     list(s.ask("What is six times seven?"))
     assert [c["think"] for c in seen] == ["low", "high"]
+
+
+@pytest.mark.parametrize("ending", ["recovery", "step_cap"])
+def test_final_answer_cannot_loop_on_reasoning_only_with_effort_enforced(setup, monkeypatch, ending):
+    rounds = ([call("read_note", {"name": 1}), call("search", {"query": "a"}),
+               call("search", {"query": "b"})] if ending == "recovery" else
+              [call("search", {"query": q}) for q in "ab"])
+    points = ["assess_effort"] + (["step_cap"] if ending == "step_cap" else [])
+    s, seen, tools = setup(points, [], tool_gate={"step_cap": 2})
+
+    def chat(model, messages, **kwargs):
+        seen.append({"think": kwargs["think"], "tools": kwargs["tools"]})
+        assert len(seen) <= len(rounds) + 1, "reasoning-only final answer looped"
+        if len(seen) <= len(rounds):
+            yield rounds[len(seen) - 1]
+        else:
+            # Even a model ignoring think=False must terminate without another call.
+            yield {"thinking": "The available evidence remains incomplete."}
+
+    monkeypatch.setattr(session, "chat", chat)
+    events = list(s.ask("Find it"))
+    assert isinstance(events[-1], Text)
+    assert len(seen) == len(rounds) + 1
+    assert seen[0]["think"] == "low"
+    assert seen[-1] == {"think": False, "tools": None}
+    assert len(tools.calls) == 2
 
 
 def test_past_the_highest_local_tier_the_expert_plans(setup, monkeypatch):
@@ -474,3 +501,62 @@ def test_step_limit_final_answer_remains_reachable_under_context_pressure(setup)
     assert len(seen) == 2 and seen[-1]["tools"] is False
     assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round")
     assert any(m.get("content", "").startswith("[left out:") for m in seen[-1]["messages"])
+
+
+def test_forced_write_lost_response_cannot_replay(setup):
+    from core.session import Failure
+    s, seen, tools = setup(['gate_write'], [[call('search', {'query': 'Priya'})],
+        [call('write_note', {'note': PRIYA, 'content': 'line'})]])
+    original = tools.call_tool_result
+    def uncertain(name, args):
+        if name == 'write_note':
+            tools.calls.append((name, args))
+            raise TimeoutError('lost receipt')
+        return original(name, args)
+    tools.call_tool_result = uncertain
+    events = list(s.ask(REQUEST))
+    assert isinstance(events[-1], Failure) and 'uncertain' in events[-1].message
+    assert len([name for name, _ in tools.calls if name == 'write_note']) == 1
+    assert s.store.pending_writes(s._vault_scope)[0]['state'] == 'uncertain'
+
+
+def test_automatic_first_read_exception_uses_bounded_recovery(setup):
+    from core.providers.mcp_tools import ToolResult
+    s, seen, tools = setup(['tool_gate'], [[call('search', {'query': 'Priya'})], ['Found Priya.']])
+    original = tools.call_tool_result
+    attempts = []
+    def transient(name, args):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise TimeoutError('first read disconnected')
+        return original(name, args)
+    tools.call_tool_result = transient
+    assert list(s.ask(REQUEST))[-1] == Text('Found Priya.')
+    assert attempts == ['search', 'search']
+
+
+def test_planned_write_honors_the_same_confirmation_gate(setup):
+    s, seen, tools = setup(['gate_write'], [['I could not write it.']],
+        script={**DEFAULT_SCRIPT, 'verdict': {'confirm': 0.95}})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 'Priya'}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'note': PRIYA, 'content': 'line'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not write it.')
+    assert [name for name, _ in tools.calls] == ['search']
+    assert not s.store.pending_writes(s._vault_scope)
+
+
+def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['gate_write', 'step_cap'],
+        [[call('write_note', {'note': INVENTED, 'content': 'line'})], ['I could not write it.']],
+        tool_gate={'step_cap': 1})
+    assert list(s.ask(REQUEST))[-1] == Text('I could not write it.')
+    assert len(seen) == 2 and not tools.calls
+    assert not any(call['fmt'] for call in seen)
+
+
+def test_plan_repair_respects_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['step_cap'], [['I could not search.']], tool_gate={'step_cap': 1})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 5}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not search.')
+    assert len(seen) == 1 and not tools.calls

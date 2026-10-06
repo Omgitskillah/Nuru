@@ -196,7 +196,8 @@ def main():
                     started, day = time.monotonic(), date.today().isoformat()
                     plan = args.plans / f"{test}.json" if args.plans else None
                     prompt = prompts.get(test, cases.get(test, {}).get("turns", [{}])[0].get("prompt", ""))
-                    record = run_turn(batch, env, prompt, think, args.timeout, plan, args.planner, cases.get(test))
+                    case_env = {**env, "NURU_DB_PATH": str(batch / "history" / f"test-{test}-{think}-{repeat}.sqlite3")}
+                    record = run_turn(batch, case_env, prompt, think, args.timeout, plan, args.planner, cases.get(test))
                     record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompt, "date": day,
                                    "wall_seconds": round(time.monotonic() - started, 1),
                                    "vault_changes": vault_changes(vault)})

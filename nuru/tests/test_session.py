@@ -32,8 +32,13 @@ def fake_chat(chunks):
 class FakeMCPTools:
     """Stand-in for MCPTools that skips actually spawning the MCP server."""
 
-    def __init__(self, tools=(), tool_results=None):
-        self._tools = list(tools)
+    def __init__(self, tools=None, tool_results=None):
+        # These broad fake schemas advertise tools used by legacy control-flow tests.
+        # Dispatch/schema tests pass explicit realistic definitions.
+        names = {"get_temperature", "search", "read_note", "calculate", "write_note", "ask_an_expert", "slow_tool", "first", "second"} | set(tool_results or {})
+        self._tools = list(tools) if tools is not None else [
+            {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+            for name in sorted(names)]
         self._tool_results = tool_results or {}
         self.calls = []
         self.connected = False

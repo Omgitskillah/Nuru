@@ -5,6 +5,7 @@ and what comes back is folded into markdown by core.reply_markdown.
 """
 
 import math
+import json
 import sys
 import threading
 import time
@@ -38,9 +39,12 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTextBrowser,
@@ -682,6 +686,10 @@ class ChatWindow(QWidget):
         self.prompt.setPlaceholderText("How can I help you today?")
         self.send = SendButton()
         buttons = QHBoxLayout()
+        self.writes = QPushButton("Pending writes")
+        self.writes.clicked.connect(self.show_pending_writes)
+        self.writes.hide()
+        buttons.addWidget(self.writes)
         buttons.addStretch(1)
         buttons.addWidget(self.send)
         composer = QFrame()
@@ -809,6 +817,54 @@ class ChatWindow(QWidget):
         self.send.stopping = streaming
         self.send.setEnabled(self.session is not None and not stopping and (streaming or has_text))
         self.send.update()
+        self.writes.setEnabled(self.session is not None and not streaming)
+        if self.session is not None and not streaming:
+            pending = self.session.pending_writes()
+            self.writes.setText(f"Pending writes ({len(pending)})")
+            self.writes.setVisible(bool(pending))
+
+    def show_pending_writes(self) -> None:
+        session = self.session
+        if session is None or self.worker is not None:
+            return
+        pending = session.pending_writes()
+        if not pending:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Resolve pending writes")
+        layout = QVBoxLayout(dialog)
+        notice = QLabel("Inspect the affected notes and move destinations first. Stop other Nuru sessions using this vault. "
+                        "Leave an attempt pending if its outcome is unknown. These actions record your conclusion; they do not retry a write.")
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        checked = QCheckBox("I inspected the affected notes and stopped other sessions using this vault.")
+        layout.addWidget(checked)
+        for attempt in pending:
+            details = QTextEdit()
+            details.setReadOnly(True)
+            details.setPlainText(json.dumps(attempt, indent=2, ensure_ascii=False))
+            layout.addWidget(details)
+            row = QHBoxLayout()
+            for state, label in (("completed", "Mark completed"), ("not_completed", "Mark not completed")):
+                button = QPushButton(label)
+                button.setEnabled(False)
+                checked.toggled.connect(button.setEnabled)
+                button.clicked.connect(lambda _, a=attempt, s=state: self.resolve_pending_write(dialog, checked, a["id"], s))
+                row.addWidget(button)
+            layout.addLayout(row)
+        dialog.resize(640, 480)
+        dialog.exec()
+        self.update_send()
+
+    def resolve_pending_write(self, dialog: QDialog, checked: QCheckBox, attempt_id: int, state: str) -> None:
+        if self.session is None or self.worker is not None or not checked.isChecked():
+            return
+        try:
+            self.session.resolve_write(attempt_id, state)
+        except ValueError as error:
+            QMessageBox.warning(dialog, "Resolution not recorded", str(error))
+            return
+        dialog.accept()  # Refresh before another attempt can be reconciled.
 
     def on_send_clicked(self) -> None:
         if self.worker is not None:

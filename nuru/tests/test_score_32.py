@@ -90,6 +90,28 @@ def test_a_denial_about_always_connected_does_not_deny_periodic_attach(score_run
     assert score_runs._periodic_attach_verdict(reply)
 
 
+@pytest.mark.parametrize("reply", [
+    "Periodic attach meets the 3-year target on paper.\n\nCan we hit 3 years?\nNo, not yet.\nYou must fix PSM engagement first.",
+    "Periodic attach passes on paper.\n\n**No, not yet.**",
+    "Periodic attach passes on paper.\n\n**The Path to 3 Years:** You must fix PSM engagement.",
+    "Periodic attach passes on paper. You can't hit 3 years with PSM off.",
+])
+def test_a_later_overall_no_or_psm_on_the_path_to_3_years_is_not_a_yes(score_runs, reply):
+    # From the PR #5 paired runs (2026-10-06): an early "B passes", then "No, not yet ... fix PSM".
+    assert not score_runs._periodic_attach_verdict(reply)
+
+
+def test_not_yet_demonstrated_is_still_a_yes(score_runs):
+    assert score_runs._periodic_attach_verdict(
+        "Yes on paper: periodic attach meets 3 years with margin, though it is not yet demonstrated on hardware.")
+
+
+def test_the_saved_reply_from_the_paired_runs_is_not_a_yes(score_runs):
+    reply = (Path(__file__).parent / "fixtures" / "test32-paired-candidate-2273a3a2.md").read_text()
+    assert not score_runs._periodic_attach_verdict(reply)
+    assert not score_runs._biggest_risk_32(reply)
+
+
 def test_a_denial_about_periodic_attach_in_a_later_clause_still_counts(score_runs):
     assert not score_runs._periodic_attach_verdict(
         "Periodic attach meets the target on paper, but it relies on PSM working, which it doesn't.")

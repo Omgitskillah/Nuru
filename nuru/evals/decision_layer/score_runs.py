@@ -541,7 +541,10 @@ _B_NEEDS_PSM = (r"(relies|depends|assumes|assuming|requires|needs)\b[^.\n]{0,40}
                 r"PSM[^.\n]{0,40}\b(eventually )?works\b|because PSM|since PSM|"
                 r"PSM is (not|dead|disabled|broken)[^.\n]{0,60}(periodic|\bB\b)|"
                 r"with PSM\W*(working|functioning|engaged|enabled)|PSM[^.\n]{0,40}(required|needed) (by|for)")
-_OVERALL_NO = (r"(^|\n)\W*(\*\*)?no\b[.!*]|cannot (hit|meet|reach) the 3.year|"
+# "No, not yet" counts. So does putting PSM on the path to 3 years with no architecture named ("The path to 3
+# years: you must fix PSM", "you can't hit 3 years with PSM off"); B needs no PSM.
+_OVERALL_NO = (r"(^|\n)\W*(\*\*)?no\b[.,!*]|(cannot|can't) (hit|meet|reach) (the )?3.years?|"
+               r"3.years?\b[^.\n]{0,40}\b(must|need to|needs|have to|requires?)\b[^.\n]{0,30}\bPSM|"
                r"can ?not (be met|meet|hit|reach)(?![^.\n]{0,40}always)|"
                r"\b(requirement|target) (is|was)? ?(un|not )(achievable|met|reachable)|we \**cannot\**|"
                r"fails? the 3.year (target|requirement)(?![^.\n]{0,40}always)")

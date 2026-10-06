@@ -118,21 +118,23 @@ def test_model_failure_after_successful_write_preserves_partial_turn(monkeypatch
     assert len(tools.calls) == 1 and not s.store.pending_writes(s._vault_scope)
 
 
-def test_two_ordinary_corrections_then_stop_without_dependent_write(monkeypatch):
+def test_two_ordinary_corrections_then_answer_without_dependent_write(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)
     script = iter([[{'tool_calls': [tool_call('calculate', '{bad'),
                                     tool_call('write_note', {'content': 'wrong'})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 4})]}],
-                   [{'tool_calls': [tool_call('calculate', {'expression': 5})]}]])
+                   [{'tool_calls': [tool_call('calculate', {'expression': 5})]}],
+                   ['Could not compute; no note written.']])
     seen = []
     def chat(model, messages, **kw):
         seen.append(kw.get('tools'))
         return iter(next(script))
     s = start_session(monkeypatch, tools=tools, chat=chat)
     events = list(s.ask('calculate and save'))
-    assert isinstance(events[-1], Failure) and len(seen) == 3
-    assert {'search', 'read_note', 'calculate'} <= {t['function']['name'] for t in seen[1]}
-    assert 'write_note' not in {t['function']['name'] for t in seen[1]}
+    assert events[-1] == Text('Could not compute; no note written.') and len(seen) == 4
+    assert seen[0] == seen[1] == seen[2] == s.tool_definitions
+    assert seen[-1] is None
+    assert 'write_note' in {t['function']['name'] for t in seen[1]}
     assert not tools.calls
 
 
@@ -264,17 +266,17 @@ def test_cross_tool_recovery_does_not_clear_failed_evidence_until_repaired(monke
     s = start_session(monkeypatch, tools=tools, chat=chat)
     assert list(s.ask('read and save'))[-1] == Text('saved')
     assert [n for n, _ in calls] == ['read_note', 'search', 'read_note', 'write_note']
-    assert all('write_note' not in {t['function']['name'] for t in offered} for offered in seen[1:3])
-    assert 'write_note' in {t['function']['name'] for t in seen[3]}
+    assert seen[0] == seen[1] == seen[2] == seen[3] == s.tool_definitions
 
 
 def test_unrelated_successful_read_does_not_unlock_a_dependent_write(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)
     script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
                    [{'tool_calls': [tool_call('read_note', {'name': 'other'})]}],
-                   [{'tool_calls': [tool_call('write_note', {'content': 'wrong'})]}]])
+                   [{'tool_calls': [tool_call('write_note', {'content': 'wrong'})]}],
+                   ['Calculation unresolved; no note written.']])
     s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
-    assert isinstance(list(s.ask('calculate and save'))[-1], Failure)
+    assert list(s.ask('calculate and save'))[-1] == Text('Calculation unresolved; no note written.')
     assert tools.calls == [('read_note', {'name': 'other'})]
 
 
@@ -318,9 +320,10 @@ def test_recovery_read_failure_does_not_unlock_rejected_write(monkeypatch):
     tools.call_tool_result = dispatch
     script = iter([[{'tool_calls': [tool_call('write_note', {'content': 'new'})]}],
                    [{'tool_calls': [tool_call('read_note', {'name': 'missing'})]}],
-                   [{'tool_calls': [tool_call('write_note', {'content': 'new'})]}]])
+                   [{'tool_calls': [tool_call('write_note', {'content': 'new'})]}],
+                   ['Missing evidence; no write retried.']])
     s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
-    assert isinstance(list(s.ask('write'))[-1], Failure)
+    assert list(s.ask('write'))[-1] == Text('Missing evidence; no write retried.')
     assert [n for n, _ in tools.calls] == ['write_note', 'read_note']
 
 
@@ -350,3 +353,47 @@ def test_failed_recovery_in_plan_stops_dependent_writes_after_two_corrections(mo
                       {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
     assert list(s.run_plan('calculate and save', plan))[-1] == Text('computation failed; no note written')
     assert not tools.calls
+
+
+def test_recovery_exhaustion_rejects_hallucinated_tool_without_step_enforcement(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 3})]}],
+                   [{'tool_calls': [tool_call('write_note', {'content': 'unverified'})]}]])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    s.enforcement = None
+    events = list(s.ask('compute and save'))
+    assert not tools.calls
+    assert any(isinstance(e, Text) and 'recovery budget' in e.text for e in events)
+
+
+def test_exhausted_recovery_answers_without_tier_escalation(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 3})]}],
+                   ['No verified calculation; nothing written.']])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    monkeypatch.setattr(s.enforcement, 'on', lambda point: point == 'watch_thinking')
+    original = s.enforcement.think_for
+    calls = []
+    def think_for(*args):
+        calls.append(True)
+        assert len(calls) <= 3, 'exhausted recovery must bypass tier escalation'
+        return original(*args)
+    monkeypatch.setattr(s.enforcement, 'think_for', think_for)
+    assert list(s.ask('compute'))[-1] == Text('No verified calculation; nothing written.')
+    assert len(calls) == 3 and not tools.calls
+
+
+def test_duplicate_recovery_call_requests_answer_instead_of_ending_turn(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    tools.call_tool_result = lambda *a: ToolResult('{"ok":false,"status":"SCRIPT_ERROR","stderr":"bad fit"}')
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 'bad'})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 'bad'})]}],
+                   ['Could not calculate; no note written.']])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    repeats = iter([None, 'repeated failed call'])
+    monkeypatch.setattr(s, '_repeated_call', lambda *a: next(repeats))
+    assert list(s.ask('compute'))[-1] == Text('Could not calculate; no note written.')

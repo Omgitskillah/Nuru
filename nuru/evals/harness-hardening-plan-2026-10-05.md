@@ -264,7 +264,11 @@ Approximate effort: 0.5–1 day.
 5. Allow two bounded recovery calls per turn for invalid arguments or repairable
    failed reads/computations, including cross-tool recovery reads (revised after PR3
    review of historical recoveries). Do not clear failed evidence after an unrelated
-   successful read. Count recovery against existing call/step limits. For plans, allow a
+   successful read. Keep the advertised tool list unchanged during recovery and
+   enforce write eligibility at dispatch. Once recovery is exhausted, ask for a
+   tool-free answer from successful evidence with unresolved failures explained.
+   Internal errors and uncertain mutations still stop immediately. Count recovery
+   against existing call/step limits. For plans, allow a
    bounded repair of the failed step, then finalize instead of running dependents.
    A mutation rejected before dispatch or explicitly confirmed rejected before mutation
    can be corrected; one dispatched with an

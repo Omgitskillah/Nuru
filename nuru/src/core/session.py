@@ -618,7 +618,10 @@ class Session:
                     tool_rounds += 1
                     decisions = self.shadow.before_next_call()
                 capped = enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap
-                if capped and final_answer:
+                if repair_pending and recovery_calls >= 2:
+                    # A failed correction must get its final answer, not a tier escalation.
+                    next_think, tier = think, "recovery_answer"
+                elif capped and final_answer:
                     next_think, tier = think, _FINAL  # the last answer's own retry (an empty reply)
                 elif capped:
                     next_think, tier = enforcing.at_step_cap(policy, think)
@@ -655,9 +658,12 @@ class Session:
 
             if answer_after_failure:
                 tools_offered = None
+                if not final_answer and repair_pending:
+                    messages.append({"role": "user", "content": "[Nuru] Recovery stopped. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
+                    final_answer = True
             if repair_pending and not final_answer:
-                tools_offered = self._recovery_tools(tools_offered, repair_pending) if recovery_calls < 2 else None
                 if recovery_calls >= 2:
+                    tools_offered = None
                     messages.append({"role": "user", "content": "[Nuru] Recovery budget exhausted. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
                     final_answer = True
 
@@ -760,7 +766,9 @@ class Session:
                 return
 
             if final_answer and tool_calls:  # tools were withdrawn, and it asked for one anyway
-                yield from self._stop(turn_id, f"it reached the {enforcing.step_cap}-step limit")
+                reason = ("the recovery budget was exhausted" if repair_pending else
+                          f"it reached the {enforcing.step_cap}-step limit")
+                yield from self._stop(turn_id, reason)
                 return
 
             if not tool_calls:
@@ -808,21 +816,25 @@ class Session:
                 args, invalid = tool_dispatch.validate(name, raw_args, self._tool_validators)
                 shown_args = args if args is not None else {"invalid_arguments": str(raw_args)[:300]}
                 yield ToolCall(name, shown_args)
-                recovery_allowed = {t["function"]["name"] for t in self._recovery_tools(self.tool_definitions, repair_pending)}
+                write_allowed = self._recovery_write_allowed(name, repair_pending)
                 exhausted = correcting and recovery_calls >= 2
                 if correcting:
                     recovery_calls += 1
                 if exhausted or (correcting and index > 0):
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
                         refusal=tool_dispatch.failure("repair", "REPAIR_LIMIT", "At most two recovery calls, one per model round, are allowed."))
-                elif correcting and name in MUTATIONS and name not in recovery_allowed:
+                elif correcting and name in MUTATIONS and not write_allowed:
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
                         refusal=tool_dispatch.failure("repair", "DEPENDENT_CALL_BLOCKED", "Repair failed evidence before writing. Reads and computations remain available."))
                 elif invalid:
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing)
                 elif (stop := self._repeated_call(name, args, calls_seen)) is not None:
-                    yield from self._stop(turn_id, stop)
-                    return
+                    if correcting:
+                        outcome = self._call_tool(turn_id, name, args, None, enforcing,
+                            refusal=tool_dispatch.failure("repair", "REPEATED_CALL", stop + "; answer from successful evidence and explain the unresolved failure."))
+                    else:
+                        yield from self._stop(turn_id, stop)
+                        return
                 elif enforcing and enforcing.on("gate_write") and name in WRITE_TOOLS:
                     before_repair = self._repair_rounds
                     outcome = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id,
@@ -850,9 +862,8 @@ class Session:
                 if not outcome.success:
                     if outcome.kind == "policy":
                         answer_after_failure = True
-                    elif not outcome.repairable or (correcting and recovery_calls >= 2):
-                        yield from self._abort_turn(turn_id, "Tool correction failed. " + outcome.user_message(name))
-                        return
+                    elif not outcome.repairable:
+                        answer_after_failure = True
                     else:
                         repair_pending[name] = outcome
                     failure = True
@@ -883,11 +894,12 @@ class Session:
         """Operator action, never exposed as a model tool. Stop active sessions first."""
         self.store.resolve_write(attempt_id, self._vault_scope, state)
 
-    def _recovery_tools(self, offered: list[dict] | None, pending: dict[str, ToolOutcome]) -> list[dict]:
-        failed_evidence = any(name not in MUTATIONS and name in self._tool_validators for name in pending)
-        return [t for t in offered or [] if t["function"]["name"] not in MUTATIONS or
-                (not failed_evidence and (outcome := pending.get(t["function"]["name"])) is not None
-                 and outcome.certainty in {"not_dispatched", "not_completed"})]
+    def _recovery_write_allowed(self, name: str, pending: dict[str, ToolOutcome]) -> bool:
+        """Keep advertised tools stable; enforce failed-evidence dependencies at dispatch."""
+        failed_evidence = any(tool not in MUTATIONS and tool in self._tool_validators for tool in pending)
+        outcome = pending.get(name)
+        return (not failed_evidence and outcome is not None
+                and outcome.certainty in {"not_dispatched", "not_completed"})
 
     def _before_tool(self, name: str, args: dict, enforcing: Enforcement | None) -> tuple[dict, dict | None, int | None]:
         """Before a tool runs: Laya's note type for a write_note (filled in when note_type is

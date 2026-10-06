@@ -182,3 +182,12 @@ for comparison.
 The PR stays draft pending assessment of the standup/sensor outcomes, latency
 increase, and the remaining scorer false positive. This report completes the
 requested paired runs; it does not claim that the merge criteria passed.
+
+
+## Recovery follow-up: test 9 × 5
+
+The exhaustion abort and changing recovery tool list are fixed, and the Python
+dependency now shows the failing source line without adapter frames. See the
+[scoped rerun](validated-dispatch-test9-recovery-2026-10-06.md): 4,3,2,5,5
+(19/25; 3/5 passing), median 43.7 s, no tool/turn failures or vault changes.
+Only test 9 was repeated; the earlier seven-case aggregate remains historical.

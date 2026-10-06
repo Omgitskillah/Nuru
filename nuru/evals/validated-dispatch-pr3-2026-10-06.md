@@ -221,3 +221,12 @@ are complete. See [paired findings](validated-dispatch-paired-2026-10-06.md) and
 [per-run scores](validated-dispatch-paired-2026-10-06.csv). After the explicit
 scorer correction, candidate passes 24/35 versus baseline 26/35; median turn
 latency is 51.3 s versus 43.0 s. PR #5 remains draft pending assessment.
+
+
+## Recovery follow-up: test 9 × 5
+
+The exhaustion abort and changing recovery tool list are fixed, and the Python
+dependency now shows the failing source line without adapter frames. See the
+[scoped rerun](validated-dispatch-test9-recovery-2026-10-06.md): 4,3,2,5,5
+(19/25; 3/5 passing), median 43.7 s, no tool/turn failures or vault changes.
+Only test 9 was repeated; the earlier seven-case aggregate remains historical.

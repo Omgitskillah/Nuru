@@ -656,7 +656,7 @@ class Session:
                     tools_offered = None
                 hold_reply = enforcing.on("check_claim")
 
-            if answer_after_failure:
+            if answer_after_failure or final_answer:
                 tools_offered = None
                 if not final_answer and repair_pending:
                     messages.append({"role": "user", "content": "[Nuru] Recovery stopped. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})

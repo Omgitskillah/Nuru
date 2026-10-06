@@ -1,13 +1,13 @@
-"""Run suite prompts through Nuru, one fresh process per turn, each on a fresh scratch copy of
+"""Run suite prompts through Nuru, one fresh process per case, each on a fresh scratch copy of
 dummyVault - so a write test can't leak into the next, and the real vault is never touched.
 
     caffeinate -i uv run python nuru/evals/decision_layer/run_suite.py --tests quick          # ~15 min
     caffeinate -i uv run python nuru/evals/decision_layer/run_suite.py --tests 28-31 --tiers off,low,high --repeats 3
 
-A batch lives in `.runs/suite-<label>-<time>/`: `results.jsonl` (one line per turn: the driver's
+A batch lives in `.runs/suite-<label>-<time>/`: `results.jsonl` (one line per case: the driver's
 record plus every vault file the turn changed), and the batch's own conversation history, session
 logs and decision log (`decisions.sqlite3`), which the reports read. The semantic index is built
-once from a pristine copy and restored before every turn (see the memory notes on eval runs).
+once from a pristine copy and restored before every case (see the memory notes on eval runs).
 """
 
 import argparse
@@ -25,6 +25,7 @@ import yaml
 
 from common import DUMMY_VAULT, HERE, REPO, RUNS
 import manifest
+from cases import load_cases
 
 # The quick suite: one test per behaviour worth watching, each ~1-2 minutes, and each one has failed
 # in at least one earlier scored run (so it tells setups apart) - except 34, the no-tool control.
@@ -78,7 +79,10 @@ def vault_changes(vault: Path) -> list[dict]:
 
 
 def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None,
-             planner: str | None = None) -> dict:
+             planner: str | None = None, case: dict | None = None) -> dict:
+    case_path = batch / "case.json"
+    if case:
+        case_path.write_text(json.dumps(case))
     out = batch / "turn.json"
     out.unlink(missing_ok=True)
     logs = Path(env["NURU_LOG_DIR"])
@@ -92,7 +96,7 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
 
     with open(batch / "turn.stdout", "w") as stdout, open(batch / "turn.stderr", "w") as stderr:
         proc = subprocess.Popen(
-            [sys.executable, str(HERE / "drive_turn.py"), "--prompt", prompt, "--think", think, "--out", str(out),
+            [sys.executable, str(HERE / "drive_turn.py"), *(["--case", str(case_path)] if case else ["--prompt", prompt]), "--think", think, "--out", str(out),
              *(["--plan", str(plan)] if plan else []), *(["--planner", planner] if planner else [])],
             env=env, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO,
         )
@@ -110,7 +114,8 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tests", default="1-34", help='"quick", or numbers and ranges: "1-34", "28-31,34"')
+    parser.add_argument("--cases", type=Path, default=HERE / "cases.json", help="additional numbered sequence cases")
+    parser.add_argument("--tests", default="all", help='"all", "quick", or numbers and ranges: "1-34", "28-31,34"')
     parser.add_argument("--tiers", default="default", help="comma-separated thinking levels: default (the model's "
                         "own, from its profile), off, low, high")
     parser.add_argument("--repeats", type=int, default=1)
@@ -127,8 +132,17 @@ def main():
     args = parser.parse_args()
 
     prompts = suite_prompts()
+    cases = load_cases(args.cases)
+    if set(prompts) & set(cases):
+        sys.exit("sequence case IDs overlap legacy prompts")
+    tests = sorted(set(prompts) | set(cases)) if args.tests == "all" else parse_tests(args.tests)
+    unknown = set(tests) - (set(prompts) | set(cases))
+    if unknown:
+        sys.exit(f"unknown test IDs: {sorted(unknown)}")
+    if args.plans and any(t in cases for t in tests):
+        sys.exit("static plans support single-prompt cases only; use --planner for sequences")
     if args.plans:
-        missing = [t for t in parse_tests(args.tests) if not (args.plans / f"{t}.json").exists()]
+        missing = [t for t in tests if not (args.plans / f"{t}.json").exists()]
         if missing:
             sys.exit(f"no plan in {args.plans} for test(s) {missing}")
     batch = RUNS / f"suite-{args.label}-{datetime.now():%Y%m%d-%H%M%S}"
@@ -164,10 +178,10 @@ def main():
                    capture_output=True)
     shutil.copy2(index, pristine_index)
 
-    total = len(parse_tests(args.tests)) * len(args.tiers.split(",")) * args.repeats
+    total = len(tests) * len(args.tiers.split(",")) * args.repeats
     done = 0
     with open(batch / "results.jsonl", "a") as results:
-        for test in parse_tests(args.tests):
+        for test in tests:
             for think in args.tiers.split(","):
                 for repeat in range(args.repeats):
                     shutil.rmtree(vault)
@@ -175,8 +189,9 @@ def main():
                     shutil.copy2(pristine_index, index)
                     started, day = time.monotonic(), date.today().isoformat()
                     plan = args.plans / f"{test}.json" if args.plans else None
-                    record = run_turn(batch, env, prompts[test], think, args.timeout, plan, args.planner)
-                    record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompts[test], "date": day,
+                    prompt = prompts.get(test, cases.get(test, {}).get("turns", [{}])[0].get("prompt", ""))
+                    record = run_turn(batch, env, prompt, think, args.timeout, plan, args.planner, cases.get(test))
+                    record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompt, "date": day,
                                    "wall_seconds": round(time.monotonic() - started, 1),
                                    "vault_changes": vault_changes(vault)})
                     results.write(json.dumps(record) + "\n")

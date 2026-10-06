@@ -12,9 +12,7 @@ from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking,
 
 
 @pytest.fixture(autouse=True)
-def _isolate_log_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(session, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")
+def _isolate_model_settings(monkeypatch):
     # Building the custom Ollama model is a real `ollama create` subprocess
     # call - never let it run for real in a test.
     monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
@@ -569,7 +567,7 @@ def test_ask_accepts_a_message_within_the_token_budget(monkeypatch):
     s = start_session(
         monkeypatch,
         chat=fake_chat(["ok", {"prompt_tokens": 1, "completion_tokens": 1}]),
-        model_info={"context_window": 1000},
+        model_info={"context_window": 8192},
     )
 
     assert list(s.ask("hi")) == [Text("ok")]
@@ -751,7 +749,7 @@ def context_overflow_error():
 
 
 def test_a_tool_result_too_long_for_the_context_is_swapped_for_a_note_and_the_turn_goes_on(monkeypatch):
-    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 50_000})
+    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 4000})
     seen = []
     calls = iter(["tool", "overflow", "answer"])
 
@@ -771,7 +769,7 @@ def test_a_tool_result_too_long_for_the_context_is_swapped_for_a_note_and_the_tu
     events = list(s.ask("audit my notes"))
 
     assert events == [ToolCall("ask_an_expert", {"message": "audit"}), Text("Here is what I found.")]
-    assert seen[1][-1]["content"] == "x" * 50_000  # the request Ollama refused
+    assert seen[1][-1]["content"] == "x" * 4000  # the request Ollama refused
     note = seen[2][-1]["content"]
     assert note.startswith("[The ask_an_expert result was about")
     assert "too long for the context window" in note
@@ -779,7 +777,7 @@ def test_a_tool_result_too_long_for_the_context_is_swapped_for_a_note_and_the_tu
 
 
 def test_a_second_overflow_in_the_same_turn_ends_it_as_before(monkeypatch):
-    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 50_000})
+    fake_tools = FakeMCPTools(tool_results={"ask_an_expert": "x" * 4000})
     calls = iter(["tool", "overflow", "overflow"])
 
     def chat(model, messages, num_ctx=8192, think=True, tools=None):
@@ -1030,3 +1028,73 @@ def test_an_index_pass_is_written_to_the_session_log(monkeypatch, tmp_path):
         {**events[0], "embedded": ["user/a.md"], "moved": [{"from": "x.md", "to": "y/x.md"}], "removed": ["z.md"]}
     ]
     s.close()
+
+
+def test_admission_counts_system_and_advertised_schemas(monkeypatch):
+    tools = FakeMCPTools(tools=[{"function": {"name": "search", "description": "x" * 40000}}])
+    s = start_session(monkeypatch, tools=tools)
+    events = list(s.ask("hi"))
+    assert isinstance(events[0], Failure)
+    assert s.store.get_messages(s.conversation_id) == []
+
+
+def test_admission_uses_reloaded_effective_window(monkeypatch):
+    s = start_session(monkeypatch, model_info={"context_window": 32768})
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda _: {"context_window": 1000})
+    assert isinstance(list(s.ask("hi"))[0], Failure)
+    assert s.context_window == 1000
+
+
+def test_oversized_continuation_stops_without_sending_missing_evidence(monkeypatch):
+    tools = FakeMCPTools(tool_results={"read_note": "x" * 100000})
+    calls = []
+    def chat(model, messages, **kwargs):
+        calls.append(messages)
+        yield {"tool_calls": [tool_call("read_note", {"name": "big"})]}
+    s = start_session(monkeypatch, tools=tools, chat=chat)
+    events = list(s.ask("read big"))
+    assert isinstance(events[-1], Failure)
+    assert len(calls) == 1
+    rows = s.store.get_messages(s.conversation_id)
+    assert [m["role"] for m in rows] == ["user", "nuru"]
+    assert "evidence" in rows[-1]["content"]
+
+
+def test_continuation_evicts_complete_old_exchange_and_keeps_tool_pair(monkeypatch):
+    tools = FakeMCPTools(tool_results={"read_note": "x" * 12000})
+    calls = []
+    def chat(model, messages, **kwargs):
+        calls.append([dict(m) for m in messages])
+        if len(calls) == 1:
+            yield {"tool_calls": [tool_call("read_note", {"name": "big"})]}
+        else:
+            yield "done"
+    s = start_session(monkeypatch, tools=tools, chat=chat)
+    s.store.add_message(s.conversation_id, "user", "old" * 1400)
+    s.store.add_message(s.conversation_id, "nuru", "answer" * 700)
+    assert list(s.ask("read big"))[-1] == Text("done")
+    assert len(calls[0]) == 3
+    assert [m["role"] for m in calls[1]] == ["user", "assistant", "tool"]
+    assert calls[1][1]["tool_calls"][0]["function"]["name"] == "read_note"
+    assert calls[1][2]["content"] == "x" * 12000
+
+
+def test_plan_request_receives_prior_conversation(monkeypatch):
+    sent = []
+    def chat(model, messages, **kwargs):
+        sent.append(messages)
+        yield "Juniper" if len(sent) == 1 else '{"steps": []}'
+    s = start_session(monkeypatch, chat=chat)
+    list(s.ask("The codeword is Juniper"))
+    list(s.ask("PLAN: Tell me that codeword"))
+    assert [m["role"] for m in sent[1]][:3] == ["system", "user", "assistant"]
+    assert sent[1][2]["content"] == "Juniper"
+
+
+def test_plan_admission_uses_independent_planners_actual_window(monkeypatch):
+    s = start_session(monkeypatch, model_info={"context_window": 32768})
+    monkeypatch.setattr(session, "PLANNER_MODEL", "qwen3.5:4b")
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: {"context_window": 200 if model == "qwen3.5:4b" else 32768})
+    events = list(s.ask("PLAN: Say hello"))
+    assert isinstance(events[-1], Failure)
+    assert "context budget" in events[-1].message

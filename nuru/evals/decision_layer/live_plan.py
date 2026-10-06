@@ -24,6 +24,8 @@ from pathlib import Path
 import jsonschema
 import requests
 
+from core.context_budget import require_fit
+
 SCHEMA = json.loads((Path(__file__).resolve().parents[1] / "planner_check" / "plan.schema.json").read_text())
 OLLAMA = "http://localhost:11434"
 _WHOLE_REF = re.compile(r"^\$(s[1-9][0-9]*)$")
@@ -107,6 +109,7 @@ def make(prompt: str, modelfile: Path, model: str, num_ctx: int) -> dict:
     start = time.monotonic()
     record = {"model": model, "modelfile": str(modelfile), "num_ctx": num_ctx}
     try:
+        require_fit(num_ctx, body["messages"], fmt=body["format"])
         r = requests.post(f"{OLLAMA}/api/chat", json=body, timeout=300)
         r.raise_for_status()
         reply = r.json()

@@ -1,7 +1,7 @@
 """Running a plan (core.planner's format): what the harness needs to carry the steps out itself.
 
 Tool steps run as they are, with "$sN" in their arguments replaced by step sN's output. The model
-only does the think steps, each a small call that sees its own inputs and nothing else:
+only does the think steps, each a small call that sees its own inputs and bounded prior conversation:
 - pick: one value out of an earlier tool's result, forced to one of the paths that result named
   (or "none"), so it can't invent one;
 - draft: text a later step needs, forced to the type of the argument it fills (a calculate
@@ -27,14 +27,14 @@ PICK_SYSTEM = (
 )
 DRAFT_SYSTEM = (
     "You carry out one step of a plan in my Obsidian vault: write exactly what is wanted, from the inputs "
-    "given and nothing else. Use the actual values from the inputs; never refer to an input by its label. "
-    "Never invent a number, name or fact that isn't in the inputs. A calculate "
+    "given and any previous conversation supplied. Use the actual values from that evidence; never refer to an input by its label. "
+    "Never invent a number, name or fact that isn't in the supplied evidence. A calculate "
     "expression is plain arithmetic: numbers, + - * / ^, parentheses and sqrt, exp, ln, log10, abs - no "
     "words, units or '='."
 )
 ANSWER_SYSTEM = (
     "You are Nuru, my personal assistant for my Obsidian vault. The steps below have already been "
-    "carried out for my request; answer every part of it from their results only, in plain words - "
+    "carried out for my request; answer every part from their results and any previous conversation supplied, in plain words - "
     "don't mention the steps. Quote the relevant lines and give note paths. Take numbers from the "
     "calculate, statistics and run_python results, rounded sensibly (money to cents), and show the expression. Say "
     "what was written or changed only if a result says it happened. If something failed or found nothing, "

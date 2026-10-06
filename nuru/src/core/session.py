@@ -28,6 +28,8 @@ from mcp.client.stdio import get_default_environment
 
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
+from core.context_budget import RESPONSE_RESERVE, ContextBudgetExceeded, available_tokens, estimate_tokens, require_fit
+from core.modelfile import render_modelfile
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
@@ -166,15 +168,6 @@ DEFAULT_NUM_CTX = 8192
 # (262144 for gemma4:12b) spills part of it onto the CPU and roughly halves
 # generation speed.
 MAX_NUM_CTX = int(os.environ.get("NURU_MAX_NUM_CTX", 32768))
-# Leave this fraction of the context window free for the model's response.
-RESPONSE_RESERVE = 0.2
-
-# Rough chars-per-token estimate for rejecting an oversized message before it
-# ever reaches the model - calibrated against an actual measurement (155,667
-# chars of plain English filler text -> ~37,062 prompt tokens once the fixed
-# tool-schema overhead is subtracted, i.e. ~4.2 chars/token).
-CHARS_PER_TOKEN_ESTIMATE = 4
-
 # DB role -> role the chat API expects.
 _ROLE_TO_API = {"user": "user", "nuru": "assistant"}
 
@@ -329,7 +322,7 @@ def _token_budget(context_window: int) -> int:
 
 
 def _estimate_tokens(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN_ESTIMATE
+    return estimate_tokens(text)
 
 
 def _timestamp_line(now: datetime) -> str:
@@ -491,6 +484,32 @@ class Session:
         """Static info about the model, or None if it isn't in memory right now."""
         return ensure_model_loaded(MODEL) if is_model_loaded(MODEL) else None
 
+    def _system_text(self) -> str:
+        rendered = render_modelfile(_modelfile_for(BASE_MODEL), BASE_MODEL)
+        return rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
+
+    def _chat(self, model: str, messages: list[dict], *, num_ctx: int, history_count: int = 0, **kwargs):
+        messages = list(messages)
+        # Evict complete old exchanges before sacrificing current-turn evidence.
+        while history_count >= 2 and available_tokens(num_ctx, messages, system=self._system_text(),
+                                                      tools=kwargs.get("tools"), fmt=kwargs.get("fmt")) < 0:
+            offset = 1 if messages[0].get("role") == "system" else 0
+            del messages[offset:offset + 2]
+            history_count -= 2
+        require_fit(num_ctx, messages, system=self._system_text(),
+                    tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
+        yield from chat(model, messages, num_ctx=num_ctx, **kwargs)
+
+    def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
+        budget = available_tokens(window, messages, system=self._system_text(), tools=tools, fmt=fmt)
+        rows = self.store.get_recent_messages(self.conversation_id, budget, before_id=before_id)
+        return [{"role": _ROLE_TO_API.get(m["role"], m["role"]), "content": m["content"]} for m in rows]
+
+    def continuation_context(self) -> str:
+        """Bounded complete exchanges for live planning, without the new request."""
+        rows = self.store.get_recent_messages(self.conversation_id, _token_budget(self.context_window) // 4)
+        return "\n".join(f"{m['role']}: {m['content']}" for m in rows)
+
     def ask(self, text: str, cancel: threading.Event | None = None) -> Iterator[Event]:
         """Send `text` to the model, behind a line giving the current date and time, and yield what
         happens next: chunks of its reply, what it reasoned, and the tool calls it makes, then a
@@ -503,18 +522,15 @@ class Session:
         Decision points set to enforce in the decision-layer config change the turn as
         core.enforcement describes; in shadow (the default) the decision layer only watches.
         """
-        budget = _token_budget(self.context_window)
-        estimated_tokens = _estimate_tokens(text)
-        if estimated_tokens > budget:
-            yield Failure(
-                f"message too long: ~{estimated_tokens} estimated tokens, "
-                f"which exceeds the {budget}-token budget for this model's context window. "
-                "Please shorten it and try again."
-            )
-            return
-
+        self.load_model()  # Admission uses the effective window, including after unload/reload.
         if planner.is_plan_request(text):
             yield from self._plan_turn(text)
+            return
+        current = {"role": "user", "content": f"{_timestamp_line(datetime.now().astimezone())}\n\n{text}"}
+        try:
+            require_fit(self.context_window, [current], system=self._system_text(), tools=self.tool_definitions)
+        except ContextBudgetExceeded as e:
+            yield Failure(f"message too long: {e}")
             return
 
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
@@ -543,14 +559,13 @@ class Session:
         calls_seen: Counter = Counter()  # (tool, arguments) -> times called this turn
 
         while True:
-            self.load_model()
-
+            if messages is not None:
+                self.load_model()
             num_ctx = _context_window(self.model_info)
             if messages is None:
-                history = self.store.get_recent_messages(self.conversation_id, _token_budget(num_ctx))
-                messages = [{"role": _ROLE_TO_API[m["role"]], "content": m["content"]} for m in history]
-                # Only what the model sees carries the timestamp; the saved message stays as typed.
-                messages[-1]["content"] = f"{_timestamp_line(datetime.now().astimezone())}\n\n{messages[-1]['content']}"
+                messages = self._history([current], num_ctx, before_id=user_message_id, tools=self.tool_definitions)
+                history_count = len(messages)
+                messages.append(current)
 
             tools_offered = self.tool_definitions
             if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
@@ -608,7 +623,7 @@ class Session:
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
             start = time.monotonic()
             try:
-                stream = chat(MODEL, messages, num_ctx=num_ctx, think=think, tools=tools_offered, **PROFILE.options(think))
+                stream = self._chat(MODEL, messages, num_ctx=num_ctx, history_count=history_count, think=think, tools=tools_offered, **PROFILE.options(think))
                 for out in stream:
                     if _cancelled(cancel):
                         self._end_cancelled(turn_id, output_text)
@@ -638,6 +653,15 @@ class Session:
                 if steer:
                     stream.close()  # stops the model mid-thought
                     usage = {"stop_reason": f"steered: {steer.kind}"}
+            except ContextBudgetExceeded as e:
+                reason = str(e) + " The turn stopped; earlier tool actions, if any, remain completed."
+                self.logger.turn_error(turn_id, reason)
+                self.store.add_message(self.conversation_id, "nuru", reason)
+                if self.shadow:
+                    self.shadow.finish()
+                self.logger.turn_end(turn_id)
+                yield Failure(reason)
+                return
             except requests.exceptions.RequestException as e:
                 if last_results and not cut_a_result and _context_overflow(e):
                     # A tool result made this request too long. Swap the largest one from that
@@ -658,7 +682,6 @@ class Session:
             if not prompt_tokens_recorded:
                 self.store.update_tokens(user_message_id, usage.get("prompt_tokens"))
                 prompt_tokens_recorded = True
-
             self.logger.model_call(
                 turn_id=turn_id,
                 duration_ms=(time.monotonic() - start) * 1000,
@@ -852,8 +875,11 @@ class Session:
         schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
 
         def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:
-            return "".join(out for out in chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt,
-                                                **PROFILE.options(think_value)) if isinstance(out, str))
+            try:
+                return "".join(out for out in self._chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt,
+                                                       **PROFILE.options(think_value)) if isinstance(out, str))
+            except ContextBudgetExceeded:
+                return ""
 
         def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
             self.logger.tool_call(turn_id, name, args, "refused", reason, 0.0)
@@ -915,9 +941,9 @@ class Session:
         retry = [*messages, {"role": "assistant", "content": draft},
                  {"role": "user", "content": REGENERATE.format(failures="; ".join(claim["failures"]), log=log)}]
         try:
-            second = "".join(out for out in chat(MODEL, retry, num_ctx=num_ctx, think=think, **PROFILE.options(think))
+            second = "".join(out for out in self._chat(MODEL, retry, num_ctx=num_ctx, think=think, **PROFILE.options(think))
                              if isinstance(out, str))
-        except requests.exceptions.RequestException:
+        except (requests.exceptions.RequestException, ContextBudgetExceeded):
             second = ""
         second_claim = self.shadow.check_reply(second, "shown") if second.strip() else None
         if second_claim and second_claim["passed"]:
@@ -965,18 +991,28 @@ class Session:
     def _plan_turn(self, text: str) -> Iterator[Event]:
         """A "PLAN:" message: the plan core.planner writes for the request, and what code found
         wrong with it. No tool runs and the decision layer isn't asked."""
-        self.store.add_message(self.conversation_id, "user", text)
+        user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
 
+        planner_info = ensure_model_loaded(PLANNER_MODEL) if PLANNER_MODEL != MODEL else self.model_info
+        planner_window = _context_window(planner_info)
+        prompt_tokens_recorded = False
+
         def chat_json(messages: list[dict], schema: dict, think) -> str:
+            nonlocal prompt_tokens_recorded
+            history = self._history(messages, planner_window, before_id=user_message_id, fmt=schema)
+            messages = [messages[0], *history, *messages[1:]]
             start, out, usage = time.monotonic(), "", {}
-            for piece in chat(PLANNER_MODEL, messages, num_ctx=_context_window(self.model_info), think=think, fmt=schema,
+            for piece in self._chat(PLANNER_MODEL, messages, num_ctx=planner_window, think=think, fmt=schema,
                               **PLANNER_PROFILE.options(think)):
                 if isinstance(piece, str):
                     out += piece
                 elif "stop_reason" in piece:
                     usage = piece
+            if not prompt_tokens_recorded:
+                self.store.update_tokens(user_message_id, usage.get("prompt_tokens"))
+                prompt_tokens_recorded = True
             self.logger.model_call(
                 turn_id=turn_id,
                 duration_ms=(time.monotonic() - start) * 1000,
@@ -988,7 +1024,14 @@ class Session:
             )
             return out
 
-        plan, problems = planner.make_plan(planner.request_of(text), tools, chat_json, PLANNER_THINK)
+        try:
+            plan, problems = planner.make_plan(planner.request_of(text), tools, chat_json, PLANNER_THINK)
+        except ContextBudgetExceeded as e:
+            reply = str(e)
+            self.store.add_message(self.conversation_id, "nuru", reply)
+            self.logger.turn_end(turn_id)
+            yield Failure(reply)
+            return
         reply = "```json\n" + json.dumps(plan, indent=1) + "\n```" if plan else "No plan was written."
         reply += ("\n\nProblems code found:\n" + "\n".join(f"- {p}" for p in problems)) if problems else "\n\nCode found no problems."
         yield Text(reply)
@@ -1002,12 +1045,17 @@ class Session:
         a failure - and the answer says what happened. Yields the same events as ask()."""
         self.load_model()
         num_ctx = _context_window(self.model_info)
-        self.store.add_message(self.conversation_id, "user", text)
+        now = _timestamp_line(datetime.now().astimezone())
+        try:
+            require_fit(num_ctx, executor.answer_messages(text, "the reply", [], None, now))
+        except ContextBudgetExceeded as e:
+            yield Failure(f"message too long: {e}")
+            return
+        user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         if self.shadow:
             self.shadow.begin(text, turn_id)
         enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
-        now = _timestamp_line(datetime.now().astimezone())  # what ask() puts ahead of the request
         steps = list(plan["steps"])
         if not steps or steps[-1].get("think") != "answer":
             steps.append({"step": f"s{len(steps) + 1}", "think": "answer", "uses": [], "want": "the reply"})
@@ -1017,18 +1065,31 @@ class Session:
         stopped: str | None = None
         reply = ""
 
+        prompt_tokens_recorded = False
+
         def call(messages: list[dict], fmt: dict | None):
             """One model call; a call that only thought is asked again with thinking off, as in ask()."""
+            nonlocal prompt_tokens_recorded
+            history = self._history(messages, num_ctx, before_id=user_message_id, fmt=fmt)
+            messages = [messages[0], *history, *messages[1:]]
+            try:
+                require_fit(num_ctx, messages, fmt=fmt)
+            except ContextBudgetExceeded as e:
+                yield Failure(str(e))
+                raise
             think = THINK
             while True:
                 start, out, thinking, usage = time.monotonic(), "", "", {}
-                for piece in chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt, **PROFILE.options(think)):
+                for piece in self._chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt, **PROFILE.options(think)):
                     if isinstance(piece, str):
                         out += piece
                     elif "thinking" in piece:
                         thinking = piece["thinking"].strip()
                     elif "stop_reason" in piece:
                         usage = piece
+                if not prompt_tokens_recorded:
+                    self.store.update_tokens(user_message_id, usage.get("prompt_tokens"))
+                    prompt_tokens_recorded = True
                 self.logger.model_call(
                     turn_id=turn_id, duration_ms=(time.monotonic() - start) * 1000,
                     prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
@@ -1057,68 +1118,72 @@ class Session:
             except (json.JSONDecodeError, KeyError, TypeError):
                 return None
 
-        for step in steps:
-            name, kind = step.get("step"), step.get("think")
-            if _cancelled(cancel):
-                self._end_cancelled(turn_id, reply)
-                return
-            if stopped and kind != "answer":
-                continue
-            if "tool" in step:
-                tool = step["tool"]
-                for attempt in (1, 2):
-                    try:
-                        args = executor.resolve(step.get("with") or {}, values)
-                    except KeyError as missing:
-                        stopped = f"{name} needs the output of {missing.args[0]}, which has none"
+        try:
+            for step in steps:
+                name, kind = step.get("step"), step.get("think")
+                if _cancelled(cancel):
+                    self._end_cancelled(turn_id, reply)
+                    return
+                if stopped and kind != "answer":
+                    continue
+                if "tool" in step:
+                    tool = step["tool"]
+                    for attempt in (1, 2):
+                        try:
+                            args = executor.resolve(step.get("with") or {}, values)
+                        except KeyError as missing:
+                            stopped = f"{name} needs the output of {missing.args[0]}, which has none"
+                            break
+                        yield ToolCall(tool, args)
+                        args, write_gate, gate_id = self._before_tool(tool, args, enforcing)
+                        if self._write_blocked(write_gate):
+                            content, ok = self._refuse_tool(turn_id, tool, args, write_gate, gate_id), False
+                        else:
+                            content, ok = self._call_tool(turn_id, tool, args, gate_id, enforcing)
+                        failed = executor.tool_failed(tool, content, ok)
+                        source = executor.refs_in(step.get("with", {}).get("expression", "")) if tool == "calculate" else []
+                        if failed and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
+                            # A rejected expression: write it again once, told why.
+                            values[source[0]] = yield from draft(by_name[source[0]], f"{args.get('expression')!r}: {failed}")
+                            continue
+                        values[name] = executor.step_value(tool, content, ok)
+                        labels[name] = f"The result of {tool} {json.dumps(args)[:300]}"
+                        log.append({"step": name, "what": labels[name], "output": values[name]})
+                        if failed:
+                            stopped = f"{name} ({tool}) failed: {failed}"
                         break
-                    yield ToolCall(tool, args)
-                    args, write_gate, gate_id = self._before_tool(tool, args, enforcing)
-                    if self._write_blocked(write_gate):
-                        content, ok = self._refuse_tool(turn_id, tool, args, write_gate, gate_id), False
-                    else:
-                        content, ok = self._call_tool(turn_id, tool, args, gate_id, enforcing)
-                    failed = executor.tool_failed(tool, content, ok)
-                    source = executor.refs_in(step.get("with", {}).get("expression", "")) if tool == "calculate" else []
-                    if failed and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
-                        # A rejected expression: write it again once, told why.
-                        values[source[0]] = yield from draft(by_name[source[0]], f"{args.get('expression')!r}: {failed}")
+                elif kind == "pick":
+                    options = list(dict.fromkeys(p for u in step.get("uses", []) for p in executor.candidates(values.get(u, ""))))
+                    if not options:
+                        stopped = f"{name}: the results had nothing to choose from for {step.get('want')!r}"
                         continue
-                    values[name] = executor.step_value(tool, content, ok)
-                    labels[name] = f"The result of {tool} {json.dumps(args)[:300]}"
-                    log.append({"step": name, "what": labels[name], "output": values[name]})
-                    if failed:
-                        stopped = f"{name} ({tool}) failed: {failed}"
-                    break
-            elif kind == "pick":
-                options = list(dict.fromkeys(p for u in step.get("uses", []) for p in executor.candidates(values.get(u, ""))))
-                if not options:
-                    stopped = f"{name}: the results had nothing to choose from for {step.get('want')!r}"
-                    continue
-                out = yield from call(executor.pick_messages(text, step.get("want", ""), inputs_of(step), now),
-                                      {"type": "object", "properties": {"choice": {"enum": options + ["none"]}},
-                                       "required": ["choice"]})
-                try:
-                    choice = json.loads(out)["choice"]
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    choice = None
-                if choice in (None, "none"):
-                    stopped = f"{name}: nothing in the results was {step.get('want')!r}"
-                    continue
-                values[name] = choice
-                labels[name] = f"Chosen as {step.get('want')!r}"
-                log.append({"step": name, "what": labels[name], "output": choice})
-            elif kind == "draft":
-                value = yield from draft(step)
-                if value is None:
-                    stopped = f"{name}: the draft couldn't be written"
-                    continue
-                values[name] = value
-                labels[name] = f"Written as {step.get('want')!r}"
-                log.append({"step": name, "what": labels[name], "output": value})
-            elif kind == "answer":
-                reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped, now), None)).strip()
-                yield Text(reply)
+                    out = yield from call(executor.pick_messages(text, step.get("want", ""), inputs_of(step), now),
+                                          {"type": "object", "properties": {"choice": {"enum": options + ["none"]}},
+                                           "required": ["choice"]})
+                    try:
+                        choice = json.loads(out)["choice"]
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        choice = None
+                    if choice in (None, "none"):
+                        stopped = f"{name}: nothing in the results was {step.get('want')!r}"
+                        continue
+                    values[name] = choice
+                    labels[name] = f"Chosen as {step.get('want')!r}"
+                    log.append({"step": name, "what": labels[name], "output": choice})
+                elif kind == "draft":
+                    value = yield from draft(step)
+                    if value is None:
+                        stopped = f"{name}: the draft couldn't be written"
+                        continue
+                    values[name] = value
+                    labels[name] = f"Written as {step.get('want')!r}"
+                    log.append({"step": name, "what": labels[name], "output": value})
+                elif kind == "answer":
+                    reply = (yield from call(executor.answer_messages(text, step.get("want", ""), log, stopped, now), None)).strip()
+                    yield Text(reply)
+        except ContextBudgetExceeded as e:
+            reply = str(e) + " The plan stopped; earlier tool actions, if any, remain completed."
+            yield Text(reply)
         self.store.add_message(self.conversation_id, "nuru", reply)
         if self.shadow:
             self.shadow.end(reply)

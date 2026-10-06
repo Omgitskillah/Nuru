@@ -76,6 +76,8 @@ def build(args: dict, decision_config: Path) -> dict:
         "tools": sorted(session.MODEL_TOOLS),
         "planner": {"arg": planner, "file": str(planner_file.relative_to(REPO)) if planner_file else None,
                     "sha256": _sha256(planner_file) if planner_file else None},
+        "cases_sha256": _sha256(Path(args["cases"])) if args.get("cases") else None,
+        "scorer_sha256": _sha256(Path(__file__).with_name("score_runs.py")),
         "decision_config_sha256": _sha256(decision_config),
         "vault": {"path": str(DUMMY_VAULT), "sha256": _tree_sha256(DUMMY_VAULT)},
         "embedding_model": obsidian.get("OBSIDIAN_EMBED_MODEL"),

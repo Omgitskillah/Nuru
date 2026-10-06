@@ -172,3 +172,30 @@ def test_think_steps_are_told_the_current_date_ahead_of_the_request():
                      executor.answer_messages("When?", "the reply", [], None, now)):
         assert messages[1]["content"].startswith(now + "\n\nMy request: When?")
     assert executor.answer_messages("When?", "the reply", [], None)[1]["content"].startswith("My request: When?")
+
+
+def test_planned_followup_gets_complete_prior_exchange(monkeypatch):
+    chat, calls = scripted_chat(["Juniper, 35 days", "5 weeks"])
+    s = start_session(monkeypatch, chat=chat)
+    plan = {"steps": [{"step": "s1", "think": "answer", "uses": [], "want": "answer"}]}
+    list(s.run_plan("My deployment is Juniper, 35 days", plan))
+    list(s.run_plan("How many weeks is that?", plan))
+    messages = calls[1]["messages"]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[2]["content"] == "Juniper, 35 days"
+    assert "How many weeks is that?" in messages[-1]["content"]
+
+
+def test_overbudget_draft_stops_before_dependent_write(monkeypatch):
+    chat, calls = scripted_chat([])
+    tools = FakeMCPTools(tools=TOOLS)
+    s = start_session(monkeypatch, chat=chat, tools=tools)
+    plan = {"steps": [
+        {"step": "s1", "think": "draft", "uses": [], "want": "draft"},
+        {"step": "s2", "tool": "write_note", "with": {"content": "$s1"}},
+    ]}
+    events = list(s.run_plan("x" * 100000, plan))
+    assert not calls
+    assert not tools.calls
+    assert "message too long" in events[-1].message
+    assert s.store.get_messages(s.conversation_id) == []

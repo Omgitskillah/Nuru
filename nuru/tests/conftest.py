@@ -49,3 +49,10 @@ def neutral_model_profile(monkeypatch):
     sampling of its own - so chat() gets exactly the arguments the test expects. Tests of the
     profiles set one themselves."""
     monkeypatch.setattr(session, "PROFILE", ModelProfile())
+
+
+@pytest.fixture(autouse=True)
+def isolate_conversation_files(monkeypatch, tmp_path):
+    """Every Session test uses scratch history/logs, including executor tests."""
+    monkeypatch.setattr(session, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")

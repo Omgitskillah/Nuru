@@ -178,16 +178,25 @@ def test_at_the_step_cap_without_an_expert_the_model_answers_from_what_it_has_wi
     s, seen, tools = setup(["step_cap"], responses, tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))
     assert events[-1] == Text("Found a and b; c is still unchecked.")
-    assert seen[-1]["tools"] is False
+    assert seen[-1]["tools"] is True  # still listed, so Ollama's cached prompt holds; calls are refused
     assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round this turn (the 2-step limit)")
 
 
-def test_a_tool_call_in_the_final_answer_ends_the_turn_as_before(setup):
-    s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abc"],
+def test_a_tool_call_in_the_final_answer_is_refused_once_then_ends_the_turn(setup):
+    s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abcd"],
                            tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))
     assert isinstance(events[-1], Text) and events[-1].text.startswith("I stopped here: it reached the 2-step limit")
-    assert [name for name, _ in tools.calls] == ["search", "search"]  # the third call never ran
+    assert [name for name, _ in tools.calls] == ["search", "search"]  # the third and fourth calls never ran
+    assert "TOOLS_CLOSED" in seen[-1]["messages"][-1]["content"]  # the third was refused, then asked again
+
+
+def test_after_a_refused_final_call_the_model_can_still_answer(setup):
+    responses = [[call("search", {"query": q})] for q in "abc"] + [["Found a and b."]]
+    s, seen, tools = setup(["step_cap"], responses, tool_gate={"step_cap": 2})
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Found a and b.")
+    assert len(tools.calls) == 2 and all(c["tools"] for c in seen)
 
 
 def _expert_client(fail=False):
@@ -231,7 +240,7 @@ def test_a_failed_expert_at_the_cap_still_ends_with_an_answer(setup):
                        expert_client=client)
     events = list(s.ask("Find it"))
     assert events[-1] == Text("Partial answer; the rest is unresolved.")
-    assert seen[-1]["tools"] is False
+    assert seen[-1]["tools"] is True
 
 
 # ---------------------------------------------------------------- assess_effort
@@ -269,7 +278,7 @@ def test_final_answer_cannot_loop_on_reasoning_only_with_effort_enforced(setup, 
     assert isinstance(events[-1], Text)
     assert len(seen) == len(rounds) + 1
     assert seen[0]["think"] == "low"
-    assert seen[-1] == {"think": False, "tools": None}
+    assert seen[-1]["think"] is False and seen[-1]["tools"] == seen[0]["tools"]
     assert len(tools.calls) == 2
 
 
@@ -498,7 +507,7 @@ def test_step_limit_final_answer_remains_reachable_under_context_pressure(setup)
                                         ["The omitted result is still unchecked."]],
                            results={"search": "x" * 100000}, tool_gate={"step_cap": 1})
     assert list(s.ask("Find it"))[-1] == Text("The omitted result is still unchecked.")
-    assert len(seen) == 2 and seen[-1]["tools"] is False
+    assert len(seen) == 2 and seen[-1]["tools"] is True
     assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round")
     assert any(m.get("content", "").startswith("[left out:") for m in seen[-1]["messages"])
 

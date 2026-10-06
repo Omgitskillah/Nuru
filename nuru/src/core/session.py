@@ -577,6 +577,7 @@ class Session:
         repair_pending: dict[str, ToolOutcome] = {}
         recovery_calls = 0  # Two corrections/recovery reads per turn, even without step_cap enforcement.
         final_answer = False  # the step cap's last call, without tools, has been asked for
+        tools_refused = False  # a tool call after tools closed has been refused once
         messages = None
         prompt_tokens_recorded = False
         think = THINK
@@ -652,18 +653,19 @@ class Session:
                     messages.append({"role": "user", "content": _FINAL_ANSWER.format(limit=enforcing.step_cap)})
                     final_answer = True
                 think = False if steered else next_think
-                if final_answer or (tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None)):
+                if not final_answer and tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None):
                     tools_offered = None
                 hold_reply = enforcing.on("check_claim")
 
+            # Once tools close (a final answer, or an answer after a refused call) the tool list still
+            # goes out unchanged: it sits at the start of the prompt, so dropping it made Ollama re-read
+            # the whole prompt (40-77 s a call in the 10-06 baseline). A call made anyway is refused below.
             if answer_after_failure or final_answer:
-                tools_offered = None
                 if not final_answer and repair_pending:
                     messages.append({"role": "user", "content": "[Nuru] Recovery stopped. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
                     final_answer = True
             if repair_pending and not final_answer:
                 if recovery_calls >= 2:
-                    tools_offered = None
                     messages.append({"role": "user", "content": "[Nuru] Recovery budget exhausted. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
                     final_answer = True
 
@@ -763,11 +765,22 @@ class Session:
                 think, steered = False, True
                 continue
 
+            if (final_answer or answer_after_failure) and tool_calls and not tools_refused:
+                # Tools are closed but still listed: refuse the calls once and ask again.
+                tools_refused = True
+                messages.append({"role": "assistant", "tool_calls": tool_calls})
+                for call in tool_calls:
+                    fn = call.get("function") or {}
+                    refused = self._call_tool(turn_id, fn.get("name", ""), fn.get("arguments", {}), None, enforcing,
+                        refusal=tool_dispatch.failure("policy", "TOOLS_CLOSED", "Not run: no more tools this turn. Answer now from the results above."))
+                    messages.append({"role": "tool", "content": refused.text})
+                continue
+
             if answer_after_failure and tool_calls:
                 yield from self._abort_turn(turn_id, "The tool was refused; no further calls were allowed.")
                 return
 
-            if final_answer and tool_calls:  # tools were withdrawn, and it asked for one anyway
+            if final_answer and tool_calls:  # tools were closed, and it asked for one again after a refusal
                 reason = ("the recovery budget was exhausted" if repair_pending else
                           f"it reached the {enforcing.step_cap}-step limit")
                 yield from self._stop(turn_id, reason)

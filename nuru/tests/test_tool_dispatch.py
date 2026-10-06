@@ -132,8 +132,7 @@ def test_two_ordinary_corrections_then_answer_without_dependent_write(monkeypatc
     s = start_session(monkeypatch, tools=tools, chat=chat)
     events = list(s.ask('calculate and save'))
     assert events[-1] == Text('Could not compute; no note written.') and len(seen) == 4
-    assert seen[0] == seen[1] == seen[2] == s.tool_definitions
-    assert seen[-1] is None
+    assert seen == [s.tool_definitions] * 4  # unchanged on the final answer, so the cached prompt holds
     assert 'write_note' in {t['function']['name'] for t in seen[1]}
     assert not tools.calls
 
@@ -309,7 +308,7 @@ def test_recovery_reads_are_bounded_even_when_successful(monkeypatch):
         return iter(next(script))
     s = start_session(monkeypatch, tools=tools, chat=chat)
     assert list(s.ask('compute'))[-1] == Text('calculation unresolved')
-    assert seen[-1] is None and len(tools.calls) == 2
+    assert seen[-1] == s.tool_definitions and len(tools.calls) == 2
 
 
 def test_recovery_read_failure_does_not_unlock_rejected_write(monkeypatch):
@@ -360,6 +359,7 @@ def test_recovery_exhaustion_rejects_hallucinated_tool_without_step_enforcement(
     script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 3})]}],
+                   [{'tool_calls': [tool_call('write_note', {'content': 'unverified'})]}],
                    [{'tool_calls': [tool_call('write_note', {'content': 'unverified'})]}]])
     s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
     s.enforcement = None
@@ -413,5 +413,5 @@ def test_exhausted_recovery_finishes_reasoning_only_answer_without_retry(monkeyp
     s.enforcement = None
     monkeypatch.setattr(session, 'THINK', True)
     assert list(s.ask('compute'))[-1] == Text(session._NO_REPLY_NOTE)
-    assert seen[:3] == [s.tool_definitions] * 3 and seen[3:] == [None]
+    assert seen == [s.tool_definitions] * 4
     assert not tools.calls

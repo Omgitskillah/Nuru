@@ -45,3 +45,18 @@ def test_manifest_tracks_shared_prompt_and_effective_embedding_model(monkeypatch
     assert first["rendered_modelfile_sha256"] != second["rendered_modelfile_sha256"]
     rendered = manifest.render_modelfile(modelfile, session.BASE_MODEL)
     assert second["rendered_modelfile_sha256"] == hashlib.sha256(rendered.encode()).hexdigest()
+
+
+def test_decision_config_hash_ignores_the_batch_database_path(monkeypatch, tmp_path):
+    evals = Path(__file__).resolve().parents[1] / "evals" / "decision_layer"
+    monkeypatch.syspath_prepend(str(evals))
+    spec = importlib.util.spec_from_file_location("config_hash_test", evals / "manifest.py")
+    manifest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(manifest)
+    a, b, c = tmp_path / "a.yaml", tmp_path / "b.yaml", tmp_path / "c.yaml"
+    a.write_text("database: /runs/batch-1/decisions.sqlite3\nexpert: {at_step_cap: false}\n")
+    b.write_text("expert: {at_step_cap: false}\ndatabase: /runs/batch-2/decisions.sqlite3\n")
+    c.write_text("database: /runs/batch-1/decisions.sqlite3\nexpert: {at_step_cap: true}\n")
+
+    assert manifest._decision_config_sha256(a) == manifest._decision_config_sha256(b)
+    assert manifest._decision_config_sha256(a) != manifest._decision_config_sha256(c)

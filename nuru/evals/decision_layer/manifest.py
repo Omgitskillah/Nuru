@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
+import yaml
 from dotenv import dotenv_values
 
 from core.modelfile import render_modelfile
@@ -23,6 +24,16 @@ from common import DUMMY_VAULT, OLLAMA, REPO
 
 def _sha256(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def _decision_config_sha256(path: Path) -> str | None:
+    """The decision config's settings, without its batch-local database path - which differs in every
+    batch and would make two batches with the same settings look different."""
+    if not path.is_file():
+        return None
+    config = yaml.safe_load(path.read_text()) or {}
+    config.pop("database", None)
+    return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _tree_sha256(root: Path) -> str:
@@ -81,7 +92,7 @@ def build(args: dict, decision_config: Path) -> dict:
                     "sha256": _sha256(planner_file) if planner_file else None},
         "cases_sha256": _sha256(Path(args["cases"])) if args.get("cases") else None,
         "scorer_sha256": _sha256(Path(__file__).with_name("score_runs.py")),
-        "decision_config_sha256": _sha256(decision_config),
+        "decision_config_sha256": _decision_config_sha256(decision_config),
         "vault": {"path": str(DUMMY_VAULT), "sha256": _tree_sha256(DUMMY_VAULT)},
         "embedding_model": semantic.model,
         "python_sandbox": {"image": python_env.get("PYTHON_MCP_IMAGE"),

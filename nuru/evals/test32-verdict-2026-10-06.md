@@ -34,17 +34,21 @@ it failed all three of Sonnet's correct, hedged answers.
 
 `score_32` now has:
 - **periodic attach meets it, without PSM.** Some sentence says B meets the requirement (hedged answers
-  count, e.g. "only with periodic attach", "yes on paper"). No sentence denies it ("unachievable",
-  "theoretical", "invalid"...) or makes B depend on PSM ("relies on PSM", "only works if PSM", "with PSM
+  count, e.g. "only with periodic attach", "yes on paper", "a theoretical estimate pending validation").
+  No sentence denies it ("unachievable", "invalid", "does not meet", "fails to meet"...) or makes B depend on PSM ("relies on PSM", "only works if PSM", "with PSM
   working", a "Yes, if:" list with a PSM condition). And there is no overall "no" about the requirement;
   a "no" about always-connected alone is right.
 - **biggest risk: report rate or alarm latency.** The reply's biggest-risk statement names one of the two
-  risks the note gives. Before, "2.3 y" anywhere counted.
+  risks the note gives. Only that statement counts: up to its first full stop, semicolon or line end, or
+  the next line under a "Biggest risk" heading. A risk named as secondary, or mentioned afterwards, doesn't
+  count. Before, "2.3 y" anywhere counted.
 
 The patterns were fitted on 22 replies labelled by hand (6 Sonnet, all right; 16 Qwen, all wrong, including
 the 9B's "Yes, if: ... PSM eventually works") and match all 22. Across every saved batch, 3 earlier runs are
 credited (two Granite low runs from 09-30, one Granite run from 10-03). I read each one and all three are
-genuine. Ten unit tests in `nuru/tests/test_score_32.py`.
+genuine. Seventeen unit tests in `nuru/tests/test_score_32.py`, including the counterexamples from the
+PR #4 review: an explicit "does not meet", a qualified "theoretical estimate", and a wrong audit whose
+risk check used to pick up the 2.3-year figure from a later sentence (it scored 5/5 and now scores 3).
 
 ## Rescored (test 32, points out of 5 per run)
 
@@ -53,12 +57,13 @@ genuine. Ten unit tests in `nuru/tests/test_score_32.py`.
 | suite-base-qwen4b (before the step-limit answer) | 5/25 | 5/25 |
 | suite-after-qwen4b | 17/25 | 15/25 |
 | suite-after-sonnet-qwen4b-t32 | 16/25 | 14/25 |
-| suite-t32-qwen9b | 11/15 | 11/15 |
+| suite-t32-qwen9b | 11/15 | 9/15 |
 | suite-t32-sonnet-qwen9b | 9/15 | 8/15 |
-| Sonnet reference, 64k output | 12/15 | 15/15 |
+| Sonnet reference, 64k output | 12/15 | 14/15 |
 
-Across all 63 saved test 32 runs, the mean goes from 2.73 to 2.37. Qwen's remaining points are for reading
-the notes right (237 days, 600 s keepalive) and replying. None comes from the conclusion.
+Across all 63 saved test 32 runs, the mean goes from 2.73 to 2.22. Qwen's remaining points are for reading
+the notes right (237 days, 600 s keepalive) and replying. None comes from the conclusion or the risk.
+Sonnet's one missed risk point is the run that names unmeasured standby current as the biggest risk.
 
 ## What it means
 

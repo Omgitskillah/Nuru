@@ -531,8 +531,11 @@ def score_27(record, changes, today):
 _ARCH_B = r"(periodic[ -]?attach|architecture\s*\(?b\)?|\(b\)|\bin b\b|\bb at\b|modem (fully )?off)"
 _B_MEETS = (r"\b(meets?|met|reachable|achievable|holds|passes|exceeds?|yes)\b|\bmargin\b|\babove 3\b|on paper|"
             r"only (in|with|under|by)[^.\n]{0,20}(periodic|architecture|\(?b\b)")
+# A qualifier ("a theoretical estimate", "not yet demonstrated") is not a denial; "does not meet" is.
 _B_DENIED = (r"unachievable|not (currently )?(achievable|reachable|met|possible)|\binvalid\b|fiction|false positive|"
-             r"\btheoretical\b|cannot (enter|be realized|be met|meet|hit|reach)|can't (meet|hit|reach)")
+             r"cannot (enter|be realized|be met|meet|hit|reach)|can't (meet|hit|reach)|"
+             r"\b(does|do|did|will|would|could)\s*(not|n't)\s+(meet|reach|hit|satisfy|exceed)|"
+             r"\b(doesn't|don't|won't|wouldn't)\s+(meet|reach|hit|satisfy)|\bfails? to (meet|reach|hit)|\bnever (meets?|reaches)")
 _B_NEEDS_PSM = (r"(relies|depends|assumes|assuming|requires|needs)\b[^.\n]{0,40}\bPSM|"
                 r"only (works|holds|valid)[^.\n]{0,20}if[^.\n]{0,20}PSM|\bif PSM\b|unless PSM|"
                 r"PSM[^.\n]{0,40}\b(eventually )?works\b|because PSM|since PSM|"
@@ -562,9 +565,17 @@ def _periodic_attach_verdict(reply: str) -> bool:
 
 def _biggest_risk_32(reply: str) -> bool:
     """The reply's biggest-risk statement names the report rate (2.3 years at 6 an hour) or the alarm-latency
-    requirement - the two risks the battery note itself names."""
+    requirement - the two risks the battery note itself names. Only the statement itself counts: up to its
+    first full stop, semicolon or line end, or the next line when the phrase is a heading ("## Biggest risk")."""
     m = re.search(r"(biggest|largest|main|primary|single)[^.\n]{0,25}risk", reply, re.I)
-    return bool(m) and bool(re.search(_RISK_32, reply[m.start(): m.start() + 450], re.I))
+    if not m:
+        return False
+    rest = reply[m.end():]
+    statement = re.split(r"(?<=[.;])\s|;|\n", rest, maxsplit=1)[0]
+    if len(re.sub(r"[\W_]", "", re.sub(r"(?i)^\W*(remaining|is|was|:)\W*", "", statement))) < 8:  # a heading
+        following = rest.split("\n", 1)[1] if "\n" in rest else ""
+        statement = re.split(r"(?<=[.;])\s|;|\n", following.lstrip("\n"), maxsplit=1)[0]
+    return bool(re.search(_RISK_32, statement, re.I))
 
 
 def score_32(record, changes, today):

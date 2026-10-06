@@ -1,0 +1,211 @@
+{
+  "fixture": "../DummyVault",
+  "captured_date": "2026-10-06",
+  "markdown_count": 51,
+  "files": [
+    {
+      "path": "Templates/01 Profile.md",
+      "sha256": "599173472a411efae441d773431c931993ab10df67ddf1dbf629cd44c9d6f8f4"
+    },
+    {
+      "path": "Templates/02 Preferences.md",
+      "sha256": "c1e885a184ac535ae5ff666358dfb90dab8cd3d428de24b4a4ce060e37c10342"
+    },
+    {
+      "path": "Templates/03 Project.md",
+      "sha256": "c1609ccf9c24ba9c9bfbe05206ec9de39429e9317d5fca26d482f036b8f22734"
+    },
+    {
+      "path": "Templates/04 Person.md",
+      "sha256": "bbabbd10a11a7c626a6df9a197a3915dcf9f443c26d26462630d8a2bdf5b7ca8"
+    },
+    {
+      "path": "Templates/05 Topic.md",
+      "sha256": "15bf51415f74f0d14bbb3bc1f34121483a08f4e69682f3450f6e31c5d7950f23"
+    },
+    {
+      "path": "Templates/06 Transcript.md",
+      "sha256": "f350dbbe5800f7754ab3c68a7b85a93e2800d308dc1afee3bcabc3906076d620"
+    },
+    {
+      "path": "Templates/07 Session.md",
+      "sha256": "e712256e2d573638d7555d34288d20fe52b6329c1cc400fffc8e9946d3f1c7b1"
+    },
+    {
+      "path": "Templates/08 Index.md",
+      "sha256": "7a863c032582152984d27a2b7f615f11baf6b0965e92e2a5d6edcd81b557b28a"
+    },
+    {
+      "path": "Templates/09 Directives.md",
+      "sha256": "ef6262abea1fb3c9ee7db4db32d6253a40dfa545c2cc7ddfd9fd589755681d21"
+    },
+    {
+      "path": "Templates/10 Daily.md",
+      "sha256": "456156b66956d0718b3fb79abd648327902ca857f480721bc8bf15f50a5cc7fb"
+    },
+    {
+      "path": "Templates/11 Correction.md",
+      "sha256": "03e38445a475eff309750eb3349c8b416937899289a4f428e148d9407d2ee0f3"
+    },
+    {
+      "path": "nuru/Indexes/area-monitor-project-index.md",
+      "sha256": "a32a8e83946f798aafabf5a573e6ed688b013b9a62349d8b76480c053378124e"
+    },
+    {
+      "path": "nuru/Indexes/technical-knowledge-base.md",
+      "sha256": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886"
+    },
+    {
+      "path": "nuru/People/alice-chen.md",
+      "sha256": "0ec765963ff2d0c461b11a6a6fa58a40547c62b4ba5ea193f6063d59c8705ac5"
+    },
+    {
+      "path": "nuru/People/bob-martinez.md",
+      "sha256": "6e10ce318232f9211d96f826ac72f6a1772734612848bacd4c8b0e7c2256f62c"
+    },
+    {
+      "path": "nuru/Preferences/communication-preferences.md",
+      "sha256": "91013e1e04003fa7a38ee03da8280b5b58314981185549fce0af57a50cab3d45"
+    },
+    {
+      "path": "nuru/Preferences/work-environment-preferences.md",
+      "sha256": "ccd9149421e4163d41f070001667d98147604a81d3109d638905a7099936a62a"
+    },
+    {
+      "path": "nuru/Profiles/sample-profile-one.md",
+      "sha256": "a2cb65f6335fc5b2dc573076700b596639872898acc182ada604fff68faf536f"
+    },
+    {
+      "path": "nuru/Profiles/sample-profile-two.md",
+      "sha256": "8d6b63b5edeb22ac545f46a0507c0d57016358db244521dd8af9540100e2aa25"
+    },
+    {
+      "path": "nuru/Topics/berlin-startup-ecosystem.md",
+      "sha256": "536bdff52e567d7391e5d4347c8d8c974f3a88466c26d978cd396f429b9e94f7"
+    },
+    {
+      "path": "nuru/Topics/freertos-task-management.md",
+      "sha256": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee"
+    },
+    {
+      "path": "nuru/Transcripts/architecture-review-meeting.md",
+      "sha256": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162"
+    },
+    {
+      "path": "nuru/Transcripts/team-standup-discussion.md",
+      "sha256": "07124338a9d7002ce147ac89afdf1db3b58389c71f716d10b69f94b0bba98911"
+    },
+    {
+      "path": "nuru/battery-life-modeling-revised.md",
+      "sha256": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be"
+    },
+    {
+      "path": "nuru/battery-life-modeling.md",
+      "sha256": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e"
+    },
+    {
+      "path": "nuru/berlin-admin-chaos-notes.md",
+      "sha256": "e67901bc80b18bfe39f219de601d39f3f579236a8a5d6293affffed713baeaf1"
+    },
+    {
+      "path": "nuru/gym-and-life-log.md",
+      "sha256": "6a652306d68a2e6ebc853395cc6a81703683023123de78ce60a55d20a46e74c9"
+    },
+    {
+      "path": "nuru/home-lab-parts-inventory.md",
+      "sha256": "49a6ab04c180c51216583c88740ee00e5400e824d998a5f4a69c39c49d3c4573"
+    },
+    {
+      "path": "nuru/one-on-one-with-manager.md",
+      "sha256": "c0913977b9ee8a66910df9a7566c027e07f4f4717a624ff07097c186db0e744d"
+    },
+    {
+      "path": "nuru/priya-raman.md",
+      "sha256": "dba63805c3892b9d2b9f417faee65448f0e5be2829f6eb74e1191e2c53680c32"
+    },
+    {
+      "path": "nuru/sensor-calibration-data.md",
+      "sha256": "bf27c88553eb060d9f25e17fd17b56a84179b65f51f00a4a91e09a81ea6011da"
+    },
+    {
+      "path": "nuru/shower-thoughts-on-electronics.md",
+      "sha256": "558b8bfe35723b954587a9a9c21670d51bbf0344cb0c3ed2cf376425a562d64a"
+    },
+    {
+      "path": "nuru/sunday-chapati-for-mom.md",
+      "sha256": "ade5f88357d12bb5365cfbd49db18c7275c463960322d079a24c00832dc77322"
+    },
+    {
+      "path": "nuru/suspicious-vendor-email-paste.md",
+      "sha256": "f50e9e31cd15da88e7531bcbb9b58a98727f8bf25678d8266cb15f5650b8771c"
+    },
+    {
+      "path": "nuru/uart-ring-buffer-snippets.md",
+      "sha256": "b0071907e25e489837767460dd53fd244fd654274e4d1e989dbb27aa7482767c"
+    },
+    {
+      "path": "nuru/unicode-and-formatting-torture.md",
+      "sha256": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88"
+    },
+    {
+      "path": "shared/Projects/area-monitor-device-redesign.md",
+      "sha256": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+    },
+    {
+      "path": "shared/Projects/memfault-integration-initiative.md",
+      "sha256": "cc381bd85ba09ef8226449cbdd2150e441b76211917b455d292440fe953ad72c"
+    },
+    {
+      "path": "shared/Sessions/firmware-development-session.md",
+      "sha256": "8c527f7316feac53a2d170e7a29acd559a0cdd0a55460ca213a156b870dae513"
+    },
+    {
+      "path": "shared/Sessions/learning-session-mcp-architecture.md",
+      "sha256": "755403d54f0ba42856b2120fcc377593e291ce9581dec5e4424e3f26b4fe2e5e"
+    },
+    {
+      "path": "shared/debugging-session-psm-not-engaging.md",
+      "sha256": "8897ad6588dc70ffc93390dbe09269456db3b46cb8cee7afe19e8a7830f864a7"
+    },
+    {
+      "path": "user/code-review-standards.md",
+      "sha256": "0e2e47ae879a10a4421b7b1f95ae4a4947906fcb61ebd299eb39b18549d2c1a0"
+    },
+    {
+      "path": "user/correction-the-47-minute-mystery.md",
+      "sha256": "5484bd280fdcef0395c70184fa3ad9a4a80797850ae244798053d7609fe766eb"
+    },
+    {
+      "path": "user/daily-2026-09-17.md",
+      "sha256": "d4c3490c14f448565e171a849c702a87b7c8c0bf604b94745048be391f74c34e"
+    },
+    {
+      "path": "user/daily-2026-09-18.md",
+      "sha256": "68d435a4d5dac375c50f435d40aec4edee6f49f8fc4c99a523bd14c3d77eff2b"
+    },
+    {
+      "path": "user/daily-note.md",
+      "sha256": "c0b96b040efb80c8dc42b4bfaba0a58281e9ec2d8f768224769eaebbfb0bffee"
+    },
+    {
+      "path": "user/directives-for-local-model.md",
+      "sha256": "cf834694b755277f711e5ac1467c46210937ef7e45cba7702168b73cd5b89bcf"
+    },
+    {
+      "path": "user/meeting-participation-guidelines.md",
+      "sha256": "1e7af8e00919e9b1fa03dfba0c31a22741c2057779d03df15b8965cbd9d33a2e"
+    },
+    {
+      "path": "user/modem-configuration-update.md",
+      "sha256": "a953105c99eaa5319c4ed406ff88243464e18403913bd9e742fc500875aeb691"
+    },
+    {
+      "path": "user/september-15-daily.md",
+      "sha256": "007642ead0e3443f4e646d92b09ef1f195a017fab2ed86c73ebc871881b6f0c2"
+    },
+    {
+      "path": "user/team-standup-action-items-resolved.md",
+      "sha256": "9d6fa2cd59dadc2b2c93500f6766fbf048b040891cc73da50da5983dc664bdc2"
+    }
+  ]
+}

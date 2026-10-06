@@ -6,6 +6,7 @@ batches can be told apart without remembering what was switched in between.
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import requests
 from dotenv import dotenv_values
 
 from core.modelfile import render_modelfile
+from obsidian_mcp.semantic import load_config as load_semantic_config
 from common import DUMMY_VAULT, OLLAMA, REPO
 
 
@@ -56,7 +58,8 @@ def build(args: dict, decision_config: Path) -> dict:
     planner_file = (Path(session.MODELFILES_DIR) / "planner" / "expert-planner.Modelfile"
                     if planner and planner.startswith("expert") else Path(planner) if planner else None)
     dirty = _git("status", "--porcelain")
-    obsidian = dotenv_values(REPO / ".env.obsidian")
+    obsidian = {**dotenv_values(REPO / ".env.obsidian"), **os.environ}
+    semantic = load_semantic_config(DUMMY_VAULT, obsidian)
     python_env = dotenv_values(REPO / ".env.python")
     return {
         "started": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -80,7 +83,7 @@ def build(args: dict, decision_config: Path) -> dict:
         "scorer_sha256": _sha256(Path(__file__).with_name("score_runs.py")),
         "decision_config_sha256": _sha256(decision_config),
         "vault": {"path": str(DUMMY_VAULT), "sha256": _tree_sha256(DUMMY_VAULT)},
-        "embedding_model": obsidian.get("OBSIDIAN_EMBED_MODEL"),
+        "embedding_model": semantic.model,
         "python_sandbox": {"image": python_env.get("PYTHON_MCP_IMAGE"),
                            "available": session.python_server_params() is not None},
         "machine": {"macos": platform.mac_ver()[0], "arch": platform.machine()},

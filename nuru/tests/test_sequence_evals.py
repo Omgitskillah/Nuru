@@ -91,6 +91,7 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     monkeypatch.setattr(driver.session.Session, "start", start)
     for key in ("VAULT_PATH", "OBSIDIAN_SEMANTIC_DB", "NURU_DECISION_CONFIG", "NURU_LOG_DIR"):
         monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.setenv("OBSIDIAN_EMBED_MODEL", "nomic-embed-text-v2-moe")
     case = tmp_path / "case.json"
     fixture = {"turns": [{"prompt": p, "checks": {"answered": "answer"}} for p in ("first", "follow up")]}
     if planned:
@@ -100,6 +101,7 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     monkeypatch.setattr("sys.argv", ["drive_turn", "--case", str(case), "--think", "off", "--out", str(out)])
     driver.main()
     assert starts == [True] and prompts == ["first", "follow up"]
+    assert driver.session.OBSIDIAN_SERVER_PARAMS.env["OBSIDIAN_EMBED_MODEL"] == "nomic-embed-text-v2-moe"
     records = json.loads(out.read_text())["turns"]
     assert [r["shadow_failures"] for r in records] == [0, 0]
 
@@ -108,6 +110,7 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     ('The codeword you gave me is "Juniper."', True),
     ('The codeword was **Juniper**.', True),
     ('"Juniper."', True),
+    ('Codeword: Juniper', True),
     ('I did not find any note mentioning Juniper.', False),
 ])
 def test_memory_rubric_checks_affirmation_and_allows_formatting(modules, reply, passed):
@@ -133,3 +136,18 @@ def test_explicit_rescoring_keeps_raw_results_and_requires_same_prompts(modules,
     path.write_text(json.dumps({"test": 35, "turns": turns}))
     with pytest.raises(ValueError, match="preserve"):
         scorer.load_results(tmp_path, cases_path=EVALS / "cases.json")
+
+
+def test_suite_excludes_shared_v2_index_and_sidecars(modules, tmp_path, monkeypatch):
+    cases, runner, *_ = modules
+    source = tmp_path / "fixture"
+    source.mkdir()
+    (source / "note.md").write_text("keep")
+    for name in (".obsidian-mcp-semantic-v2.sqlite3", ".obsidian-mcp-semantic-v2.sqlite3-wal"):
+        (source / name).write_bytes(b"runtime")
+    monkeypatch.setattr(runner, "DUMMY_VAULT", source)
+    scratch = tmp_path / "scratch"
+    runner.copy_vault(scratch)
+    assert [p.name for p in scratch.iterdir()] == ["note.md"]
+    assert list(cases.vault_snapshot(source)) == ["note.md"]
+    assert runner.vault_changes(scratch) == []

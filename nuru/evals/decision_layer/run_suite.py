@@ -66,7 +66,8 @@ def vault_changes(vault: Path) -> list[dict]:
     """Every note the turn created, changed or removed, relative to pristine dummyVault."""
     def files(root):
         return {p.relative_to(root).as_posix(): p for p in root.rglob("*")
-                if p.is_file() and not any(part in SKIPPED for part in p.relative_to(root).parts)}
+                if p.is_file() and not any(part in SKIPPED or part.startswith(".obsidian-mcp-")
+                                          for part in p.relative_to(root).parts)}
 
     before, after = files(DUMMY_VAULT), files(vault)
     changes = []
@@ -76,6 +77,11 @@ def vault_changes(vault: Path) -> list[dict]:
         if old != new:
             changes.append({"path": rel, "before": old, "after": new})
     return changes
+
+
+def copy_vault(destination: Path) -> None:
+    """Copy notes, excluding interactive indexes/locks and their SQLite sidecars."""
+    shutil.copytree(DUMMY_VAULT, destination, symlinks=True, ignore=shutil.ignore_patterns(".obsidian-mcp-*"))
 
 
 def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None,
@@ -173,7 +179,7 @@ def main():
            "PATH": "/opt/homebrew/bin:" + os.environ.get("PATH", "")}
     env.pop("VIRTUAL_ENV", None)
 
-    shutil.copytree(DUMMY_VAULT, vault, symlinks=True)
+    copy_vault(vault)
     subprocess.run(["uv", "run", "obsidian-mcp-index"], cwd=REPO / "servers" / "obsidian", env=env, check=True,
                    capture_output=True)
     shutil.copy2(index, pristine_index)
@@ -185,7 +191,7 @@ def main():
             for think in args.tiers.split(","):
                 for repeat in range(args.repeats):
                     shutil.rmtree(vault)
-                    shutil.copytree(DUMMY_VAULT, vault, symlinks=True)
+                    copy_vault(vault)
                     shutil.copy2(pristine_index, index)
                     started, day = time.monotonic(), date.today().isoformat()
                     plan = args.plans / f"{test}.json" if args.plans else None

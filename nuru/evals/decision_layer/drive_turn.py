@@ -41,6 +41,9 @@ def main():
 
     env = get_default_environment()
     env.update({k: os.environ[k] for k in ("VAULT_PATH", "OBSIDIAN_SEMANTIC_DB", "PATH")})
+    # Keep explicit overrides identical for the index builder and the MCP server.
+    env.update({k: os.environ[k] for k in ("OBSIDIAN_EMBED_MODEL", "OBSIDIAN_CHUNK_CHARS", "OLLAMA_HOST")
+                if k in os.environ})
     env.update(session.OBSIDIAN_ENV)
     session.OBSIDIAN_SERVER_PARAMS = StdioServerParameters(
         command="uv", args=["run", "obsidian-mcp"], cwd=session.OBSIDIAN_DIR, env=env

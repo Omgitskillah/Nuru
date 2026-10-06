@@ -26,7 +26,7 @@ def vault_snapshot(root: Path) -> dict[str, bytes]:
     ignored = {".obsidian", ".obsidian-mcp-index.sqlite3", ".obsidian-mcp-semantic.sqlite3",
                ".obsidian-mcp-write.lock"}
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*")
-            if p.is_file() and not any(part in ignored for part in p.relative_to(root).parts)}
+            if p.is_file() and not any(part in ignored or part.startswith(".obsidian-mcp-") for part in p.relative_to(root).parts)}
 
 
 def snapshot_changes(before: dict[str, bytes], after: dict[str, bytes]) -> list[dict]:

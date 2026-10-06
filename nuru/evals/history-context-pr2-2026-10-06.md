@@ -2,6 +2,63 @@
 
 Branch: `feat/history-context-budgets`, from `plan-executor` at `b532930`.
 
+## Baseline comparability correction
+
+**The live numbers in the historical observations section were collected before the baseline environment configs
+were copied to NuruCodex. They used v1.5 embeddings and had no `run_python`. They
+are not comparable with the current v2/Python-enabled baselines. Re-run them with
+matched configurations before making any baseline comparison.** This applies to
+scores, timings, tool counts and context behavior; the old raw records are retained
+as historical smoke evidence.
+
+The current `.env.obsidian` selects `nomic-embed-text-v2-moe`. Both interactive
+checkouts share `dummyVault/.obsidian-mcp-semantic-v2.sqlite3`. Suite runs override
+the index path with their own batch-local file and build it from scratch; copying
+fixtures now excludes interactive index/lock files and SQLite sidecars.
+
+`.env.python` is now configured, but actual `run_python` availability still requires
+a working Docker server/image at startup. `.env.deep-think` was not copied. Keep
+the expert off; Sonnet/Haiku planning requires its credentials to be configured
+explicitly. No credentials were copied or committed during this update.
+
+The manifest now resolves the effective embedding model through the server's own
+configuration loader, including defaults and process overrides. Previously it
+recorded `null` for an unset variable even when v1.5 was used. Explicit embedding
+settings are forwarded consistently to the scratch index builder and MCP server.
+
+## Rerun with copied baseline configuration
+
+Batch: `evals/decision_layer/.runs/suite-pr2-v2-python-memory-20261006-093147`.
+Runs were scheduled after unit checks and after the user confirmed the CPU was
+available. Effective settings:
+
+- `granite4.2:3b`, default thinking `low`, 16,384-token context, isolated runtime
+  tag `nuru-pr2-eval`; Ollama 0.35.1.
+- `nomic-embed-text-v2-moe`; the batch-local index metadata confirms that model,
+  1,500-character chunks and 768 dimensions.
+- Python sandbox available, image
+  `sha256:56357ac130fd71a8a09d8c9d72feedc215c8adbfc1de59680f9e256b8337ab14`.
+  Both Session startup logs include `python-mcp`.
+- Expert planner off; no expert calls and no credentials copied.
+
+| Case | Turn scores | Every check passed | Turn time | Vault changes |
+| --- | --- | --- | --- | --- |
+| 35, ordinary | 5/5, 5/5, 5/5 | Yes | 27.1 s | None |
+| 36, fixed answer-only plan | 5/5, 5/5, 5/5 | Yes | 5.7 s | None |
+
+The planned reply `Codeword: Juniper` exposed another rubric formatting omission.
+The saved transcript was explicitly re-scored with the corrected label-aware
+rubric, SHA-256
+`0c94702fb990229d7636849189d66c9f56aca6ddfed4aa60b23c79c330c615e9`.
+Both cases pass every check; the raw collection records remain unchanged. A unit
+regression covers that label form, and no additional model calls were used to
+correct scoring.
+
+Both memory cases made zero tool calls. These are memory/context smoke checks
+with Python available in the contract; they do not exercise Python computation
+or semantic retrieval. They do not constitute a baseline/candidate comparison.
+The older Qwen/v1.5 timings are not used to claim an improvement.
+
 ## Implementation
 
 - `content_tokens` estimates saved content independently of actual `tokens_used`.
@@ -28,7 +85,7 @@ Branch: `feat/history-context-budgets`, from `plan-executor` at `b532930`.
 
 ## Verification
 
-Workspace suite: **625 passed**. Focused coverage includes the 100-content-token /
+Workspace suite: **629 passed**. Focused coverage includes the 100-content-token /
 6,000-usage-token history regression under a 5,000-token budget, legacy migration
 and rollback, orphan/empty exchanges, admission after a changed effective window,
 SYSTEM/schema overhead, continuation eviction, oversized evidence, and planned
@@ -37,7 +94,7 @@ modes; planner tests also cover prior context and an independently configured
 planner’s effective window. Every Session unit test now uses temporary conversation databases and logs;
 previously that isolation was local to `test_session.py`.
 
-## Live observations
+## Historical live observations (v1.5, no Python)
 
 Local evaluations use the isolated `nuru-pr2-eval` tag, Qwen3.5 4B, thinking off,
 scratch vault/index copies, and no expert planner. Runtime results remain in the
@@ -91,14 +148,14 @@ changes. Its last answer was `The codeword you gave me is "Juniper."`.
 
 The collection-time regex incorrectly rejected that quoted answer. The final
 rubric accepts quotation marks and Markdown around an affirmative answer, and
-still rejects merely mentioning the word in a failed search report. Five scorer
+still rejects merely mentioning the word in a failed search report. Scorer
 regressions cover formatting and explicit re-scoring. Raw runtime records remain
 unchanged: `load_results(batch, cases_path=Path(".../cases.json"))` applies an
 explicit revised rubric, requires exactly the same recorded prompts, and records
 its SHA-256 on the returned results. Default scoring still uses the collected
 rubric for reproducibility.
 
-Using the final cases hash
+Using the rubric hash recorded for that historical re-scoring,
 `e41a1b6596586eda259de952c310ba31efcde0dbd4c003c423f1adf7528bcd41`, re-scoring
 confirms default-window case 35 and tight-window planned case 36 both pass every
 check. Tight-window ordinary case 35 remains failed: no rubric change masks its

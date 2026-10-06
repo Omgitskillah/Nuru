@@ -72,3 +72,19 @@ For live planned sequences, use `--planner <Modelfile>`: live planning receives 
 ## Current limitations
 
 Live acceptance requires installed local models, embedding models, Laya checkpoints and scratch fixtures. Expert planning (`--planner expert[:model]`) can make paid calls. Context estimates are heuristic, and passing a short memory case does not prove arbitrary long conversations fit. The executor's existing per-input character clipping remains explicit in its prompts.
+
+## Matching the baseline environment
+
+Match embeddings, model/profile, tool availability (including `run_python`), context
+window, fixtures and execution mode before comparing runs. The older PR 2 runs
+in NuruCodex used v1.5 embeddings without Python and must be rerun before comparison
+with the v2/Python-enabled baselines. Manifests record the effective embedding model,
+including its default, rather than only the optional environment variable.
+
+Interactive Nuru checkouts can share the configured v2 semantic index. Each suite
+batch builds and restores its own index; interactive index files, locks and SQLite
+sidecars are excluded from copied fixtures and vault-diff accounting. The suite
+does not rebuild the shared interactive index. Expert planning requires separate
+deep-think credentials; keep it off when `.env.deep-think` is absent. Schedule live
+model runs after implementation and unit checks, and coordinate reruns when CPU/GPU
+resources are occupied.

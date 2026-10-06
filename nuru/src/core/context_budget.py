@@ -9,6 +9,11 @@ import math
 RESPONSE_RESERVE = 0.2
 MESSAGE_FRAMING = 16
 REQUEST_FRAMING = 32
+MAX_RESPONSE_RESERVE = 2048
+
+
+def input_budget(window: int) -> int:
+    return window - math.ceil(min(window * RESPONSE_RESERVE, MAX_RESPONSE_RESERVE))
 
 
 class ContextBudgetExceeded(ValueError):
@@ -34,7 +39,7 @@ def available_tokens(window: int, messages: list[dict], *, system: str = "", too
     for schema in (tools, fmt):
         if schema:
             overhead += estimate_tokens(json.dumps(schema, ensure_ascii=False)) + MESSAGE_FRAMING
-    return math.floor(window * (1 - RESPONSE_RESERVE)) - overhead
+    return input_budget(window) - overhead
 
 
 def require_fit(window: int, messages: list[dict], **kwargs) -> None:

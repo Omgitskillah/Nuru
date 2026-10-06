@@ -151,3 +151,17 @@ def test_suite_excludes_shared_v2_index_and_sidecars(modules, tmp_path, monkeypa
     assert [p.name for p in scratch.iterdir()] == ["note.md"]
     assert list(cases.vault_snapshot(source)) == ["note.md"]
     assert runner.vault_changes(scratch) == []
+
+
+def test_plain_suite_retains_34_prompt_baseline(modules, monkeypatch):
+    _, runner, _, _ = modules
+    selected = []
+    parse_tests = runner.parse_tests
+    def stop_after_selection(value):
+        selected.extend(parse_tests(value))
+        raise RuntimeError("selection captured before model setup")
+    monkeypatch.setattr(runner, "parse_tests", stop_after_selection)
+    monkeypatch.setattr("sys.argv", ["run_suite"])
+    with pytest.raises(RuntimeError, match="selection captured"):
+        runner.main()
+    assert selected == list(range(1, 35))

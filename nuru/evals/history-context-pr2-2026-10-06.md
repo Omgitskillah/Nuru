@@ -70,9 +70,12 @@ The older Qwen/v1.5 timings are not used to claim an improvement.
   adjacent user/reply exchanges. Orphan rows are skipped, empty cancelled replies
   are retained, and zero/negative budgets never force a message into a request.
 - Each model request includes estimated SYSTEM, tool/format schema, framing,
-  timestamp, current input, history and evidence, with 20% reserved for output.
-  Complete old exchanges can be evicted on continuation without splitting tool
-  calls/results. Required evidence that cannot fit stops the turn explicitly.
+  timestamp, current input, history and evidence, with 20% reserved for output, capped at 2,048 tokens.
+  Complete old exchanges are evicted first, then the largest tool-result bodies
+  are replaced with explicit omission notices until the request fits, without
+  splitting calls/results. Only requests still too large after optional evidence
+  is removed stop explicitly. The exact model-build SYSTEM rendering is cached
+  at session startup.
   The existing single server-overflow recovery remains a fallback.
 - Planner and executor calls receive bounded complete prior exchanges. Explicit
   executor/planner SYSTEM messages replace the baked assistant prompt for budgeting.

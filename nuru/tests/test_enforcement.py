@@ -2,6 +2,8 @@
 DecisionLayer, with a scripted Laya and a test-only config that marks every threshold calibrated
 (the only way the config allows enforce). No model, no vault: chat and the MCP tools are fakes."""
 
+from core.modelfile import render_modelfile
+
 import json
 
 import pytest
@@ -128,7 +130,7 @@ def setup(monkeypatch, tmp_path):
             yield from next(responses)
 
         tools = Tools(results or {"search": SEARCH, "write_note": "nuru/priya-raman.md"})
-        monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+        monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
         monkeypatch.setattr(session, "ensure_server_running", lambda: None)
         monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
         monkeypatch.setattr(session, "chat", chat)
@@ -462,3 +464,13 @@ def test_enforced_a_repeated_call_stops_the_turn_before_it_runs(setup, tmp_path)
     assert events[-1].text.startswith("I stopped here: it called search with the same arguments 3 times")
     rows = [r for r in watch_rows(tmp_path) if r["proposed_action"] == "repeated_call"]
     assert rows[0]["action_taken"] == "stopped"
+
+
+def test_step_limit_final_answer_remains_reachable_under_context_pressure(setup):
+    s, seen, tools = setup(["step_cap"], [[call("search", {"query": "big"})],
+                                        ["The omitted result is still unchecked."]],
+                           results={"search": "x" * 100000}, tool_gate={"step_cap": 1})
+    assert list(s.ask("Find it"))[-1] == Text("The omitted result is still unchecked.")
+    assert len(seen) == 2 and seen[-1]["tools"] is False
+    assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round")
+    assert any(m.get("content", "").startswith("[left out:") for m in seen[-1]["messages"])

@@ -57,7 +57,7 @@ caffeinate -i uv run python run_suite.py --tests quick --label quick
 
 ## Multi-turn memory cases
 
-The default `--tests all` discovers the original 34 prompts plus additional numbered cases from [`cases.json`](cases.json). `--tests 1-34` preserves the legacy suite; `--tests 35` runs the three-turn follow-up memory case; `--tests 36` runs the same turns through a fixed answer-only plan. Use `--cases path.json` to supply additional fixtures with unique numeric IDs. Each case has a `name`, an optional `plan` shared by its turns, and a nonempty `turns` list; each turn contains a `prompt` and a `checks` mapping of labels to regular expressions. Fixtures and scorer hashes are recorded in the manifest.
+The default `--tests 1-34` preserves the original 34-prompt baseline (/170). Explicit `--tests all` includes additional numbered cases from [`cases.json`](cases.json); `--tests 35` runs the three-turn follow-up memory case; `--tests 36` runs the same turns through a fixed answer-only plan. Use `--cases path.json` to supply additional fixtures with unique numeric IDs. Each case has a `name`, an optional `plan` shared by its turns, and a nonempty `turns` list; each turn contains a `prompt` and a `checks` mapping of labels to regular expressions. Fixtures and scorer hashes are recorded in the manifest.
 
 ```bash
 MODEL=nuru-pr2-eval NURU_PLANNER_MODEL=nuru-pr2-eval uv run python run_suite.py --tests 35 --tiers off --label memory

@@ -21,3 +21,10 @@ def test_tool_call_arguments_and_response_reserve_are_counted():
     with pytest.raises(ContextBudgetExceeded):
         require_fit(1000, messages)
     assert available_tokens(0, []) < 0
+
+
+@pytest.mark.parametrize("window,expected", [(1000, 800), (8192, 6553), (16384, 14336), (32768, 30720)])
+def test_response_reserve_is_capped(window, expected):
+    from core.context_budget import input_budget, REQUEST_FRAMING
+    assert input_budget(window) == expected
+    assert available_tokens(window, []) == expected - REQUEST_FRAMING

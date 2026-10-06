@@ -1,3 +1,4 @@
+from core.modelfile import render_modelfile
 import json
 import threading
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,7 @@ from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking,
 def _isolate_model_settings(monkeypatch):
     # Building the custom Ollama model is a real `ollama create` subprocess
     # call - never let it run for real in a test.
-    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+    monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
     # THINK comes from the developer's own .env via load_dotenv, so without this the
     # thinking-mode tests pass or fail depending on what the machine is set up to run.
     monkeypatch.setattr(session, "THINK", True)
@@ -81,7 +82,7 @@ def tool_call(name, arguments):
 def test_start_builds_the_custom_model_from_the_modelfile_before_loading(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        session, "create_model", lambda model, base_model, modelfile_path: calls.append((model, base_model, modelfile_path))
+        session, "create_model", lambda model, base_model, modelfile_path: (calls.append((model, base_model, modelfile_path)) or render_modelfile(modelfile_path, base_model))
     )
 
     start_session(monkeypatch)
@@ -1045,19 +1046,24 @@ def test_admission_uses_reloaded_effective_window(monkeypatch):
     assert s.context_window == 1000
 
 
-def test_oversized_continuation_stops_without_sending_missing_evidence(monkeypatch):
+def test_oversized_continuation_omits_evidence_and_completes(monkeypatch):
     tools = FakeMCPTools(tool_results={"read_note": "x" * 100000})
     calls = []
     def chat(model, messages, **kwargs):
         calls.append(messages)
-        yield {"tool_calls": [tool_call("read_note", {"name": "big"})]}
+        if len(calls) == 1:
+            yield {"tool_calls": [tool_call("read_note", {"name": "big"})]}
+        else:
+            yield "The large note is unresolved."
     s = start_session(monkeypatch, tools=tools, chat=chat)
-    events = list(s.ask("read big"))
-    assert isinstance(events[-1], Failure)
-    assert len(calls) == 1
-    rows = s.store.get_messages(s.conversation_id)
-    assert [m["role"] for m in rows] == ["user", "nuru"]
-    assert "evidence" in rows[-1]["content"]
+    assert list(s.ask("read big"))[-1] == Text("The large note is unresolved.")
+    assert len(calls) == 2
+    assert calls[1][-1]["content"].startswith("[left out: ~25000 tokens")
+    entries = [json.loads(line) for log in session.LOG_DIR.glob("*.jsonl") for line in log.read_text().splitlines()]
+    reduction = next(e for e in entries if e["event"] == "context_reduction")
+    assert reduction["omitted_result_tokens"] == [25000] and reduction["turn_id"] == "t-1"
+    assert calls[1][-2]["tool_calls"][0]["function"]["name"] == "read_note"
+    assert s.store.get_messages(s.conversation_id)[-1]["content"] == "The large note is unresolved."
 
 
 def test_continuation_evicts_complete_old_exchange_and_keeps_tool_pair(monkeypatch):
@@ -1098,3 +1104,50 @@ def test_plan_admission_uses_independent_planners_actual_window(monkeypatch):
     events = list(s.ask("PLAN: Say hello"))
     assert isinstance(events[-1], Failure)
     assert "context budget" in events[-1].message
+
+
+def test_system_budget_uses_exact_build_rendering_without_reading_again(monkeypatch):
+    monkeypatch.setattr(session, "create_model", lambda *args: 'FROM test\nSYSTEM """startup prompt"""\n')
+    s = start_session(monkeypatch)
+    assert s._system_text() == "startup prompt"
+    # The template may change or disappear after startup; accounting stays fixed.
+    monkeypatch.setattr(session, "_modelfile_for", lambda _: (_ for _ in ()).throw(AssertionError("re-read")))
+    assert s._system_text() == "startup prompt"
+    assert list(s.ask("hi")) == []
+
+
+def test_budget_omits_largest_tools_only_until_fit_and_preserves_original(monkeypatch):
+    from core.context_budget import available_tokens
+    sent = []
+    s = start_session(monkeypatch, chat=lambda model, messages, **kw: (sent.append(messages) or iter(["ok"])))
+    messages = [{"role": "system", "content": "explicit"}, {"role": "user", "content": "question"},
+                {"role": "assistant", "tool_calls": [tool_call("read_note", {"name": "large"}),
+                                                       tool_call("read_note", {"name": "small"})]},
+                {"role": "tool", "tool_call_id": "large", "content": "x" * 6000},
+                {"role": "tool", "tool_call_id": "small", "content": "important remaining fact"}]
+    assert list(s._chat("test", messages, num_ctx=1000)) == ["ok"]
+    assert available_tokens(1000, sent[0]) >= 0
+    assert sent[0][3]["content"].startswith("[left out:")
+    assert sent[0][3]["tool_call_id"] == "large"
+    assert sent[0][4] == messages[4]
+    assert messages[3]["content"] == "x" * 6000
+    assert sent[0][2] == messages[2]
+
+
+def test_irreducible_request_raises_after_all_tool_evidence_removed(monkeypatch):
+    from core.context_budget import ContextBudgetExceeded
+    s = start_session(monkeypatch, chat=lambda *a, **kw: pytest.fail("must not send"))
+    messages = [{"role": "system", "content": "explicit"}, {"role": "user", "content": "x" * 6000},
+                {"role": "tool", "content": "x" * 12000}]
+    with pytest.raises(ContextBudgetExceeded):
+        list(s._chat("test", messages, num_ctx=1000))
+
+
+def test_multiple_tool_results_are_omitted_if_one_is_not_enough(monkeypatch):
+    sent = []
+    s = start_session(monkeypatch, chat=lambda model, messages, **kw: (sent.append(messages) or iter(["ok"])))
+    messages = [{"role": "system", "content": "explicit"}, {"role": "user", "content": "question"},
+                {"role": "assistant", "tool_calls": [tool_call("read_note", {"name": n}) for n in ("a", "b")]},
+                {"role": "tool", "content": "x" * 7000}, {"role": "tool", "content": "y" * 6000}]
+    list(s._chat("test", messages, num_ctx=1000))
+    assert all(m["content"].startswith("[left out:") for m in sent[0] if m["role"] == "tool")

@@ -28,8 +28,7 @@ from mcp.client.stdio import get_default_environment
 
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
-from core.context_budget import RESPONSE_RESERVE, ContextBudgetExceeded, available_tokens, estimate_tokens, require_fit
-from core.modelfile import render_modelfile
+from core.context_budget import ContextBudgetExceeded, available_tokens, estimate_tokens, input_budget, require_fit
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
@@ -318,7 +317,7 @@ def _context_window(model_info: dict | None) -> int:
 
 
 def _token_budget(context_window: int) -> int:
-    return int(context_window * (1 - RESPONSE_RESERVE))
+    return input_budget(context_window)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -396,6 +395,7 @@ class Session:
         conversation_id: int,
         shadow: DecisionShadow | None = None,
         enforcement: Enforcement | None = None,
+        system_text: str = "",
     ) -> None:
         self.tools = tools
         self.tool_definitions = tool_definitions
@@ -409,13 +409,15 @@ class Session:
         self.confirm_write: Callable[[str, dict], bool] | None = None
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
+        self._cached_system_text = system_text
 
     @classmethod
     def start(cls) -> "Session":
         """Build the custom model, connect the MCP servers, open the log and the database, load the
         model, and return the session that ties them together. Whatever was opened is closed
         again if a later step fails."""
-        create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
+        rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
+        system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
 
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
@@ -447,7 +449,7 @@ class Session:
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 
-            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement)
+            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement, system_text)
             session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
@@ -485,17 +487,33 @@ class Session:
         return ensure_model_loaded(MODEL) if is_model_loaded(MODEL) else None
 
     def _system_text(self) -> str:
-        rendered = render_modelfile(_modelfile_for(BASE_MODEL), BASE_MODEL)
-        return rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
+        return self._cached_system_text
 
     def _chat(self, model: str, messages: list[dict], *, num_ctx: int, history_count: int = 0, **kwargs):
-        messages = list(messages)
+        messages = [dict(message) for message in messages]
+        original_history_count = history_count
+        omitted_tokens = []
         # Evict complete old exchanges before sacrificing current-turn evidence.
         while history_count >= 2 and available_tokens(num_ctx, messages, system=self._system_text(),
                                                       tools=kwargs.get("tools"), fmt=kwargs.get("fmt")) < 0:
             offset = 1 if messages[0].get("role") == "system" else 0
             del messages[offset:offset + 2]
             history_count -= 2
+        # Keep tool-call relationships, but omit the largest evidence bodies first.
+        # Work on copies: the original transcript remains available for logging/recovery.
+        for index in sorted((i for i, m in enumerate(messages) if m.get("role") == "tool"),
+                            key=lambda i: estimate_tokens(messages[i].get("content") or ""), reverse=True):
+            if available_tokens(num_ctx, messages, system=self._system_text(),
+                                tools=kwargs.get("tools"), fmt=kwargs.get("fmt")) >= 0:
+                break
+            content = messages[index].get("content") or ""
+            note = (f"[left out: ~{estimate_tokens(content)} tokens; evidence unavailable. "
+                    "State what remains unchecked or retrieve a smaller section.]")
+            if estimate_tokens(note) < estimate_tokens(content):
+                messages[index]["content"] = note
+                omitted_tokens.append(estimate_tokens(content))
+        if history_count != original_history_count or omitted_tokens:
+            self.logger.context_reduction(num_ctx, original_history_count - history_count, omitted_tokens)
         require_fit(num_ctx, messages, system=self._system_text(),
                     tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
         yield from chat(model, messages, num_ctx=num_ctx, **kwargs)

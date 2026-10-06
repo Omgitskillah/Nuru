@@ -121,7 +121,7 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", type=Path, default=HERE / "cases.json", help="additional numbered sequence cases")
-    parser.add_argument("--tests", default="all", help='"all", "quick", or numbers and ranges: "1-34", "28-31,34"')
+    parser.add_argument("--tests", default="1-34", help='"all", "quick", or numbers and ranges: "1-34", "28-31,34"')
     parser.add_argument("--tiers", default="default", help="comma-separated thinking levels: default (the model's "
                         "own, from its profile), off, low, high")
     parser.add_argument("--repeats", type=int, default=1)

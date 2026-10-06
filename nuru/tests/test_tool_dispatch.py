@@ -404,7 +404,7 @@ def test_exhausted_recovery_keeps_tools_off_on_empty_answer_retry(monkeypatch):
     script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
                    [{'tool_calls': [tool_call('calculate', {'expression': 3})]}],
-                   [{'thinking_chunk': 'The calculation remains unresolved.'}],
+                   [{'thinking': 'The calculation remains unresolved.'}],
                    ['No verified calculation; no note written.']])
     seen = []
     def chat(*a, **k):

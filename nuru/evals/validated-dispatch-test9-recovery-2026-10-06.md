@@ -27,6 +27,7 @@ Nuru head **`c965e9103af10959e6b69200cdb444900fed8c02`** was clean at launch:
   final-answer phase is stopped without dispatch; uncertainty/internal-error
   stops are unchanged.
 - Python dependency **`3da1447`**, [PR #1](https://github.com/Omgitskillah/python-4-llms/pull/1),
+  now merged as `8114e7c` and repinned (identical tree to the tested `3da1447`),
   registers the in-memory `script.py` source and strips only input-adapter frames
   from uncaught tracebacks. Script/library frames, failing source lines, exception
   chains/groups, syntax carets, partial stdout and exit codes are preserved.
@@ -110,5 +111,5 @@ caffeinate -i .venv/bin/python nuru/evals/decision_layer/run_suite.py \
 The historical 70-run paired report remains intact. This scoped rerun supersedes
 its description of recovery-exhaustion behavior and supplies new test-9 evidence;
 it is not a fresh seven-case aggregate. Other observed issues and the scorer's
-battery-audit false positive remain unresolved. The Python dependency must also
-be merged and repinned before merging Nuru.
+battery-audit false positive remain unresolved. The Python dependency merged as `8114e7c` and is repinned; its tree is
+identical to the tested `3da1447`, so repinning requires no further model rerun.

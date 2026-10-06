@@ -171,3 +171,80 @@ counts, not a tokenizer guarantee. Executor input clipping remains explicit in
 its prompts. These small memory runs are smoke checks, not the full baseline /
 candidate 34-case acceptance comparison planned for later hardening work. Tool
 failure normalization and independent mutation authorization remain PR 3 and PR 4.
+
+
+## PR review follow-up: context-pressure regression
+
+Review fixes are in commit `4dfac47`. Continuations now evict complete prior
+exchanges first, then replace the largest tool-result bodies with explicit
+`[left out: ~N tokens; evidence unavailable ...]` notices until the estimated
+request fits. Tool-call relationships and the step-limit final-answer instruction
+stay intact. Original messages are retained for logging and server-overflow
+recovery. The response reserve is `min(20% of window, 2048)`; at 16,384 the
+estimated input allowance is 14,336 before fixed request costs. A request still
+too large after removable content is omitted stops explicitly. Reduction events
+record evicted history counts and omitted evidence sizes without logging its text.
+
+`create_model()` returns its exact rendering, and Session caches that rendering's
+SYSTEM prompt at startup. It no longer reads templates for budget calculations.
+The suite defaults to `--tests 1-34` (/170); memory cases 35/36 remain opt-in and
+`--tests all` remains explicit. Documentation reflects these changes.
+
+Validation: **639 unit tests passed**. New checks cover capped reserves, largest
+and multiple tool-result omissions, preserved call relationships and original
+messages, irreducible requests, exact startup prompt caching, the default
+34-prompt selection, and the step-limit final answer under context pressure.
+Both GitHub CI checks passed on the implementation commit.
+
+The authorized live regression was run after code, documentation and unit checks,
+when CPU activity was low and Ollama had no models loaded:
+
+```sh
+MODEL=nuru-pr2-qwen-review NURU_BASE_MODEL=qwen3.5:4b \
+NURU_PLANNER_MODEL=nuru-pr2-qwen-review NURU_MAX_NUM_CTX=16384 \
+caffeinate -i .venv/bin/python nuru/evals/decision_layer/run_suite.py \
+  --tests 25,31,32 --tiers default --repeats 5 \
+  --label pr2-review-qwen4b --timeout 600
+```
+
+Batch: `evals/decision_layer/.runs/suite-pr2-review-qwen4b-20261006-095407`,
+implementation commit `4dfac47`, clean checkout at collection. Qwen3.5:4b Q4_K_M,
+default thinking off, Ollama 0.35.1, context 16,384. Base model digest:
+`2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`.
+Embedding index metadata confirms `nomic-embed-text-v2-moe`, 768 dimensions,
+1,500-character chunks. Python image:
+`sha256:56357ac130fd71a8a09d8c9d72feedc215c8adbfc1de59680f9e256b8337ab14`;
+all 15 session startup logs confirm Python availability. No expert calls occurred.
+Each case used a fresh scratch vault and the batch's own index.
+
+Scores use the unchanged single-prompt rubrics from the current scorer, applied
+also to the earlier raw records in the other checkout:
+
+| Test | Five candidate scores | Candidate | after-qwen4b | tweak-qwen4b | Largest measured prompt |
+| --- | --- | --- | --- | --- | --- |
+| 25, status | 5, 5, 3, 4, 5 | 22/25 | 19/25 | 19/25 | 13,459 |
+| 31, standup | 2, 2, 5, 5, 5 | 19/25 | 16/25 | 12/25 | 12,547 |
+| 32, audit | 3, 3, 4, 3, 4 | 17/25 | 17/25 | not collected | 15,228 |
+
+Earlier batches: `suite-after-qwen4b-20261005-194106` and
+`suite-tweak-qwen4b-20261005-211544`. Model digest, context, sampling, declared
+tools, submodule revisions, embedding model, Python image and semantic decision
+configuration match. Raw decision-config hashes differ because each batch has
+its own database path. The candidate vault hash
+`d50237d06a8f93ea788e05e78fda3893f981bdbd3d5362c0380df490ee891321`
+matches the tweak batch; the older after batch used
+`45ded25aaf93116b59b9794739af36242d9a25fb14344eebbb9ad05f1b89e068`.
+Earlier manifests lack rendered-prompt hashes. The current other checkout's
+rendered Qwen Modelfile matches the candidate exactly:
+`45de03832c3da004307023cb5cab5fbfdcbc495db3d645ced9f7d3557cd5d8da`.
+These are historical comparisons, not a paired same-day experiment.
+
+All 15 turns completed: no context-budget failures, crashes or timeouts. Four
+audits reached the ten-step final-answer path; repetition 3 answered within nine
+tool rounds. No live context-reduction events occurred; the omission
+path is demonstrated by focused unit tests, not by these live transcripts.
+Measured prompt usage is not the byte-based estimate used by the guard.
+The candidate totals match or exceed the cited scores, but five stochastic runs
+per case do not establish statistical improvement. Status and standup still have
+content misses; audits still miss periodic-attach and/or report-rate conclusions.
+The first-action-search prompt rule remains a separate change. PR #3 remains draft.

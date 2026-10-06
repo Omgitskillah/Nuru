@@ -191,7 +191,7 @@ that the refused replacement created no backup. The first transport run revealed
 that the SDK prefixes the JSON receipt; the adapter and a regression test now cover
 that envelope.
 
-The requested paired regression remains a **pre-merge check**, not a completed result:
+At this review follow-up, the paired regression was still a **pre-merge check**:
 cases 30, 31, 9, 7, 8, 12 and 32, five repeats on baseline and candidate with matched
 Qwen3.5:4b, thinking off, 16K context, v2 embeddings, Python, vault and scorer. Earlier
 v1.5/no-Python batches are ineligible as that baseline. Test 32's scorer issues on
@@ -212,3 +212,12 @@ Dependency contract: [obsidian-4-llms PR #2](https://github.com/Omgitskillah/obs
 merged and pinned at `3e084e3` on `main` in this checkout. Its tree is identical
 to the tested implementation commit `584be0e` (`afd2aa33770ab3fa97a8789ae5dcdb160742d6c8`),
 so repinning changes no dependency code and requires no repeated test run.
+
+
+## Completed paired regression after PR #4 merge
+
+Rebased on merged `plan-executor`; 714 tests passed. All 70 requested model runs
+are complete. See [paired findings](validated-dispatch-paired-2026-10-06.md) and
+[per-run scores](validated-dispatch-paired-2026-10-06.csv). After the explicit
+scorer correction, candidate passes 24/35 versus baseline 26/35; median turn
+latency is 51.3 s versus 43.0 s. PR #5 remains draft pending assessment.

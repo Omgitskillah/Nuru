@@ -209,5 +209,6 @@ Final follow-up checks:
 - Six scratch-vault MCP contracts passed after the SDK-envelope fix.
 
 Dependency contract: [obsidian-4-llms PR #2](https://github.com/Omgitskillah/obsidian-4-llms/pull/2),
-pinned at `584be0e` in this checkout. Both implementation changes are reviewable
-without a dependency merge; the commit is published on its feature branch.
+merged and pinned at `3e084e3` on `main` in this checkout. Its tree is identical
+to the tested implementation commit `584be0e` (`afd2aa33770ab3fa97a8789ae5dcdb160742d6c8`),
+so repinning changes no dependency code and requires no repeated test run.

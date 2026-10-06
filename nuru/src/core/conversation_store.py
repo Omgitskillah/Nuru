@@ -115,7 +115,7 @@ class ConversationStore:
         return cursor.lastrowid
 
     def finish_write(self, attempt_id: int, state: str, diagnostic: str | None = None) -> None:
-        if state not in {'completed', 'uncertain'}:
+        if state not in {'completed', 'not_completed', 'uncertain'}:
             raise ValueError("invalid dispatched-write state")
         with self._conn:
             self._conn.execute("UPDATE write_attempts SET state = ?, diagnostic = ? WHERE id = ?",

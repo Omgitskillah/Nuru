@@ -18,7 +18,7 @@ class ToolOutcome:
     kind: str | None = None
     code: str | None = None
     hint: str | None = None
-    certainty: str = "completed"  # completed | not_dispatched | failed | uncertain
+    certainty: str = "completed"  # completed | not_dispatched | not_completed | failed | uncertain
     repairable: bool = False
     attempt_id: int | None = None
 
@@ -78,9 +78,15 @@ def validate(name: str, arguments, schemas: dict) -> tuple[dict | None, ToolOutc
 
 def classify(name: str, result: ToolResult) -> ToolOutcome:
     data = None
-    if name in DOMAIN_TOOLS:
+    if name in DOMAIN_TOOLS or name in MUTATIONS:
         try:
-            data = json.loads(result.text)
+            # The pinned Python MCP SDK prefixes ToolError text; the receipt remains
+            # structured JSON. Never infer certainty from the exception type itself.
+            payload = result.text
+            prefix = f"Error executing tool {name}: "
+            if name in MUTATIONS and result.is_error and payload.startswith(prefix):
+                payload = payload[len(prefix):]
+            data = json.loads(payload)
         except (ValueError, TypeError):
             pass
     domain_error = isinstance(data, dict) and data.get("ok") is False
@@ -88,6 +94,10 @@ def classify(name: str, result: ToolResult) -> ToolOutcome:
         return ToolOutcome(result.text, True)
     # A mutation error is not proof that nothing changed: server/index cleanup may fail after writing.
     if name in MUTATIONS:
+        if (result.is_error and isinstance(data, dict) and data.get("code") == "REJECTED_BEFORE_WRITE"
+                and data.get("completion_certainty") == "not_completed"):
+            return failure("rejection", "REJECTED_BEFORE_WRITE", str(data.get("message") or result.text),
+                           certainty="not_completed", repairable=True, payload=result.text)
         return failure("protocol", "WRITE_OUTCOME_UNCERTAIN", result.text,
                        certainty="uncertain", payload=result.text)
     diagnostic = data.get("error") if isinstance(data, dict) and isinstance(data.get("error"), dict) else data

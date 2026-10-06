@@ -38,6 +38,12 @@ class FakeSession:
     def close(self):
         self.calls.append("close")
 
+    def pending_writes(self):
+        return self.store.pending_writes(self._vault_scope)
+
+    def resolve_write(self, attempt_id, state):
+        self.store.resolve_write(attempt_id, self._vault_scope, state)
+
 
 @pytest.fixture
 def fake_session(monkeypatch, tmp_path):

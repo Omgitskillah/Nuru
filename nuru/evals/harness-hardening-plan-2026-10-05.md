@@ -261,10 +261,13 @@ Approximate effort: 0.5–1 day.
    existing successful payload consumers, including executor `step_value()` and
    search provenance extraction, rather than blindly wrapping every successful
    tool result in a new JSON format.
-5. Allow one model correction for invalid arguments or repairable failed reads/
-   computations. Count it against existing call/step limits. For plans, allow a
+5. Allow two bounded recovery calls per turn for invalid arguments or repairable
+   failed reads/computations, including cross-tool recovery reads (revised after PR3
+   review of historical recoveries). Do not clear failed evidence after an unrelated
+   successful read. Count recovery against existing call/step limits. For plans, allow a
    bounded repair of the failed step, then finalize instead of running dependents.
-   A mutation rejected before dispatch can be corrected; one dispatched with an
+   A mutation rejected before dispatch or explicitly confirmed rejected before mutation
+   can be corrected; one dispatched with an
    uncertain outcome cannot be replayed. Stop subsequent writes, reconcile using
    safe reads when possible, and report uncertainty if it cannot be established.
    If a subsequent model call fails after a successful mutation, persist a partial

@@ -118,19 +118,21 @@ def test_model_failure_after_successful_write_preserves_partial_turn(monkeypatch
     assert len(tools.calls) == 1 and not s.store.pending_writes(s._vault_scope)
 
 
-def test_one_ordinary_correction_then_stop_without_dependent_write(monkeypatch):
+def test_two_ordinary_corrections_then_stop_without_dependent_write(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)
     script = iter([[{'tool_calls': [tool_call('calculate', '{bad'),
                                     tool_call('write_note', {'content': 'wrong'})]}],
-                   [{'tool_calls': [tool_call('calculate', {'expression': 4})]}]])
+                   [{'tool_calls': [tool_call('calculate', {'expression': 4})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 5})]}]])
     seen = []
     def chat(model, messages, **kw):
         seen.append(kw.get('tools'))
         return iter(next(script))
     s = start_session(monkeypatch, tools=tools, chat=chat)
     events = list(s.ask('calculate and save'))
-    assert isinstance(events[-1], Failure) and len(seen) == 2
-    assert [t['function']['name'] for t in seen[1]] == ['calculate']
+    assert isinstance(events[-1], Failure) and len(seen) == 3
+    assert {'search', 'read_note', 'calculate'} <= {t['function']['name'] for t in seen[1]}
+    assert 'write_note' not in {t['function']['name'] for t in seen[1]}
     assert not tools.calls
 
 
@@ -180,7 +182,7 @@ def test_python_partial_output_is_failure_in_logs_and_shadow(monkeypatch):
     assert logged['status'] == 'error' and logged['error_kind'] == 'domain' and logged['completion_certainty'] == 'failed'
 
 
-def test_plan_literal_arguments_get_only_one_correction(monkeypatch):
+def test_plan_literal_arguments_can_be_corrected(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS, tool_results={'calculate': '{"ok":true,"result":"4"}'})
     replies = iter(['{"expression":"2+2"}', '4'])
     s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(replies)]))
@@ -217,3 +219,134 @@ def test_validation_respects_the_advertised_schema_draft():
     tools = [{'function': {'name': 'write_note', 'parameters': schema}}]
     _, outcome = tool_dispatch.validate('write_note', {'note': 'x'}, tool_dispatch.validators(tools))
     assert outcome.code == 'SCHEMA_MISMATCH'
+
+
+def rejected(message='Replacement requires expected_revision'):
+    return ToolResult(json.dumps({'code': 'REJECTED_BEFORE_WRITE', 'completion_certainty': 'not_completed',
+                                  'message': message}), True)
+
+
+@pytest.mark.parametrize('name', ['write_note', 'rename_or_move_file'])
+def test_explicit_prewrite_rejection_is_repairable_but_exception_prefix_is_not(name):
+    outcome = tool_dispatch.classify(name, rejected())
+    assert outcome.certainty == 'not_completed' and outcome.repairable and not outcome.must_stop
+    for text in ['ValueError: Move recovery refused: destination changed', 'PermissionError: denied',
+                 '{"code":"REJECTED_BEFORE_WRITE"}']:
+        outcome = tool_dispatch.classify(name, ToolResult(text, True))
+        assert outcome.certainty == 'uncertain' and outcome.must_stop and not outcome.repairable
+
+
+def test_ordinary_second_correction_can_succeed(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': 2})]}],
+                   [{'tool_calls': [tool_call('calculate', {'expression': '2+2'})]}], ['4']])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    assert list(s.ask('compute'))[-1] == Text('4')
+    assert tools.calls == [('calculate', {'expression': '2+2'})]
+
+
+def test_cross_tool_recovery_does_not_clear_failed_evidence_until_repaired(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    calls = []
+    def dispatch(name, args):
+        calls.append((name, args))
+        return ToolResult('FileNotFoundError: wrong name', True) if name == 'read_note' and args['name'] == 'wrong' else ToolResult('found')
+    tools.call_tool_result = dispatch
+    script = iter([[{'tool_calls': [tool_call('read_note', {'name': 'wrong'})]}],
+                   [{'tool_calls': [tool_call('search', {'query': 'find correct name'})]}],
+                   [{'tool_calls': [tool_call('read_note', {'name': 'right'})]}],
+                   [{'tool_calls': [tool_call('write_note', {'content': 'verified'})]}], ['saved']])
+    seen = []
+    def chat(*a, **kw):
+        seen.append(kw.get('tools'))
+        return iter(next(script))
+    s = start_session(monkeypatch, tools=tools, chat=chat)
+    assert list(s.ask('read and save'))[-1] == Text('saved')
+    assert [n for n, _ in calls] == ['read_note', 'search', 'read_note', 'write_note']
+    assert all('write_note' not in {t['function']['name'] for t in offered} for offered in seen[1:3])
+    assert 'write_note' in {t['function']['name'] for t in seen[3]}
+
+
+def test_unrelated_successful_read_does_not_unlock_a_dependent_write(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
+                   [{'tool_calls': [tool_call('read_note', {'name': 'other'})]}],
+                   [{'tool_calls': [tool_call('write_note', {'content': 'wrong'})]}]])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    assert isinstance(list(s.ask('calculate and save'))[-1], Failure)
+    assert tools.calls == [('read_note', {'name': 'other'})]
+
+
+def test_confirmed_write_rejection_can_reread_then_correct_without_pending_lock(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    calls = []
+    def dispatch(name, args):
+        calls.append((name, args))
+        return rejected() if name == 'write_note' and args.get('note') == 'stale' else ToolResult('ok')
+    tools.call_tool_result = dispatch
+    script = iter([[{'tool_calls': [tool_call('write_note', {'note': 'stale', 'content': 'new'})]}],
+                   [{'tool_calls': [tool_call('read_note', {'name': 'fresh'})]}],
+                   [{'tool_calls': [tool_call('write_note', {'note': 'fresh', 'content': 'new'})]}], ['saved']])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    assert list(s.ask('replace'))[-1] == Text('saved')
+    assert [n for n, _ in calls] == ['write_note', 'read_note', 'write_note']
+    assert not s.pending_writes()
+    assert s.store._conn.execute('select state from write_attempts order by id').fetchall() == [('not_completed',), ('completed',)]
+    assert 'confirmed not completed' in s._partial_actions()
+
+
+def test_recovery_reads_are_bounded_even_when_successful(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    script = iter([[{'tool_calls': [tool_call('calculate', {'expression': 1})]}],
+                   [{'tool_calls': [tool_call('read_note', {'name': 'a'})]}],
+                   [{'tool_calls': [tool_call('search', {'query': 'b'})]}], ['calculation unresolved']])
+    seen = []
+    def chat(*a, **kw):
+        seen.append(kw.get('tools'))
+        return iter(next(script))
+    s = start_session(monkeypatch, tools=tools, chat=chat)
+    assert list(s.ask('compute'))[-1] == Text('calculation unresolved')
+    assert seen[-1] is None and len(tools.calls) == 2
+
+
+def test_recovery_read_failure_does_not_unlock_rejected_write(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    def dispatch(name, args):
+        tools.calls.append((name, args))
+        return rejected() if name == 'write_note' else ToolResult('not found', True)
+    tools.call_tool_result = dispatch
+    script = iter([[{'tool_calls': [tool_call('write_note', {'content': 'new'})]}],
+                   [{'tool_calls': [tool_call('read_note', {'name': 'missing'})]}],
+                   [{'tool_calls': [tool_call('write_note', {'content': 'new'})]}]])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    assert isinstance(list(s.ask('write'))[-1], Failure)
+    assert [n for n, _ in tools.calls] == ['write_note', 'read_note']
+
+
+def test_planned_second_correction_can_succeed(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    responses = iter(['{"expression":2}', '{"expression":"2+2"}', '4'])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(responses)]))
+    plan = {'steps': [{'step': 's1', 'tool': 'calculate', 'with': {'expression': 1}}]}
+    assert list(s.run_plan('calculate', plan))[-1] == Text('4')
+    assert tools.calls == [('calculate', {'expression': '2+2'})]
+
+
+def test_mcp_sdk_prefixed_rejection_receipt_is_recognized():
+    raw = rejected()
+    result = ToolResult('Error executing tool write_note: ' + raw.text, True)
+    outcome = tool_dispatch.classify('write_note', result)
+    assert outcome.certainty == 'not_completed' and outcome.repairable
+    wrong = ToolResult('Error executing tool rename_or_move_file: ' + raw.text, True)
+    assert tool_dispatch.classify('write_note', wrong).certainty == 'uncertain'
+
+
+def test_failed_recovery_in_plan_stops_dependent_writes_after_two_corrections(monkeypatch):
+    tools = FakeMCPTools(tools=TOOLS)
+    responses = iter(['{"expression":2}', '{"expression":3}', 'computation failed; no note written'])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(responses)]))
+    plan = {'steps': [{'step': 's1', 'tool': 'calculate', 'with': {'expression': 1}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
+    assert list(s.run_plan('calculate and save', plan))[-1] == Text('computation failed; no note written')
+    assert not tools.calls

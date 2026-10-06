@@ -574,8 +574,8 @@ class Session:
         failure = False  # a failure signal since the last model call (enforced tiers move up on it)
         tool_rounds = 0
         answer_after_failure = False
-        repair_pending: ToolOutcome | None = None
-        repair_tool: str | None = None
+        repair_pending: dict[str, ToolOutcome] = {}
+        recovery_calls = 0  # Two corrections/recovery reads per turn, even without step_cap enforcement.
         final_answer = False  # the step cap's last call, without tools, has been asked for
         messages = None
         prompt_tokens_recorded = False
@@ -613,7 +613,7 @@ class Session:
                         yield from self._abort_turn(turn_id, first_outcome.user_message(first_read))
                         return
                     if not first_outcome.success:
-                        repair_pending, repair_tool = first_outcome, first_read
+                        repair_pending[first_read] = first_outcome
                     first_read = None
                     tool_rounds += 1
                     decisions = self.shadow.before_next_call()
@@ -656,10 +656,10 @@ class Session:
             if answer_after_failure:
                 tools_offered = None
             if repair_pending and not final_answer:
-                # One correction, never a dependent write using failed evidence.
-                tools_offered = [t for t in self.tool_definitions if t["function"]["name"] == repair_tool]
-                if repair_tool not in self._tool_validators:
-                    tools_offered = [t for t in self.tool_definitions if t["function"]["name"] not in MUTATIONS]
+                tools_offered = self._recovery_tools(tools_offered, repair_pending) if recovery_calls < 2 else None
+                if recovery_calls >= 2:
+                    messages.append({"role": "user", "content": "[Nuru] Recovery budget exhausted. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
+                    final_answer = True
 
             tool_calls = None
             usage: dict = {}
@@ -800,7 +800,7 @@ class Session:
             tool_rounds += 1
             messages.append({"role": "assistant", "tool_calls": tool_calls})
             last_results = []
-            correcting = repair_pending is not None
+            correcting = bool(repair_pending)
             for index, call in enumerate(tool_calls):
                 fn = call.get("function") or {}
                 name = fn.get("name", "")
@@ -808,12 +808,16 @@ class Session:
                 args, invalid = tool_dispatch.validate(name, raw_args, self._tool_validators)
                 shown_args = args if args is not None else {"invalid_arguments": str(raw_args)[:300]}
                 yield ToolCall(name, shown_args)
-                if correcting and index > 0:
+                recovery_allowed = {t["function"]["name"] for t in self._recovery_tools(self.tool_definitions, repair_pending)}
+                exhausted = correcting and recovery_calls >= 2
+                if correcting:
+                    recovery_calls += 1
+                if exhausted or (correcting and index > 0):
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
-                        refusal=tool_dispatch.failure("repair", "REPAIR_LIMIT", "Only one correction call is allowed."))
-                elif correcting and repair_tool in self._tool_validators and name != repair_tool:
+                        refusal=tool_dispatch.failure("repair", "REPAIR_LIMIT", "At most two recovery calls, one per model round, are allowed."))
+                elif correcting and name in MUTATIONS and name not in recovery_allowed:
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
-                        refusal=tool_dispatch.failure("repair", "DEPENDENT_CALL_BLOCKED", "Repair the failed tool before doing anything else."))
+                        refusal=tool_dispatch.failure("repair", "DEPENDENT_CALL_BLOCKED", "Repair failed evidence before writing. Reads and computations remain available."))
                 elif invalid:
                     outcome = self._call_tool(turn_id, name, raw_args, None, enforcing)
                 elif (stop := self._repeated_call(name, args, calls_seen)) is not None:
@@ -822,8 +826,11 @@ class Session:
                 elif enforcing and enforcing.on("gate_write") and name in WRITE_TOOLS:
                     before_repair = self._repair_rounds
                     outcome = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id,
-                        allow_repair=not (enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap))
+                        allow_repair=not (enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap)
+                                     and (not correcting or recovery_calls < 2))
                     tool_rounds += self._repair_rounds - before_repair
+                    if correcting:
+                        recovery_calls += self._repair_rounds - before_repair
                 else:
                     if name == _EXPERT_TOOL:
                         args = {**self._resolve_attachments(args), _INJECTED_EXPERT_ARG: text}
@@ -843,11 +850,11 @@ class Session:
                 if not outcome.success:
                     if outcome.kind == "policy":
                         answer_after_failure = True
-                    elif correcting or not outcome.repairable:
+                    elif not outcome.repairable or (correcting and recovery_calls >= 2):
                         yield from self._abort_turn(turn_id, "Tool correction failed. " + outcome.user_message(name))
                         return
                     else:
-                        repair_pending, repair_tool = outcome, name
+                        repair_pending[name] = outcome
                     failure = True
                     # Do not dispatch siblings whose arguments may depend on failed evidence.
                     for skipped in tool_calls[index + 1:]:
@@ -858,7 +865,10 @@ class Session:
                         messages.append({"role": "tool", "content": skipped_outcome.text})
                     break
                 if correcting:
-                    repair_pending, repair_tool = None, None
+                    repair_pending.pop(name, None)
+                    # A replacement read/computation can replace an unavailable tool, but an
+                    # unrelated successful read cannot clear an actual failed evidence source.
+                    repair_pending = {n: o for n, o in repair_pending.items() if n in self._tool_validators}
                 if _cancelled(cancel):
                     self._end_cancelled(turn_id, output_text)
                     return
@@ -866,6 +876,19 @@ class Session:
                 decisions = self.shadow.before_next_call()
 
     # ------------------------------------------------------------------ running one tool
+    def pending_writes(self) -> list[dict]:
+        return self.store.pending_writes(self._vault_scope)
+
+    def resolve_write(self, attempt_id: int, state: str) -> None:
+        """Operator action, never exposed as a model tool. Stop active sessions first."""
+        self.store.resolve_write(attempt_id, self._vault_scope, state)
+
+    def _recovery_tools(self, offered: list[dict] | None, pending: dict[str, ToolOutcome]) -> list[dict]:
+        failed_evidence = any(name not in MUTATIONS and name in self._tool_validators for name in pending)
+        return [t for t in offered or [] if t["function"]["name"] not in MUTATIONS or
+                (not failed_evidence and (outcome := pending.get(t["function"]["name"])) is not None
+                 and outcome.certainty in {"not_dispatched", "not_completed"})]
+
     def _before_tool(self, name: str, args: dict, enforcing: Enforcement | None) -> tuple[dict, dict | None, int | None]:
         """Before a tool runs: Laya's note type for a write_note (filled in when note_type is
         enforced) and gate_write for a write. Returns the arguments to run with, the write gate's
@@ -947,7 +970,8 @@ class Session:
                     certainty="uncertain" if name in MUTATIONS else "failed", repairable=transport and name not in MUTATIONS)
         if attempt_id is not None:
             outcome = replace(outcome, attempt_id=attempt_id)
-            self.store.finish_write(attempt_id, "completed" if outcome.success else "uncertain", outcome.hint)
+            self.store.finish_write(attempt_id, "completed" if outcome.success else
+                                    "not_completed" if outcome.certainty == "not_completed" else "uncertain", outcome.hint)
             self._turn_writes.append((name, args, outcome))
         if name == _PYTHON_TOOL:
             outcome = replace(outcome, text=_python_result(outcome.text))
@@ -968,7 +992,8 @@ class Session:
         lines = []
         for name, args, outcome in self._turn_writes:
             target = args.get("note") or args.get("source_path") or "new note"
-            status = "confirmed completed" if outcome.success else "outcome uncertain; do not retry"
+            status = ("confirmed completed" if outcome.success else "confirmed not completed" if
+                      outcome.certainty == "not_completed" else "outcome uncertain; do not retry")
             lines.append(f"- {name} ({target}): {status} (attempt {outcome.attempt_id}).")
         return "\nEarlier write actions:\n" + "\n".join(lines)
 
@@ -1261,7 +1286,7 @@ class Session:
                 if "tool" in step:
                     tool = step["tool"]
                     repaired_args = None
-                    for attempt in (1, 2):
+                    for attempt in (1, 2, 3):
                         try:
                             args = repaired_args if repaired_args is not None else executor.resolve(step.get("with") or {}, values)
                         except KeyError as missing:
@@ -1280,16 +1305,15 @@ class Session:
                         failed = None if ok else outcome.hint or content
                         source = list(dict.fromkeys(executor.refs_in(step.get("with", {}))))
                         can_repair = not (enforcing and enforcing.on("step_cap") and tool_attempts >= enforcing.step_cap)
-                        if failed and can_repair and outcome.repairable and attempt == 1 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
-                            # A rejected expression: write it again once, told why.
+                        if failed and can_repair and outcome.repairable and attempt < 3 and len(source) == 1 and by_name.get(source[0], {}).get("think") == "draft":
+                            # At most two corrections, counted against the step cap.
                             values[source[0]] = yield from draft(by_name[source[0]], f"{json.dumps(args)[:300]}: {failed}")
                             continue
-                        if failed and can_repair and outcome.repairable and attempt == 1 and tool in self._tool_validators:
+                        if failed and can_repair and outcome.repairable and attempt < 3 and tool in self._tool_validators:
                             out = yield from call(executor.repair_messages(text, tool, args, failed, now),
                                                   self._tool_validators[tool].schema)
-                            repaired_args, invalid = tool_dispatch.validate(tool, out, self._tool_validators)
-                            if invalid is None:
-                                continue
+                            repaired_args = out  # The dispatch boundary validates and logs the correction.
+                            continue
                         values[name] = executor.step_value(tool, content, ok)
                         labels[name] = f"The result of {tool} {json.dumps(args)[:300]}"
                         log.append({"step": name, "what": labels[name], "output": values[name]})

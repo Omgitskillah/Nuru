@@ -91,11 +91,11 @@ def main() -> None:
             elif text.strip() == "/load":
                 session.load_model()
             elif text.strip() == "/writes":
-                print(json.dumps(session.store.pending_writes(session._vault_scope), indent=2))
+                print(json.dumps(session.pending_writes(), indent=2))
             elif text.strip().startswith("/resolve-write "):
                 try:
                     _, attempt, state = text.strip().split()
-                    session.store.resolve_write(int(attempt), session._vault_scope, state)
+                    session.resolve_write(int(attempt), state)
                     print("Write reconciliation recorded. No write was executed.")
                 except ValueError as e:
                     print(f"[error] {e}")

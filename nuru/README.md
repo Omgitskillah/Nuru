@@ -190,11 +190,12 @@ JSON Schema before execution. Arguments must be JSON objects. Python accepts onl
 `code` and `notes`; Nuru injects note text and validates the resulting server request.
 Tool errors carry a common kind, code, hint and completion certainty in logs and model
 results. Math/Python domain failures override a successful protocol flag; note content
-is not interpreted as a tool-status envelope. Recoverable failures get one correction;
+is not interpreted as a tool-status envelope. Recoverable failures get two recovery calls;
 failed evidence cannot feed a dependent write.
 
 A write attempt is committed to the conversation database before dispatch. If its
-response is lost or reports an error, Nuru cannot assume nothing changed: it preserves
+response is lost or reports an error without an explicit pre-mutation rejection
+receipt, Nuru cannot assume nothing changed: it preserves
 the request, reports uncertainty and blocks further writes to that vault/database.
 This holds with Laya unavailable and after reopening. Reads remain available. A model
 failure after a confirmed write reports that completed action instead of deleting the
@@ -204,7 +205,18 @@ After stopping other sessions on the vault and inspecting its actual state, use
 `/writes` in the CLI to inspect pending attempts, then `/resolve-write ID completed`
 or `/resolve-write ID not_completed` to record a verified conclusion. Neither command
 executes a write; the model cannot resolve attempts. Leave uncertainty unresolved if
-you cannot establish what happened. The UI can inspect notes but uses the CLI for
-reconciliation in this revision. Separate conversation databases do not share the
+you cannot establish what happened. The UI also offers reconciliation through its
+Pending writes dialog while idle. Separate conversation databases do not share the
 journal; canonical authorization and target provenance remain the next work package.
 See [PR 3 findings](evals/validated-dispatch-pr3-2026-10-06.md) for coverage and limits.
+
+Pre-write refusals from the pinned Obsidian server carry an explicit
+`REJECTED_BEFORE_WRITE` receipt. These can be corrected without locking the vault;
+exception type names alone never make a dispatched write safe to retry. Recovery
+allows two calls per turn across reads and computations, while failed evidence
+continues to block dependent writes. Planned steps permit two bounded corrections.
+
+The desktop **Pending writes** button shows unresolved attempts while idle. Inspect
+the affected notes and move destinations, stop other sessions using that vault, then
+acknowledge those checks to mark an attempt completed or not completed. Leave it
+pending if unsure. These actions record a conclusion and do not retry any write.

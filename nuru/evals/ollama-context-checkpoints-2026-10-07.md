@@ -88,4 +88,3 @@ Follow-ups can still suffer if Nuru changes earlier text, drops reasoning, rewri
 4. **0.40.0 / MLX**, separately from llama.cpp tuning. Hold prompt, model quality/quantization, context, and scoring criteria comparable and explicitly record backend changes.
 
 Use **different user messages after an identical stable prefix**. Repeating the complete same prompt can hit the end-minus-four checkpoint and produce a misleading four-token result, as task 18048 already demonstrates. For every call capture prompt length, LCP, restored position, evaluated tokens, duration, runner reloads, and checkpoint eviction. The useful overhead is `LCP - restored`, not the whole `prompt_eval_count`.
-

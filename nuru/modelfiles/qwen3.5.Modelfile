@@ -22,5 +22,9 @@ PARAMETER repeat_penalty 1.0
 # Safety net against runaway thinking, as for Granite: high enough not to cut off a normal
 # think + tool-call turn.
 PARAMETER num_predict 8192
+# Qwen3.5 is hybrid: Ollama can only resume from a checkpoint, and keeps one num_batch tokens before
+# the end of each prompt. At the default 1024 a new session's first call re-read 1,024 tokens (4.1 s)
+# for a ~36-token message; at 256, 256 tokens (1.1 s), with full-prompt speed unchanged (2026-10-07).
+PARAMETER num_batch 256
 
 SYSTEM """__SYSTEM_PROMPT__"""

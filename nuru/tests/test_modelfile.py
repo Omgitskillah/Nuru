@@ -10,9 +10,9 @@ from core.providers import ollama
 from core.tool_contract import MODEL_TOOLS, RETIRED_TOOLS
 
 MODELFILES = Path(__file__).resolve().parents[1] / "modelfiles"
-# Full Modelfiles at plan-executor 80171de, before shared-source extraction, plus core rule 8 and the expert example (no expert, 2026-10-07).
+# Full Modelfiles at plan-executor 80171de, before shared-source extraction, plus core rule 8 and the expert example (no expert) and Qwen num_batch 256 (2026-10-07).
 BASELINE_HASHES = {
-    "qwen3.5": "47cbf6af1b48e948f8c8a33c2e9482f50370c71b3eeb8ec4033bf022e8ed9ce2",
+    "qwen3.5": "7188e6caf5c405964f818136d481fbc72adb33f698fc0021bdd094240532b76f",
     "granite4.2": "9dc46399311b06554b2ab4543f0a7c6b472782cc21125949c9a1494aaf37b351",
 }
 

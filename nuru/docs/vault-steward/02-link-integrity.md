@@ -1,6 +1,9 @@
 # WP02 — Link integrity
 
-Status: proposed work package, 2026-10-07. No implementation or measured results.
+Status: deterministic v1 implemented on `feat/vault-link-integrity`, 2026-10-07.
+See [usage and evaluation](../../evals/vault_steward/README.md). Model-assisted
+ranking, held-out evaluation, persistent acknowledgements, and real-vault efficacy
+remain follow-up work; source notes are never automatically repaired.
 
 ## Outcome
 

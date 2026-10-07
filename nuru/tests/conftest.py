@@ -42,6 +42,7 @@ def no_real_model_build_or_sandbox(monkeypatch):
 def no_background_indexer(monkeypatch):
     """Session.start() would otherwise start embedding the real vault through the real Ollama."""
     monkeypatch.setattr(session, "VaultIndexer", _NoIndexer)
+    monkeypatch.setattr(session, "VaultLinkAuditor", _NoIndexer)
 
 
 @pytest.fixture(autouse=True)

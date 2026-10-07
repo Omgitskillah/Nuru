@@ -49,6 +49,7 @@ from core.providers.ollama import (
     unload_all_models,
 )
 from core.vault_indexer import VaultIndexer
+from core.vault_link_auditor import VaultLinkAuditor
 from core.thinking_watch import ThinkingWatch
 from core.tool_contract import MODEL_TOOLS
 from core.write_args import ask_for_arguments, validate_arguments
@@ -439,6 +440,7 @@ class Session:
         self.answer_question: Callable[[Question], list[str] | None] | None = None
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
+        self.link_auditor: VaultLinkAuditor | None = None
         self.model_info: dict | None = None
         self._cached_system_text = system_text
         self._tool_validators = tool_dispatch.validators(tool_definitions)
@@ -495,6 +497,11 @@ class Session:
                 )
                 session.indexer.start()
                 opened.callback(session.indexer.stop)
+            session.link_auditor = VaultLinkAuditor.from_env()
+            if session.link_auditor:
+                session.link_auditor.on_change = logger.link_audit
+                session.link_auditor.start()
+                opened.callback(session.link_auditor.stop)
             opened.pop_all()  # it worked, so the session owns them now
         return session
 
@@ -1547,6 +1554,8 @@ class Session:
         Ollama running."""
         if self.indexer:
             self.indexer.stop()
+        if self.link_auditor:
+            self.link_auditor.stop()
         self.tools.close()
         self.store.close()
         if self.shadow:

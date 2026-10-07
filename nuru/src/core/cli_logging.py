@@ -176,6 +176,12 @@ class CLILogger:
             }
         )
 
+    def link_audit(self, report: dict[str, Any]) -> None:
+        """One summary per changed audit snapshot, without note content."""
+        self._log({"event": "link_audit", "snapshot": report["snapshot"],
+                   "complete": report["complete"], "counts": report["counts"],
+                   "diagnostic_count": report["diagnostic_count"], "stats": report["stats"]})
+
     def session_end(self, reason: str, models_unloaded: bool, server_stopped: bool) -> None:
         self._log(
             {

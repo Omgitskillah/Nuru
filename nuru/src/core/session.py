@@ -194,6 +194,14 @@ _FINAL_ANSWER = (
     "from the results above: give what you found and worked out, with the numbers and note paths, and say "
     "plainly what is still unresolved or unchecked."
 )
+# When a failed tool call couldn't be put right (recovery stopped, or its two calls are used up). Worded
+# like _FINAL_ANSWER: a terse "Recovery budget exhausted. Answer from successful evidence only..." was
+# once copied back as the whole reply (test 16, 2026-10-07).
+_RECOVERY_ANSWER = (
+    "[Nuru] The failed tool call above couldn't be put right this turn, so no more tools or writes. Answer "
+    "my request now from the results that succeeded: give what you found and worked out, with the numbers "
+    "and note paths, and say plainly which step failed and what is still unresolved."
+)
 
 # ask_an_expert's user_request is the user's message verbatim. The session has it, so it fills
 # the field in itself: a small model asked to copy it paraphrased it, errors included.
@@ -662,11 +670,11 @@ class Session:
             # the whole prompt (40-77 s a call in the 10-06 baseline). A call made anyway is refused below.
             if answer_after_failure or final_answer:
                 if not final_answer and repair_pending:
-                    messages.append({"role": "user", "content": "[Nuru] Recovery stopped. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
+                    messages.append({"role": "user", "content": _RECOVERY_ANSWER})
                     final_answer = True
             if repair_pending and not final_answer:
                 if recovery_calls >= 2:
-                    messages.append({"role": "user", "content": "[Nuru] Recovery budget exhausted. Answer from successful evidence only; explain unresolved failures. No further tools or writes."})
+                    messages.append({"role": "user", "content": _RECOVERY_ANSWER})
                     final_answer = True
 
             if final_answer or answer_after_failure:

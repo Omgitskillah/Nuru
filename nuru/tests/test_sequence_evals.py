@@ -77,10 +77,10 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
         tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
         def continuation_context(self):
             return "previous answer" if prompts else ""
-        def ask(self, prompt):
+        def ask(self, prompt, cancel=None):
             prompts.append(prompt)
             yield driver.Text("answer")
-        def run_plan(self, prompt, plan):
+        def run_plan(self, prompt, plan, cancel=None):
             assert plan == {"steps": []}
             yield from self.ask(prompt)
         def close(self):
@@ -104,6 +104,67 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     assert driver.session.OBSIDIAN_SERVER_PARAMS.env["OBSIDIAN_EMBED_MODEL"] == "nomic-embed-text-v2-moe"
     records = json.loads(out.read_text())["turns"]
     assert [r["shadow_failures"] for r in records] == [0, 0]
+
+
+def test_driver_cancels_a_turn_at_its_deadline_and_does_not_send_later_turns(modules, monkeypatch, tmp_path):
+    import time
+    from types import SimpleNamespace
+    _, _, _, driver = modules
+    prompts = []
+    class FakeSession:
+        shadow = SimpleNamespace(failures=0)
+        logger = SimpleNamespace(session_id="test")
+        tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
+        def continuation_context(self):
+            return ""
+        def ask(self, prompt, cancel=None):
+            prompts.append(prompt)
+            while prompt == "slow" and not cancel.is_set():  # Session.ask stops at the next chunk
+                time.sleep(0.01)
+                yield driver.Text(".")
+            yield driver.Text("answer")
+        def close(self):
+            pass
+    monkeypatch.setattr(driver.session.Session, "start", FakeSession)
+    for key in ("VAULT_PATH", "OBSIDIAN_SEMANTIC_DB", "NURU_DECISION_CONFIG", "NURU_LOG_DIR"):
+        monkeypatch.setenv(key, str(tmp_path))
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps({"turns": [{"prompt": p, "checks": {}} for p in ("first", "slow", "third")]}))
+    out = tmp_path / "out.json"
+    monkeypatch.setattr("sys.argv", ["drive_turn", "--case", str(case), "--think", "off", "--out", str(out),
+                                     "--turn-timeout", "0.2"])
+    driver.main()
+    output = json.loads(out.read_text())
+    first, slow, third = output["turns"]
+    assert prompts == ["first", "slow"]
+    assert not first["timed_out"] and first["failure"] is None
+    assert slow["timed_out"] and "timed out after 0.2 s" in slow["failure"]
+    assert third == {"prompt": "third", "not_run": True, "checks": {}}
+    assert output["turns_not_run"] == 1 and output["failure"] == slow["failure"]
+
+
+@pytest.mark.parametrize("case,flag,deadline", [
+    (None, False, 10),
+    ({"turns": [{"prompt": p, "checks": {}} for p in ("a", "b", "c")]}, True, 10 * 3 + 300),
+])
+def test_runner_gives_sequences_a_deadline_per_turn(modules, tmp_path, monkeypatch, case, flag, deadline):
+    _, runner, _, _ = modules
+    seen = {}
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            seen["command"] = command
+            (tmp_path / "turn.json").write_text("{}")
+        def wait(self, timeout=None):
+            seen["timeout"] = timeout
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    runner.run_turn(tmp_path, {"NURU_LOG_DIR": str(tmp_path)}, "a", "off", 10, case=case)
+    command = seen["command"]
+    assert ("--turn-timeout" in command) is flag
+    if flag:
+        assert command[command.index("--turn-timeout") + 1] == "10"
+    assert seen["timeout"] == deadline
 
 
 @pytest.mark.parametrize("reply,passed", [

@@ -1,0 +1,157 @@
+# One-shot versus multi-turn failure pairs — draft (2026-10-07)
+
+Test whether fixed, user-guided decomposition improves Nuru’s completion of the
+same requests that were weak in historical one-shot runs. Accuracy and cumulative
+time to the requested result are the primary measures. This is a specification,
+not a result: **no new model runs, embedding calls or paid API calls were made**.
+
+This package extends the broader [multi-turn plan](../README.md). Unlike that
+plan’s topic changes and altered numerical inputs, these cases preserve the
+original task and finish with its exact original prompt.
+
+- [Historical findings](historical-findings.md): selection, counts, limitations and
+  prompts that extra turns cannot make feasible.
+- [Copyable prompts and grading](prompts-and-grading.md): 12 supported-task pairs
+  and three capability diagnostics.
+- [cases.json](cases.json): canonical sequences, five shared outcome criteria,
+  critical rejection gates, source paths and numeric oracles.
+- [historical-summary.csv](historical-summary.csv): recorded October 6 cohorts,
+  keeping baseline, candidate and recovery results separate.
+- [source-manifest.json](source-manifest.json): hashes of the selection evidence
+  and existing vault manifest. Raw ignored logs are not required to read the plan.
+
+## What to compare
+
+**OS:** a new Session receives only the original one-shot prompt.
+
+**MT:** a different new Session receives the fixed preparation prompts, then the
+exact original prompt, retaining conversation state throughout. Preparation asks
+Nuru to find inputs, check assumptions or calculate; it supplies no answer values,
+source paths, target IDs or grading hints. Later prompts remain fixed even if an
+earlier reply is wrong. Do not manually correct values or add rescue turns.
+
+This measures the benefit and cost of user scaffolding, including information
+about the intended workflow. It does not demonstrate that an autonomous planner
+can generate these sequences. The tasks are known development fixtures, not a
+held-out acceptance set.
+
+Use all five shared criteria for both arms. Judge the requested final answer, with
+successful tool evidence from the entire run and the entire run’s vault diff.
+The final MT answer must stand on its own; scattered correct intermediate fragments
+do not make an incomplete final answer complete. Intermediate accuracy and the
+first divergence turn are separate diagnostic measurements, not extra MT points.
+
+Each criterion awards 1 or 0, using the facts and numeric tolerances specified in
+the case. Report both **full completion (5/5)** and the old compatibility threshold
+(**at least 4/5**). A material rejected conclusion, confidential disclosure,
+unauthorized mutation or fabricated tool success fails the run regardless of
+points. Do not average these failures away. Do not credit unsafe attempted calls
+as safe model behavior just because the server blocked them.
+
+## Matched execution
+
+1. Pin Nuru/dependency commits, rendered prompt, tool schemas, model digest and
+   quantization, context, sampling, thinking, embeddings and sandbox image. Use
+   Qwen3.5:4b, thinking off, 16K, v2 embeddings and Python enabled as the proposed
+   reference configuration. Verify actual tools at startup; missing required
+   services make a run INVALID rather than an apparent reasoning failure.
+2. Freeze the same vault contents for both arms using the existing
+   [51-file manifest](../fixture-manifest.json). Source vault stays untouched.
+   Each arm/repeat has its own scratch vault, writable semantic index, history,
+   session logs and mutation journal. No shared conversation or result caches.
+3. Inject the same reference date/time into every model call and dated write:
+   **2026-10-07, Europe/Berlin**, or a newly frozen date recorded in the manifest
+   and reflected in date oracles. Do not fake the date only in grader code.
+   The original prompts remain unchanged. Date injection support is a runner
+   prerequisite for reproducible dated tests.
+4. Run both arms on the same current implementation. Historical runs motivate
+   selection but are not the new OS baseline. Never compare modern MT results
+   directly against the old v1.5/no-Python timings as an improvement claim.
+5. Run five paired repeats per case, alternating OS→MT and MT→OS, recording order.
+   Standardize warm model state before timing; isolate index build and process
+   startup from task time, report them separately, and also report full wall time.
+   Keep the stable prefix/cache handling the same. Run sequentially; no model or
+   embedding contention from other work during measurements.
+6. Send each next MT prompt immediately after the preceding completed reply.
+   Automated prompt delivery has zero intended user-think delay; log actual gaps.
+   Keep handled failures in the conversation, stop on timeout/process failure,
+   and label remaining turns NOT RUN. Preserve uncertain-write journal state.
+7. Apply the same **600-second task budget to the whole OS request or whole MT
+   sequence**, including preparation. MT must not silently get four 600-second
+   opportunities. Log per-turn duration and cancellation. A larger-budget study
+   can be a separate declared lane, never pooled with this one.
+8. Freeze rubrics after a one-repeat pilot. Save complete replies, successful and
+   refused/failed calls, source inputs, timing records and Markdown diffs. Review
+   both arms using the same criteria, preferably blinded to arm. Adjudicate
+   disputed engineering conclusions against vault evidence, not keyword presence.
+
+The 12 supported pairs contain **12 OS turns and 40 MT turns per repeat**.
+Five repeats are **120 conversations / 260 turns**, before optional diagnostics.
+The five primary failure/omission pairs plus the correction pair are tests
+32, 9, 31, 8, 12 and 30: a practical first batch before refreshing legacy cases.
+Test 17 is a resolved control, reported separately from failure improvement.
+
+## Accuracy and time to result
+
+For every repeat and arm, record:
+
+| Field | Meaning |
+|---|---|
+| `outcome_points`, `full_completion`, `legacy_pass` | Shared 0–5 result, 5/5 flag and >=4/5 flag |
+| `critical_failures` | Unsupported conclusions, unsafe actions, leaks or false success |
+| `turn_seconds[]` | Measured time for every user turn, including preparation |
+| `task_seconds` | Start of first prompt to end of final required reply, including all actual gaps |
+| `active_seconds` | Sum of turn times; show separately from elapsed task time |
+| `first_correct_result_seconds` | Earliest completed reply satisfying all five original-task criteria, plus verified action state where required; null if never achieved |
+| `final_correct_result_seconds` | Task duration if final answer/state satisfies all five; null otherwise |
+| `censored_at_seconds`, `stop_reason` | Timeout/failure duration when no full result is reached |
+| `model_calls`, `tool_calls`, `input_tokens`, `output_tokens` | Totals across every turn, with retries included |
+| `vault_diff`, `first_divergence_turn` | Actual effects and first observed evidence/reasoning error |
+
+An early full answer can count as the first correct result, but MT final completion
+still fails if it subsequently regresses or creates a duplicate. A partial answer
+or successful calculation alone is not a correct result for a broader request.
+Never record a failed run’s result time as zero, discard it, or treat its final
+reply time as time to success.
+
+Report per-case full-completion fraction, mean points, critical failures and
+all-run task-time median/range. Report successful-result latency with its numerator
+and denominator; it is selection-biased and must not replace all-run measurements.
+For each paired repeat, show MT−OS points and MT−OS elapsed time, and categorical
+outcomes: both complete, MT only, OS only, neither. Give time deltas for
+both-complete pairs separately; report censored pairs without inventing a delta
+for a nonexistent success. Five repeats are exploratory, not proof of a small
+latency gain. Avoid a single score-per-second number that rewards fast failures.
+
+A useful MT finding is higher full-completion rate with an explicit, acceptable
+time cost, or equal completion at lower task time. A longer sequence does not
+count as faster because its final turn alone is short. Also show number of user
+messages as the interaction cost; optional human-paced runs can measure realistic
+reading/typing delays separately.
+
+## Rubric corrections and runner limits
+
+Keep historical points intact. The new outcome rubric is versioned separately
+and must grade **both newly collected arms**:
+
+- Test 32: judge the final architecture verdict and asserted main risk; an early
+  affirmative followed by an overall denial fails. Conditional on-paper success
+  is not proof of field validation.
+- Test 9: check all aligned input rows and the actual 200-ppm residual; the old
+  regex can credit any nonlinearity mention. A six-point fit alone does not prove
+  saturation.
+- Test 12: accept correct 26.496% / 26.5% arithmetic rather than requiring literal
+  `26%`; disclose decimal-KB and month conventions.
+- Tests 20/21: distinguish different architectures, chronological updates and
+  partially addressed TODOs from unresolved contradictions/open actions. Include
+  items the old narrow scorer omitted.
+- Test 13: 576 bytes of backlog require 577 slots for this particular ring, even
+  though the old scorer describes 576 bytes as the minimum.
+
+The existing `drive_turn.py --case` can run a single extracted MT object with a
+`turns` list; map `multi_turn` to `turns`. This catalog is not directly registered
+with `run_suite.py`: its `load_cases` requires nonempty regex checks. The empty
+checks here intentionally award no automatic points. A paired runner/report adapter,
+common task deadline, frozen-date injection and outcome grading remain to be
+implemented before execution. Do not claim these files are an executable scored
+suite. No production code or existing one-shot scorer is changed by this proposal.

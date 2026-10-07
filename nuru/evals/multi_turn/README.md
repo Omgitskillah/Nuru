@@ -12,6 +12,9 @@ including its templates. This is the vault used for the earlier benchmarks.
 drafting time. Mutable SQLite indexes and Obsidian workspace settings are not
 part of the content oracle.
 
+- [Historical one-shot failure pairs](failure_pairs/README.md): original suite prompts
+  versus fixed multi-turn decompositions, with shared accuracy and cumulative
+  time-to-result grading (added 2026-10-07).
 - [Prompts and expected grading](prompts-and-grading.md): copyable turn sequences,
   required facts, rejection criteria and expected file state.
 - [cases.json](cases.json): the same 14 cases with evaluator-only metadata and

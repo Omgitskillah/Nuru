@@ -1,0 +1,16 @@
+test,cohort,n,scores,legacy_passes,full_credit,mean_score,median_turn_seconds,source
+7,2026-10-06-paired-baseline,5,5;4;5;5;5,5,4,4.8,43.0,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+7,2026-10-06-paired-candidate,5,5;5;5;4;4,5,3,4.6,49.2,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+8,2026-10-06-paired-baseline,5,4;4;5;4;3,4,1,4,38.6,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+8,2026-10-06-paired-candidate,5,4;4;4;3;4,4,0,3.8,38.2,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+9,2026-10-06-paired-baseline,5,4;1;4;4;5,4,1,3.6,67.6,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+9,2026-10-06-paired-candidate,5,5;5;4;0;0,3,2,2.8,159.9,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+12,2026-10-06-paired-baseline,5,4;4;4;4;5,5,1,4.2,28.7,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+12,2026-10-06-paired-candidate,5,4;4;4;4;4,5,0,4,32.3,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+30,2026-10-06-paired-baseline,5,4;4;4;4;5,5,1,4.2,32.9,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+30,2026-10-06-paired-candidate,5,4;4;4;5;4,5,1,4.2,42.8,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+31,2026-10-06-paired-baseline,5,5;5;5;2;1,3,3,3.6,43.1,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+31,2026-10-06-paired-candidate,5,2;1;5;2;5,2,2,3,68.7,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+32,2026-10-06-paired-baseline,5,3;2;3;3;3,0,0,2.8,238.3,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+32,2026-10-06-paired-candidate,5,3;3;3;3;3,0,0,3,263.4,nuru/evals/validated-dispatch-paired-2026-10-06.csv
+9,2026-10-06-recovery,5,4;3;2;5;5,3,2,3.8,43.7,nuru/evals/validated-dispatch-test9-recovery-2026-10-06.md

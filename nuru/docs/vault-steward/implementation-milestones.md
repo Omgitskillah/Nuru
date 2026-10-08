@@ -22,7 +22,7 @@ tool-list change is implied by exposing new read-only MCP tools.
 | WP11.1 | Existing index compatibility/freshness and fake-embedder validation | Backend/worker tested with fake embeddings |
 | Shared.1 | Opt-in worker, findings lifecycle, CLI/MCP, restart/reconciliation | Tested; default disabled |
 | Validation.1 | Independent fixtures, CI correctness, measured offline results | Pending |
-| Interpretation | Bounded injectable model stages and separately approved evaluations | Pending |
+| Interpretation | Bounded injectable stage, approval/budget/citation checks | Fake-provider tested; live adapters/evals NOT RUN |
 | Pilot | Held-out human labels and consenting real-vault review efficacy | Requires approval |
 
 Backend code lives in the Obsidian dependency; orchestration/evals live in Nuru.

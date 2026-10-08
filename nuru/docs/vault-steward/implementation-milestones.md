@@ -20,7 +20,7 @@ tool-list change is implied by exposing new read-only MCP tools.
 | WP08.1 | Scoped structured claims and explicit unit comparisons | Backend tested: 3 cases |
 | WP10.1 | Resolved link graph and explicit navigation indexes | Backend tested: 2 cases |
 | WP11.1 | Existing index compatibility/freshness and fake-embedder validation | Backend/worker tested with fake embeddings |
-| Shared.1 | Opt-in worker, findings lifecycle, CLI/MCP, restart/reconciliation | Pending |
+| Shared.1 | Opt-in worker, findings lifecycle, CLI/MCP, restart/reconciliation | Tested; default disabled |
 | Validation.1 | Independent fixtures, CI correctness, measured offline results | Pending |
 | Interpretation | Bounded injectable model stages and separately approved evaluations | Pending |
 | Pilot | Held-out human labels and consenting real-vault review efficacy | Requires approval |

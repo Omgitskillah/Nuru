@@ -1,11 +1,23 @@
 # Vault stewardship work packages
 
-Draft for discussion, 2026-10-07. These documents propose implementation and
-evaluation work; they do not implement services or report benchmark results.
+Work-package definitions, 2026-10-07; implementation began on 2026-10-08.
+[Milestone ledger](implementation-milestones.md) distinguishes implemented
+deterministic stages from remaining inference, held-out, and pilot acceptance.
+Do not treat proposed efficacy thresholds below as measured results.
 
 Goal: reduce the effort required to keep an Obsidian vault consistent, useful,
 and searchable. Most checks should run without Obsidian open or a model loaded.
 Interpretation should run only on candidates selected by deterministic checks.
+
+`nuru-vault-steward VAULT --config CONFIG.json [--state EXCLUDED.sqlite3] [--watch]`
+runs standalone without chat/model startup. During Nuru chat, enable explicitly
+with `NURU_STEWARD_ENABLED=1`, `OBSIDIAN_STEWARD_CONFIG`, and optional
+`NURU_STEWARD_STATE`; default is disabled. Standalone worker re-loads configuration,
+coalesces changed snapshots, and reconciles every polling pass. State is optional.
+It never launches inference or edits notes. Normal Nuru chat startup still loads
+its existing chat model; use the standalone command when no model is available.
+The server CLI `obsidian-mcp-steward` provides pagination, full detail, and explicit
+sidecar review. See the dependency's `docs/stewardship.md` for supported contracts.
 
 ## Packages and suggested delivery order
 

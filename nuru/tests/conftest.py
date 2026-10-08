@@ -58,3 +58,8 @@ def isolate_conversation_files(monkeypatch, tmp_path):
     """Every Session test uses scratch history/logs, including executor tests."""
     monkeypatch.setattr(session, "LOG_DIR", tmp_path)
     monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")
+
+
+@pytest.fixture(autouse=True)
+def isolate_optional_steward(monkeypatch):
+    monkeypatch.setattr(session.VaultSteward, 'from_env', lambda: None)

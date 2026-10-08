@@ -20,6 +20,7 @@ nuru-cli = "core.cli:main"
 nuru-ui = "core.ui:main"
 nuru = "core.label_cli:main"
 nuru-vault-links = "core.vault_link_auditor:main"
+nuru-vault-steward = "core.vault_steward:main"
 
 [tool.uv.sources]
 obsidian-mcp = { workspace = true }

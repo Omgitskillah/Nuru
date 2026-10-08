@@ -14,6 +14,7 @@ import contextlib
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -57,6 +58,9 @@ class VaultIndexer:
         self.interval = interval
         self.pending = 0  # notes left to embed in the pass under way; 0 while idle. Read from the GUI thread.
         self.error: str | None = None  # why the last pass failed, if it did
+        self.last_success: float | None = None
+        self.status: dict | None = None
+        self.paused = threading.Event()
         # A pass that embeds one note is over in ~0.1 s, too quick to see; these let the window say
         # so afterwards. `changes` counts the passes that changed the index, `last_change` says what
         # the latest one did. last_change is set first, so a reader that sees a new count sees its text.
@@ -92,8 +96,12 @@ class VaultIndexer:
         try:
             with contextlib.closing(semantic.connect(self.config)) as conn:
                 result = semantic.refresh(
-                    conn, self.config, self.embed, on_progress=self._set_pending, should_stop=self._stop.is_set
+                    conn, self.config, self.embed, on_progress=self._set_pending,
+                    should_stop=lambda: self._stop.is_set() or self.paused.is_set(), force_hash=True
                 )
+                self.status = semantic.maintenance_status(conn, self.config)
+                if not result.interrupted:
+                    self.last_success = time.time()
         finally:
             self.pending = 0
         if summary := describe(result):

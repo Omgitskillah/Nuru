@@ -10,8 +10,8 @@ tool-list change is implied by exposing new read-only MCP tools.
 
 | Milestone | Deliverable | Status |
 |---|---|---|
-| WP01.1 | Reconciled snapshots, explicit schemas, read-only property checks | In progress |
-| WP03.1 | Streaming asset hashes, ownership inventory, duplicate candidates | Pending |
+| WP01.1 | Reconciled snapshots, explicit schemas, read-only property checks | Backend tested: 16 cases |
+| WP03.1 | Streaming asset hashes, ownership inventory, duplicate candidates | Backend tested: 3 cases |
 | WP04.1 | Fixed-clock task ledger and explicit mirror conflicts | Pending |
 | WP09.1 | Declared tables and decimal arithmetic checks | Pending |
 | WP06.1 | Explicit project review checklist and evidence digest | Pending |

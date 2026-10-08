@@ -67,6 +67,9 @@ class FakeSession:
     def close(self):
         self.calls.append("close")
 
+    def pending_writes(self):
+        return []
+
 
 def waits_for(release, *events):
     """A scripted turn that holds until `release` is set, then plays `events`."""
@@ -928,3 +931,44 @@ def test_the_summary_follows_a_pass_that_was_seen_running(make_window):
 
     wait_until(lambda: window.windowTitle() == "Nuru · indexed 3 notes")
     wait_until(lambda: window.windowTitle() == "Nuru")
+
+
+def test_pending_write_resolution_requires_inspection_and_idle_worker(started):
+    window, session = started()
+    pending = [{'id': 7, 'tool': 'write_note', 'arguments': {'note': 'nuru/a.md'}, 'state': 'uncertain'}]
+    session.pending_writes = lambda: pending
+    resolved = []
+    session.resolve_write = lambda *args: resolved.append(args)
+    window.update_send()
+    assert window.writes.isVisible() and window.writes.isEnabled()
+    dialog = ui.QDialog(window)
+    inspected = ui.QCheckBox()
+    window.resolve_pending_write(dialog, inspected, 7, 'completed')
+    assert resolved == []
+    inspected.setChecked(True)
+    window.worker = object()
+    window.resolve_pending_write(dialog, inspected, 7, 'completed')
+    window.update_send()
+    assert not window.writes.isEnabled() and resolved == []
+    window.worker = None
+    window.resolve_pending_write(dialog, inspected, 7, 'not_completed')
+    assert resolved == [(7, 'not_completed')] and not session.asked
+    assert dialog.result() == ui.QDialog.DialogCode.Accepted
+
+
+def test_pending_write_dialog_exposes_attempt_and_operator_actions(started, monkeypatch):
+    window, session = started()
+    session.pending_writes = lambda: [{'id': 7, 'tool': 'write_note', 'arguments': {'note': 'nuru/a.md'}, 'state': 'uncertain'}]
+    resolved = []
+    session.resolve_write = lambda *args: resolved.append(args)
+    def inspect(dialog):
+        assert 'nuru/a.md' in dialog.findChild(ui.QTextEdit).toPlainText()
+        actions = dialog.findChildren(ui.QPushButton)
+        assert all(not a.isEnabled() for a in actions)
+        dialog.findChild(ui.QCheckBox).setChecked(True)
+        assert all(a.isEnabled() for a in actions)
+        next(a for a in actions if a.text() == 'Mark completed').click()
+        return dialog.result()
+    monkeypatch.setattr(ui.QDialog, 'exec', inspect)
+    window.show_pending_writes()
+    assert resolved == [(7, 'completed')] and not session.asked

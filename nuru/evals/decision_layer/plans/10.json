@@ -1,0 +1,50 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "temperature coefficient 100 ppm"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "the note with the sensor's temperature coefficient data"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "a calculate expression for the temperature coefficient at 100 ppm in %/\u00b0C, from the note's data"
+  },
+  {
+   "step": "s5",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s4"
+   }
+  },
+  {
+   "step": "s6",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s5"
+   ],
+   "want": "the temperature coefficient at 100 ppm, compared with the datasheet's value"
+  }
+ ]
+}

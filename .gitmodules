@@ -4,3 +4,6 @@
 [submodule "servers/obsidian"]
 	path = servers/obsidian
 	url = git@github.com:Omgitskillah/obsidian-4-llms.git
+[submodule "servers/python-4-llms"]
+	path = servers/python-4-llms
+	url = git@github.com:Omgitskillah/python-4-llms.git

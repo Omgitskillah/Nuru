@@ -1,0 +1,67 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "power budget"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "the note with the power budget table"
+  },
+  {
+   "step": "s3",
+   "tool": "read_note",
+   "with": {
+    "name": "$s2"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "draft",
+   "uses": [
+    "s3"
+   ],
+   "want": "a calculate expression for the average current in mA, weighting each state's current by its share of time in the power budget table"
+  },
+  {
+   "step": "s5",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s4"
+   }
+  },
+  {
+   "step": "s6",
+   "think": "draft",
+   "uses": [
+    "s3",
+    "s5"
+   ],
+   "want": "a calculate expression for the battery life in hours: the battery capacity in mAh from the note divided by the average current in mA (the result of s5)"
+  },
+  {
+   "step": "s7",
+   "tool": "calculate",
+   "with": {
+    "expression": "$s6"
+   }
+  },
+  {
+   "step": "s8",
+   "think": "answer",
+   "uses": [
+    "s3",
+    "s5",
+    "s7"
+   ],
+   "want": "the recomputed average current and battery life, compared with what the note says"
+  }
+ ]
+}

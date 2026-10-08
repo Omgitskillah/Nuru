@@ -20,6 +20,9 @@ class Provider(ABC):
         system: str | None = None,
         max_tokens: int = 1024,
         tools: list[dict] | None = None,
+        thinking: dict | None = None,
+        output_config: dict | None = None,
+        fallbacks: str | None = None,
     ) -> dict:
         """Equivalent of POST /v1/messages. Raises ValueError if messages is empty."""
 

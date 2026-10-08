@@ -75,13 +75,15 @@ class ToolGateSettings(_Strict):
 class TierSettings(_Strict):
     order: tuple[Tier, ...]
     default: Tier
-    # model name -> tier -> Ollama `think` value (false, or a level string)
-    models: dict[str, dict[Literal["off", "low", "high"], bool | str]]
+    # How a tier becomes an Ollama `think` value depends on the model: nuru/modelfiles/profiles.yaml.
 
 
 class ExpertSettings(_Strict):
     model: str
     daily_cap: int = Field(ge=0)
+    # Whether a turn at the step cap asks the expert for a plan first. Either way, a turn the expert
+    # doesn't rescue ends with one last model call without tools: an answer from what it has.
+    at_step_cap: bool = True
 
 
 class RerankSettings(_Strict):

@@ -1,0 +1,20 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "write_note",
+   "with": {
+    "type": "daily",
+    "content": "- The soak test is running.\n- Going to the gym."
+   }
+  },
+  {
+   "step": "s2",
+   "think": "answer",
+   "uses": [
+    "s1"
+   ],
+   "want": "where it was written"
+  }
+ ]
+}

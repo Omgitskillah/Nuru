@@ -1,0 +1,290 @@
+{
+  "search": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false
+  },
+  "find_in_notes": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string"
+      },
+      "literal": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "additionalProperties": false
+  },
+  "browse": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "limit": {
+        "type": "integer",
+        "default": 10
+      },
+      "folder": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "tags": {
+    "type": "object",
+    "properties": {
+      "tag": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "read_note": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "section": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  },
+  "note_info": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false
+  },
+  "write_note": {
+    "type": "object",
+    "properties": {
+      "content": {
+        "type": "string",
+        "default": ""
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "mode": {
+        "type": "string",
+        "default": "append"
+      },
+      "type": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "author": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "tags": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "default": null
+      },
+      "supersedes": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "targets": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "default": null
+      },
+      "session": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "rename_or_move_file": {
+    "type": "object",
+    "properties": {
+      "source_path": {
+        "type": "string"
+      },
+      "destination_path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "source_path",
+      "destination_path"
+    ],
+    "additionalProperties": false
+  },
+  "calculate": {
+    "type": "object",
+    "properties": {
+      "expression": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "expression"
+    ],
+    "additionalProperties": false
+  },
+  "statistics": {
+    "type": "object",
+    "properties": {
+      "numbers": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "x": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "reference_line": {
+        "type": "object",
+        "properties": {
+          "slope": {
+            "type": "number"
+          },
+          "intercept": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "slope",
+          "intercept"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "numbers"
+    ],
+    "additionalProperties": false
+  },
+  "ask_an_expert": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string"
+      },
+      "best_guess": {
+        "type": "string",
+        "default": ""
+      },
+      "file_paths": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "default": null
+      },
+      "user_request": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "required": [
+      "question"
+    ],
+    "additionalProperties": false
+  },
+  "run_python": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "additionalProperties": false
+  }
+}

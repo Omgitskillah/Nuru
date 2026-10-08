@@ -38,6 +38,12 @@ class FakeSession:
     def close(self):
         self.calls.append("close")
 
+    def pending_writes(self):
+        return self.store.pending_writes(self._vault_scope)
+
+    def resolve_write(self, attempt_id, state):
+        self.store.resolve_write(attempt_id, self._vault_scope, state)
+
 
 @pytest.fixture
 def fake_session(monkeypatch, tmp_path):
@@ -307,3 +313,14 @@ def test_no_answer_is_no(monkeypatch):
 
     monkeypatch.setattr("builtins.input", eof)
     assert cli.confirm_write("append_note", {}) is False
+
+
+def test_write_reconciliation_command_does_not_send_a_model_prompt(fake_session, monkeypatch, capsys):
+    s = fake_session()
+    s._vault_scope = 'scratch'
+    cid = s.store.create_conversation()
+    attempt = s.store.begin_write(cid, 't-1', 'scratch', 'write_note', {'content': 'line'})
+    monkeypatch.setattr(builtins, 'input', fake_input(['/writes', f'/resolve-write {attempt} completed', '/writes']))
+    cli.main()
+    assert not s.asked and not s.store.pending_writes('scratch')
+    assert 'No write was executed.' in capsys.readouterr().out

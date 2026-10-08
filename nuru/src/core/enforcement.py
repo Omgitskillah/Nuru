@@ -57,11 +57,12 @@ def log_lines(executed: list[dict]) -> str:
 
 
 class Enforcement:
-    def __init__(self, config: DecisionConfig, base_model: str, planner: ExpertPlanner | None):
+    def __init__(self, config: DecisionConfig, think_map: dict | None, planner: ExpertPlanner | None):
         self.config = config
         self.planner = planner
-        # A model with no tier map can't have its thinking level enforced; it stays as configured.
-        self.think_map = config.tiers.models.get(base_model)
+        # The model's tier -> Ollama `think` map (its profile, core.model_profile). A model without
+        # one can't have its thinking level enforced; it stays as configured.
+        self.think_map = think_map
 
     def on(self, point: str) -> bool:
         return self.config.mode(point) == "enforce"
@@ -106,6 +107,10 @@ class Enforcement:
         return self._think(tier, current_think)
 
     def at_step_cap(self, policy: TierPolicy, current_think):
+        """The cap was hit: the expert's plan when config allows and the expert is there, else STOP -
+        which the session turns into one last answer without tools."""
+        if not self.config.expert.at_step_cap:
+            return STOP, STOP
         return self._think(policy.at_step_cap(self.expert_available()), current_think)
 
     def _think(self, tier: str, current_think):

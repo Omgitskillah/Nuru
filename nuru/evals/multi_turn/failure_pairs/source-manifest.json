@@ -1,0 +1,40 @@
+{
+  "sources": [
+    {
+      "path": "nuru-test-results-2026-09-21.md",
+      "sha256": "232070cf4ea83edd74a9a5c908ca7fa90b485865f007c6a8fad63493096b5a2e"
+    },
+    {
+      "path": "nuru/evals/validated-dispatch-paired-2026-10-06.csv",
+      "sha256": "6e4a4f6c34acb8908c3ec04eac5381f7197321eb871167cfc1eb5ae0671285ee"
+    },
+    {
+      "path": "nuru/evals/validated-dispatch-test9-recovery-2026-10-06.md",
+      "sha256": "31b8089d37c8166016153ae35522d187038442f334ef78d6c92b822e0943cccc"
+    },
+    {
+      "path": "nuru/evals/qwen-vs-granite-check-2026-10-04.md",
+      "sha256": "3dbdf08e2ee3645d6123e6a1d6d3d723fe482934f2d2318ab2eb4baf9cd7a09a"
+    },
+    {
+      "path": "nuru/evals/live-planner-check-2026-10-05-embeddings.md",
+      "sha256": "65c90c15f55e80bd6d65ca5263328be6d0d5abae8bc7bdd590b4132bd88f6802"
+    },
+    {
+      "path": "nuru/evals/multi_turn/fixture-manifest.json",
+      "sha256": "85d72078f0f81d2ea83f028a907b9f5bf3e63ca2e9928736d6ce001c9096c1e1"
+    },
+    {
+      "path": "nuru/src/core/tool_contract.py",
+      "sha256": "d5ea9d6abe51a9989a8448da7c365d2ccf6623148bc9b8dcd36a5e0140da2014"
+    },
+    {
+      "path": "servers/obsidian/src/obsidian_mcp/server.py",
+      "sha256": "a8712d3b6d3cf1ccaf894a80e1124014f8bfb25dbd8f6b4deb9b3e29430c312c"
+    },
+    {
+      "path": "servers/python-4-llms/README.md",
+      "sha256": "f6bd1b6c9998e4c317bbf59798a6157c04c264b3991e28ea5800dafacfbea588"
+    }
+  ]
+}

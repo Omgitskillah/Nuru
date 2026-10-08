@@ -103,8 +103,9 @@ def test_create_model_renders_the_base_model_placeholder_and_calls_ollama_create
 
     monkeypatch.setattr(ollama.subprocess, "run", fake_run)
 
-    ollama.create_model("nuru", "qwen3:8b", modelfile)
+    rendered = ollama.create_model("nuru", "qwen3:8b", modelfile)
 
+    assert rendered == rendered_contents[0]
     assert len(calls) == 1
     cmd = calls[0]
     assert cmd[:3] == ["ollama", "create", "nuru"]
@@ -442,6 +443,20 @@ def test_chat_sends_think_and_num_ctx_options(monkeypatch):
     assert seen["json"]["think"] is False
     assert seen["json"]["options"] == {"num_ctx": 4096}
     assert seen["json"]["stream"] is True
+
+
+def test_chat_sends_sampling_options_alongside_num_ctx(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, stream, timeout):
+        seen["json"] = json
+        return FakeResponse(lines=[])
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    list(ollama.chat("qwen3.5:4b", [], num_ctx=4096, options={"temperature": 0.7, "num_ctx": 1}))
+
+    assert seen["json"]["options"] == {"temperature": 0.7, "num_ctx": 4096}  # num_ctx is the session's
 
 
 def test_chat_sends_tools_when_given(monkeypatch):

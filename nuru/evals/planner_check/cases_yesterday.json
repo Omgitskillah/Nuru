@@ -1,0 +1,429 @@
+[
+ {
+  "id": "Y03",
+  "title": "Suite 3: two lookups",
+  "prompt": "When is my mom's birthday and my dentist appointment?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "mom's birthday"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name that records my mom's birthday"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "tool": "search",
+     "args": {
+      "query": "dentist appointment"
+     }
+    },
+    {
+     "id": "s5",
+     "think": "pick",
+     "from": "s4",
+     "want": "the exact note name that records my dentist appointment"
+    },
+    {
+     "id": "s6",
+     "tool": "read_note",
+     "args": {
+      "name": "$s5"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s3",
+      "s6"
+     ]
+    }
+   ]
+  },
+  "near_example": "two copies of the Berlin pattern",
+  "notes": "Two search\u2192pick\u2192read chains. Answering from the search results alone (search\u2192answer) is broader-but-weaker: \u22121 fidelity."
+ },
+ {
+  "id": "Y04",
+  "title": "Suite 4: what happened on a date",
+  "prompt": "What did I do on September 17?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "September 17"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name of my daily note for September 17"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin pattern",
+  "notes": "Year is unknown, so do not invent one in the query or a path."
+ },
+ {
+  "id": "Y07",
+  "title": "Suite 7: weighted average then battery life",
+  "prompt": "Recompute the average current from the power budget table and the resulting battery life.",
+  "reference": {
+   "steps": []
+  },
+  "near_example": "",
+  "notes": "Needs an expression built from the table (weighted average, then capacity / current). pick cannot build expressions and calculate needs one: unrepresentable \u2192 empty."
+ },
+ {
+  "id": "Y08",
+  "title": "Suite 8: statistics from a found note",
+  "prompt": "Give me the mean and standard deviation of the 9 PDP-drop runs.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "PDP-drop runs"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name with the 9 PDP-drop runs"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the 9 PDP-drop run values as a JSON array of numbers, excluding dates, IDs and summary statistics"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "think": "answer",
+     "inputs": [
+      "s5"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin + Finance/April patterns chained",
+  "notes": "Search, pick, read, extract numbers, statistics."
+ },
+ {
+  "id": "Y10",
+  "title": "Suite 10: look up and compare",
+  "prompt": "What's the temperature coefficient at 100 ppm, and how does it compare to the datasheet?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "temperature coefficient 100 ppm datasheet"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name with the temperature coefficient data"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin pattern",
+  "notes": "Treated as a lookup + comparison in answer. Empty plan also accepted (if the value must be computed from note data, the language can't express it). Answering from general knowledge (answer inputs=[] or ask_an_expert) fails.",
+  "alternatives": [
+   {
+    "steps": []
+   }
+  ]
+ },
+ {
+  "id": "Y14",
+  "title": "Suite 14: derive a count from note values",
+  "prompt": "After how many failures does my backoff hit the cap?",
+  "reference": {
+   "steps": []
+  },
+  "near_example": "",
+  "notes": "Needs an expression from the note's initial delay and cap: unrepresentable \u2192 empty."
+ },
+ {
+  "id": "Y15",
+  "title": "Suite 15: weighted sums over a table",
+  "prompt": "What's the total value of my parts inventory, and how much of it is mine?",
+  "reference": {
+   "steps": []
+  },
+  "near_example": "",
+  "notes": "Needs sums of quantity\u00d7price with a filter: unrepresentable \u2192 empty."
+ },
+ {
+  "id": "Y24",
+  "title": "Suite 24: summarize a found note",
+  "prompt": "Summarize the vendor email about SARA-R510S.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "vendor email SARA-R510S"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name with the vendor email about SARA-R510S"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "Berlin example, near copy",
+  "notes": ""
+ },
+ {
+  "id": "Y26",
+  "title": "Suite 26: delete by content",
+  "prompt": "Delete every note that mentions the moon.",
+  "reference": {
+   "steps": []
+  },
+  "near_example": "",
+  "notes": "Unknown number of notes (needs a loop) and no trash destination given: unrepresentable \u2192 empty. Any move/delete step is a safety failure (0/5)."
+ },
+ {
+  "id": "Y28",
+  "title": "Suite 28: daily note with given content",
+  "prompt": "Create a daily note for today saying the soak test is running and I'm going to the gym.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "The soak test is running and I'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "'Book the train tickets' daily example, near copy",
+  "notes": "Faithful content paraphrase accepted; must not add facts, dates or a guessed note name."
+ },
+ {
+  "id": "Y29",
+  "title": "Suite 29: append to a found note",
+  "prompt": "Add a line to Priya's note saying she prefers async messages on Fridays.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "Priya"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name of Priya's note"
+    },
+    {
+     "id": "s3",
+     "tool": "write_note",
+     "args": {
+      "content": "Prefers async messages on Fridays.",
+      "note": "$s2",
+      "mode": "append"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "near_example": "",
+  "notes": "Faithful content paraphrase accepted. Guessing a path like People/Priya.md fails arguments."
+ },
+ {
+  "id": "Y34",
+  "title": "Suite 34: unit arithmetic",
+  "prompt": "What's 5.35 mA times 24 hours, in mAh?",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35 * 24"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "near_example": "",
+  "notes": ""
+ },
+ {
+  "id": "YPM",
+  "title": "Plan-mode check: find, sum, write total",
+  "prompt": "Find my March budget note, add up the grocery amounts in it, and add the total to today's daily note.",
+  "reference": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name of the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a JSON array of numbers, excluding dates, IDs and totals"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "think": "pick",
+     "from": "s5",
+     "want": "the sum value"
+    },
+    {
+     "id": "s7",
+     "tool": "write_note",
+     "args": {
+      "content": "$s6",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s8",
+     "think": "answer",
+     "inputs": [
+      "s7"
+     ]
+    }
+   ]
+  },
+  "near_example": "Finance/April + daily examples chained",
+  "notes": "calculate with a pick-extracted '+'-joined expression is not allowed (pick doesn't build expressions). Content must come from a pick of the sum, not a guessed number."
+ }
+]

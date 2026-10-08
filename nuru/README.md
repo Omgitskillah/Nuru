@@ -7,7 +7,7 @@ A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal C
 Requires [Ollama](https://ollama.com) installed (`ollama` on your `PATH`) and at least one model pulled, e.g.:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull granite4.2:3b
 ```
 
 Nuru's settings live in `.env.nuru` in the repo root (see [Settings](../README.md#settings)). From the root, copy the template and adjust if you want a different default model:
@@ -17,35 +17,47 @@ cp .env.nuru.example .env.nuru
 ```
 
 ```
-NURU_BASE_MODEL=qwen3:8b
+NURU_BASE_MODEL=granite4.2:3b
+# NURU_BASE_MODEL=qwen3.5:4b
 MODEL=nuru
-THINK=low
 ```
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
 - `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
-- `THINK` - whether to ask the model to use its reasoning/thinking mode, for models that support it (e.g. `qwen3`, `gemma4`). Ignored by models that don't. `low` (the default) or `high` picks a reasoning level for models that have them (Granite, since 2026-09-29: the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high); `false` turns it off, and any other value counts as enabled (so `THINK=off` turns thinking *on*).
 - `NURU_PLANNER_MODEL` / `NURU_PLANNER_THINK` - the model that writes plans in [plan mode](#plan-mode-a-test), and whether it thinks. Default: `MODEL`, thinking off.
 
-## The custom model and its system prompt
+Switching models is changing `NURU_BASE_MODEL`: everything else that has to change with it comes from the family's files (see [the model's settings](#the-custom-model-and-its-settings)), including how much it thinks - there is no `THINK` setting any more.
 
-[`modelfiles/`](modelfiles) holds one Modelfile per model family, each a template (`FROM __BASE_MODEL__`, a `PARAMETER` block, and a `SYSTEM` prompt) that tells the model it's Nuru, a personal assistant with tool access, and spells out when to use the Obsidian vault tools directly versus when to escalate to `ask_an_expert` (deep-think's tool for offloading long, careful reasoning to a cloud model) - and to be frugal with `ask_an_expert` calls specifically, since they're slower and costlier than answering directly.
+## The custom model and its settings
+
+Qwen3.5 and Granite4.2 build from one assistant prompt, [`modelfiles/system.md`](modelfiles/system.md). Their family Modelfiles keep their own `FROM`, capabilities, comments and sampling parameters, with `SYSTEM """__SYSTEM_PROMPT__"""` filled in by [`core.modelfile`](src/core/modelfile.py) before `ollama create`. Use Nuru's build path to resolve this template; passing the family template directly to Ollama would leave the placeholder as the prompt.
+
+In the shared source, `{{tool:search}}` renders to `search`, so explicit tool references can be checked against [`MODEL_TOOLS`](src/core/tool_contract.py) without changing the words the model sees. Unknown references and exact retired tool names fail before a model is built. `run_python` is permitted in the prompt but offered only when its optional server starts; its absence does not prevent model construction. The harness's expert tools are excluded from the model's contract.
 
 `session._modelfile_for(base_model)` picks the file by family - `NURU_BASE_MODEL` with any registry namespace and `:tag` stripped, so `qwen3.5:9b` builds from [`modelfiles/qwen3.5.Modelfile`](modelfiles/qwen3.5.Modelfile). A base model with no file of its own raises `FileNotFoundError` listing the families that do have one, rather than falling back: the `PARAMETER` blocks are tuned per model, so reusing another family's would sample the model wrongly and skew any bakeoff run against it. To run a new model, add `<family>.Modelfile`.
 
 | Family | `PARAMETER` block |
 | --- | --- |
-| [`qwen3.5`](modelfiles/qwen3.5.Modelfile) | Qwen's thinking-mode preset: `temperature 1.0`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `presence_penalty 1.5`, `repeat_penalty 1.0` |
+| [`qwen3.5`](modelfiles/qwen3.5.Modelfile) | Qwen's thinking-mode preset: `temperature 1.0`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `presence_penalty 1.5`, `repeat_penalty 1.0`, `num_predict 8192` - overridden per request by its profile (below) |
 | [`qwen3`](modelfiles/qwen3.Modelfile) | Qwen3's thinking-mode preset: `temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0.0`, `repeat_penalty 1.0` |
 | [`gemma4`](modelfiles/gemma4.Modelfile) | Gemma's shipped defaults: `temperature 1.0`, `top_p 0.95`, `top_k 64` |
-| [`granite4.2`](modelfiles/granite4.2.Modelfile) | Granite's shipped defaults: `temperature 1.0`, `top_p 0.95` |
+| [`granite4.2`](modelfiles/granite4.2.Modelfile) | Tuned for tool calls: `temperature 0.2`, `top_p 0.9`, `top_k 40`, `min_p 0.05`, `repeat_penalty 1.0`, `num_ctx 16384`, `num_predict 8192` |
 | [`llama3.1`](modelfiles/llama3.1.Modelfile) | Meta's reference values: `temperature 0.6`, `top_p 0.9` |
 | [`mistral-nemo`](modelfiles/mistral-nemo.Modelfile) | Mistral's low-temperature guidance for Nemo: `temperature 0.3`, `top_p 0.9` |
 | [`lfm2.5-thinking`](modelfiles/lfm2.5-thinking.Modelfile) | Liquid's shipped defaults: `temperature 0.05`, `top_k 50` |
 
-Every file carries the same `SYSTEM` prompt; only the `PARAMETER` block differs. They are separate copies, so a prompt change has to be made in every one or they drift - which would confound a bakeoff comparing them.
+Only Qwen3.5 and Granite4.2 are supported. The other five files above retain legacy prompts and are explicitly disabled in `profiles.yaml` until their prompt and thinking settings are ported and tested. Edit `system.md` to change both supported families' assistant prompt. The golden rendering tests preserve their complete Modelfiles at `plan-executor` commit `80171de`; intentional prompt changes must update those baselines. Planner Modelfiles remain separate because they describe a different role.
 
-`core.providers.ollama.create_model(model, base_model, modelfile_path)` renders `__BASE_MODEL__` to `NURU_BASE_MODEL` and runs `ollama create` with the result. `Session.start()` calls this on every startup before connecting to any MCP server, so the system prompt is always in sync with the template - edit the family's Modelfile and it takes effect on the next run, no manual `ollama create` needed.
+**Profiles.** What a Modelfile can't express lives in [`modelfiles/profiles.yaml`](modelfiles/profiles.yaml), per family ([`model_profile.py`](src/core/model_profile.py)):
+
+| Family | Thinking levels `off` / `low` / `high` as Ollama's `think` | Runs at | Sampling sent with each request |
+| --- | --- | --- | --- |
+| `granite4.2` | `false` / `"low"` / `"high"` | `low` (the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high, 2026-09-29) | none - the Modelfile's |
+| `qwen3.5` | `false` / `true` / `true` - it has no levels | `off` (on, it thought 13 s over "what is 2+3") | thinking: `temperature 0.6`, `top_p 0.95`; not: `temperature 0.7`, `top_p 0.8`; both `top_k 20`, no presence penalty - a starting point, not yet measured |
+
+A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. An independently configured `NURU_PLANNER_MODEL` needs its own supported profile and uses its own thinking and request sampling settings. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
+
+`core.providers.ollama.create_model(model, base_model, modelfile_path)` resolves the shared SYSTEM text and `__BASE_MODEL__`, validates tool references, and runs `ollama create` with a temporary rendered file. `Session.start()` calls this on every startup before connecting to any MCP server. Eval manifests include the rendered Modelfile's hash, so edits to the shared source change the recorded prompt identity.
 
 Install dependencies and run either front end:
 
@@ -61,8 +73,8 @@ uv run nuru-ui    # in a window
 
 1. **Server check** - if Ollama's server isn't already running on `localhost:11434`, it's started in the background (`ollama serve`).
 2. **Model check** - if the configured model isn't already loaded into memory, it's loaded, and its params (size, quantization, family, thinking support) are printed.
-3. **History loaded** - prior turns from the current conversation are read back from a local SQLite database (the hidden `.db/conversation.db` by default, via `core.conversation_store.ConversationStore`) and sent along with the new message, oldest first, keeping as many of the most recent turns as fit under a token budget (80% of the model's context window - the rest is reserved for the response). The new message goes to the model behind a line giving the current local date and time (`[Current date and time: Monday 2026-09-21 17:52 CEST]`); the saved copy stays as you typed it. A message that would already exceed that budget on its own is rejected with an error instead of being sent. The `[user: NN%]` prompt shows how much of the context window the last turn used.
-4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. The model is only offered the tools on an allowlist (`MODEL_TOOLS` in [`session.py`](src/core/session.py)): the vault (where a delete is a move to `trash/`), `calculate`, `statistics` and `ask_an_expert` - never the decision layer's own tools. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
+3. **History loaded** - complete prior user/reply exchanges are read from the local SQLite database (`.db/conversation.db` by default). Stored `content_tokens` estimate each message's content size separately from `tokens_used`, which preserves actual model usage for the CLI context indicator. Existing databases receive an atomic, versioned backfill on opening. History selection scans at most 200 rows in stable ID order and skips orphan messages; empty cancelled replies still complete a turn. Each request reserves 20% for output, capped at 2,048 tokens, and budgets the actual SYSTEM prompt, tools or format schema, timestamp, framing, current message and evidence. The current message is counted once, and its saved copy stays as typed. Continuations evict complete old exchanges, then replace the largest tool-result bodies with explicit omission notices until the request fits. Tool-call relationships and the step-limit final-answer instruction are preserved. A request that still cannot fit after history and optional tool evidence are removed stops with an explicit limitation. The SYSTEM prompt is cached from the exact model-build rendering at session startup. Estimates use UTF-8 bytes divided by four, rounded up; they are not tokenizer guarantees. One bounded tool-result overflow recovery remains for server-side rejection. Planned execution also receives prior exchanges and budgets each pick, draft and answer separately. The `[user: NN%]` prompt continues to show measured prompt usage from the last turn.
+4. **Response streamed** - the reply streams in live, prefixed with `[nuru] ` before the first chunk. If the model calls a tool (from the Obsidian or deep-think MCP servers - see their own READMEs under [servers/](../servers)), the tool runs and its result is fed back to the model before the final reply is produced. The model is only offered the tools on an allowlist (`MODEL_TOOLS` in [`tool_contract.py`](src/core/tool_contract.py)): the vault (where a delete is a move to `trash/`), `calculate`, `statistics`, optional Docker-backed `run_python`, and `ask_an_expert` - never the decision layer's own tools. What a thinking model reasoned is printed as `[thinking] ` once each model call is done. If it ends a turn with reasoning but no reply (it sometimes writes its whole answer into the reasoning), the reply is a one-line note saying so, and the reasoning is saved as the reply.
 
 History is scoped to one conversation per run of `nuru` - each launch starts a new conversation row in the database, but earlier conversations are kept, not deleted.
 
@@ -73,7 +85,7 @@ History is scoped to one conversation per run of `nuru` - each launch starts a n
    - **step_cap** - a turn stops after 10 rounds of tool calls (after one expert attempt if the budget allows), with the log of what ran.
    - **write_checks** - a write naming a note ID no search returned, a blocked tool or a protected path doesn't run; the model is told why.
 
-   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at `THINK` (low). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
+   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at its model's default level (its [profile](#the-custom-model-and-its-settings)). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
    - **tool_gate** - a read or write request starts with the harness running the search itself (the request as its query); `answer` / `ask_user` get no tools.
    - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
    - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
@@ -135,7 +147,7 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 `core.session` - what the CLI and the UI share, with no dependency on either:
 
 - **`Session.start()`** - Builds the custom model, connects the MCP servers, opens the log and the database, loads the model, and returns the `Session`. If a later step fails, whatever was already opened is closed again.
-- **`session.ask(text, cancel=None)`** - A generator for one turn. Yields `Text` chunks of the reply, a `Thinking` for what each model call reasoned (once that call is done, so it follows the text it was reasoning towards) and a `ToolCall` for each tool the model calls (before it runs), then a `Failure` if the turn couldn't be completed (an oversized message, or a failed request - in which case the message is not saved). Setting the `threading.Event` passed as `cancel` stops the turn at the next chunk, or once a running tool call returns, and keeps what was said so far as the reply.
+- **`session.ask(text, cancel=None)`** - A generator for one turn. Yields `Text` chunks of the reply, a `Thinking` for what each model call reasoned (once that call is done, so it follows the text it was reasoning towards) and a `ToolCall` for each tool the model calls (before it runs), then a `Failure` if the turn couldn't be completed (an oversized message, or a failed request - a failed initial admission is not saved; a context-budget failure after a turn starts preserves its request and limitation). Setting the `threading.Event` passed as `cancel` stops the turn at the next chunk, or once a running tool call returns, and keeps what was said so far as the reply.
 - **`session.load_model()`** / **`loaded_model_info()`** - Load the model if needed; its static info, or `None` if it isn't in memory.
 - **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
@@ -145,6 +157,8 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 `core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
+
+`core.model_profile` - [profiles](#the-custom-model-and-its-settings): a family's thinking translation, default level and sampling, from `modelfiles/profiles.yaml`.
 
 `core.planner` - [plan mode](#plan-mode-a-test): the planner prompt and schema, `check_plan`, and `make_plan`.
 
@@ -167,3 +181,42 @@ uv run pytest
 ```
 
 No live Ollama server is required - the tests fake out `requests` so they run standalone. The UI tests run headless on Qt's `offscreen` platform (no display needed); if the machine's Qt libraries can't be loaded, that file is skipped rather than failed. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.
+
+
+## Validated tool dispatch and uncertain writes
+
+Every model-facing tool call is checked against connected tools and their advertised
+JSON Schema before execution. Arguments must be JSON objects. Python accepts only
+`code` and `notes`; Nuru injects note text and validates the resulting server request.
+Tool errors carry a common kind, code, hint and completion certainty in logs and model
+results. Math/Python domain failures override a successful protocol flag; note content
+is not interpreted as a tool-status envelope. Recoverable failures get two recovery calls;
+failed evidence cannot feed a dependent write.
+
+A write attempt is committed to the conversation database before dispatch. If its
+response is lost or reports an error without an explicit pre-mutation rejection
+receipt, Nuru cannot assume nothing changed: it preserves
+the request, reports uncertainty and blocks further writes to that vault/database.
+This holds with Laya unavailable and after reopening. Reads remain available. A model
+failure after a confirmed write reports that completed action instead of deleting the
+request and inviting an indistinguishable retry.
+
+After stopping other sessions on the vault and inspecting its actual state, use
+`/writes` in the CLI to inspect pending attempts, then `/resolve-write ID completed`
+or `/resolve-write ID not_completed` to record a verified conclusion. Neither command
+executes a write; the model cannot resolve attempts. Leave uncertainty unresolved if
+you cannot establish what happened. The UI also offers reconciliation through its
+Pending writes dialog while idle. Separate conversation databases do not share the
+journal; canonical authorization and target provenance remain the next work package.
+See [PR 3 findings](evals/validated-dispatch-pr3-2026-10-06.md) for coverage and limits.
+
+Pre-write refusals from the pinned Obsidian server carry an explicit
+`REJECTED_BEFORE_WRITE` receipt. These can be corrected without locking the vault;
+exception type names alone never make a dispatched write safe to retry. Recovery
+allows two calls per turn across reads and computations, while failed evidence
+continues to block dependent writes. Planned steps permit two bounded corrections.
+
+The desktop **Pending writes** button shows unresolved attempts while idle. Inspect
+the affected notes and move destinations, stop other sessions using that vault, then
+acknowledge those checks to mark an attempt completed or not completed. Leave it
+pending if unsure. These actions record a conclusion and do not retry any write.

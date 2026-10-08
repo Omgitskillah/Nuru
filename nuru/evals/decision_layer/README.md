@@ -53,8 +53,45 @@ caffeinate -i uv run python run_suite.py --tests quick --label quick
 
 ## How the suite runs are isolated
 
-`run_suite.py` runs one fresh Nuru process per turn (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with the batch's own conversation history, session logs and decision log - the real vault, history and decision log are never touched. The semantic index is built once from the pristine copy and restored before every turn. A turn gets 10 minutes; past that its whole process tree is killed and it counts as a failure. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).
+`run_suite.py` runs one fresh Nuru process per case (`drive_turn.py`), each on a fresh scratch copy of dummyVault inside the batch folder, with a case-specific conversation history and write-attempt journal, plus the batch's session logs and decision log. The semantic index is built once from the pristine copy and restored between cases. A case gets 10 minutes by default (`--timeout`); past that its whole process tree is killed and it counts as a failure. Sequence turns keep the same Session, vault and index until the case finishes. The driver waits for Laya to finish loading before asking (a fresh process otherwise answers every first decision with a fallback).
 
-## What these can't measure yet
+## Multi-turn memory cases
 
-The **expert tier** and the **assess_effort policy actually steering a run** (tiers rising on failure signals, escalation to Claude) arrive with the enforcement paths in Phase 4. Until then, eval 3 labels a test `expert` when no local tier passes (untested), and eval 4 is a replay rather than a live A/B. Both should be re-run once Phase 4 lands.
+The default `--tests 1-34` preserves the original 34-prompt baseline (/170). Explicit `--tests all` includes additional numbered cases from [`cases.json`](cases.json); `--tests 35` runs the three-turn follow-up memory case; `--tests 36` runs the same turns through a fixed answer-only plan. Use `--cases path.json` to supply additional fixtures with unique numeric IDs. Each case has a `name`, an optional `plan` shared by its turns, and a nonempty `turns` list; each turn contains a `prompt` and a `checks` mapping of labels to regular expressions. Fixtures and scorer hashes are recorded in the manifest.
+
+```bash
+MODEL=nuru-pr2-eval NURU_PLANNER_MODEL=nuru-pr2-eval uv run python run_suite.py --tests 35 --tiers off --label memory
+```
+
+Single-prompt result records keep their existing format. Sequence records contain `turns`, with each turn's prompt, reply, regex checks, failure, model usage and vault diff. `score_runs.load_results()` adds per-turn scores and executed calls; `score()` also returns an aggregate score on the existing 0–5 scale. Each memory turn must answer successfully and leave the scratch vault unchanged. `load_results()` also records `acceptance_passed`: every check must pass, even if the aggregate reaches the legacy pass threshold. A timeout or crash fails the whole case.
+
+For an explicit rubric correction, `load_results(batch, cases_path=Path("cases.json"))` re-scores saved replies without model calls. It requires the same prompt sequence, records the replacement fixture hash, and leaves raw runtime records untouched. Omitting `cases_path` retains the collected rubric.
+
+For live planned sequences, use `--planner <Modelfile>`: live planning receives bounded conversation context and each executor call independently receives complete prior exchanges. Static `--plans` fixtures support only single-prompt cases. Legacy decision autolabelling skips sequence cases because its intent rules are specific to the original 34 prompts.
+
+## Current limitations
+
+Live acceptance requires installed local models, embedding models, Laya checkpoints and scratch fixtures. Expert planning (`--planner expert[:model]`) can make paid calls. Context estimates are heuristic, and passing a short memory case does not prove arbitrary long conversations fit. The executor's existing per-input character clipping remains explicit in its prompts.
+
+## Matching the baseline environment
+
+Match embeddings, model/profile, tool availability (including `run_python`), context
+window, fixtures and execution mode before comparing runs. The older PR 2 runs
+in NuruCodex used v1.5 embeddings without Python and must be rerun before comparison
+with the v2/Python-enabled baselines. Manifests record the effective embedding model,
+including its default, rather than only the optional environment variable.
+
+Interactive Nuru checkouts can share the configured v2 semantic index. Each suite
+batch builds and restores its own index; interactive index files, locks and SQLite
+sidecars are excluded from copied fixtures and vault-diff accounting. The suite
+does not rebuild the shared interactive index. Expert planning requires separate
+deep-think credentials; keep it off when `.env.deep-think` is absent. Schedule live
+model runs after implementation and unit checks, and coordinate reruns when CPU/GPU
+resources are occupied.
+
+
+`tool_contract_probe.py --out .runs/contracts.json` verifies Math and Python MCP
+success/error transport flags without Ollama or vault writes. It requires the local
+Rust tool builds and configured Docker sandbox. It checks success, bad arithmetic,
+an empty dataset, and Python partial stdout followed by an exception. See
+[PR 3 findings](../validated-dispatch-pr3-2026-10-06.md).

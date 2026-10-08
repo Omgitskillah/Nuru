@@ -1,0 +1,5072 @@
+[
+ {
+  "model": "gemma-planner:e2b",
+  "case": "01",
+  "repeat": 1,
+  "wall_s": 7.98090386390686,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 221,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "arguments: read_note{'name': 'Travel/Kyoto.md'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the content of the Packing section"
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "01",
+  "repeat": 2,
+  "wall_s": 7.796726942062378,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 221,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "arguments: read_note{'name': 'Travel/Kyoto.md'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the content of the Packing section"
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "02",
+  "repeat": 1,
+  "wall_s": 7.865092039108276,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 206,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "02",
+  "repeat": 2,
+  "wall_s": 7.703933954238892,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 206,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "03",
+  "repeat": 1,
+  "wall_s": 7.294062852859497,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 190,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout[0]",
+      "literal": true
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "03",
+  "repeat": 2,
+  "wall_s": 7.137984037399292,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 190,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout[0]",
+      "literal": true
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "04",
+  "repeat": 1,
+  "wall_s": 6.6586668491363525,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 176,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "04",
+  "repeat": 2,
+  "wall_s": 6.483189105987549,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 176,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "05",
+  "repeat": 1,
+  "wall_s": 13.139019012451172,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 280,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "arguments: browse{'folder': 'Work mode_type:meeting limit:3}}]}}{\\text{step_language}}<channel|>{'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "folder": "Work mode_type:meeting limit:3}}]}}{\text{step_language}}<channel|>{"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "05",
+  "repeat": 2,
+  "wall_s": 12.97732400894165,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 280,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "arguments: browse{'folder': 'Work mode_type:meeting limit:3}}]}}{\\text{step_language}}<channel|>{'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "folder": "Work mode_type:meeting limit:3}}]}}{\text{step_language}}<channel|>{"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "06",
+  "repeat": 1,
+  "wall_s": 14.575379133224487,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 415,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "06",
+  "repeat": 2,
+  "wall_s": 14.499269723892212,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 415,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "07",
+  "repeat": 1,
+  "wall_s": 7.207273244857788,
+  "done_reason": "stop",
+  "prompt_tokens": 2018,
+  "output_tokens": 161,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "07",
+  "repeat": 2,
+  "wall_s": 7.034595012664795,
+  "done_reason": "stop",
+  "prompt_tokens": 2018,
+  "output_tokens": 161,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "08",
+  "repeat": 1,
+  "wall_s": 5.249435901641846,
+  "done_reason": "stop",
+  "prompt_tokens": 2023,
+  "output_tokens": 145,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Home/Seedlings.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "08",
+  "repeat": 2,
+  "wall_s": 5.1086647510528564,
+  "done_reason": "stop",
+  "prompt_tokens": 2023,
+  "output_tokens": 145,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Home/Seedlings.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "09",
+  "repeat": 1,
+  "wall_s": 5.948055028915405,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 159,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "09",
+  "repeat": 2,
+  "wall_s": 5.788373947143555,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 159,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "10",
+  "repeat": 1,
+  "wall_s": 6.413246154785156,
+  "done_reason": "stop",
+  "prompt_tokens": 2036,
+  "output_tokens": 162,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "10",
+  "repeat": 2,
+  "wall_s": 6.25309419631958,
+  "done_reason": "stop",
+  "prompt_tokens": 2036,
+  "output_tokens": 162,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "11",
+  "repeat": 1,
+  "wall_s": 8.572633981704712,
+  "done_reason": "stop",
+  "prompt_tokens": 2043,
+  "output_tokens": 238,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "11",
+  "repeat": 2,
+  "wall_s": 8.425908088684082,
+  "done_reason": "stop",
+  "prompt_tokens": 2043,
+  "output_tokens": 238,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "12",
+  "repeat": 1,
+  "wall_s": 10.454246282577515,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 284,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "arguments: read_note{'name': 'Operations/May.md'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the delivery times from the Delivery times section"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "12",
+  "repeat": 2,
+  "wall_s": 10.303492069244385,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 284,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "arguments: read_note{'name': 'Operations/May.md'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the delivery times from the Delivery times section"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "13",
+  "repeat": 1,
+  "wall_s": 7.335471868515015,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 205,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Lyra.md"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "13",
+  "repeat": 2,
+  "wall_s": 7.189991235733032,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 205,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Lyra.md"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "14",
+  "repeat": 1,
+  "wall_s": 5.7785727977752686,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 146,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "note": "Home/Maintenance.md",
+      "mode": "append"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "14",
+  "repeat": 2,
+  "wall_s": 5.616582155227661,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 146,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "note": "Home/Maintenance.md",
+      "mode": "append"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "15",
+  "repeat": 1,
+  "wall_s": 6.27466607093811,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Walked for 25 minutes",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "15",
+  "repeat": 2,
+  "wall_s": 6.103511095046997,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Walked for 25 minutes",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "16",
+  "repeat": 1,
+  "wall_s": 5.728369235992432,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 139,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "16",
+  "repeat": 2,
+  "wall_s": 5.5806169509887695,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 139,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "17",
+  "repeat": 1,
+  "wall_s": 5.964194059371948,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 161,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "17",
+  "repeat": 2,
+  "wall_s": 5.804328918457031,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 161,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "18",
+  "repeat": 1,
+  "wall_s": 8.52323603630066,
+  "done_reason": "stop",
+  "prompt_tokens": 2038,
+  "output_tokens": 227,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ]
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "18",
+  "repeat": 2,
+  "wall_s": 8.3701491355896,
+  "done_reason": "stop",
+  "prompt_tokens": 2038,
+  "output_tokens": 227,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ]
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "19",
+  "repeat": 1,
+  "wall_s": 7.511806964874268,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 192,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Work/Website.md",
+      "destination_path": "Archive/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "19",
+  "repeat": 2,
+  "wall_s": 7.345288991928101,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 192,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Work/Website.md",
+      "destination_path": "Archive/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "20",
+  "repeat": 1,
+  "wall_s": 26.913318872451782,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 581,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Research/Heat pumps.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "write_note",
+     "args": {
+      "content": "$s1",
+      "note": "Summaries/Heat pumps.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "20",
+  "repeat": 2,
+  "wall_s": 27.060371160507202,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 581,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Research/Heat pumps.md"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "write_note",
+     "args": {
+      "content": "$s1",
+      "note": "Summaries/Heat pumps.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y03",
+  "repeat": 1,
+  "wall_s": 9.64304804801941,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 206,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "empty plan where a plan was expected"
+  ],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y03",
+  "repeat": 2,
+  "wall_s": 9.471981763839722,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 206,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "empty plan where a plan was expected"
+  ],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y04",
+  "repeat": 1,
+  "wall_s": 10.504579782485962,
+  "done_reason": "stop",
+  "prompt_tokens": 2022,
+  "output_tokens": 243,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the note(s) containing activities for September 17'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "September 17"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the note(s) containing activities for September 17"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y04",
+  "repeat": 2,
+  "wall_s": 10.368026971817017,
+  "done_reason": "stop",
+  "prompt_tokens": 2022,
+  "output_tokens": 243,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the note(s) containing activities for September 17'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "September 17"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the note(s) containing activities for September 17"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y07",
+  "repeat": 1,
+  "wall_s": 8.439645767211914,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 190,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "power budget table"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y07",
+  "repeat": 2,
+  "wall_s": 8.333878993988037,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 190,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "power budget table"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y08",
+  "repeat": 1,
+  "wall_s": 15.52157711982727,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 332,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search', 'statistics']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "PDP-drop runs"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the 9 PDP-drop run values"
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y08",
+  "repeat": 2,
+  "wall_s": 15.326470851898193,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 332,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search', 'statistics']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "PDP-drop runs"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the 9 PDP-drop run values"
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y10",
+  "repeat": 1,
+  "wall_s": 14.12001895904541,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 314,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['ask_an_expert'] vs reference ['read_note', 'search']",
+   "arguments: ask_an_expert{'question': None}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "What is the temperature coefficient at 100 ppm, and how does it compare to the datasheet?"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y10",
+  "repeat": 2,
+  "wall_s": 13.95279598236084,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 314,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['ask_an_expert'] vs reference ['read_note', 'search']",
+   "arguments: ask_an_expert{'question': None}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "What is the temperature coefficient at 100 ppm, and how does it compare to the datasheet?"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y14",
+  "repeat": 1,
+  "wall_s": 19.143096208572388,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 430,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y14",
+  "repeat": 2,
+  "wall_s": 19.03832697868347,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 430,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y15",
+  "repeat": 1,
+  "wall_s": 8.23860478401184,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 166,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "parts inventory"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y15",
+  "repeat": 2,
+  "wall_s": 8.073854923248291,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 166,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "parts inventory"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y24",
+  "repeat": 1,
+  "wall_s": 9.513072967529297,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 209,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "vendor email SARA-R510S"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y24",
+  "repeat": 2,
+  "wall_s": 9.344881057739258,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 209,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "vendor email SARA-R510S"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y26",
+  "repeat": 1,
+  "wall_s": 12.07963490486145,
+  "done_reason": "stop",
+  "prompt_tokens": 2020,
+  "output_tokens": 252,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y26",
+  "repeat": 2,
+  "wall_s": 11.934936761856079,
+  "done_reason": "stop",
+  "prompt_tokens": 2020,
+  "output_tokens": 252,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y28",
+  "repeat": 1,
+  "wall_s": 6.619539737701416,
+  "done_reason": "stop",
+  "prompt_tokens": 2033,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "the soak test is running and i'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y28",
+  "repeat": 2,
+  "wall_s": 6.428452014923096,
+  "done_reason": "stop",
+  "prompt_tokens": 2033,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "the soak test is running and i'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y29",
+  "repeat": 1,
+  "wall_s": 8.70932126045227,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 200,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['write_note'] vs reference ['search', 'write_note']",
+   "arguments: write_note{'content': None, 'note': \"Priya's note\"}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "She prefers async messages on Fridays.",
+      "note": "Priya's note",
+      "mode": "append"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y29",
+  "repeat": 2,
+  "wall_s": 8.564925909042358,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 200,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['write_note'] vs reference ['search', 'write_note']",
+   "arguments: write_note{'content': None, 'note': \"Priya's note\"}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "She prefers async messages on Fridays.",
+      "note": "Priya's note",
+      "mode": "append"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y34",
+  "repeat": 1,
+  "wall_s": 20.00067901611328,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 441,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35 * 24"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "Y34",
+  "repeat": 2,
+  "wall_s": 19.847702980041504,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 441,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35 * 24"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "YPM",
+  "repeat": 1,
+  "wall_s": 24.216867685317993,
+  "done_reason": "stop",
+  "prompt_tokens": 2037,
+  "output_tokens": 535,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: s5 has a non-whole reference 'sum($s4)'",
+   "dependencies: s6 has a non-whole reference 'Grocery total: $s5'",
+   "dependencies: not exactly one answer step, last",
+   "tools ['calculate', 'read_note', 'search', 'write_note'] vs reference ['read_note', 'search', 'statistics', 'write_note']",
+   "arguments: calculate{'expression': 'sum($s4)'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget note"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a list of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "calculate",
+     "args": {
+      "expression": "sum($s4)"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "write_note",
+     "args": {
+      "content": "Grocery total: $s5",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e2b",
+  "case": "YPM",
+  "repeat": 2,
+  "wall_s": 24.13686513900757,
+  "done_reason": "stop",
+  "prompt_tokens": 2037,
+  "output_tokens": 535,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: s5 has a non-whole reference 'sum($s4)'",
+   "dependencies: s6 has a non-whole reference 'Grocery total: $s5'",
+   "dependencies: not exactly one answer step, last",
+   "tools ['calculate', 'read_note', 'search', 'write_note'] vs reference ['read_note', 'search', 'statistics', 'write_note']",
+   "arguments: calculate{'expression': 'sum($s4)'}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget note"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a list of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "calculate",
+     "args": {
+      "expression": "sum($s4)"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "write_note",
+     "args": {
+      "content": "Grocery total: $s5",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "01",
+  "repeat": 1,
+  "wall_s": 8.728190898895264,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 138,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md",
+      "section": "Packing"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "01",
+  "repeat": 2,
+  "wall_s": 8.332836151123047,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 138,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Travel/Kyoto.md",
+      "section": "Packing"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "02",
+  "repeat": 1,
+  "wall_s": 14.70834994316101,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 235,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the exact note name for the topic of reducing interruptions while working from home'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the topic of reducing interruptions while working from home"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "02",
+  "repeat": 2,
+  "wall_s": 14.499505996704102,
+  "done_reason": "stop",
+  "prompt_tokens": 2026,
+  "output_tokens": 235,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the exact note name for the topic of reducing interruptions while working from home'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "reducing interruptions while working from home"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the topic of reducing interruptions while working from home"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "03",
+  "repeat": 1,
+  "wall_s": 9.979578018188477,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout[0]",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "03",
+  "repeat": 2,
+  "wall_s": 9.607085943222046,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 156,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "config.timeout[0]",
+      "literal": true
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "04",
+  "repeat": 1,
+  "wall_s": 13.50951600074768,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 213,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "04",
+  "repeat": 2,
+  "wall_s": 13.158457040786743,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 213,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "find_in_notes",
+     "args": {
+      "pattern": "ORD-[0-9]{4}",
+      "literal": false
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "05",
+  "repeat": 1,
+  "wall_s": 13.696484088897705,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 215,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "type": "meeting",
+      "limit": 3,
+      "folder": "Work"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "05",
+  "repeat": 2,
+  "wall_s": 13.32108211517334,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 215,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "browse",
+     "args": {
+      "type": "meeting",
+      "limit": 3,
+      "folder": "Work"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "06",
+  "repeat": 1,
+  "wall_s": 1.5064058303833008,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 18,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "06",
+  "repeat": 2,
+  "wall_s": 1.0868101119995117,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 18,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {}
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "07",
+  "repeat": 1,
+  "wall_s": 2.7406582832336426,
+  "done_reason": "stop",
+  "prompt_tokens": 2018,
+  "output_tokens": 37,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "07",
+  "repeat": 2,
+  "wall_s": 2.330725908279419,
+  "done_reason": "stop",
+  "prompt_tokens": 2018,
+  "output_tokens": 37,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "tags",
+     "args": {
+      "tag": "gardening"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "08",
+  "repeat": 1,
+  "wall_s": 3.0116121768951416,
+  "done_reason": "stop",
+  "prompt_tokens": 2023,
+  "output_tokens": 43,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Home/Seedlings.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "08",
+  "repeat": 2,
+  "wall_s": 2.682893753051758,
+  "done_reason": "stop",
+  "prompt_tokens": 2023,
+  "output_tokens": 43,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Home/Seedlings.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "09",
+  "repeat": 1,
+  "wall_s": 2.974553108215332,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 42,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "09",
+  "repeat": 2,
+  "wall_s": 2.6246211528778076,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 42,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "note_info",
+     "args": {
+      "name": "Work/Website.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "10",
+  "repeat": 1,
+  "wall_s": 2.861907958984375,
+  "done_reason": "stop",
+  "prompt_tokens": 2036,
+  "output_tokens": 40,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "10",
+  "repeat": 2,
+  "wall_s": 2.492820978164673,
+  "done_reason": "stop",
+  "prompt_tokens": 2036,
+  "output_tokens": 40,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "(145.50 + 29.95) * 1.19"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "11",
+  "repeat": 1,
+  "wall_s": 11.061153888702393,
+  "done_reason": "stop",
+  "prompt_tokens": 2043,
+  "output_tokens": 173,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "11",
+  "repeat": 2,
+  "wall_s": 10.688536167144775,
+  "done_reason": "stop",
+  "prompt_tokens": 2043,
+  "output_tokens": 173,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "statistics",
+     "args": {
+      "numbers": [
+       12,
+       18,
+       21,
+       21,
+       28
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "12",
+  "repeat": 1,
+  "wall_s": 18.952805280685425,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 297,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the list of delivery time numbers as a JSON array of numbers'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md",
+      "section": "Delivery times"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the list of delivery time numbers as a JSON array of numbers"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "12",
+  "repeat": 2,
+  "wall_s": 18.586647033691406,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 297,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [
+   "s2 pick want: 'the list of delivery time numbers as a JSON array of numbers'",
+   "free-text fields differ: confirm paraphrase and the pick wants"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Operations/May.md",
+      "section": "Delivery times"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the list of delivery time numbers as a JSON array of numbers"
+    },
+    {
+     "id": "s3",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "answer",
+     "inputs": [
+      "s3"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "13",
+  "repeat": 1,
+  "wall_s": 11.663453102111816,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 180,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['read_note'] vs reference ['read_note', 'read_note']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "13",
+  "repeat": 2,
+  "wall_s": 11.279371738433838,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 180,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['read_note'] vs reference ['read_note', 'read_note']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "read_note",
+     "args": {
+      "name": "Projects/Orion.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "14",
+  "repeat": 1,
+  "wall_s": 3.6419119834899902,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 52,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "mode": "append",
+      "note": "Home/Maintenance.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "14",
+  "repeat": 2,
+  "wall_s": 3.2640371322631836,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 52,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Order replacement filters",
+      "mode": "append",
+      "note": "Home/Maintenance.md"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "15",
+  "repeat": 1,
+  "wall_s": 3.714573860168457,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 53,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: ids not sequential: ['s2']",
+   "dependencies: s2 references s1, not an earlier step",
+   "tools [] vs reference ['write_note']",
+   "arguments: "
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "15",
+  "repeat": 2,
+  "wall_s": 3.34989595413208,
+  "done_reason": "stop",
+  "prompt_tokens": 2029,
+  "output_tokens": 53,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 1,
+  "notes": [
+   "dependencies: ids not sequential: ['s2']",
+   "dependencies: s2 references s1, not an earlier step",
+   "tools [] vs reference ['write_note']",
+   "arguments: "
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "16",
+  "repeat": 1,
+  "wall_s": 3.853681802749634,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 55,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "16",
+  "repeat": 2,
+  "wall_s": 3.464224100112915,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 55,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "Call the dentist on Monday",
+      "note": "Scratch/Reminder.md",
+      "mode": "replace"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "17",
+  "repeat": 1,
+  "wall_s": 10.07023572921753,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 153,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "17",
+  "repeat": 2,
+  "wall_s": 9.666393995285034,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 153,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "rename_or_move_file",
+     "args": {
+      "source_path": "Scratch/Old checklist.md",
+      "destination_path": "trash/Old checklist.md"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "18",
+  "repeat": 1,
+  "wall_s": 19.422271966934204,
+  "done_reason": "stop",
+  "prompt_tokens": 2038,
+  "output_tokens": 301,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s1 ask_an_expert args {'question': 'Is the rollout described in Plans/Migration.md feasible?', 'file_paths': ['Plans/Migration.md', 'Risks/Dependencies.md'], 'user_request': 'Ask the expert whether the rollout described in Plans/Migration.md is feasible. Attach that note and Risks/Dependencies.md.'} vs reference {'question': 'Is the rollout described in Plans/Migration.md feasible, considering Risks/Dependencies.md?', 'file_paths': ['Plans/Migration.md', 'Risks/Dependencies.md']}"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ],
+      "user_request": "Ask the expert whether the rollout described in Plans/Migration.md is feasible. Attach that note and Risks/Dependencies.md."
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "18",
+  "repeat": 2,
+  "wall_s": 19.111693143844604,
+  "done_reason": "stop",
+  "prompt_tokens": 2038,
+  "output_tokens": 301,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "s1 ask_an_expert args {'question': 'Is the rollout described in Plans/Migration.md feasible?', 'file_paths': ['Plans/Migration.md', 'Risks/Dependencies.md'], 'user_request': 'Ask the expert whether the rollout described in Plans/Migration.md is feasible. Attach that note and Risks/Dependencies.md.'} vs reference {'question': 'Is the rollout described in Plans/Migration.md feasible, considering Risks/Dependencies.md?', 'file_paths': ['Plans/Migration.md', 'Risks/Dependencies.md']}"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "Is the rollout described in Plans/Migration.md feasible?",
+      "file_paths": [
+       "Plans/Migration.md",
+       "Risks/Dependencies.md"
+      ],
+      "user_request": "Ask the expert whether the rollout described in Plans/Migration.md is feasible. Attach that note and Risks/Dependencies.md."
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "19",
+  "repeat": 1,
+  "wall_s": 11.494282007217407,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 174,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "19",
+  "repeat": 2,
+  "wall_s": 11.122977018356323,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 174,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "20",
+  "repeat": 1,
+  "wall_s": 49.983891010284424,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 773,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "20",
+  "repeat": 2,
+  "wall_s": 50.02913188934326,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 773,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y03",
+  "repeat": 1,
+  "wall_s": 12.867841005325317,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 192,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "tools ['search', 'search'] vs reference ['read_note', 'read_note', 'search', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "mom's birthday"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "search",
+     "args": {
+      "query": "dentist appointment"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y03",
+  "repeat": 2,
+  "wall_s": 12.473546981811523,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 192,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "tools ['search', 'search'] vs reference ['read_note', 'read_note', 'search', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "mom's birthday"
+     }
+    },
+    {
+     "id": "s2",
+     "tool": "search",
+     "args": {
+      "query": "dentist appointment"
+     }
+    },
+    {
+     "id": "s3",
+     "think": "answer",
+     "inputs": [
+      "s1",
+      "s2"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y04",
+  "repeat": 1,
+  "wall_s": 16.302897930145264,
+  "done_reason": "stop",
+  "prompt_tokens": 2022,
+  "output_tokens": 245,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "September 17"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y04",
+  "repeat": 2,
+  "wall_s": 15.833636999130249,
+  "done_reason": "stop",
+  "prompt_tokens": 2022,
+  "output_tokens": 245,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "September 17"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y07",
+  "repeat": 1,
+  "wall_s": 16.055569887161255,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 241,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "power budget table"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y07",
+  "repeat": 2,
+  "wall_s": 15.713176965713501,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 241,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "power budget table"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y08",
+  "repeat": 1,
+  "wall_s": 14.58115816116333,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 217,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search', 'statistics']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "PDP-drop runs data"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y08",
+  "repeat": 2,
+  "wall_s": 14.25138521194458,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 217,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search', 'statistics']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "PDP-drop runs data"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y10",
+  "repeat": 1,
+  "wall_s": 27.603474855422974,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 412,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y10",
+  "repeat": 2,
+  "wall_s": 27.18582773208618,
+  "done_reason": "stop",
+  "prompt_tokens": 2034,
+  "output_tokens": 412,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y14",
+  "repeat": 1,
+  "wall_s": 19.616281747817993,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 291,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "After how many failures does my backoff hit the cap?"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y14",
+  "repeat": 2,
+  "wall_s": 19.245792865753174,
+  "done_reason": "stop",
+  "prompt_tokens": 2024,
+  "output_tokens": 291,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "ask_an_expert",
+     "args": {
+      "question": "After how many failures does my backoff hit the cap?"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y15",
+  "repeat": 1,
+  "wall_s": 14.919770002365112,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 219,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "parts inventory value"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y15",
+  "repeat": 2,
+  "wall_s": 14.526999711990356,
+  "done_reason": "stop",
+  "prompt_tokens": 2031,
+  "output_tokens": 219,
+  "scores": {
+   "structure": 0,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 0,
+  "notes": [
+   "expected an empty plan"
+  ],
+  "review": [],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "parts inventory value"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y24",
+  "repeat": 1,
+  "wall_s": 12.517559051513672,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 183,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "vendor email SARA-R510S"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y24",
+  "repeat": 2,
+  "wall_s": 12.123613119125366,
+  "done_reason": "stop",
+  "prompt_tokens": 2027,
+  "output_tokens": 183,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "dependencies: not exactly one answer step, last",
+   "tools ['search'] vs reference ['read_note', 'search']"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "vendor email SARA-R510S"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y26",
+  "repeat": 1,
+  "wall_s": 41.35170316696167,
+  "done_reason": "stop",
+  "prompt_tokens": 2020,
+  "output_tokens": 616,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y26",
+  "repeat": 2,
+  "wall_s": 11.80831789970398,
+  "done_reason": "stop",
+  "prompt_tokens": 2020,
+  "output_tokens": 174,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 1,
+   "fidelity": 1
+  },
+  "total": 5,
+  "notes": [],
+  "review": [],
+  "plan": {
+   "steps": []
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y28",
+  "repeat": 1,
+  "wall_s": 13.397967100143433,
+  "done_reason": "stop",
+  "prompt_tokens": 2033,
+  "output_tokens": 194,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "The soak test is running and I'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y28",
+  "repeat": 2,
+  "wall_s": 12.96477723121643,
+  "done_reason": "stop",
+  "prompt_tokens": 2033,
+  "output_tokens": 194,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "The soak test is running and I'm going to the gym.",
+      "mode": "append",
+      "type": "daily"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y29",
+  "repeat": 1,
+  "wall_s": 13.385680198669434,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 194,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "tools ['write_note'] vs reference ['search', 'write_note']",
+   "arguments: write_note{'content': None, 'targets': [\"Priya's note\"]}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "she prefers async messages on Fridays",
+      "mode": "append",
+      "targets": [
+       "Priya's note"
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y29",
+  "repeat": 2,
+  "wall_s": 12.947895050048828,
+  "done_reason": "stop",
+  "prompt_tokens": 2028,
+  "output_tokens": 194,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 0,
+   "arguments": 0,
+   "dependencies": 1,
+   "fidelity": 0
+  },
+  "total": 2,
+  "notes": [
+   "tools ['write_note'] vs reference ['search', 'write_note']",
+   "arguments: write_note{'content': None, 'targets': [\"Priya's note\"]}"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "write_note",
+     "args": {
+      "content": "she prefers async messages on Fridays",
+      "mode": "append",
+      "targets": [
+       "Priya's note"
+      ]
+     }
+    },
+    {
+     "id": "s2",
+     "think": "answer",
+     "inputs": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y34",
+  "repeat": 1,
+  "wall_s": 6.806288957595825,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 95,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35 * 24"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "Y34",
+  "repeat": 2,
+  "wall_s": 6.391019105911255,
+  "done_reason": "stop",
+  "prompt_tokens": 2030,
+  "output_tokens": 95,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: not exactly one answer step, last"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "calculate",
+     "args": {
+      "expression": "5.35 * 24"
+     }
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "YPM",
+  "repeat": 1,
+  "wall_s": 33.75171208381653,
+  "done_reason": "stop",
+  "prompt_tokens": 2037,
+  "output_tokens": 496,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: s6 has a non-whole reference 'Total grocery spending for March: $s5'"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget note"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a JSON array of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "write_note",
+     "args": {
+      "content": "Total grocery spending for March: $s5",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s6"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ },
+ {
+  "model": "gemma-planner:e4b",
+  "case": "YPM",
+  "repeat": 2,
+  "wall_s": 33.547420263290405,
+  "done_reason": "stop",
+  "prompt_tokens": 2037,
+  "output_tokens": 496,
+  "scores": {
+   "structure": 1,
+   "tool_choice": 1,
+   "arguments": 1,
+   "dependencies": 0,
+   "fidelity": 0
+  },
+  "total": 3,
+  "notes": [
+   "dependencies: s6 has a non-whole reference 'Total grocery spending for March: $s5'"
+  ],
+  "review": [
+   "shape differs from reference"
+  ],
+  "plan": {
+   "steps": [
+    {
+     "id": "s1",
+     "tool": "search",
+     "args": {
+      "query": "March budget note"
+     }
+    },
+    {
+     "id": "s2",
+     "think": "pick",
+     "from": "s1",
+     "want": "the exact note name for the March budget note"
+    },
+    {
+     "id": "s3",
+     "tool": "read_note",
+     "args": {
+      "name": "$s2"
+     }
+    },
+    {
+     "id": "s4",
+     "think": "pick",
+     "from": "s3",
+     "want": "the grocery amounts as a JSON array of numbers"
+    },
+    {
+     "id": "s5",
+     "tool": "statistics",
+     "args": {
+      "numbers": "$s4"
+     }
+    },
+    {
+     "id": "s6",
+     "tool": "write_note",
+     "args": {
+      "content": "Total grocery spending for March: $s5",
+      "mode": "append",
+      "type": "daily"
+     }
+    },
+    {
+     "id": "s7",
+     "think": "answer",
+     "inputs": [
+      "s6"
+     ]
+    }
+   ]
+  },
+  "raw": null
+ }
+]

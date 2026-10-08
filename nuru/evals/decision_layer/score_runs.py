@@ -9,6 +9,7 @@ notes each test is about. A test *passes* at 4/5 or better. The rubric is below,
 """
 
 import json
+import hashlib
 import re
 from datetime import date
 from pathlib import Path
@@ -123,6 +124,33 @@ def _says(record, pattern: str) -> bool:
     return re.search(pattern, record.get("reply", ""), re.IGNORECASE) is not None
 
 
+def _ran(record, *tools: str) -> bool:
+    """One of `tools` was called and succeeded - from the session log's statuses (load_results),
+    since a tool named in the turn's events may have been refused or failed. A batch without logs
+    falls back to the tool having been called."""
+    if "calculate" in tools:
+        tools += LEGACY_ARITHMETIC
+    executed = record.get("executed")
+    if executed is None:
+        return bool(set(_tools(record)) & set(tools))
+    return any(tool in tools and status == "ok" for tool, status in executed)
+
+
+# calculate's predecessors (before the 2026-10 tools purge), so older batches still score as they did.
+LEGACY_ARITHMETIC = ("add", "subtract", "multiply", "divide")
+
+
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+_NEGATED = re.compile(r"\bnot\b|n['’]t\b|\bfail|\bfalls? short|\bshort of\b|\bbelow\b|\bmiss|\bnever\b|\bcannot\b|\bno longer\b", re.I)
+
+
+def _concludes(record, subject: str, positive: str) -> bool:
+    """A sentence about `subject` says `positive` and isn't negated - the conclusion, not just the
+    words: "periodic attach (13.6 years) does not hold" names the subject but concludes the opposite."""
+    sentences = [s for s in _SENTENCE.split(record.get("reply", "")) if re.search(subject, s, re.I)]
+    return any(re.search(positive, s, re.I) and not _NEGATED.search(s) for s in sentences)
+
+
 def _answered_cleanly(record, changes) -> bool:
     return _replied(record) and not changes
 
@@ -188,9 +216,9 @@ def score_34(record, changes, today):
     """5.35 mA x 24 h = 128.4 mAh - no vault lookup needed."""
     return [
         ("128.4 mAh", _says(record, r"128\.4")),
+        ("computed with calculate or run_python", _ran(record, "calculate", "run_python")),
         ("no vault lookup", not set(_tools(record)) & VAULT_TOOLS),
-        ("no expert call", "ask_an_expert" not in _tools(record)),
-        ("nothing changed", not changes),
+        ("no expert call, and nothing changed", "ask_an_expert" not in _tools(record) and not changes),
         ("it replied", _replied(record)),
     ]
 
@@ -293,7 +321,8 @@ def score_8(record, changes, today):
     """The 9 PDP-drop runs in the Area Monitor note: mean 47.0 min, SD 0.19 min."""
     return [
         ("mean 47.0", _says(record, r"\b47\.0")),
-        ("SD 0.19", _says(record, r"0\.19")),
+        ("SD 0.19, computed with statistics or run_python",
+         _says(record, r"0\.19") and _ran(record, "statistics", "run_python")),
         ("cites the Area Monitor note", _says(record, r"area.monitor")),
         ("a concise answer (under 2,000 characters)", len(record.get("reply", "")) < 2000),
         ("looked in the vault, nothing changed, and it replied", _looked_and_answered(record, changes)),
@@ -495,26 +524,102 @@ def score_27(record, changes, today):
     ]
 
 
+# Test 32's verdict (2026-10-06): every model tried said "No - PSM isn't engaging, so periodic attach is
+# invalid", though architecture B switches the modem off and needs no PSM; a word match credited some of
+# those and failed Claude Sonnet's correct, hedged "yes on paper, via periodic attach". These patterns
+# were fitted on 6 Sonnet and 16 Qwen replies, all labelled by hand (22/22).
+_ARCH_B = r"(periodic[ -]?attach|architecture\s*\(?b\)?|\(b\)|\bin b\b|\bb at\b|modem (fully )?off)"
+_B_MEETS = (r"\b(meets?|met|reachable|achievable|holds|passes|exceeds?|yes)\b|\bmargin\b|\babove 3\b|on paper|"
+            r"only (in|with|under|by)[^.\n]{0,20}(periodic|architecture|\(?b\b)")
+# A qualifier ("a theoretical estimate", "not yet demonstrated") is not a denial; "does not meet" is.
+_B_DENIED = (r"unachievable|not (currently )?(achievable|reachable|met|possible)|\binvalid\b|fiction|false positive|"
+             r"cannot (enter|be realized|be met|meet|hit|reach)|can't (meet|hit|reach)|"
+             r"\b(does|do|did|will|would|could)\s*(not|n't)\s+(meet|reach|hit|satisfy|exceed)|"
+             r"\b(doesn't|don't|won't|wouldn't)\s+(meet|reach|hit|satisfy)|\bfails? to (meet|reach|hit)|\bnever (meets?|reaches)")
+_B_NEEDS_PSM = (r"(relies|depends|assumes|assuming|requires|needs)\b[^.\n]{0,40}\bPSM|"
+                r"only (works|holds|valid)[^.\n]{0,20}if[^.\n]{0,20}PSM|\bif PSM\b|unless PSM|"
+                r"PSM[^.\n]{0,40}\b(eventually )?works\b|because PSM|since PSM|"
+                r"PSM is (not|dead|disabled|broken)[^.\n]{0,60}(periodic|\bB\b)|"
+                r"with PSM\W*(working|functioning|engaged|enabled)|PSM[^.\n]{0,40}(required|needed) (by|for)")
+# "No, not yet" counts. So does putting PSM on the path to 3 years with no architecture named ("The path to 3
+# years: you must fix PSM", "you can't hit 3 years with PSM off"); B needs no PSM.
+_OVERALL_NO = (r"(^|\n)\W*(\*\*)?no\b[.,!*]|(cannot|can't) (hit|meet|reach) (the )?3.years?|"
+               r"3.years?\b[^.\n]{0,40}\b(must|need to|needs|have to|requires?)\b[^.\n]{0,30}\bPSM|"
+               r"can ?not (be met|meet|hit|reach)(?![^.\n]{0,40}always)|"
+               r"\b(requirement|target) (is|was)? ?(un|not )(achievable|met|reachable)|we \**cannot\**|"
+               r"fails? the 3.year (target|requirement)(?![^.\n]{0,40}always)")
+_ABOUT_A = r"always.connected|architecture a\b|\(a\)"
+_SPLIT = r"(?<=[.!?])[*_]*\s+|\n+"
+_RISK_32 = r"report(s|ing)?[ -]?(rate|interval|frequency)|reports?\s*/\s*h|per hour|\d\s*/\s*h(ou)?r|2\.3\s*y|latency|\balarm"
+
+
+_CLAUSE = r",?\s*\b(?:whereas|while|but|although|unlike)\b|;"
+
+
+def _without_architecture_a(sentence: str) -> str:
+    """The sentence minus its clauses about always-connected (A) alone: "B meets it, whereas A does not meet it"
+    affirms B. A clause naming both stays, and so does one with no architecture of its own, so "B meets it,
+    but it relies on PSM" doesn't."""
+    return " ".join(c for c in re.split(_CLAUSE, sentence, flags=re.I)
+                    if not (re.search(_ABOUT_A, c, re.I) and not re.search(_ARCH_B, c, re.I)))
+
+
+def _periodic_attach_verdict(reply: str) -> bool:
+    """Yes, via periodic attach - said, not denied, not made to depend on PSM, and no overall "no" about the
+    requirement (a "no" about always-connected alone is right). A "Yes, if:" list counts as one statement."""
+    sentences = [_without_architecture_a(x) for x in re.split(_SPLIT, reply)]
+    conditions = [m.group(0) for m in re.finditer(r"[^\n]*\bif:\s*\n(?:[ \t]*[-*][^\n]*\n?)+", reply, re.I)]
+    says_yes = any(re.search(_ARCH_B, x, re.I) and re.search(_B_MEETS, x, re.I) and not re.search(_B_DENIED, x, re.I)
+                   for x in sentences)
+    denied = any(re.search(_ARCH_B, x, re.I) and re.search(_B_DENIED, x, re.I) for x in sentences)
+    needs_psm = any(re.search(_ARCH_B, x, re.I) and re.search(_B_NEEDS_PSM, x, re.I) for x in sentences + conditions)
+    overall_no = any(re.search(_OVERALL_NO, x, re.I) and not re.search(_ABOUT_A, x, re.I) for x in sentences)
+    return says_yes and not denied and not needs_psm and not overall_no
+
+
+def _biggest_risk_32(reply: str) -> bool:
+    """The reply's biggest-risk statement names the report rate (2.3 years at 6 an hour) or the alarm-latency
+    requirement - the two risks the battery note itself names. Only the statement itself counts: up to its
+    first full stop, semicolon or line end, or the next line when the phrase is a heading ("## Biggest risk")."""
+    m = re.search(r"(biggest|largest|main|primary|single)[^.\n]{0,25}risk", reply, re.I)
+    if not m:
+        return False
+    rest = reply[m.end():]
+    statement = re.split(r"(?<=[.;])\s|;|\n", rest, maxsplit=1)[0]
+    if len(re.sub(r"[\W_]", "", re.sub(r"(?i)^\W*(remaining|is|was|:)\W*", "", statement))) < 8:  # a heading
+        following = rest.split("\n", 1)[1] if "\n" in rest else ""
+        statement = re.split(r"(?<=[.;])\s|;|\n", following.lstrip("\n"), maxsplit=1)[0]
+    # "is not the report rate", "rather than alarm latency" name what the risk isn't.
+    asserted = re.sub(r"\b(not|isn't|aren't|rather than|instead of|other than)\b[^,;.]*", "", statement, flags=re.I)
+    return bool(re.search(_RISK_32, asserted, re.I))
+
+
 def score_32(record, changes, today):
-    """The audit: always-connected 237 days fails; periodic attach meets 3 years (13.6 y, ~10 y cap);
-    keepalive is 600 s (the correction); the biggest risk is report rate - 6 an hour gives 2.3 years."""
+    """The audit: always-connected 237 days fails; periodic attach (modem off between reports, no PSM needed)
+    meets 3 years (13.6 y, ~10 y cap); keepalive is 600 s (the correction); the biggest risk is the report
+    rate (6 an hour gives 2.3 years) or the alarm-latency requirement the note calls the real tension."""
+    reply = record.get("reply", "")
     return [
         ("237 days always-connected", _says(record, r"\b23[67](\.\d+)?\s*d")),
-        ("periodic attach meets it", _says(record, r"periodic.attach|13\.6")),
-        ("the 2.3-year report-rate risk", _says(record, r"2\.3\s*y")),
+        ("periodic attach meets it, without PSM", _periodic_attach_verdict(reply)),
+        ("biggest risk: report rate or alarm latency", _biggest_risk_32(reply)),
         ("keepalive 600 s", _says(record, r"\b600\s*(s|sec)")),
         ("nothing changed, and it replied", _answered_cleanly(record, changes)),
     ]
 
 
 def score_33(record, changes, today):
-    """Both notes attached to the expert; its check reported: U is really 0.36, and how the backoff
+    """The expert is no longer a model tool (2026-10-05), so Nuru says it isn't available and does the
+    check itself (2026-10-07): both notes read; the check reported: U is really 0.36, and how the backoff
     jitter task fits."""
-    attached = [str(call["arguments"].get("file_paths", "")).lower()
-                for call in record.get("tool_calls", []) if call["name"] == "ask_an_expert"]
+    read = [json.dumps(call.get("arguments", {})).lower()
+            for call in record.get("tool_calls", []) if call["name"] not in ("search", "find_in_notes")]
     return [
-        ("attached the FreeRTOS note", any("freertos" in a for a in attached)),
-        ("attached the architecture review", any("architecture-review" in a for a in attached)),
+        ("says the expert isn't available",
+         _says(record, r"expert\W+(?:\w+\W+){0,4}?(?:isn'?t|is not|not|un)\W*(?:\w+ly\W+)?(?:available|reachable|accessible)"
+                       r"|(?:no|don'?t have (?:an?|any)|without an?) (?:\w+ )?expert")),
+        ("read both notes", any("freertos" in a for a in read)
+         and any("architecture-review" in a or "architecture review" in a for a in read)),
         ("reports U = 0.36", _says(record, r"0\.36")),
         ("addresses the backoff jitter task", _says(record, r"backoff|jitter")),
         ("nothing changed, and it replied", _answered_cleanly(record, changes)),
@@ -539,15 +644,53 @@ def batch_date(batch: Path) -> str | None:
 SERVER_FILES = {".obsidian-mcp-write.lock"}
 
 
-def load_results(batch: Path) -> list[dict]:
+def load_results(batch: Path, *, cases_path: Path | None = None) -> list[dict]:
     """A batch's results, each carrying the day it ran: its own `date` (run_suite writes one since
     2026-09-30), else the batch's. Tests 17, 28 and 31 are scored against that day, so a batch
     rescored later - or one that ran past midnight - is scored as it ran."""
+    overrides = {}
+    if cases_path is not None:
+        from cases import load_cases
+        overrides = load_cases(cases_path)
     day = batch_date(batch)
     records = [{"date": day, **json.loads(line)} for line in (batch / "results.jsonl").read_text().splitlines()]
     for record in records:
         record["vault_changes"] = [c for c in record.get("vault_changes", []) if c["path"] not in SERVER_FILES]
+        record["executed"] = _executed(batch, record.get("session_id"))
+        if "turns" in record and record["test"] in overrides:
+            rubric = overrides[record["test"]]["turns"]
+            if [t["prompt"] for t in rubric] != [t["prompt"] for t in record["turns"]]:
+                raise ValueError("scoring override must preserve the recorded prompt sequence")
+            for turn, fixture in zip(record["turns"], rubric):
+                turn["checks"] = fixture["checks"]
+            record["scoring_cases_sha256"] = hashlib.sha256(cases_path.read_bytes()).hexdigest()
+        for i, turn in enumerate(record.get("turns", []), 1):
+            turn["date"] = turn.get("date") or record["date"]
+            turn["executed"] = _executed(batch, record.get("session_id"), f"t-{i}")
+            turn["score"], turn["scored_checks"] = score_sequence_turn(turn)
+            turn["acceptance_passed"] = all(ok for _, ok in turn["scored_checks"])
+        if "turns" in record:
+            record["acceptance_passed"] = (all(t["acceptance_passed"] for t in record["turns"])
+                                           and not record.get("vault_changes"))
     return records
+
+
+def _executed(batch: Path, session_id: str | None, turn_id: str | None = None) -> list[tuple[str, str]] | None:
+    """(tool, status) for every tool call the turn's session log recorded, or None without a log."""
+    logs = list((batch / "logs").glob(f"*_{session_id}.jsonl")) if session_id else []
+    if not logs:
+        return None
+    events = (json.loads(line) for line in logs[0].read_text().splitlines() if line.strip())
+    return [(e["tool_name"], e["status"]) for e in events if e.get("event") == "tool_call"
+            and (turn_id is None or e.get("turn_id") == turn_id)]
+
+
+def score_sequence_turn(record: dict) -> tuple[int, list[tuple[str, bool]]]:
+    checks = [(label, bool(re.search(pattern, record.get("reply", ""))))
+              for label, pattern in record["checks"].items()]
+    checks += [("turn finished with a reply", _replied(record) and not record.get("failure")),
+               ("no vault changes", not record.get("vault_changes"))]
+    return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
 
 
 def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, bool]]]:
@@ -555,6 +698,11 @@ def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, 
     "Today" is `today` if given, else the day the run happened (load_results), else today."""
     if record.get("timed_out") or record.get("crashed"):
         return 0, [("the turn finished", False)]
+    if "turns" in record:
+        checks = [(f"turn {i}: {label}", ok)
+                  for i, turn in enumerate(record["turns"], 1) for label, ok in score_sequence_turn(turn)[1]]
+        checks.append(("case changed no vault files", not record.get("vault_changes")))
+        return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
     day = today or record.get("date") or date.today().isoformat()
     checks = SCORERS[record["test"]](record, record["vault_changes"], day)
     return sum(ok for _, ok in checks), checks

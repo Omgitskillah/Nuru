@@ -10,6 +10,9 @@ from core.session import Event, RetryWithoutThinking, Session, Steered, Text, Th
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
+  /writes            Show unresolved write attempts. Inspect the vault before resolving one.
+  /resolve-write ID completed|not_completed
+                     Record your reconciliation; never runs or retries the write.
   /load              Load the model into memory (starting the server if needed) without sending a prompt.
   /show              Print static info about the current model (params, quantization, context window, etc).
   /exit, /bye,       End the session: unload the model, stop the server, and exit.
@@ -87,6 +90,15 @@ def main() -> None:
                 print("no model loaded" if info is None else json.dumps(info, indent=2))
             elif text.strip() == "/load":
                 session.load_model()
+            elif text.strip() == "/writes":
+                print(json.dumps(session.pending_writes(), indent=2))
+            elif text.strip().startswith("/resolve-write "):
+                try:
+                    _, attempt, state = text.strip().split()
+                    session.resolve_write(int(attempt), state)
+                    print("Write reconciliation recorded. No write was executed.")
+                except ValueError as e:
+                    print(f"[error] {e}")
             elif text.strip() == "/help":
                 print(HELP_TEXT)
             else:

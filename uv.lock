@@ -278,6 +278,8 @@ name = "core"
 version = "0.1.0"
 source = { editable = "nuru" }
 dependencies = [
+    { name = "anyio" },
+    { name = "jsonschema" },
     { name = "laya-mcp" },
     { name = "mcp" },
     { name = "obsidian-mcp" },
@@ -293,6 +295,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "laya-mcp", editable = "servers/laya" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "obsidian-mcp", editable = "servers/obsidian" },

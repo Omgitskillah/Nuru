@@ -236,3 +236,59 @@ def test_ask_an_expert_asks_for_more_than_the_contract_default_token_budget(monk
 
     assert provider.send_message.call_args.kwargs["max_tokens"] == server.ASK_AN_EXPERT_MAX_TOKENS
     assert server.ASK_AN_EXPERT_MAX_TOKENS > 1024
+
+
+def test_write_plan_asks_haiku_at_its_lowest_thinking_for_the_schema(monkeypatch):
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {
+        "content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": '{"steps":[]}'}],
+        "stop_reason": "end_turn",
+    }
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+    schema = {"type": "object", "properties": {"steps": {"type": "array"}}}
+
+    result = server.write_plan(request="Plan this.", instructions="You plan.", schema=schema)
+
+    fake_provider.send_message.assert_called_once_with(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Plan this."}],
+        system="You plan.",
+        max_tokens=4096,
+        thinking={"type": "enabled", "budget_tokens": 1024},
+        output_config={"format": {"type": "json_schema", "schema": schema}},
+    )
+    assert result == {"plan": '{"steps":[]}', "stop_reason": "end_turn", "model": "claude-haiku-4-5"}
+
+
+def test_write_plan_runs_sonnet_at_low_effort_with_the_refusal_fallback(monkeypatch):
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {"content": [{"type": "text", "text": "{}"}], "stop_reason": "end_turn"}
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+
+    server.write_plan(request="Plan this.", instructions="You plan.", model="claude-sonnet-5-5")
+
+    fake_provider.send_message.assert_called_once_with(
+        model="claude-sonnet-5-5",
+        messages=[{"role": "user", "content": "Plan this."}],
+        system="You plan.",
+        max_tokens=4096,
+        thinking={"type": "adaptive"},
+        output_config={"effort": "low"},
+        fallbacks="default",
+    )
+
+
+def test_write_plan_refuses_an_unknown_model():
+    with pytest.raises(ToolError, match="model must be one of"):
+        server.write_plan(request="Plan this.", instructions="You plan.", model="claude-opus-5")
+
+
+def test_write_plan_says_when_there_is_no_plan(monkeypatch):
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {"content": [], "stop_reason": "end_turn"}
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+
+    result = server.write_plan(request="Plan this.", instructions="You plan.")
+
+    assert result["plan"] == "" and "no plan" in result["hint"]
+    assert fake_provider.send_message.call_args.kwargs["output_config"] is None

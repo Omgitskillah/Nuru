@@ -1,0 +1,36 @@
+{
+ "steps": [
+  {
+   "step": "s1",
+   "tool": "search",
+   "with": {
+    "query": "Priya"
+   }
+  },
+  {
+   "step": "s2",
+   "think": "pick",
+   "uses": [
+    "s1"
+   ],
+   "want": "Priya's person note"
+  },
+  {
+   "step": "s3",
+   "tool": "write_note",
+   "with": {
+    "note": "$s2",
+    "content": "- Prefers async messages on Fridays.",
+    "mode": "append"
+   }
+  },
+  {
+   "step": "s4",
+   "think": "answer",
+   "uses": [
+    "s3"
+   ],
+   "want": "which note the line was added to"
+  }
+ ]
+}

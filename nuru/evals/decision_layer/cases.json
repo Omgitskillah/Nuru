@@ -1,0 +1,60 @@
+{
+ "35": {
+  "name": "follow-up memory",
+  "turns": [
+   {
+    "prompt": "For this conversation only, the codeword is Juniper and the duration is 35 days. Repeat those two facts briefly; do not save a note.",
+    "checks": {
+     "codename": "(?i)juniper",
+     "duration": "\\b35\\b"
+    }
+   },
+   {
+    "prompt": "How many weeks is that? Answer briefly.",
+    "checks": {
+     "converted earlier duration": "(?i)\\b(5|five)\\s*weeks?"
+    }
+   },
+   {
+    "prompt": "What was the codeword I gave you?",
+    "checks": {
+     "remembers earlier subject": "(?is)(?:^\\s*[\"'\u201c\u201d\u2018\u2019*_`]*juniper\\b|\\b(?:codeword|codename)(?:\\s+(?:you gave me\\s+)?(?:was|is)\\s*[:=]?|\\s*[:=])\\s*[\"'\u201c\u201d\u2018\u2019*_`]*juniper\\b)"
+    }
+   }
+  ]
+ },
+ "36": {
+  "name": "planned follow-up memory",
+  "plan": {
+   "steps": [
+    {
+     "step": "s1",
+     "think": "answer",
+     "uses": [],
+     "want": "answer the current request using the previous conversation when relevant"
+    }
+   ]
+  },
+  "turns": [
+   {
+    "prompt": "For this conversation only, the codeword is Juniper and the duration is 35 days. Repeat those two facts briefly; do not save a note.",
+    "checks": {
+     "codename": "(?i)juniper",
+     "duration": "\\b35\\b"
+    }
+   },
+   {
+    "prompt": "How many weeks is that? Answer briefly.",
+    "checks": {
+     "converted earlier duration": "(?i)\\b(5|five)\\s*weeks?"
+    }
+   },
+   {
+    "prompt": "What was the codeword I gave you?",
+    "checks": {
+     "remembers earlier subject": "(?is)(?:^\\s*[\"'\u201c\u201d\u2018\u2019*_`]*juniper\\b|\\b(?:codeword|codename)(?:\\s+(?:you gave me\\s+)?(?:was|is)\\s*[:=]?|\\s*[:=])\\s*[\"'\u201c\u201d\u2018\u2019*_`]*juniper\\b)"
+    }
+   }
+  ]
+ }
+}

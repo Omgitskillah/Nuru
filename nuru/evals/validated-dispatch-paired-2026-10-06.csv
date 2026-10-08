@@ -1,0 +1,71 @@
+arm,test,repeat,automatic_score,reviewed_score,turn_seconds,wall_seconds,tools,model_calls,failure,session_id,misses
+baseline,30,0,4,4,50.8,81.0,4,5,,a2745063,it targets the Area Monitor project
+baseline,30,1,4,4,20.8,32.2,3,4,,802c6b76,it targets the Area Monitor project
+baseline,30,2,4,4,18.4,29.2,3,4,,8be411b6,it targets the Area Monitor project
+baseline,30,3,4,4,33.0,44.2,4,5,,5b4794cc,it targets the Area Monitor project
+baseline,30,4,5,5,32.9,44.4,4,5,,eb34b631,
+baseline,31,0,5,5,23.4,34.5,3,4,,dd3e1b08,
+baseline,31,1,5,5,43.1,54.4,5,6,,b4f436ee,
+baseline,31,2,5,5,59.1,70.6,8,9,,a7d5420b,
+baseline,31,3,2,2,28.9,40.3,4,5,,3ef60191,a transcript for today was created; it mentions the soak test; it mentions the supercap
+baseline,31,4,1,1,54.4,65.6,7,8,,1ccc7481,a transcript for today was created; it mentions the soak test; it mentions the supercap; nothing else changed
+baseline,9,0,4,4,50.3,61.7,3,4,,1d376eb2,notes the curve at 200 ppm
+baseline,9,1,1,1,391.2,404.4,10,10,,75b5a934,slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm
+baseline,9,2,4,4,82.8,99.0,4,5,,dcf6959d,notes the curve at 200 ppm
+baseline,9,3,4,4,56.8,69.6,3,4,,6ce27430,notes the curve at 200 ppm
+baseline,9,4,5,5,67.6,81.1,3,4,,da20fc6a,
+baseline,7,0,5,5,38.5,49.8,5,6,,753bc36c,
+baseline,7,1,4,4,49.7,61.5,9,10,,d1e33033,deals with the note's overlap doubt
+baseline,7,2,5,5,37.3,49.3,5,6,,14aad7fa,
+baseline,7,3,5,5,45.1,56.8,5,6,,5028a7e0,
+baseline,7,4,5,5,43.0,54.5,5,6,,a7c20450,
+baseline,8,0,4,4,41.1,52.5,4,5,,fc58f432,"SD 0.19, computed with statistics or run_python"
+baseline,8,1,4,4,63.5,75.0,8,9,,53657fe5,"SD 0.19, computed with statistics or run_python"
+baseline,8,2,5,5,38.6,50.6,4,5,,9c63c8a3,
+baseline,8,3,4,4,34.3,46.5,3,4,,ff7aafc0,cites the Area Monitor note
+baseline,8,4,3,3,32.5,44.0,3,4,,649ad8b7,"SD 0.19, computed with statistics or run_python; cites the Area Monitor note"
+baseline,12,0,4,4,27.1,38.6,2,3,,2774170b,34.7 days crash-looping
+baseline,12,1,4,4,23.4,35.1,2,3,,1efbae72,34.7 days crash-looping
+baseline,12,2,4,4,31.4,42.6,2,3,,06bcb8b2,34.7 days crash-looping
+baseline,12,3,4,4,28.7,39.9,2,3,,2ead2ccb,34.7 days crash-looping
+baseline,12,4,5,5,33.4,44.5,3,4,,a9ce98e0,
+baseline,32,0,3,3,238.3,251.4,10,11,,4c6ec39e,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+baseline,32,1,2,2,250.6,265.3,10,11,,d69bf05c,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency; keepalive 600 s"
+baseline,32,2,3,3,138.1,150.3,7,8,,f76d739f,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+baseline,32,3,3,3,250.9,265.0,10,11,,c69c1de6,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+baseline,32,4,3,3,237.5,251.2,10,11,,6f7c648a,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+candidate,30,0,4,4,60.0,73.2,3,4,,cec52445,it targets the Area Monitor project
+candidate,30,1,4,4,33.6,45.5,3,4,,eb490077,it targets the Area Monitor project
+candidate,30,2,4,4,42.8,54.0,4,5,,c31163f7,it targets the vendor email note
+candidate,30,3,5,5,52.0,63.4,4,5,,337d02f5,
+candidate,30,4,4,4,32.1,43.8,3,4,,43a9e29f,it targets the Area Monitor project
+candidate,31,0,2,2,185.3,198.0,10,11,,12276329,a transcript for today was created; it mentions the soak test; it mentions the supercap
+candidate,31,1,1,1,40.1,52.3,3,4,,240d6f4a,a transcript for today was created; it mentions the soak test; it mentions the supercap; nothing else changed
+candidate,31,2,5,5,24.8,36.6,2,3,,b081264a,
+candidate,31,3,2,2,84.6,95.9,8,9,,5dfbd18f,a transcript for today was created; it mentions the soak test; it mentions the supercap
+candidate,31,4,5,5,68.7,81.1,6,7,,367ec464,
+candidate,9,0,5,5,58.2,70.2,4,5,,12c411ba,
+candidate,9,1,5,5,49.5,61.6,3,4,,19e91151,
+candidate,9,2,4,4,163.4,175.7,4,5,,5a6a8c54,notes the curve at 200 ppm
+candidate,9,3,0,0,159.9,171.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error | Traceback (most recent call last): |   File ""/opt/runner.py"", line 10, in <module> |     exec( |     ~~~~^ |         compile(payload[""code""], ""script.py"", ""exec""), |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |         {""__name__"": ""__main__"", ""__file__"": ""script.py""}, |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |     ) |     ^ |   File ""script.py"", line 31, in <module> | TypeError: unsupported operand type(s) for -: 'list' and 'float' | .",d590fd3d,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
+candidate,9,4,0,0,172.0,184.9,5,5,"Tool correction failed. run_python could not be completed: Python exited with an error | Traceback (most recent call last): |   File ""/opt/runner.py"", line 10, in <module> |     exec( |     ~~~~^ |         compile(payload[""code""], ""script.py"", ""exec""), |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |         {""__name__"": ""__main__"", ""__file__"": ""script.py""}, |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ |     ) |     ^ |   File ""script.py"", line 41, in <module> |   File ""script.py"", line 41, in <genexpr> | TypeError: 'float' object is not subscriptable | .",9cef2a81,"slope about 66.5; intercept about 850; compares it with the eyeballed fit; notes the curve at 200 ppm; nothing changed, and it replied"
+candidate,7,0,5,5,60.8,73.0,7,8,,b10e346c,
+candidate,7,1,5,5,51.3,63.8,5,6,,6faa3cf9,
+candidate,7,2,5,5,43.5,55.6,5,6,,f6f72502,
+candidate,7,3,4,4,48.8,60.9,6,7,,3d3a1277,deals with the note's overlap doubt
+candidate,7,4,4,4,49.2,61.0,5,6,,548ffd51,deals with the note's overlap doubt
+candidate,8,0,4,4,36.5,48.2,3,4,,18683044,"SD 0.19, computed with statistics or run_python"
+candidate,8,1,4,4,134.6,146.0,9,10,,fbe4d0fb,"SD 0.19, computed with statistics or run_python"
+candidate,8,2,4,4,38.2,50.3,3,4,,f6fbc902,cites the Area Monitor note
+candidate,8,3,3,3,34.4,45.7,3,4,,c801f47f,"SD 0.19, computed with statistics or run_python; cites the Area Monitor note"
+candidate,8,4,4,4,138.2,150.1,7,8,,05af60ee,"SD 0.19, computed with statistics or run_python"
+candidate,12,0,4,4,29.4,42.2,2,3,,afff0a71,34.7 days crash-looping
+candidate,12,1,4,4,32.3,43.7,2,3,,a4aa5ffd,34.7 days crash-looping
+candidate,12,2,4,4,32.1,43.9,2,3,,ab5f3277,34.7 days crash-looping
+candidate,12,3,4,4,33.0,44.3,3,4,,b8e9810f,34.7 days crash-looping
+candidate,12,4,4,4,40.8,52.5,3,4,,9201e3a7,34.7 days crash-looping
+candidate,32,0,3,3,280.5,293.9,10,11,,0de98db6,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+candidate,32,1,3,3,279.8,293.3,10,11,,ceb19c8b,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+candidate,32,2,4,3,262.4,275.4,10,11,,2273a3a2,biggest risk: report rate or alarm latency
+candidate,32,3,3,3,252.1,265.6,10,11,,be955b9d,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"
+candidate,32,4,3,3,263.4,276.8,10,11,,9b7dfc28,"periodic attach meets it, without PSM; biggest risk: report rate or alarm latency"

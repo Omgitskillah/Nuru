@@ -57,17 +57,13 @@ tool_gate:
 
 tiers:
   order: ["off", low, high, expert]
-  default: low              # matches THINK=low, Nuru's default since 2026-09-29
-  # Ollama `think` value per tier, per model. There is no medium tier: measured 2026-09-28 on
-  # Ollama 0.34.0 (nuru/evals/decision_layer, eval 1), granite4.2 given think="medium" sends the
-  # same prompt as "high" but answers differently - slower (107 s vs 65 s per argument step), one
-  # runaway to the token limit, and no more correct. So medium was folded into high.
-  models:
-    granite4.2:3b: {"off": false, low: low, high: high}
+  default: low              # Nuru's default level since 2026-09-29
+  # How each tier becomes an Ollama `think` value is the model's: nuru/modelfiles/profiles.yaml.
 
 expert:
   model: claude-opus-5
   daily_cap: 10             # calls per local day; the API key comes only from ANTHROPIC_API_KEY
+  at_step_cap: false        # 2026-10-05: measure Nuru without the expert's help at the step cap
 
 rerank:
   top_k: 5

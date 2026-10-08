@@ -78,6 +78,11 @@ class CLILogger:
     def turn_error(self, turn_id: str, error: str) -> None:
         self._log({"event": "turn_error", "turn_id": turn_id, "error": error})
 
+    def context_reduction(self, num_ctx: int, history_messages: int, omitted_result_tokens: list[int]) -> None:
+        self._log({"event": "context_reduction", "turn_id": f"t-{self._turn_count}",
+                   "num_ctx": num_ctx, "history_messages": history_messages,
+                   "omitted_result_tokens": omitted_result_tokens})
+
     def model_lifecycle(self, server_spawned: bool, model_info: dict[str, Any] | None) -> None:
         """Logs the model/server startup info once per session, however many
         times ensure_server_running/ensure_model_loaded get re-checked."""
@@ -134,9 +139,13 @@ class CLILogger:
         status: str,
         error: str | None,
         duration_ms: float,
+        outcome=None,
     ) -> None:
         self._log(
             {
+                **({"error_kind": outcome.kind, "error_code": outcome.code,
+                    "completion_certainty": outcome.certainty, "repairable": outcome.repairable,
+                    "attempt_id": outcome.attempt_id} if outcome is not None else {}),
                 "event": "tool_call",
                 "turn_id": turn_id,
                 "tool_name": tool_name,

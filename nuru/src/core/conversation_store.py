@@ -2,9 +2,13 @@
 later fed back to the model as context.
 """
 
+import hashlib
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+from core.context_budget import estimate_tokens, MESSAGE_FRAMING
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -12,6 +16,21 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at TEXT NOT NULL,
     title TEXT
 );
+
+CREATE TABLE IF NOT EXISTS write_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+    turn_id TEXT NOT NULL,
+    vault TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL,
+    diagnostic TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS write_attempts_pending ON write_attempts(vault, state);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,9 +47,8 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-# Hard cap on how much history get_recent_messages will ever scan/return,
-# independent of token_budget - keeps a pathological conversation (or one
-# where tokens_used is mostly NULL/0) from forcing an unbounded table scan.
+# Bound metadata scans independently of the budget, even for empty replies
+# and legacy conversations containing many orphan rows.
 _MAX_HISTORY_EXCHANGES = 100
 _MAX_HISTORY_MESSAGES = _MAX_HISTORY_EXCHANGES * 2
 
@@ -47,6 +65,72 @@ class ConversationStore:
         self._conn.execute("PRAGMA foreign_keys = ON")
         with self._conn:
             self._conn.executescript(_SCHEMA)
+        try:
+            self._migrate()
+        except Exception:
+            self._conn.close()
+            raise
+
+    def _migrate(self) -> None:
+        """Atomic, versioned backfill, bounded to 256 rows in memory at a time."""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute("CREATE TABLE IF NOT EXISTS conversation_migrations (version INTEGER PRIMARY KEY)")
+            if self._conn.execute("SELECT 1 FROM conversation_migrations WHERE version = 1").fetchone():
+                return
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)")}
+            if "content_tokens" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN content_tokens INTEGER")
+            last_id = 0
+            while rows := self._conn.execute(
+                "SELECT id, content FROM messages WHERE id > ? ORDER BY id LIMIT 256", (last_id,)
+            ).fetchall():
+                self._conn.executemany("UPDATE messages SET content_tokens = ? WHERE id = ?",
+                                       [(estimate_tokens(content), mid) for mid, content in rows])
+                last_id = rows[-1][0]
+            self._conn.execute("INSERT INTO conversation_migrations VALUES (1)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, id)")
+
+    def pending_writes(self, vault: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, tool, arguments, state, diagnostic FROM write_attempts "
+            "WHERE vault = ? AND state IN ('in_flight', 'uncertain') ORDER BY id", (vault,)
+        ).fetchall()
+        return [{"id": rid, "tool": tool, "arguments": json.loads(args), "state": state, "diagnostic": diagnostic}
+                for rid, tool, args, state, diagnostic in rows]
+
+    def begin_write(self, conversation_id: int, turn_id: str, vault: str, tool: str, args: dict) -> int | None:
+        # Serialize the pending check and intent record across concurrent sessions on this database.
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if self.pending_writes(vault):
+                return None
+            serialized = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            fingerprint = hashlib.sha256((tool + "\0" + serialized).encode()).hexdigest()
+            cursor = self._conn.execute(
+                "INSERT INTO write_attempts (conversation_id, turn_id, vault, tool, arguments, fingerprint, state, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'in_flight', ?)",
+                (conversation_id, turn_id, vault, tool, serialized, fingerprint, _now_iso()),
+            )
+        return cursor.lastrowid
+
+    def finish_write(self, attempt_id: int, state: str, diagnostic: str | None = None) -> None:
+        if state not in {'completed', 'not_completed', 'uncertain'}:
+            raise ValueError("invalid dispatched-write state")
+        with self._conn:
+            self._conn.execute("UPDATE write_attempts SET state = ?, diagnostic = ? WHERE id = ?",
+                               (state, diagnostic, attempt_id))
+
+    def resolve_write(self, attempt_id: int, vault: str, state: str) -> None:
+        """Operator reconciliation only; never called by the model or inferred from note prose."""
+        if state not in {'completed', 'not_completed'}:
+            raise ValueError("resolution must be completed or not_completed")
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE write_attempts SET state = ?, diagnostic = 'operator reconciled' "
+                "WHERE id = ? AND vault = ? AND state IN ('in_flight', 'uncertain')", (state, attempt_id, vault))
+            if cursor.rowcount != 1:
+                raise ValueError("no pending write with that ID in this vault")
 
     def create_conversation(self, title: str | None = None) -> int:
         with self._conn:
@@ -59,9 +143,9 @@ class ConversationStore:
     def add_message(self, conversation_id: int, role: str, content: str, tokens_used: int | None = None) -> int:
         with self._conn:
             cursor = self._conn.execute(
-                "INSERT INTO messages (conversation_id, timestamp, role, content, tokens_used) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (conversation_id, _now_iso(), role, content, tokens_used),
+                "INSERT INTO messages (conversation_id, timestamp, role, content, tokens_used, content_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (conversation_id, _now_iso(), role, content, tokens_used, estimate_tokens(content)),
             )
         return cursor.lastrowid
 
@@ -81,49 +165,40 @@ class ConversationStore:
         with self._conn:
             self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
 
-    def _history_cutoff(self, conversation_id: int, token_budget: int) -> tuple[int | None, int]:
-        """Scans only (id, tokens_used) - cheap, no message content - to find the
-        oldest id that still fits under token_budget, and the resulting token
-        total. Always includes at least the single most recent message, even if
-        it alone exceeds the budget. Never looks at more than the most recent
-        _MAX_HISTORY_MESSAGES, regardless of budget.
+    def get_recent_messages(self, conversation_id: int, token_budget: int, *, before_id: int | None = None) -> list[dict]:
+        """Newest complete adjacent user/reply exchanges that fit, in stable ID order.
 
-        Returns (cutoff_id, total_tokens); cutoff_id is None if there's no history.
+        Usage is never a message size. Unfinished users and legacy orphan replies
+        are skipped; an empty cancelled reply still completes an exchange.
+        Fetch content only for selected IDs, after a bounded metadata scan.
         """
-        cursor = self._conn.execute(
-            "SELECT id, tokens_used FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
-            (conversation_id, _MAX_HISTORY_MESSAGES),
-        )
-
-        cutoff_id = None
-        total_tokens = 0
-        for message_id, tokens_used in cursor:
-            tokens = tokens_used or 0
-            if cutoff_id is not None and total_tokens + tokens > token_budget:
-                break
-            total_tokens += tokens
-            cutoff_id = message_id
-
-        return cutoff_id, total_tokens
-
-    def get_recent_messages(self, conversation_id: int, token_budget: int) -> list[dict]:
-        """Most recent messages for `conversation_id` whose summed tokens_used fit
-        under token_budget, oldest first.
-
-        Two-pass: _history_cutoff finds the oldest id that still fits without
-        loading message content; then this fetches full rows for just that
-        surviving range, so content is never loaded for discarded history.
-        """
-        cutoff_id, _ = self._history_cutoff(conversation_id, token_budget)
-        if cutoff_id is None:
+        if token_budget <= 0:
             return []
-
         rows = self._conn.execute(
-            "SELECT id, conversation_id, timestamp, role, content, tokens_used "
-            "FROM messages WHERE conversation_id = ? AND id >= ? ORDER BY id",
-            (conversation_id, cutoff_id),
+            "SELECT id, role, content_tokens FROM messages WHERE conversation_id = ? "
+            "AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+            (conversation_id, before_id, before_id, _MAX_HISTORY_MESSAGES),
         ).fetchall()
-        columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used"]
+        selected, total, i = [], 0, 0
+        while i < len(rows) - 1:
+            reply, user = rows[i], rows[i + 1]
+            if reply[1] in ("nuru", "assistant") and user[1] == "user":
+                cost = reply[2] + user[2] + 2 * MESSAGE_FRAMING
+                if total + cost > token_budget:
+                    break
+                selected.extend((reply[0], user[0]))
+                total += cost
+                i += 2
+            else:
+                i += 1
+        if not selected:
+            return []
+        placeholders = ",".join("?" for _ in selected)
+        rows = self._conn.execute(
+            f"SELECT id, conversation_id, timestamp, role, content, tokens_used, content_tokens "
+            f"FROM messages WHERE id IN ({placeholders}) ORDER BY id", selected,
+        ).fetchall()
+        columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used", "content_tokens"]
         return [dict(zip(columns, row)) for row in rows]
 
     def get_latest_prompt_tokens(self, conversation_id: int) -> int | None:
@@ -145,11 +220,11 @@ class ConversationStore:
 
     def get_messages(self, conversation_id: int) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, conversation_id, timestamp, role, content, tokens_used "
-            "FROM messages WHERE conversation_id = ? ORDER BY timestamp",
+            "SELECT id, conversation_id, timestamp, role, content, tokens_used, content_tokens "
+            "FROM messages WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()
-        columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used"]
+        columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used", "content_tokens"]
         return [dict(zip(columns, row)) for row in rows]
 
     def close(self) -> None:

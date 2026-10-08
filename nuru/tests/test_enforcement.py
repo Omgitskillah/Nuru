@@ -2,6 +2,8 @@
 DecisionLayer, with a scripted Laya and a test-only config that marks every threshold calibrated
 (the only way the config allows enforce). No model, no vault: chat and the MCP tools are fakes."""
 
+from core.modelfile import render_modelfile
+
 import json
 
 import pytest
@@ -10,6 +12,7 @@ from ulid import ULID
 from core import session
 from core.enforcement import Enforcement, log_lines
 from core.expert import ExpertPlanner
+from core.model_profile import ModelProfile
 from core.providers.mcp_tools import ToolResult
 from core.session import Session, Text, Thinking, ToolCall
 from laya_mcp import server as laya_server
@@ -60,6 +63,7 @@ class Tools:
 
     def list_tools(self):
         return [{"type": "function", "function": {"name": n, "description": "x", "parameters": p}} for n, p in [
+            ("read_note", {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
             ("search", {"properties": {"query": {"type": "string"}}, "required": ["query"], "type": "object"}),
             ("write_note", {"properties": {"content": {"type": "string"},
                                            "note": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None}},
@@ -104,7 +108,6 @@ def enforce_config(tmp_path, points, **overrides):
     raw["decision_points"] = {point: "shadow" for point in raw["decision_points"]}
     for point in points:
         raw["decision_points"][point] = "enforce"
-    raw["tiers"]["models"][session.BASE_MODEL] = {"off": False, "low": "low", "high": "high"}
     for key, value in overrides.items():
         raw[key] = {**raw[key], **value}
     return type(load_config()).model_validate(raw)
@@ -115,6 +118,8 @@ def setup(monkeypatch, tmp_path):
     def make(points, responses, script=DEFAULT_SCRIPT, results=None, expert_client=None, **config_overrides):
         config = enforce_config(tmp_path, points, **config_overrides)
         monkeypatch.setattr(session, "THINK", True)
+        # A model with real thinking levels, whatever the developer's .env names.
+        monkeypatch.setattr(session, "PROFILE", ModelProfile({"off": False, "low": "low", "high": "high"}))
         monkeypatch.setattr(session, "load_decision_config", lambda: config)
         layer = DecisionLayer(config, load_question_sets(), ScriptedPredictor(script), DecisionLog(config.database_path))
         monkeypatch.setattr(laya_server, "_layer", layer)
@@ -126,7 +131,7 @@ def setup(monkeypatch, tmp_path):
             yield from next(responses)
 
         tools = Tools(results or {"search": SEARCH, "write_note": "nuru/priya-raman.md"})
-        monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: None)
+        monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
         monkeypatch.setattr(session, "ensure_server_running", lambda: None)
         monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
         monkeypatch.setattr(session, "chat", chat)
@@ -168,12 +173,74 @@ def test_a_confident_answer_gets_no_tools(setup):
     assert seen[0]["tools"] is False and tools.calls == []
 
 
-def test_the_step_cap_stops_the_turn_when_there_is_no_expert(setup):
-    s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abc"],
+def test_at_the_step_cap_without_an_expert_the_model_answers_from_what_it_has_without_tools(setup):
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Found a and b; c is still unchecked."]]
+    s, seen, tools = setup(["step_cap"], responses, tool_gate={"step_cap": 2})
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Found a and b; c is still unchecked.")
+    assert seen[-1]["tools"] is True  # still listed, so Ollama's cached prompt holds; calls are refused
+    assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round this turn (the 2-step limit)")
+
+
+def test_a_tool_call_in_the_final_answer_is_refused_once_then_ends_the_turn(setup):
+    s, seen, tools = setup(["step_cap"], [[call("search", {"query": q})] for q in "abcd"],
                            tool_gate={"step_cap": 2})
     events = list(s.ask("Find it"))
     assert isinstance(events[-1], Text) and events[-1].text.startswith("I stopped here: it reached the 2-step limit")
-    assert "expert isn't available" in events[-1].text
+    assert [name for name, _ in tools.calls] == ["search", "search"]  # the third and fourth calls never ran
+    assert "TOOLS_CLOSED" in seen[-1]["messages"][-1]["content"]  # the third was refused, then asked again
+
+
+def test_after_a_refused_final_call_the_model_can_still_answer(setup):
+    responses = [[call("search", {"query": q})] for q in "abc"] + [["Found a and b."]]
+    s, seen, tools = setup(["step_cap"], responses, tool_gate={"step_cap": 2})
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Found a and b.")
+    assert len(tools.calls) == 2 and all(c["tools"] for c in seen)
+
+
+def _expert_client(fail=False):
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(calls=[])
+
+    def create(**kwargs):
+        client.calls.append(kwargs)
+        if fail:  # the expert declines: ExpertPlanner raises ExpertUnavailable, as for a failed API call
+            return SimpleNamespace(stop_reason="refusal", content=[])
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="1. search c")])
+
+    client.beta = SimpleNamespace(messages=SimpleNamespace(create=create))
+    return client
+
+
+def test_with_the_expert_off_at_the_cap_an_available_expert_is_not_asked(setup):
+    client = _expert_client()
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Here is what I found."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": False},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert client.calls == []
+    assert events[-1] == Text("Here is what I found.")
+
+
+def test_with_the_expert_on_at_the_cap_it_plans_first(setup):
+    client = _expert_client()
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Done with the plan."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": True},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert len(client.calls) == 1 and Thinking("Plan from the expert:\n1. search c") in events
+
+
+def test_a_failed_expert_at_the_cap_still_ends_with_an_answer(setup):
+    client = _expert_client(fail=True)
+    responses = [[call("search", {"query": q})] for q in "ab"] + [["Partial answer; the rest is unresolved."]]
+    s, seen, _ = setup(["step_cap"], responses, tool_gate={"step_cap": 2}, expert={"at_step_cap": True},
+                       expert_client=client)
+    events = list(s.ask("Find it"))
+    assert events[-1] == Text("Partial answer; the rest is unresolved.")
+    assert seen[-1]["tools"] is True
 
 
 # ---------------------------------------------------------------- assess_effort
@@ -187,6 +254,32 @@ def test_an_empty_reply_moves_the_tier_up_instead_of_turning_thinking_off(setup)
     s, seen, _ = setup(["assess_effort"], [[{"thinking": "the answer is 42"}], ["42"]])
     list(s.ask("What is six times seven?"))
     assert [c["think"] for c in seen] == ["low", "high"]
+
+
+@pytest.mark.parametrize("ending", ["recovery", "step_cap"])
+def test_final_answer_cannot_loop_on_reasoning_only_with_effort_enforced(setup, monkeypatch, ending):
+    rounds = ([call("read_note", {"name": 1}), call("search", {"query": "a"}),
+               call("search", {"query": "b"})] if ending == "recovery" else
+              [call("search", {"query": q}) for q in "ab"])
+    points = ["assess_effort"] + (["step_cap"] if ending == "step_cap" else [])
+    s, seen, tools = setup(points, [], tool_gate={"step_cap": 2})
+
+    def chat(model, messages, **kwargs):
+        seen.append({"think": kwargs["think"], "tools": kwargs["tools"]})
+        assert len(seen) <= len(rounds) + 1, "reasoning-only final answer looped"
+        if len(seen) <= len(rounds):
+            yield rounds[len(seen) - 1]
+        else:
+            # Even a model ignoring think=False must terminate without another call.
+            yield {"thinking": "The available evidence remains incomplete."}
+
+    monkeypatch.setattr(session, "chat", chat)
+    events = list(s.ask("Find it"))
+    assert isinstance(events[-1], Text)
+    assert len(seen) == len(rounds) + 1
+    assert seen[0]["think"] == "low"
+    assert seen[-1]["think"] is False and seen[-1]["tools"] == seen[0]["tools"]
+    assert len(tools.calls) == 2
 
 
 def test_past_the_highest_local_tier_the_expert_plans(setup, monkeypatch):
@@ -302,7 +395,7 @@ def test_log_lines_read_plainly():
 
 
 def test_enforcement_is_off_until_a_point_is_enforced(tmp_path):
-    enforcement = Enforcement(enforce_config(tmp_path, []), session.BASE_MODEL, None)
+    enforcement = Enforcement(enforce_config(tmp_path, []), None, None)
     assert enforcement.any is False and enforcement.offer_tools({"mode": "answer"}) is True
 
 
@@ -407,3 +500,72 @@ def test_enforced_a_repeated_call_stops_the_turn_before_it_runs(setup, tmp_path)
     assert events[-1].text.startswith("I stopped here: it called search with the same arguments 3 times")
     rows = [r for r in watch_rows(tmp_path) if r["proposed_action"] == "repeated_call"]
     assert rows[0]["action_taken"] == "stopped"
+
+
+def test_step_limit_final_answer_remains_reachable_under_context_pressure(setup):
+    s, seen, tools = setup(["step_cap"], [[call("search", {"query": "big"})],
+                                        ["The omitted result is still unchecked."]],
+                           results={"search": "x" * 100000}, tool_gate={"step_cap": 1})
+    assert list(s.ask("Find it"))[-1] == Text("The omitted result is still unchecked.")
+    assert len(seen) == 2 and seen[-1]["tools"] is True
+    assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] That was the last tool round")
+    assert any(m.get("content", "").startswith("[left out:") for m in seen[-1]["messages"])
+
+
+def test_forced_write_lost_response_cannot_replay(setup):
+    from core.session import Failure
+    s, seen, tools = setup(['gate_write'], [[call('search', {'query': 'Priya'})],
+        [call('write_note', {'note': PRIYA, 'content': 'line'})]])
+    original = tools.call_tool_result
+    def uncertain(name, args):
+        if name == 'write_note':
+            tools.calls.append((name, args))
+            raise TimeoutError('lost receipt')
+        return original(name, args)
+    tools.call_tool_result = uncertain
+    events = list(s.ask(REQUEST))
+    assert isinstance(events[-1], Failure) and 'uncertain' in events[-1].message
+    assert len([name for name, _ in tools.calls if name == 'write_note']) == 1
+    assert s.store.pending_writes(s._vault_scope)[0]['state'] == 'uncertain'
+
+
+def test_automatic_first_read_exception_uses_bounded_recovery(setup):
+    from core.providers.mcp_tools import ToolResult
+    s, seen, tools = setup(['tool_gate'], [[call('search', {'query': 'Priya'})], ['Found Priya.']])
+    original = tools.call_tool_result
+    attempts = []
+    def transient(name, args):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise TimeoutError('first read disconnected')
+        return original(name, args)
+    tools.call_tool_result = transient
+    assert list(s.ask(REQUEST))[-1] == Text('Found Priya.')
+    assert attempts == ['search', 'search']
+
+
+def test_planned_write_honors_the_same_confirmation_gate(setup):
+    s, seen, tools = setup(['gate_write'], [['I could not write it.']],
+        script={**DEFAULT_SCRIPT, 'verdict': {'confirm': 0.95}})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 'Priya'}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'note': PRIYA, 'content': 'line'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not write it.')
+    assert [name for name, _ in tools.calls] == ['search']
+    assert not s.store.pending_writes(s._vault_scope)
+
+
+def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['gate_write', 'step_cap'],
+        [[call('write_note', {'note': INVENTED, 'content': 'line'})], ['I could not write it.']],
+        tool_gate={'step_cap': 1})
+    assert list(s.ask(REQUEST))[-1] == Text('I could not write it.')
+    assert len(seen) == 2 and not tools.calls
+    assert not any(call['fmt'] for call in seen)
+
+
+def test_plan_repair_respects_the_remaining_step_budget(setup):
+    s, seen, tools = setup(['step_cap'], [['I could not search.']], tool_gate={'step_cap': 1})
+    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 5}},
+                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
+    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not search.')
+    assert len(seen) == 1 and not tools.calls

@@ -1,0 +1,59 @@
+{
+ "schema_version": 1,
+ "date": "2026-10-08",
+ "purpose": "Plain multi-turn arm: the preparation turns a person would naturally say, with no restrictions (do not calculate yet, do not change notes, do not write yet), no method hints, and no values, paths or conclusions. Same turn count as each pair's scaffolded multi_turn; the final turn is the pair's one_shot_prompt, added at export.",
+ "preparation_turns": {
+  "FP08": [
+   "What were the nine PDP-drop durations I measured?",
+   "What's the mean and standard deviation of those?"
+  ],
+  "FP09": [
+   "What's in my sensor calibration data at 25 °C?",
+   "Can you fit a line to it?",
+   "How far off is each point from that line?"
+  ],
+  "FP31": [
+   "Do I have any standup transcripts already?",
+   "Today's standup was about the soak test and the supercap."
+  ],
+  "FP12": [
+   "What does my Memfault note say about data usage and coredumps?",
+   "How much of my monthly data plan do the metrics uploads use?",
+   "And how long would the flash last with the coredumps?"
+  ],
+  "FP30": [
+   "Where do my notes mention the SARA-R510S lead time?",
+   "The supplier told me it's 20 weeks now."
+  ],
+  "FP20": [
+   "What's the current status of my projects?",
+   "What do my notes say about the battery and modem problems?",
+   "Is there anything in my meeting and daily notes I should double-check?"
+  ],
+  "FP21": [
+   "What tasks or to-dos are in my notes?",
+   "Have any of those been done since?"
+  ],
+  "FP25": [
+   "What did my manager last ask me for?",
+   "Where do my projects stand right now?"
+  ],
+  "FP06": [
+   "Which of my notes link to other notes?",
+   "Do all of those links lead somewhere?"
+  ],
+  "FP13": [
+   "What do my notes say about the UART buffer and the 921600 baud problem?",
+   "Is my current buffer big enough?"
+  ],
+  "FP17": [
+   "What does my internet contract note say?",
+   "When's the last day I can cancel?"
+  ],
+  "FP32": [
+   "What do my notes say about the battery life models, the PSM debugging and the connection-drop correction?",
+   "What battery life does each design actually get?",
+   "Do those notes agree with each other?"
+  ]
+ }
+}

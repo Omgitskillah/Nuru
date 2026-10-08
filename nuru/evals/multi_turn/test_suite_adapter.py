@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from mechanical_checks import assess
-from suite_adapter import HERE, cumulative, export, records
+from suite_adapter import HERE, as_one_shot, cumulative, export, export_pairs, records
 
 CASES = json.loads((HERE / 'cases.json').read_text())
 
@@ -38,6 +38,57 @@ class Export(unittest.TestCase):
             path = Path(tmp) / 'mt.json'
             path.write_text(json.dumps(export(CASES)))
             self.assertEqual(sorted(load_cases(path)), list(range(101, 113)))
+
+
+class Pairs(unittest.TestCase):
+    PAIRS = json.loads((HERE / 'failure_pairs' / 'cases.json').read_text())
+
+    def test_pairs_end_on_the_legacy_prompt_and_carry_no_grading(self):
+        exported = export_pairs(self.PAIRS)
+        self.assertEqual(len(exported), 12)
+        for case in self.PAIRS['cases']:
+            turns = exported[str(200 + case['original_test'])]['turns']
+            self.assertEqual(turns[-1]['prompt'], case['one_shot_prompt'])
+            self.assertTrue(all(set(t) == {'prompt', 'checks'} and t['checks'] == {} for t in turns))
+
+    def test_plain_variants_match_turn_counts_and_end_on_the_legacy_prompt(self):
+        plain = json.loads((HERE / 'failure_pairs' / 'plain-variants.json').read_text())
+        self.assertEqual(set(plain['preparation_turns']), {c['id'] for c in self.PAIRS['cases']})
+        exported = export_pairs(self.PAIRS, plain)
+        for case in self.PAIRS['cases']:
+            turns = [t['prompt'] for t in exported[str(200 + case['original_test'])]['turns']]
+            self.assertEqual(len(turns), len(case['multi_turn']))
+            self.assertEqual(turns[-1], case['one_shot_prompt'])
+            self.assertEqual(turns[:-1], plain['preparation_turns'][case['id']])
+            # No restrictions survive in the plain arm.
+            self.assertFalse(any(word in p.lower() for p in turns[:-1] for word in ('do not', "don't", 'yet')))
+
+    def test_a_plain_variant_with_the_wrong_turn_count_is_refused(self):
+        plain = {'preparation_turns': {c['id']: ['only one'] for c in self.PAIRS['cases']}}
+        with self.assertRaises(ValueError):
+            export_pairs(self.PAIRS, plain)
+
+    def test_final_reply_is_scored_as_the_legacy_test(self):
+        result = {'test': 232, 'turns': [{'reply': 'prep'}, {'reply': 'verdict', 'failure': None}],
+                  'vault_changes': [], 'tool_calls': [{'name': 'search'}]}
+        record = as_one_shot(result)
+        self.assertEqual((record['test'], record['reply'], record['timed_out']), (32, 'verdict', False))
+        self.assertEqual(record['tool_calls'], [{'name': 'search'}])
+        self.assertNotIn('turns', record)  # else score_runs.score() would use the sequence checks
+
+    def test_legacy_scorer_judges_the_final_reply(self):
+        import sys
+        sys.path.insert(0, str(HERE.parent / 'decision_layer'))
+        import score_runs
+        result = {'test': 234, 'turns': [{'reply': 'thinking about it'}, {'reply': "I don't know."}],
+                  'vault_changes': [], 'tool_calls': [], 'executed': [], 'date': '2026-10-08'}
+        right = {**result, 'turns': [*result['turns'][:-1], {'reply': '128.4 mAh'}]}
+        self.assertLess(score_runs.score(as_one_shot(result))[0], score_runs.score(as_one_shot(right))[0])
+
+    def test_unfinished_conversations_count_as_timed_out(self):
+        for result in ({'test': 209, 'turns': [{'reply': 'a', 'timed_out': True}, {'not_run': True}]},
+                       {'test': 209, 'timed_out': True}):
+            self.assertTrue(as_one_shot(result)['timed_out'])
 
 
 class Records(unittest.TestCase):

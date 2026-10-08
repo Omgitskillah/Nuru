@@ -19,6 +19,11 @@ its existing chat model; use the standalone command when no model is available.
 The server CLI `obsidian-mcp-steward` provides pagination, full detail, and explicit
 sidecar review. See the dependency's `docs/stewardship.md` for supported contracts.
 
+[Example configuration](steward-config.example.json) matches the synthetic
+development fixture. Adapt schemas, scopes, folders, and the explicit `as_of`
+date before enabling a worker on another vault. The fixed reference clock is
+deliberate: background date advancement is not implicit in this first stage.
+
 ## Packages and suggested delivery order
 
 | Package | Feature | Compute | Suggested phase |

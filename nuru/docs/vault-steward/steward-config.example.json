@@ -1,0 +1,81 @@
+{
+  "packages": [
+    "properties",
+    "links",
+    "attachments",
+    "tasks",
+    "tables",
+    "reviews",
+    "triage",
+    "duplicates",
+    "claims",
+    "graph"
+  ],
+  "as_of": "2026-10-08",
+  "timezone": "Europe/Berlin",
+  "schemas": [
+    {
+      "name": "project",
+      "glob": "Projects/*.md",
+      "fields": {
+        "owner": {
+          "type": "string",
+          "required": true
+        }
+      }
+    }
+  ],
+  "tables": [
+    {
+      "name": "money",
+      "columns": {
+        "Item": {
+          "type": "string"
+        },
+        "Amount": {
+          "type": "number",
+          "currency": "€",
+          "required": true
+        }
+      },
+      "totals": [
+        {
+          "label_column": "Item",
+          "label": "Total",
+          "column": "Amount",
+          "tolerance": "0"
+        }
+      ]
+    }
+  ],
+  "triage": {
+    "inboxes": [
+      "Inbox/*.md"
+    ],
+    "destinations": {
+      "Projects": {
+        "scope": "private"
+      }
+    },
+    "rules": [
+      {
+        "field": "project",
+        "value": "A",
+        "destination": "Projects"
+      }
+    ]
+  },
+  "claims": {
+    "duration": {
+      "units": {
+        "ms": {
+          "factor": "1"
+        },
+        "s": {
+          "factor": "1000"
+        }
+      },
+      "tolerance": "0"
+    }
+  }
+}

@@ -1,5 +1,11 @@
 # Vault stewardship evaluations
 
+The remaining packages now have deterministic first milestones. See
+[implementation results and scope](steward-implementation-2026-10-08.md),
+[combined independent fixture](steward_fixture.json), and
+[model-free evaluator](steward_eval.py). Optional inference remains OFF and requires
+permission for each live run. The original WP02-only results below are unchanged.
+
 WP02 is a model-free link-audit implementation.
 [Results and limitations](wp02-link-integrity-2026-10-07.md) record the first offline validation. The reproducible fixture manifest
 and oracle are [wp02_fixture.json](wp02_fixture.json); the harness is

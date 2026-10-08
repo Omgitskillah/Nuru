@@ -1,0 +1,175 @@
+{
+  "fixture_sha256": "31e456cf550723f901404a1252f2cd12585e22c86e8e9967703af0987167dd14",
+  "accuracy": {
+    "finding_grade": {
+      "exact": true,
+      "tp": 11,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "missing": [],
+      "extra": []
+    },
+    "checks": {
+      "exact_note_groups": true,
+      "asset_groups": true,
+      "asset_bytes": true,
+      "graph_edges": true,
+      "route": true,
+      "table_total": true,
+      "unchanged_files": true,
+      "complete": true,
+      "no_model_calls": true
+    },
+    "pass": true,
+    "notes": 11,
+    "assets": 2
+  },
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.7",
+  "hardware_note": "Apple M4, 16 GiB RAM",
+  "source_sha256": {
+    "/Users/aluchoayisi/Desktop/NuruCodex/nuru/evals/vault_steward/steward_eval.py": "2e39287102c93bb117d6810515fdc510e9170e0bf7bdc8c336b2012ff087d990",
+    "servers/obsidian/src/obsidian_mcp/steward.py": "a4e1fcfc639f60d10e5491514a7fd1375b61d7e2823d266713173b3636a12cf4",
+    "servers/obsidian/src/obsidian_mcp/steward_claims.py": "161ce6c07c6928c82794a4d57fb54167fa24d603f61965fe3b3e6c5788cc75bc",
+    "servers/obsidian/src/obsidian_mcp/steward_duplicates.py": "a08457bb0c5a5867fba5d6053e5c0150cae080d3ba98870c185a7082e3d4fba4",
+    "servers/obsidian/src/obsidian_mcp/steward_graph.py": "37513c595ab0f5418c417056337ce7d2ce802eedbb246228a12b724bab5a4e05",
+    "servers/obsidian/src/obsidian_mcp/steward_interpretation.py": "3c2e164bb257e75dfd5dc542aac5bf0a3c9ea9c0451369698e487f6f7ae18c8e",
+    "servers/obsidian/src/obsidian_mcp/steward_state.py": "9be822632cf673b831abb070ef9085931e0a0d133ac744178e229fd0e2e36c4a",
+    "servers/obsidian/src/obsidian_mcp/steward_tables.py": "1d378cacbcd9ab274f254023551eb44fa82f15594dc894500afab2698f6dc5dd",
+    "servers/obsidian/src/obsidian_mcp/stewardship.py": "dafd828213e55ce67553fe0a9053b72c5f794f16098c129061ac09c67e5cdae6"
+  },
+  "dependency_commit": "0b853c117e363780693b238d7f0113621a60f542",
+  "nuru_source_commit": "0aa9ac8b81fbe21776e87346840960003184b10d",
+  "timing_scope": "Steward.run_once, including hashing, parsing/reconciliation, feature computation, report snapshot; excludes fixture creation and JSON serialization. Cold parser cache, OS cache not flushed.",
+  "timings": [
+    {
+      "notes": 1000,
+      "repeats": 5,
+      "packages": [
+        "properties",
+        "links",
+        "tasks",
+        "duplicates",
+        "graph"
+      ],
+      "raw_ms": {
+        "cold": [
+          1024.8569168616086,
+          1726.267416961491,
+          1432.30791692622,
+          1312.3137920629233,
+          1307.663083076477
+        ],
+        "no_change": [
+          651.2738750316203,
+          792.7292080130428,
+          608.6529579479247,
+          646.2980408687145,
+          579.3108327779919
+        ],
+        "one_note_edit": [
+          735.8411669265479,
+          796.1253328248858,
+          668.3072920423001,
+          664.5135420840234,
+          535.9714168589562
+        ]
+      },
+      "median_ms": {
+        "cold": 1312.314,
+        "no_change": 646.298,
+        "one_note_edit": 668.307
+      },
+      "one_edit_parse_counts": [
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        }
+      ],
+      "model_calls": 0
+    },
+    {
+      "notes": 10000,
+      "repeats": 5,
+      "packages": [
+        "properties",
+        "links",
+        "tasks",
+        "duplicates",
+        "graph"
+      ],
+      "raw_ms": {
+        "cold": [
+          12353.962125023827,
+          13401.803500019014,
+          13457.896374864504,
+          12692.780499812216,
+          13056.783917127177
+        ],
+        "no_change": [
+          5848.962165880948,
+          7152.87800016813,
+          5459.78158316575,
+          5512.368208030239,
+          6098.0476250406355
+        ],
+        "one_note_edit": [
+          6939.0396669041365,
+          5995.128666982055,
+          4577.3109591100365,
+          5775.7461671717465,
+          5423.726249951869
+        ]
+      },
+      "median_ms": {
+        "cold": 13056.784,
+        "no_change": 5848.962,
+        "one_note_edit": 5775.746
+      },
+      "one_edit_parse_counts": [
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        },
+        {
+          "notes": 1,
+          "links": 1
+        }
+      ],
+      "model_calls": 0
+    }
+  ],
+  "peak_rss_bytes": 146374656,
+  "live_models": "NOT RUN",
+  "human_efficacy": "NOT RUN"
+}

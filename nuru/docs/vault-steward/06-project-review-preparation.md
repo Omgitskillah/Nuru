@@ -1,6 +1,9 @@
 # WP06 — Project review preparation
 
-Status: proposed work package, 2026-10-07. No implementation or measured results.
+Status: deterministic first milestone implemented, 2026-10-08. See the
+[milestone ledger](implementation-milestones.md) and
+[offline evaluation](../../evals/vault_steward/steward-implementation-2026-10-08.md).
+Optional model quality, held-out labels, and real-vault efficacy remain NOT RUN.
 
 ## Outcome
 

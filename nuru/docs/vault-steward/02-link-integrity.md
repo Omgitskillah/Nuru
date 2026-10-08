@@ -1,9 +1,11 @@
 # WP02 — Link integrity
 
 Status: deterministic v1 implemented on `feat/vault-link-integrity`, 2026-10-07.
-See [usage and evaluation](../../evals/vault_steward/README.md). Model-assisted
-ranking, held-out evaluation, persistent acknowledgements, and real-vault efficacy
-remain follow-up work; source notes are never automatically repaired.
+See [usage and evaluation](../../evals/vault_steward/README.md). The shared
+stewardship runner now adds optional persistent acknowledgements and conservative
+rename identity; the original `audit_links` tool remains stateless. Model-assisted
+ranking quality, held-out evaluation, and real-vault efficacy remain follow-up
+work; source notes are never automatically repaired.
 
 ## Outcome
 

@@ -14,7 +14,7 @@ tool-list change is implied by exposing new read-only MCP tools.
 | WP03.1 | Streaming asset hashes, ownership inventory, duplicate candidates | Backend tested: 3 cases |
 | WP04.1 | Fixed-clock task ledger and explicit mirror conflicts | Backend tested: 4 cases |
 | WP09.1 | Declared tables and decimal arithmetic checks | Backend tested: 14 cases |
-| WP06.1 | Explicit project review checklist and evidence digest | Pending |
+| WP06.1 | Explicit project review checklist and evidence digest | Backend tested: 2 cases |
 | WP05.1 | Explicit metadata routing previews with scope boundaries | Pending |
 | WP07.1 | Exact copies and bounded lexical candidate pairs | Pending |
 | WP08.1 | Scoped structured claims and explicit unit comparisons | Pending |

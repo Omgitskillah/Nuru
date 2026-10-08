@@ -17,7 +17,7 @@ tool-list change is implied by exposing new read-only MCP tools.
 | WP06.1 | Explicit project review checklist and evidence digest | Backend tested: 2 cases |
 | WP05.1 | Explicit metadata routing previews with scope boundaries | Backend tested: 2 cases |
 | WP07.1 | Exact copies and bounded lexical candidate pairs | Backend tested: 3 cases |
-| WP08.1 | Scoped structured claims and explicit unit comparisons | Pending |
+| WP08.1 | Scoped structured claims and explicit unit comparisons | Backend tested: 3 cases |
 | WP10.1 | Resolved link graph and explicit navigation indexes | Pending |
 | WP11.1 | Existing index compatibility/freshness and fake-embedder validation | Pending |
 | Shared.1 | Opt-in worker, findings lifecycle, CLI/MCP, restart/reconciliation | Pending |

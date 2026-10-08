@@ -100,10 +100,15 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
         new = sorted(set(logs.glob("*.jsonl")) - logs_before)
         return {"session_id": new[-1].stem.split("_", 1)[1]} if new else {}
 
+    # A sequence gets `timeout` per turn, enforced by the driver; killing the process is only the
+    # backstop, after every turn's deadline plus time for startup and a turn's slow last step.
+    turn_timeout = ["--turn-timeout", str(timeout)] if case else []
+    if case:
+        timeout = timeout * len(case["turns"]) + 300
     with open(batch / "turn.stdout", "w") as stdout, open(batch / "turn.stderr", "w") as stderr:
         proc = subprocess.Popen(
             [sys.executable, str(HERE / "drive_turn.py"), *(["--case", str(case_path)] if case else ["--prompt", prompt]), "--think", think, "--out", str(out),
-             *(["--plan", str(plan)] if plan else []), *(["--planner", planner] if planner else [])],
+             *(["--plan", str(plan)] if plan else []), *(["--planner", planner] if planner else []), *turn_timeout],
             env=env, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO,
         )
         try:
@@ -126,7 +131,7 @@ def main():
                         "own, from its profile), off, low, high")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--label", default="run")
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int, default=600, help="seconds per test, or per turn of a sequence case")
     parser.add_argument("--plans", type=Path, help="a folder of plans, <test>.json each: every turn is then the "
                         "harness carrying out the test's plan (Session.run_plan) instead of the model's own turn")
     parser.add_argument("--planner", help="a planner Modelfile (modelfiles/planner/), swapped onto the model to write "

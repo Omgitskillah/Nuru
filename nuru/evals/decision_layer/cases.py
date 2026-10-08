@@ -15,7 +15,8 @@ def load_cases(path: Path) -> dict[int, dict]:
         for turn in case["turns"]:
             if not isinstance(turn.get("prompt"), str) or not turn["prompt"].strip():
                 raise ValueError(f"case {key}: expected a nonempty prompt")
-            if not isinstance(turn.get("checks"), dict) or not turn["checks"]:
+            # Empty checks are allowed: hand-graded cases (multi_turn/) score nothing automatically.
+            if not isinstance(turn.get("checks"), dict):
                 raise ValueError(f"case {key}: expected per-turn regex checks")
             for pattern in turn["checks"].values():
                 re.compile(pattern)

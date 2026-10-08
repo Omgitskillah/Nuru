@@ -81,15 +81,16 @@ limits or fault conditions into one latency comparison.
    fault or context reduction was not exercised, mark that case INVALID and
    exclude it from acceptance, while reporting the missing coverage.
 
-`decision_layer/drive_turn.py --case` already supports a sequence of turns in one
-Session. Extract one core case object from `cases.json` to a temporary case file
-and use the existing scratch-vault/environment setup. The combined catalog is
-not directly accepted by `--case`; this package adds no runner registration.
-Empty `checks` dictionaries maintain driver compatibility but award no automated
-score. Controlled setup metadata is not executed by that driver. A runner must
-also enforce a per-turn deadline: the existing suite process timeout can otherwise
-cover the entire conversation. Start with 600 seconds per turn and report timeout
-and cancellation behavior explicitly.
+`decision_layer/drive_turn.py --case` runs a sequence of turns in one Session.
+[suite_adapter.py](suite_adapter.py) `export` writes the core cases as numbered
+run_suite sequence cases (101–112, prompts only), and `records` turns a batch into
+the input of `mechanical_checks.py --records`, with diffs cumulative from the
+original fixture. Its docstring has the full commands. Empty `checks` dictionaries
+award no automated score. Controlled cases are refused, since their setup is not
+executed. run_suite's `--timeout` (default 600 s) is a deadline per turn for
+sequence cases: the driver cancels a turn still running at its deadline (at the
+next streamed chunk, or once the running tool returns), records it as
+`timed_out`, and labels the later turns NOT RUN.
 
 ## Grading
 

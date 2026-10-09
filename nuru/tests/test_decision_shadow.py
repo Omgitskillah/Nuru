@@ -63,6 +63,8 @@ class ShadowedTools:
         return result if isinstance(result, ToolResult) else ToolResult(result)
 
     def call_harness_tool(self, name, arguments):
+        if name == "note_info":  # the notes server's lookup: these tests' notes count as new ones
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named '{arguments['name']}'.", is_error=True)
         self.harness_calls.append(name)
         if self.laya_down:
             raise ConnectionError("laya-mcp is gone")

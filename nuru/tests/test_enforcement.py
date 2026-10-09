@@ -75,6 +75,8 @@ class Tools:
         return ToolResult(self.results.get(name, "ok"))
 
     def call_harness_tool(self, name, arguments):
+        if name == "note_info":  # the notes server's lookup: these tests' notes count as new ones
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named '{arguments['name']}'.", is_error=True)
         try:
             return ToolResult(json.dumps(getattr(laya_server, name)(**arguments)))
         except Exception as e:

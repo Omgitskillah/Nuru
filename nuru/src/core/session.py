@@ -965,26 +965,48 @@ class Session:
         self.logger.question(turn_id, question.text, answer, questions.answer_text(answer), "answered", seconds)
         return answer
 
-    def _shared_target(self, name: str, args: dict) -> str | None:
-        """The shared/ path a write would land on, if it lands there. A note named by its title is
-        found the way the server finds it; one that doesn't exist yet is created in nuru/."""
+    def _in_shared(self, target: str) -> str | None:
+        """`target` as a vault-relative path if it lands in shared/. Dot components and an absolute
+        path are resolved against the vault, as the server resolves them, so "nuru/../shared/x.md"
+        is shared/x.md."""
+        vault = Path(self._vault_scope)
+        try:
+            relative = (vault / target.replace("\\", "/")).resolve().relative_to(vault)
+        except ValueError:
+            return None  # outside the vault: the server refuses it
+        return relative.as_posix() if relative.parts and relative.parts[0].lower() == "shared" else None
+
+    def _write_scope(self, name: str, args: dict) -> tuple[str, str]:
+        """Where a write lands: ("shared", its path), ("private", ""), or ("unknown", why) when that
+        can't be established. A note named by its title is found with note_info, the way the server
+        finds it; one it reports as not found is created in nuru/. Any other failure is unknown, not
+        private: the server may still resolve the name to a note in shared/."""
         if name == "rename_or_move_file":
-            target = str(args.get("destination_path") or "")
-        elif name == "write_note" and args.get("type") != "daily" and args.get("note"):
-            target = str(args["note"])
-            if not target.lower().startswith("shared/"):
-                try:
-                    result = self.tools.call_harness_tool("note_info", {"name": target})
-                    target = "" if result.is_error else str(json.loads(result.text).get("note") or "")
-                except Exception:
-                    target = ""
-        else:
-            return None
-        return target if target.lower().startswith("shared/") else None
+            shared = self._in_shared(str(args.get("destination_path") or ""))
+            return ("shared", shared) if shared else ("private", "")
+        if name != "write_note" or args.get("type") == "daily" or not args.get("note"):
+            return "private", ""
+        note = str(args["note"])
+        if shared := self._in_shared(note):
+            return "shared", shared
+        try:
+            result = self.tools.call_harness_tool("note_info", {"name": note})
+        except Exception as e:
+            return "unknown", f"the note lookup failed: {type(e).__name__}"
+        if result.is_error:
+            if "No note found named" in result.text:
+                return "private", ""
+            return "unknown", "the note lookup failed"
+        try:
+            path = json.loads(result.text)["note"]
+        except (ValueError, TypeError, KeyError):
+            return "unknown", "the note lookup gave no path"
+        shared = self._in_shared(str(path))
+        return ("shared", shared) if shared else ("private", "")
 
     def _confirmed(self, turn_id: str, name: str, args: dict) -> bool | None:
         """The user's OK for a write gate_write wants confirmed; None if nobody was there to give it."""
-        if questions.no_save_phrase(self._turn_text) or self._shared_target(name, args):
+        if questions.no_save_phrase(self._turn_text) or self._write_scope(name, args)[0] != "private":
             return True  # the "do not save" or shared/ question asks instead, once (_call_tool)
         if self.confirm_write:
             return self.confirm_write(name, args)
@@ -1059,12 +1081,15 @@ class Session:
                 outcome = tool_dispatch.failure("policy", "NOT_RUN", f'{name} was not run: this message says "{said}"'
                     + (", and the user didn't allow it when asked." if answer is not None else ".")
                     + " Give the result in the reply instead.")
-        if outcome is None and name in MUTATIONS and (shared := self._shared_target(name, args)):
-            answer = self._answer(turn_id, questions.shared_write(name, args, shared))
+        if outcome is None and name in MUTATIONS and (scope := self._write_scope(name, args))[0] != "private":
+            kind, where = scope
+            answer = self._answer(turn_id, questions.shared_write(name, args, where) if kind == "shared"
+                                  else questions.unknown_write(name, args, where))
             if not questions.is_yes(answer):
-                outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: {shared} is in shared/, "
-                    "which others read, and " + ("the user didn't allow it when asked." if answer is not None
-                                                 else "nobody was there to allow it.")
+                outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: "
+                    + (f"{where} is in shared/, which others read, and " if kind == "shared" else
+                       f"Nuru couldn't confirm that {args.get('note')} is outside shared/ ({where}), and ")
+                    + ("the user didn't allow it when asked." if answer is not None else "nobody was there to allow it.")
                     + " Give the result in the reply instead.")
         if outcome is None and name in MUTATIONS:
             attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args)

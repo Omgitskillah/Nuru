@@ -58,6 +58,8 @@ class FakeMCPTools:
         return ToolResult(self.call_tool(name, arguments))
 
     def call_harness_tool(self, name, arguments):
+        if name == "note_info":  # the notes server's lookup: these tests' notes count as new ones
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named '{arguments['name']}'.", is_error=True)
         # No decision layer here: the shadow's calls fail, which it must shrug off.
         return ToolResult("no decision layer in this test", is_error=True)
 
@@ -1317,14 +1319,22 @@ def test_every_question_code_raises_is_logged_with_what_the_turn_went_on_with(mo
 
 
 class SharedVault(FakeMCPTools):
-    """Notes named by title resolve as the server would: "Team Handover" is in shared/."""
+    """Notes named by title resolve as the server would: "Team Handover" is in shared/. A name it
+    doesn't know gets the server's not-found error; `lookup` replaces note_info's answer outright."""
+
+    def __init__(self, *args, lookup=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lookup = lookup
 
     def call_harness_tool(self, name, arguments):
         if name == "note_info":
+            if self.lookup is not None:
+                return self.lookup(arguments)
             paths = {"Team Handover": "shared/Team Handover.md", "Priya Raman": "user/Priya Raman.md"}
             if arguments["name"] in paths:
                 return ToolResult(json.dumps({"note": paths[arguments["name"]]}))
-            return ToolResult("not found", is_error=True)
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named "
+                              f"'{arguments['name']}'. Use browse or search to find the right note.", is_error=True)
         return super().call_harness_tool(name, arguments)
 
 
@@ -1332,6 +1342,12 @@ class SharedVault(FakeMCPTools):
     (tool_call("write_note", {"note": "shared/Team Handover.md", "content": "x"}), "shared/Team Handover.md"),
     (tool_call("write_note", {"note": "Team Handover", "content": "x"}), "shared/Team Handover.md"),
     (tool_call("rename_or_move_file", {"source_path": "nuru/a.md", "destination_path": "Shared/a.md"}), "Shared/a.md"),
+    # Dot components are resolved as the server resolves them (PR #10 review).
+    (tool_call("rename_or_move_file", {"source_path": "nuru/private.md", "destination_path": "nuru/../shared/leaked.md"}),
+     "shared/leaked.md"),
+    (tool_call("rename_or_move_file", {"source_path": "nuru/private.md", "destination_path": "./shared/leaked.md"}),
+     "shared/leaked.md"),
+    (tool_call("write_note", {"note": "nuru/../shared/Team Handover.md", "content": "x"}), "shared/Team Handover.md"),
 ])
 def test_a_write_into_shared_is_asked_about_and_runs_only_on_a_yes(monkeypatch, call, path):
     for answer, runs in ((["Yes"], True), (None, False)):
@@ -1367,6 +1383,46 @@ def test_with_nobody_there_a_write_into_shared_does_not_run(monkeypatch):
     s = start_session(monkeypatch, chat=chat, tools=tools)
 
     list(s.ask("Add her lunch discussion to the handover."))
+
+    assert tools.calls == []
+    assert "nobody was there to allow it" in seen[1][-1]["content"]
+
+
+def lookup_raises(arguments):
+    raise ConnectionError("obsidian server went away")
+
+
+@pytest.mark.parametrize("lookup", [
+    lookup_raises,
+    lambda arguments: ToolResult("Error executing tool note_info: ValueError: bad frontmatter", is_error=True),
+    lambda arguments: ToolResult("not json"),
+    lambda arguments: ToolResult(json.dumps({"hint": "no note key"})),
+], ids=["exception", "other error", "unparseable", "no path"])
+def test_a_write_whose_note_cant_be_looked_up_is_treated_as_possibly_shared(monkeypatch, lookup):
+    # PR #10 review: a failed lookup can't establish that the note is private; the server may still
+    # resolve "Handover" to shared/Handover.md.
+    for answer, runs in ((["Yes"], True), (["No"], False), (None, False)):
+        seen, tools = [], SharedVault(lookup=lookup)
+        chat = scripted_chat([[tool_call("write_note", {"note": "Handover", "content": "Private lunch detail"})], "Done."], seen)
+        s = start_session(monkeypatch, chat=chat, tools=tools)
+        s.answer_question, asked = asking([answer])
+
+        list(s.ask("Add the lunch detail to the handover."))
+
+        assert len(asked) == 1
+        assert asked[0].text.startswith("Nuru couldn't check where write_note on Handover would land")
+        assert asked[0].timeout == 10
+        assert bool(tools.calls) is runs
+        if not runs:
+            assert "couldn't confirm that Handover is outside shared/" in seen[1][-1]["content"]
+
+
+def test_with_nobody_there_a_write_whose_note_cant_be_looked_up_does_not_run(monkeypatch):
+    seen, tools = [], SharedVault(lookup=lookup_raises)
+    chat = scripted_chat([[tool_call("write_note", {"note": "Handover", "content": "x"})], "Done."], seen)
+    s = start_session(monkeypatch, chat=chat, tools=tools)
+
+    list(s.ask("Add it to the handover."))
 
     assert tools.calls == []
     assert "nobody was there to allow it" in seen[1][-1]["content"]

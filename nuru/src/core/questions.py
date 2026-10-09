@@ -163,6 +163,12 @@ def shared_write(tool: str, arguments: dict, path: str) -> Question:
                   details=_details(arguments), timeout=ANSWER_SECONDS)
 
 
+def unknown_write(tool: str, arguments: dict, why: str) -> Question:
+    """A write whose note couldn't be looked up, so it may land in shared/."""
+    return yes_no(f"Nuru couldn't check where {tool} on {_target(arguments)} would land ({why}), so it may be in "
+                  "shared/, where others can read it. Allow it?", details=_details(arguments), timeout=ANSWER_SECONDS)
+
+
 def _details(arguments: dict) -> str:
     return json.dumps(arguments, ensure_ascii=False, indent=1)[:2000]
 

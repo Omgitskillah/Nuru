@@ -34,6 +34,12 @@ revisions and verbatim citations. Live adapters/model benchmarks remain NOT RUN;
 valid citations do not establish a correct suggestion. No automatic model stage,
 repair, move, merge, delete, notification, or paid job is enabled.
 
+Subsequent evaluation: the user authorized Qwen 3.5 4B-only local tests on
+2026-10-09. See [the separate protocol and findings](qwen-steward-2026-10-09.md).
+The earlier NOT RUN statements describe the 2026-10-08 milestone; the later
+synthetic advisory evaluation does not complete the outstanding held-out,
+embedding-index, or production efficacy gates.
+
 ## Independent fixture and grading
 
 [Fixture/oracle](steward_fixture.json) contains 11 notes and 2 placeholder assets.

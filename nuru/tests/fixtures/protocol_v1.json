@@ -1,5 +1,5 @@
 {
- "about": "Frozen protocol v1 examples (WP01 M1). Generated once, then kept as is: a change that breaks them is a protocol change.",
+ "about": "Frozen protocol v1 examples (WP01 M1). Generated once, then kept as is: a change that breaks them is a protocol change. Additions are fine.",
  "streams": {
   "completed_with_tools": [
    {
@@ -950,6 +950,178 @@
      "reply": "<script>alert(1)</script><img src=x onerror=alert(2)> [click](javascript:alert(3)) <a href=\"file:///etc/passwd\">f</a>"
     }
    }
+  ],
+  "multi_answered_none": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000005",
+     "operation": "9137aadea9accdf13f914a9d89346197ee85cad4bba93a551a1aab65426fe0bf",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "multi",
+      "text": "Which notes should Nuru tag #trip?",
+      "options": [
+       {
+        "label": "user/Rome.md"
+       },
+       {
+        "label": "user/Oslo.md"
+       },
+       {
+        "label": "nuru/Packing.md"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000005",
+     "outcome": "answered",
+     "chosen": [],
+     "decision": "None of these."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "I left the tags alone."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "I left the tags alone."
+    }
+   }
+  ],
+  "single_answered_other": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000006",
+     "operation": "2c0dd28e5b4f9e63189caf5fc35262bc3d0c1db0bcc9c35657065a3d747814a8",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "single",
+      "text": "Where should the summary go?",
+      "options": [
+       {
+        "label": "nuru/Summary.md",
+        "recommended": true
+       },
+       {
+        "label": "user/Summary.md"
+       }
+      ],
+      "allow_other": true
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000006",
+     "outcome": "answered",
+     "chosen": [],
+     "other": "nuru/Trips/Summary.md",
+     "decision": "nuru/Trips/Summary.md"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Saved to nuru/Trips/Summary.md."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "Saved to nuru/Trips/Summary.md."
+    }
+   }
   ]
  },
  "requests": {
@@ -1161,5 +1333,145 @@
     }
    }
   }
+ },
+ "request_binding": {
+  "about": "Each case is a request already accepted, then a second one with the same request_id: replay returns the first result, conflict is 409.",
+  "cases": [
+   {
+    "why": "identical retry",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "expect": "replay"
+   },
+   {
+    "why": "same body, other conversation",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000othr",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "same conversation, other text",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Saturday?"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "cancel retried",
+    "operation": "cancel_turn",
+    "first": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "second": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "expect": "replay"
+   },
+   {
+    "why": "cancel aimed at another turn",
+    "operation": "cancel_turn",
+    "first": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "second": {
+     "target": "turn00000002",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "answer sent to another question",
+    "operation": "answer_question",
+    "first": {
+     "target": "ques00000001",
+     "body": {
+      "request_id": "req-0000000000000003",
+      "operation": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chosen": [
+       "Yes"
+      ]
+     }
+    },
+    "second": {
+     "target": "ques00000002",
+     "body": {
+      "request_id": "req-0000000000000003",
+      "operation": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chosen": [
+       "Yes"
+      ]
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "new conversation retried",
+    "operation": "create_conversation",
+    "first": {
+     "target": "",
+     "body": {
+      "request_id": "req-0000000000000004",
+      "title": "Plans"
+     }
+    },
+    "second": {
+     "target": "",
+     "body": {
+      "request_id": "req-0000000000000004",
+      "title": "Plans"
+     }
+    },
+    "expect": "replay"
+   }
+  ]
  }
 }

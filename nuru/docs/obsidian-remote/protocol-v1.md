@@ -60,12 +60,17 @@ The service makes no tool or model call before all four checks pass.
 ### Request IDs
 
 - Every POST carries a client-chosen `request_id`. It is scoped to the principal, vault
-  and operation (`request_key`), and bound to a hash of the rest of the body
-  (`payload_hash`).
+  and operation (`request_key`).
+- It is bound by `payload_hash` to the rest of the body and to the resource the URL names:
+  - the conversation a turn goes to;
+  - the turn to cancel;
+  - the question to answer;
+  - `""` for a new conversation.
 - The service stores the request before it acts on it.
 - A retry with the same ID and body gets the original result, with `replayed: true`. It
   never starts a second turn.
-- The same ID with a different body gets 409 `conflict`.
+- The same ID with a different body, or aimed at a different resource, gets 409 `conflict`
+  (the `request_binding` fixtures).
 - Compact tombstones keep old IDs for as long as the database lives in this release, so
   an old ID never becomes new work.
 
@@ -86,16 +91,16 @@ Every event has these fields:
 | `accepted` | Always first. Its `request_id` is the one the turn came from. |
 | `queued` | Waiting for the one generation slot. `position` counts from 1. |
 | `started` | Generation has begun. Content events come only after it. |
-| `text` | A piece of the reply. Chunks may split words, Markdown or Unicode clusters, but never a code point. |
+| `text` | A piece of the reply, at most 16,000 characters. A reply that Session buffers is split to fit. Chunks may split words, Markdown or Unicode clusters, but never a code point. |
 | `reasoning` | Optional display data. Chunks have `final: false`. `final: true` carries the whole call's reasoning and replaces the chunks before it. No turn needs these to finish. |
 | `retry` | The model call is being run again (`silent`: it only reasoned; otherwise why it was steered). |
 | `tool_start` / `tool_result` | A tool call (`call_id`, name, arguments), then whether it worked. |
 | `question` | A question Nuru needs answered before it can go on. Details under Questions. |
-| `question_closed` | `answered` (with `chosen`), `expired` or `cancelled`. `decision` is what Nuru acts on; no answer means No. |
+| `question_closed` | `answered`, `expired` or `cancelled`. Only `answered` has `chosen` (possibly empty) and, where `allow_other` is set, `other`. `decision` is what Nuru acts on. Details under Questions. |
 | `write_receipt` | What a write actually did: `applied`, `refused`, `failed` or `uncertain`. Clients show this, not the request. |
-| `completed` | The reply, plus `ask` if the model asked the user something (the next message answers it). |
+| `completed` | The reply, plus `ask` if the model asked the user something (the next message answers it). A reply over 60,000 characters keeps its start and adds `truncated: true`; the conversation history keeps the whole reply. |
 | `failed` | `turn_failed`, `model_unavailable`, `service_restarted` or `internal`, with a message fit to show the user. |
-| `cancelled` | `user` (Stop) or `shutdown`, with the reply so far. |
+| `cancelled` | `user` (Stop) or `shutdown`, with the reply so far (truncated the same way). |
 
 A stream has these rules (`StreamCheck` enforces them):
 
@@ -106,8 +111,9 @@ A stream has these rules (`StreamCheck` enforces them):
   `cancelled`.
 - `tool_result` and `write_receipt` name a `call_id` that `tool_start` has already
   opened.
-- One event is at most 256 KiB. Text fields are bounded so they always fit, and longer
-  tool arguments are cut for display.
+- One event is at most 256 KiB. The limit counts the whole SSE frame as sent: compact JSON
+  plus the `id`/`event`/`data` lines. Text fields are bounded so they always fit, and
+  longer tool arguments are cut for display.
 
 ### Reconnecting
 
@@ -131,12 +137,19 @@ A stream has these rules (`StreamCheck` enforces them):
   - it comes from the turn's principal;
   - it arrives before `expires_at`;
   - it repeats the question's `operation`;
-  - it picks labels the question offers (one for `yes_no` and `single`). `other` is
-    allowed only when `allow_other` is set.
+  - it picks labels the question offers, each once:
+    - `yes_no` and `single` take exactly one label, or, when `allow_other` is set, the
+      user's own words in `other` instead;
+    - `multi` takes any of its labels, including none, plus `other` when it is allowed.
 - An answer that misses any of these is refused:
   - a late, duplicate or second answer gets `question_closed`;
   - an answer for another operation gets `wrong_operation`.
 - A refused answer never changes the decision.
+- The `decision` follows from the answer:
+  - no answer is No;
+  - an answer that picked nothing is "None of these.";
+  - otherwise it is the chosen labels and then `other`, joined with "; " (`questions.answer_text`).
+- `StreamCheck` checks every `question_closed` against the question it closes.
 - Closing the panel, disconnecting or stopping never counts as Yes. When a question
   closes without an answer, `question_closed` records `expired` or `cancelled` with
   decision No.
@@ -180,7 +193,8 @@ Error bodies have the form `{v, error: {code, message, retry_after_seconds?, res
 
 - A refusal always carries the CORS headers for an allowed origin, so the plugin can tell
   a wrong token from a missing service.
-- Error messages never include credentials or note contents.
+- Error messages never include credentials, note contents or anything the client sent.
+  They name the field and the rule it broke, such as `text: maxLength is 32000`.
 
 ## Not in version 1
 

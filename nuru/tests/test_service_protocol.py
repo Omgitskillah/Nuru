@@ -140,8 +140,19 @@ def test_request_ids_are_scoped_and_bound_to_their_content():
     assert key != protocol.request_key("plugin", "vault0000othr", "submit_turn", "req-0000000000000001")
     assert key != protocol.request_key("plugin", "vault0000demo", "cancel_turn", "req-0000000000000001")
     first = {"request_id": "req-0000000000000001", "text": "hi"}
-    assert protocol.payload_hash(first) == protocol.payload_hash({**first, "request_id": "req-0000000000000002"})
-    assert protocol.payload_hash(first) != protocol.payload_hash({**first, "text": "hi!"})
+    assert protocol.payload_hash("conv0000demo", first) == protocol.payload_hash("conv0000demo", {**first, "request_id": "req-0000000000000002"})
+    assert protocol.payload_hash("conv0000demo", first) != protocol.payload_hash("conv0000demo", {**first, "text": "hi!"})
+
+
+@pytest.mark.parametrize("case", FIXTURES["request_binding"]["cases"], ids=lambda c: c["why"])
+def test_a_reused_request_id_replays_only_for_the_same_target_and_body(case):
+    keys, hashes = set(), set()
+    for sent in (case["first"], case["second"]):
+        protocol.validate(case["operation"], sent["body"])
+        keys.add(protocol.request_key("operator", "vault0000demo", case["operation"], sent["body"]["request_id"]))
+        hashes.add(protocol.payload_hash(sent["target"], sent["body"]))
+    assert len(keys) == 1  # the same request ID, so the second is a replay or a conflict, never new work
+    assert ("replay" if len(hashes) == 1 else "conflict") == case["expect"]
 
 
 def test_sse_frames_round_trip_with_newlines_and_unicode():
@@ -190,15 +201,125 @@ def test_a_raised_question_is_tied_to_its_turn_and_closed_before_the_end():
 
 
 def test_answers_must_be_ones_the_question_allows():
-    yes_no = STREAMS["write_approved"][3]
+    yes_no = STREAMS["write_approved"][3]["data"]["question"]
     assert protocol.answer_is_valid(yes_no, ["Yes"]) and protocol.answer_is_valid(yes_no, ["No"])
     assert not protocol.answer_is_valid(yes_no, ["Yes", "No"])
     assert not protocol.answer_is_valid(yes_no, ["Maybe"])
     assert not protocol.answer_is_valid(yes_no, [])
-    assert not protocol.answer_is_valid(yes_no, [], other="sure")
-    single = {"data": {"question": {**STREAMS["model_asks"][-1]["data"]["ask"]}}}
+    assert not protocol.answer_is_valid(yes_no, [], other="sure")  # no allow_other
+    single = STREAMS["single_answered_other"][2]["data"]["question"]
     assert protocol.answer_is_valid(single, [], other="the other one")
-    multi = {"data": {"question": {"kind": "multi", "text": "Which?", "options": [{"label": "a"}, {"label": "b"}]}}}
-    assert protocol.answer_is_valid(multi, ["a", "b"]) and protocol.answer_is_valid(multi, [])
-    assert not protocol.answer_is_valid(multi, ["a", "a"])
-    assert protocol.decision(None) == "No" and protocol.decision(["a", "b"]) == "a; b"
+    assert not protocol.answer_is_valid(single, ["nuru/Summary.md"], other="the other one")  # one answer, not two
+    assert not protocol.answer_is_valid(single, [], other="  ")
+    multi = STREAMS["multi_answered_none"][2]["data"]["question"]
+    assert protocol.answer_is_valid(multi, ["user/Rome.md", "user/Oslo.md"]) and protocol.answer_is_valid(multi, [])
+    assert not protocol.answer_is_valid(multi, ["user/Rome.md", "user/Rome.md"])
+
+
+def test_no_answer_is_no_but_an_empty_answer_is_none_of_these():
+    assert protocol.decision(None) == "No"
+    assert protocol.decision([]) == questions.answer_text([]) == "None of these."
+    assert protocol.decision(["a", "b"]) == "a; b"
+    assert protocol.decision([], "my own") == "my own"
+    assert shown(STREAMS["multi_answered_none"]).decisions[0]["decision"] == "None of these."
+    assert shown(STREAMS["single_answered_other"]).decisions[0]["other"] == "nuru/Trips/Summary.md"
+
+
+def test_a_closed_question_is_checked_against_the_question_asked():
+    assert "allows" in broken("write_approved", lambda e: e[4]["data"].update(chosen=["Maybe"], decision="Maybe"))
+    assert "allows" in broken("write_approved", lambda e: e[4]["data"].update(other="sure", decision="Yes; sure"))
+    assert "allows" in broken("multi_answered_none", lambda e: e[3]["data"].update(chosen=["user/Rome.md"] * 2,
+                                                                                   decision="user/Rome.md; user/Rome.md"))
+    assert "decision" in broken("write_approved", lambda e: e[4]["data"].update(decision="No"))
+    assert "decision" in broken("multi_answered_none", lambda e: e[3]["data"].update(decision="No"))
+    assert "only an answered" in broken("write_expired", lambda e: e[4]["data"].update(other="late"))
+
+
+@pytest.mark.parametrize("chosen,other,decided", [([], None, "None of these."), (None, None, "No"),
+                                                  ([], "nuru/Trips/Summary.md", "nuru/Trips/Summary.md")])
+def test_a_turn_stream_can_close_every_kind_of_answer(chosen, other, decided):
+    turn = TurnStream("conv0000demo", "turn00000001")
+    turn.emit("accepted", {"request_id": "req-0000000000000001"})
+    turn.emit("started", {})
+    question = questions.Question("Which?", questions.MULTI if other is None else questions.SINGLE,
+                                  (questions.Option("a"), questions.Option("b")), allow_other=other is not None)
+    asked = turn.question(question, "2026-10-09T12:00:10.000Z")["data"]
+    closed = {"question_id": asked["question_id"], "decision": protocol.decision(chosen, other)}
+    if chosen is None:
+        closed["outcome"] = "expired"
+    else:
+        closed.update(outcome="answered", chosen=chosen, **({"other": other} if other else {}))
+    turn.emit("question_closed", closed)
+    turn.completed()
+    protocol.check_stream(turn.events)
+    assert shown(turn.events).decisions[0]["decision"] == decided
+
+
+def started_turn():
+    turn = TurnStream("conv0000demo", "turn00000001")
+    turn.emit("accepted", {"request_id": "req-0000000000000001"})
+    turn.emit("started", {})
+    return turn
+
+
+def test_a_buffered_reply_is_split_into_text_events_without_changing_it():
+    reply = "Grüße 🌍 " * 2001  # 16,008 characters, past one text event's limit
+    turn = started_turn()
+    sent = turn.session_event(session.Text(reply))
+    assert [len(e["data"]["text"]) for e in sent] == [protocol.MAX_TEXT_CHARS, len(reply) - protocol.MAX_TEXT_CHARS]
+    turn.completed()
+    protocol.check_stream(turn.events)
+    assert shown(turn.events).reply == reply and "truncated" not in turn.events[-1]["data"]
+
+
+def test_a_reply_past_the_limit_ends_truncated_not_unfinished():
+    turn = started_turn()
+    for _ in range(5):
+        turn.session_event(session.Text("🌍" * 15000))
+    turn.completed()
+    protocol.check_stream(turn.events)
+    display = shown(turn.events)
+    assert (len(display.reply), display.truncated, display.state) == (protocol.MAX_REPLY_CHARS, True, "completed")
+
+    stopped = started_turn()
+    stopped.text("x" * (protocol.MAX_REPLY_CHARS + 1))
+    stopped.cancelled("user")
+    protocol.check_stream(stopped.events)
+    assert shown(stopped.events).truncated and len(shown(stopped.events).reply) == protocol.MAX_REPLY_CHARS
+
+
+def test_the_event_limit_is_measured_on_the_frame_sent():
+    # Nested arguments, where spaces after separators would add a third to the size.
+    def tool(n):
+        return {"v": 1, "conversation_id": "conv0000demo", "turn_id": "turn00000001", "seq": 3, "type": "tool_start",
+                "data": {"call_id": "call00search", "name": "search", "arguments": {"query": [0] * n}}}
+    overhead = len(protocol.sse(tool(0)))
+    fits = (protocol.MAX_EVENT_BYTES - overhead + 1) // 2  # the first element adds "0", each after it ",0"
+    assert len(protocol.sse(tool(fits))) <= protocol.MAX_EVENT_BYTES < len(protocol.sse(tool(fits + 1)))
+    protocol.check_event(tool(fits))
+    with pytest.raises(ProtocolError) as raised:
+        protocol.check_event(tool(fits + 1))
+    assert raised.value.code == "payload_too_large"
+    assert protocol.parse_sse(protocol.sse(tool(fits))) == [tool(fits)]
+
+
+SECRET = "CONFIDENTIAL NOTE CONTENT"
+
+
+@pytest.mark.parametrize("operation,body", [
+    ("submit_turn", {"request_id": "req-0000000000000001", "text": SECRET + "x" * 32000}),
+    ("submit_turn", {"request_id": "req-0000000000000001", "text": "hi", "attachments": [{"path": "a.md", "selection": SECRET * 1000}]}),
+    ("submit_turn", {"request_id": "req-0000000000000001", "text": "hi", "attachments": [{"path": "/" + SECRET}]}),
+    ("submit_turn", {"request_id": SECRET, "text": "hi"}),
+    ("submit_turn", {"request_id": "req-0000000000000001", "text": "hi", SECRET: 1}),
+    ("submit_turn", {"request_id": "req-0000000000000001", "text": [SECRET]}),
+    ("answer_question", {"request_id": "req-0000000000000003", "operation": SECRET, "chosen": ["Yes"]}),
+    ("answer_question", {"request_id": "req-0000000000000003", "operation": "0" * 64, "chosen": ["Yes"], "other": SECRET * 100}),
+])
+def test_refusals_never_repeat_what_was_sent(operation, body):
+    with pytest.raises(ProtocolError) as raised:
+        protocol.parse_request(operation, json.dumps(body).encode())
+    message = json.dumps(protocol.error_body(raised.value.code, str(raised.value)))
+    assert "CONFIDENTIAL" not in message
+    assert str(raised.value).split(":")[0] in ("text", "attachments/0/selection", "attachments/0/path", "request_id",
+                                                "the body", "operation", "other")

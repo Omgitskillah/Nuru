@@ -192,8 +192,12 @@
            "type": "object", "additionalProperties": false, "required": ["question_id", "outcome", "decision"],
            "properties": {"question_id": {"$ref": "#/$defs/id"},
                           "outcome": {"enum": ["answered", "expired", "cancelled"]},
-                          "chosen": {"type": "array", "items": {"type": "string"}},
-                          "decision": {"type": "string", "maxLength": 2000}}}}}},
+                          "chosen": {"description": "answered only: the labels picked, possibly none (multi).",
+                                     "type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 200}},
+                          "other": {"description": "answered only, where allow_other is set: the user's own words.",
+                                    "type": "string", "minLength": 1, "maxLength": 2000},
+                          "decision": {"description": "What Nuru acts on: No without an answer, else questions.answer_text of chosen then other.",
+                                       "type": "string", "maxLength": 4000}}}}}},
         {"if": {"properties": {"type": {"const": "write_receipt"}}},
          "then": {"properties": {"data": {
            "description": "What a write actually did. uncertain: it may have run but no receipt came; it is never retried on its own.",
@@ -207,6 +211,7 @@
          "then": {"properties": {"data": {
            "type": "object", "additionalProperties": false, "required": ["reply"],
            "properties": {"reply": {"type": "string", "maxLength": 60000},
+                          "truncated": {"description": "The reply was longer than 60000 characters; this is its start.", "const": true},
                           "ask": {"description": "The model asked this (ask_user): the user's next message answers it.",
                                   "$ref": "#/$defs/question"}}}}}},
         {"if": {"properties": {"type": {"const": "failed"}}},
@@ -217,7 +222,8 @@
          "then": {"properties": {"data": {
            "description": "Stopped. Tools that already ran are not undone; their receipts came before this.",
            "type": "object", "additionalProperties": false, "required": ["reason"],
-           "properties": {"reason": {"enum": ["user", "shutdown"]}, "partial_reply": {"type": "string", "maxLength": 60000}}}}}}
+           "properties": {"reason": {"enum": ["user", "shutdown"]}, "partial_reply": {"type": "string", "maxLength": 60000},
+                          "truncated": {"const": true}}}}}}
       ]
     }
   }

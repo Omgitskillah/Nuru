@@ -26,8 +26,11 @@ from core.questions import Question
 VERSION = 1
 DEFAULT_PORT = 27125  # RemoteNotes' receiver has 27124
 MAX_REQUEST_BYTES = 256 * 1024
-# Every text field fits within this even at 4 bytes a character; it bounds what the schema can't, like tool arguments.
+# The whole SSE frame (wire()), not just the JSON. Every text field fits within it even at 4 bytes a
+# character; it bounds what the schema can't, like tool arguments.
 MAX_EVENT_BYTES = 256 * 1024
+MAX_TEXT_CHARS = 16000  # one text event (schema)
+MAX_REPLY_CHARS = 60000  # completed.reply and cancelled.partial_reply (schema)
 TERMINAL = frozenset({"completed", "failed", "cancelled"})
 # What may come before `started`: a turn can be cancelled or fail while it waits in the queue.
 BEFORE_START = frozenset({"accepted", "queued", "failed", "cancelled"})
@@ -62,8 +65,32 @@ def validate(kind: str, value) -> None:
     status, error...). The message names the first problem, worded for a client author."""
     error = jsonschema.exceptions.best_match(_validator(kind).iter_errors(value))
     if error is not None:
-        where = "/".join(str(p) for p in error.absolute_path) or "the body"
-        raise ProtocolError("invalid_request", f"{where}: {error.message}"[:500])
+        raise ProtocolError("invalid_request", _problem(error)[:500])
+
+
+_LIMITS = {"maxLength", "minLength", "maxItems", "minItems", "maximum", "minimum", "maxProperties"}
+
+
+def _problem(error: jsonschema.ValidationError) -> str:
+    """What's wrong, from the field and the rule it broke, never the rejected value: jsonschema's own
+    message quotes it, and it may be note content. Field names come from the schema, except a free
+    object's keys, and no request has one."""
+    where = "/".join(str(p) for p in error.absolute_path) or "the body"
+    rule, limit = error.validator, error.validator_value
+    if rule == "required":
+        given = error.instance if isinstance(error.instance, dict) else {}
+        return f"{where}: missing {', '.join(k for k in limit if k not in given)}"
+    if rule == "additionalProperties":
+        return f"{where}: has a field the schema doesn't allow"
+    if rule in _LIMITS:
+        return f"{where}: {rule} is {limit}"
+    if rule == "type":
+        return f"{where}: should be {limit if isinstance(limit, str) else ' or '.join(limit)}"
+    if rule in ("enum", "const"):
+        return f"{where}: not an allowed value"
+    if rule in ("pattern", "not"):
+        return f"{where}: not in the required format"
+    return f"{where}: fails {rule}"
 
 
 def parse_request(operation: str, body: bytes):
@@ -100,10 +127,13 @@ def request_key(principal: str, vault: str, operation: str, request_id: str) -> 
     return hashlib.sha256(canonical([principal, vault, operation, request_id])).hexdigest()
 
 
-def payload_hash(payload: dict) -> str:
-    """What a request ID is bound to. A retry with the same hash gets the turn already accepted; a
-    different hash under the same ID is a conflict."""
-    return hashlib.sha256(canonical({k: v for k, v in payload.items() if k != "request_id"})).hexdigest()
+def payload_hash(target: str, payload: dict) -> str:
+    """What a request ID is bound to: the resource the URL names (the conversation a turn goes to, the
+    turn to cancel, the question to answer; "" for a new conversation) and the body. A retry with the
+    same hash gets the result already given; a different hash under the same ID, such as the same body
+    sent to another conversation, is a conflict."""
+    body = {k: v for k, v in payload.items() if k != "request_id"}
+    return hashlib.sha256(canonical({"target": target, "body": body})).hexdigest()
 
 
 def operation_hash(turn_id: str, question_id: str, question: dict) -> str:
@@ -125,8 +155,8 @@ def question_data(question: Question) -> dict:
 # --------------------------------------------------------------------------- streams
 def check_event(event: dict) -> None:
     validate("event", event)
-    if len(canonical(event)) > MAX_EVENT_BYTES:
-        raise ProtocolError("payload_too_large", f"event {event['seq']} is over {MAX_EVENT_BYTES} bytes")
+    if len(sse(event)) > MAX_EVENT_BYTES:
+        raise ProtocolError("payload_too_large", f"event {event['seq']} is over {MAX_EVENT_BYTES} bytes on the wire")
 
 
 class StreamCheck:
@@ -137,7 +167,7 @@ class StreamCheck:
     def __init__(self) -> None:
         self.turn: tuple[str, str] | None = None
         self.count, self.started, self.ended = 0, False, False
-        self.open_questions: set[str] = set()
+        self.open_questions: dict[str, dict] = {}  # question_id -> the question
         self.closed_questions: set[str] = set()
         self.calls: set[str] = set()
 
@@ -170,17 +200,23 @@ class StreamCheck:
         elif kind in ("tool_result", "write_receipt") and data["call_id"] not in self.calls:
             broken("names a call that never started")
         elif kind == "question":
-            if data["question_id"] in self.open_questions | self.closed_questions:
+            if data["question_id"] in self.open_questions.keys() | self.closed_questions:
                 broken("reuses a question_id")
             if data["operation"] != operation_hash(event["turn_id"], data["question_id"], data["question"]):
                 broken("operation doesn't match the question")
-            self.open_questions.add(data["question_id"])
+            self.open_questions[data["question_id"]] = data["question"]
         elif kind == "question_closed":
-            if data["question_id"] not in self.open_questions:
+            question = self.open_questions.pop(data["question_id"], None)
+            if question is None:
                 broken("closes a question that isn't open")
-            if (data["outcome"] == "answered") != bool(data.get("chosen")):
-                broken("an answered question has chosen labels, and only it")
-            self.open_questions.discard(data["question_id"])
+            answered = data["outcome"] == "answered"
+            if answered != ("chosen" in data) or (not answered and "other" in data):
+                broken("only an answered question has chosen labels or other text")
+            if answered and not answer_is_valid(question, data["chosen"], data.get("other")):
+                broken("the answer isn't one the question allows")
+            chosen = data["chosen"] if answered else None
+            if data["decision"] != decision(chosen, data.get("other")):
+                broken("decision doesn't match the answer")
             self.closed_questions.add(data["question_id"])
         elif kind in TERMINAL:
             if self.open_questions:
@@ -210,9 +246,11 @@ def after(events: list[dict], cursor: int) -> list[dict]:
 
 
 def sse(event: dict) -> bytes:
-    """One event as a server-sent-events frame. The id is the seq, so a browser EventSource resumes
-    with Last-Event-ID; the JSON is one line."""
-    return f"id: {event['seq']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
+    """One event as a server-sent-events frame: what goes on the wire, and what MAX_EVENT_BYTES
+    measures. The id is the seq, so a browser EventSource resumes with Last-Event-ID; the JSON is
+    compact and on one line."""
+    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    return f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n".encode()
 
 
 KEEPALIVE = b": keepalive\n\n"
@@ -243,6 +281,7 @@ class Display:
     decisions: list[dict] = field(default_factory=list)
     state: str = "accepted"  # accepted, queued, running, or the terminal type
     ask: dict | None = None
+    truncated: bool = False  # the reply was longer than the protocol carries
     message: str = ""
 
     def apply(self, event: dict) -> None:
@@ -273,6 +312,7 @@ class Display:
             self.decisions.append(data)
         elif kind in TERMINAL:
             self.state = kind
+            self.truncated = data.get("truncated", False)
             if kind == "completed":
                 self.reply, self.ask = data["reply"], data.get("ask")
             elif kind == "failed":
@@ -289,7 +329,8 @@ class TurnStream:
     def __init__(self, conversation_id: str, turn_id: str) -> None:
         self.conversation_id, self.turn_id = conversation_id, turn_id
         self.events: list[dict] = []
-        self.reply = ""
+        self.reply = ""  # what the text events carried, at most MAX_REPLY_CHARS
+        self.truncated = False  # text beyond that was dropped
         self._check = StreamCheck()
 
     def emit(self, kind: str, data: dict) -> dict:
@@ -300,6 +341,22 @@ class TurnStream:
         if kind == "text":
             self.reply += data["text"]
         return event
+
+    def text(self, text: str) -> list[dict]:
+        """`text` as text events of at most MAX_TEXT_CHARS each (a buffered reply comes as one long
+        piece). Past MAX_REPLY_CHARS in all, the rest is dropped and the turn ends truncated."""
+        room = MAX_REPLY_CHARS - len(self.reply)
+        if len(text) > room:
+            text, self.truncated = text[:room], True
+        return [self.emit("text", {"text": text[i:i + MAX_TEXT_CHARS]}) for i in range(0, len(text), MAX_TEXT_CHARS)]
+
+    def completed(self, ask: dict | None = None) -> dict:
+        return self.emit("completed", {"reply": self.reply, **({"ask": ask} if ask else {}),
+                                       **({"truncated": True} if self.truncated else {})})
+
+    def cancelled(self, reason: str) -> dict:
+        return self.emit("cancelled", {"reason": reason, "partial_reply": self.reply,
+                                       **({"truncated": True} if self.truncated else {})})
 
     def question(self, question: Question, expires_at: str) -> dict:
         question_id, data = new_id(), question_data(question)
@@ -312,7 +369,7 @@ class TurnStream:
         from core import session  # heavy (MCP, Ollama, Laya); the protocol alone doesn't need it
 
         if isinstance(event, session.Text):
-            return [self.emit("text", {"text": event.text})] if event.text else []
+            return self.text(event.text)
         if isinstance(event, session.ThinkingChunk):
             return [self.emit("reasoning", {"text": event.text, "final": False})]
         if isinstance(event, session.Thinking):
@@ -326,22 +383,26 @@ class TurnStream:
         if isinstance(event, session.Failure):
             return [self.emit("failed", {"code": "turn_failed", "message": event.message})]
         if isinstance(event, session.Ask):
-            return [self.emit("completed", {"reply": self.reply, "ask": question_data(event.question)})]
+            return [self.completed(question_data(event.question))]
         raise TypeError(f"no protocol event for {type(event).__name__}")
 
 
-def answer_is_valid(question_event: dict, chosen: list[str], other: str | None = None) -> bool:
-    """Whether `chosen` is an answer the question allows: its labels, one for yes_no and single."""
-    question = question_event["data"]["question"]
-    labels = {o["label"] for o in question["options"]}
-    if other and not question.get("allow_other"):
+def answer_is_valid(question: dict, chosen: list[str], other: str | None = None) -> bool:
+    """Whether `chosen` (and `other`, the user's own words) answer `question` (a question event's
+    `question`): its own labels, each once. yes_no and single take exactly one label or, where
+    allow_other is set, the user's own words instead. multi takes any of its labels, none included,
+    and the user's own words besides where allowed."""
+    if other is not None and not (other.strip() and question.get("allow_other")):
         return False
-    if not chosen:
-        return bool(other) or question["kind"] == "multi"
-    return set(chosen) <= labels and len(set(chosen)) == len(chosen) and (
-        question["kind"] == "multi" or len(chosen) == 1)
+    labels = {o["label"] for o in question["options"]}
+    if not set(chosen) <= labels or len(set(chosen)) != len(chosen):
+        return False
+    return question["kind"] == "multi" or len(chosen) + (other is not None) == 1
 
 
-def decision(chosen: list[str] | None) -> str:
-    """The decision a closed question records: no answer is No."""
-    return questions.answer_text(chosen) if chosen else questions.NO
+def decision(chosen: list[str] | None, other: str | None = None) -> str:
+    """The decision a closed question records. No answer (chosen None) is No; an answer that picked
+    nothing is "None of these.", as the model would be told."""
+    if chosen is None:
+        return questions.NO
+    return questions.answer_text([*chosen, *([other] if other is not None else [])])

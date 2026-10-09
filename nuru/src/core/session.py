@@ -34,8 +34,9 @@ from core.context_budget import ContextBudgetExceeded, available_tokens, estimat
 from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import executor, model_profile, planner
+from core import executor, model_profile, planner, questions
 from core.providers.mcp_tools import MCPTools, ToolResult
+from core.questions import Question
 from core import tool_dispatch
 from core.tool_dispatch import ToolOutcome, MUTATIONS
 from core.providers.ollama import (
@@ -206,6 +207,10 @@ _RECOVERY_ANSWER = (
 # ask_an_expert's user_request is the user's message verbatim. The session has it, so it fills
 # the field in itself: a small model asked to copy it paraphrased it, errors included.
 _EXPERT_TOOL = "ask_an_expert"
+
+# ask_user (core.questions) is offered to the model only with NURU_ASK_USER=1, until a model run shows
+# when it asks: too often, and Nuru checks in instead of doing the work.
+ASK_USER = os.environ.get("NURU_ASK_USER") == "1"
 _INJECTED_EXPERT_ARG = "user_request"
 
 # Answered ask_an_expert calls allowed per turn (a failed call doesn't count). A small model
@@ -390,7 +395,15 @@ class Failure:
     message: str
 
 
-Event = Text | ToolCall | Thinking | RetryWithoutThinking | Steered | Failure
+@dataclass(frozen=True)
+class Ask:
+    """The model asked the user `question` (the ask_user tool), which ends the turn. The answer goes
+    back as the next message (questions.answer_text). Nothing follows this in the turn."""
+
+    question: Question
+
+
+Event = Text | ToolCall | Thinking | RetryWithoutThinking | Steered | Failure | Ask
 
 
 class Session:
@@ -421,6 +434,10 @@ class Session:
         # Asked when an enforced gate_write says a write needs the user's OK; None means nobody is
         # there to ask (the UI, an eval run), and such a write is blocked.
         self.confirm_write: Callable[[str, dict], bool] | None = None
+        # Asked a question code raises mid-turn (a write to OK, a save the message ruled out); returns
+        # the chosen labels, or None if nobody answered. Used when confirm_write isn't set.
+        self.answer_question: Callable[[Question], list[str] | None] | None = None
+        self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.model_info: dict | None = None
         self._cached_system_text = system_text
@@ -573,6 +590,7 @@ class Session:
 
         self._turn_writes = []
         self._repair_rounds = 0
+        self._turn_text = text
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         decisions = self.shadow.begin(text, turn_id) if self.shadow else None
@@ -614,6 +632,8 @@ class Session:
             tools_offered = self.tool_definitions
             if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
                 tools_offered = [t for t in tools_offered if t["function"]["name"] != _EXPERT_TOOL]
+            if ASK_USER:
+                tools_offered = [*tools_offered, questions.TOOL]
             hold_reply = False  # check_claim enforced: nothing is shown until the reply is checked
             if enforcing:
                 if first_read:
@@ -836,6 +856,18 @@ class Session:
                 fn = call.get("function") or {}
                 name = fn.get("name", "")
                 raw_args = fn.get("arguments", {})
+                if ASK_USER and name == questions.TOOL_NAME:
+                    try:
+                        question = questions.from_tool(raw_args)
+                    except ValueError as e:
+                        outcome = self._call_tool(turn_id, name, raw_args, None, enforcing,
+                            refusal=tool_dispatch.failure("arguments", "INVALID_QUESTION", str(e), repairable=True))
+                        messages.append({"role": "tool", "content": outcome.text})
+                        failure = True
+                        break
+                    # The calls after it in this round don't run: the user's answer may change them.
+                    yield from self._end_with_question(turn_id, question, output_text)
+                    return
                 args, invalid = tool_dispatch.validate(name, raw_args, self._tool_validators)
                 shown_args = args if args is not None else {"invalid_arguments": str(raw_args)[:300]}
                 yield ToolCall(name, shown_args)
@@ -917,6 +949,29 @@ class Session:
         """Operator action, never exposed as a model tool. Stop active sessions first."""
         self.store.resolve_write(attempt_id, self._vault_scope, state)
 
+    def _answer(self, question: Question) -> list[str] | None:
+        """The user's answer to a question code raises, or None with nobody there to ask."""
+        return self.answer_question(question) if self.answer_question else None
+
+    def _confirmed(self, name: str, args: dict) -> bool | None:
+        """The user's OK for a write gate_write wants confirmed; None if nobody was there to give it."""
+        if questions.no_save_phrase(self._turn_text):
+            return True  # the "do not save" question asks instead, once (_call_tool)
+        if self.confirm_write:
+            return self.confirm_write(name, args)
+        answer = self._answer(questions.write(name, args))
+        return None if answer is None else questions.is_yes(answer)
+
+    def _end_with_question(self, turn_id: str, question: Question, said: str):
+        """End the turn on the model's ask_user question. The conversation keeps it as Nuru's reply,
+        after anything the model wrote first, so the user's answer reads as a reply to it."""
+        reply = (said.rstrip() + "\n\n" if said.strip() else "") + questions.as_text(question)
+        self.store.add_message(self.conversation_id, "nuru", reply)
+        if self.shadow:
+            self.shadow.end(reply)
+        self.logger.turn_end(turn_id)
+        yield Ask(question)
+
     def _recovery_write_allowed(self, name: str, pending: dict[str, ToolOutcome]) -> bool:
         """Keep advertised tools stable; enforce failed-evidence dependencies at dispatch."""
         failed_evidence = any(tool not in MUTATIONS and tool in self._tool_validators for tool in pending)
@@ -964,10 +1019,17 @@ class Session:
                 verdict = write_gate["verdict"] if write_gate else "ask"
                 if verdict == "block":
                     outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: write gate blocked it.")
-                elif verdict == "ask" and (self.confirm_write is None or not self.confirm_write(name, args)):
+                elif verdict == "ask" and not self._confirmed(name, args):
                     outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: confirmation was not given.")
                 if outcome and self.shadow:
                     self.shadow.gate_action(write_gate, "blocked")
+        if outcome is None and name in MUTATIONS and (said := questions.no_save_phrase(self._turn_text)):
+            answer = self._answer(questions.against_no_save(name, args, said))
+            if not questions.is_yes(answer):
+                # Worded for the model, which reads it; a hint addressed to "the user" gets repeated to them.
+                outcome = tool_dispatch.failure("policy", "NOT_RUN", f'{name} was not run: this message says "{said}"'
+                    + (", and the user said no when asked." if answer is not None else ".")
+                    + " Give the result in the reply instead.")
         if outcome is None and name in MUTATIONS:
             attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args)
             if attempt_id is None:
@@ -1101,9 +1163,10 @@ class Session:
         if verdict == "block":
             return not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked")
         if verdict == "ask":
-            if self.confirm_write is None:
+            confirmed = self._confirmed(name, args)
+            if confirmed is None:
                 return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
-            if not self.confirm_write(name, args):
+            if not confirmed:
                 return not_run("you declined it", False, gate, "declined")
         yield ToolCall(name, args)
         return self._call_tool(turn_id, name, args, gate["decision_id"] if gate else None, self.enforcement, gate_checked=True)
@@ -1180,6 +1243,7 @@ class Session:
         wrong with it. No tool runs and the decision layer isn't asked."""
         self._turn_writes = []
         self._repair_rounds = 0
+        self._turn_text = text
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
@@ -1242,6 +1306,7 @@ class Session:
             return
         self._turn_writes = []
         self._repair_rounds = 0
+        self._turn_text = text
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         if self.shadow:

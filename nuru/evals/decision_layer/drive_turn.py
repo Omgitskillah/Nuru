@@ -19,10 +19,10 @@ from pathlib import Path
 from mcp import StdioServerParameters
 from mcp.client.stdio import get_default_environment
 
-from core import session
+from core import questions, session
 import live_plan
 from cases import vault_snapshot, snapshot_changes
-from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
                                if history else prompt)
             before = vault_snapshot(Path(os.environ["VAULT_PATH"]))
             turn_started, day = time.monotonic(), date.today().isoformat()
-            reply, tool_calls, thinking, retried, failure, planned = "", [], 0, False, None, None
+            reply, tool_calls, thinking, retried, failure, planned, asked = "", [], 0, False, None, None, None
             plan = json.loads(args.plan.read_text()) if args.plan else (case.get("plan") if case else None)
             if args.planner:
                 # Planning counts as part of the turn: it starts after `ready`, like the question.
@@ -107,6 +107,9 @@ def main():
                     retried = True
                 elif isinstance(event, Failure):
                     failure = event.message
+                elif isinstance(event, Ask):  # ends the turn; no scripted answers yet, so the next prompt is sent as is
+                    asked = questions.as_text(event.question)
+                    reply += ("\n\n" if reply else "") + asked
             if timer:
                 timer.cancel()
             if cancel.is_set():
@@ -115,7 +118,7 @@ def main():
                 "prompt": prompt, "think": args.think, "plan": str(args.plan) if args.plan else None,
                 "planner": planned, "session_id": s.logger.session_id, "laya_state": laya_state,
                 "reply": reply, "tool_calls": tool_calls, "thinking_events": thinking,
-                "retried_without_thinking": retried, "failure": failure, "timed_out": cancel.is_set(),
+                "retried_without_thinking": retried, "failure": failure, "asked": asked, "timed_out": cancel.is_set(),
                 "turn_seconds": round(time.monotonic() - turn_started, 1),
                 "shadow_failures": s.shadow.failures if s.shadow else None,
                 "expert_calls": sum(c["name"] == "ask_an_expert" for c in tool_calls),

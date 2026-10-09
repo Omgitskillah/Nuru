@@ -6,7 +6,7 @@ Kept free of Qt so it can be tested without a display.
 import re
 from dataclasses import dataclass
 
-from core.session import Event, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Event, RetryWithoutThinking, Text, Thinking, ToolCall
 
 # A thematic break. The blank lines around it matter: directly under a line of text, `---`
 # would turn that line into a heading instead.
@@ -50,10 +50,10 @@ class Reply:
             else:
                 self._pieces.append(event.text)
                 self._growing = True
-        elif isinstance(event, ToolCall | Thinking | RetryWithoutThinking):
+        elif isinstance(event, ToolCall | Thinking | RetryWithoutThinking | Ask):
             # A call, the reasoning behind it and the note that a silent call is being retried are
-            # shown above the reply, not in it. Ending the piece here still sets what the model said
-            # before them apart from what it says after.
+            # shown above the reply, not in it; a question has its own card under it. Ending the piece
+            # here still sets what the model said before them apart from what it says after.
             self._growing = False
         else:
             self.add_error(event.message)

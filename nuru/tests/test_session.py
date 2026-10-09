@@ -1156,3 +1156,140 @@ def test_multiple_tool_results_are_omitted_if_one_is_not_enough(monkeypatch):
                 {"role": "tool", "content": "x" * 7000}, {"role": "tool", "content": "y" * 6000}]
     list(s._chat("test", messages, num_ctx=1000))
     assert all(m["content"].startswith("[left out:") for m in sent[0] if m["role"] == "tool")
+
+
+# ------------------------------------------------------------------ questions to the user
+def asking(answers):
+    """An answer_question hook that records each question and gives the next scripted answer."""
+    asked, answers = [], iter(answers)
+
+    def answer(question):
+        asked.append(question)
+        return next(answers)
+
+    return answer, asked
+
+
+def write_then_reply(seen=None):
+    return scripted_chat([[tool_call("write_note", {"note": "summary.md", "content": "- one"})], "Here it is."], seen)
+
+
+def test_a_write_the_message_ruled_out_is_not_run_with_nobody_to_ask(monkeypatch):
+    seen = []
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(seen), tools=fake_tools)
+
+    events = list(s.ask("Write a three-bullet summary here. Do not save it."))
+
+    assert fake_tools.calls == []
+    tool_message = seen[1][-1]
+    assert tool_message["role"] == "tool"
+    assert 'write_note was not run: this message says \\"Do not save it\\". Give the result in the reply instead.' in tool_message["content"]
+    assert events[-1] == Text("Here it is.")
+
+
+@pytest.mark.parametrize("answer, runs", [(["Yes"], True), (["No"], False), (None, False)])
+def test_a_write_the_message_ruled_out_runs_only_if_the_user_says_yes_when_asked(monkeypatch, answer, runs):
+    seen = []
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(seen), tools=fake_tools)
+    s.answer_question, asked = asking([answer])
+
+    list(s.ask("Summarise it; do not save yet."))
+
+    assert [q.text for q in asked] == [
+        'Your message said "do not save yet", but Nuru wants to run write_note on summary.md. Go ahead anyway?']
+    assert asked[0].recommended.label == "No"
+    assert (fake_tools.calls == [("write_note", {"note": "summary.md", "content": "- one"})]) is runs
+    if answer == ["No"]:
+        assert "and the user said no when asked" in seen[1][-1]["content"]
+
+
+def test_a_write_the_message_asked_for_runs_without_a_question(monkeypatch):
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(), tools=fake_tools)
+    s.answer_question, asked = asking([])
+
+    list(s.ask("Save a three-bullet summary to my notes."))
+
+    assert asked == []
+    assert fake_tools.calls == [("write_note", {"note": "summary.md", "content": "- one"})]
+
+
+ASK = {"question": "Which reporting rate should I use?", "kind": "single",
+       "options": [{"label": "4 reports/h", "description": "the revised note", "recommended": True}, "6 reports/h"]}
+
+
+def offered_tools(steps, offered):
+    """scripted_chat, also recording the tool names offered to each call. A step may be (text, calls)."""
+    steps = iter(steps)
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        offered.append([t["function"]["name"] for t in tools or []])
+        step = next(steps)
+        if isinstance(step, tuple):
+            yield step[0]
+            yield {"tool_calls": step[1]}
+        elif isinstance(step, list):
+            yield {"tool_calls": step}
+        else:
+            yield step
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    return chat
+
+
+def test_ask_user_is_not_offered_unless_switched_on(monkeypatch):
+    offered = []
+    s = start_session(monkeypatch, chat=offered_tools([[tool_call("ask_user", ASK)], "Using 4 reports/h."], offered))
+
+    events = list(s.ask("battery life?"))
+
+    assert "ask_user" not in offered[0]
+    assert not any(isinstance(e, session.Ask) for e in events)  # refused as a tool it wasn't given
+
+
+def test_ask_user_ends_the_turn_on_the_question_and_keeps_it_as_the_reply(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    offered = []
+    fake_tools = FakeMCPTools()
+    chat = offered_tools([("The two notes disagree.", [tool_call("ask_user", ASK), tool_call("calculate", {})])], offered)
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("battery life?"))
+
+    assert offered[0][-1] == "ask_user"
+    assert events[0] == Text("The two notes disagree.")
+    assert isinstance(events[-1], session.Ask)
+    assert events[-1].question.options[0].label == "4 reports/h"
+    assert fake_tools.calls == []  # the call after the question waits for the answer
+    kept = s.store.get_recent_messages(s.conversation_id, 10_000)[-1]
+    assert kept["role"] == "nuru"
+    assert kept["content"] == ("The two notes disagree.\n\nWhich reporting rate should I use?\n\n"
+                               "- 4 reports/h (recommended): the revised note\n- 6 reports/h")
+
+
+def test_the_answer_is_the_next_message_and_the_model_sees_the_question_before_it(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    seen = []
+    chat = scripted_chat([[tool_call("ask_user", ASK)], "At 4 reports/h: 3.47 years."], seen)
+    s = start_session(monkeypatch, chat=chat)
+
+    list(s.ask("battery life?"))
+    list(s.ask("4 reports/h"))
+
+    roles = [(m["role"], m["content"].splitlines()[-1]) for m in seen[1]]
+    assert roles[-2:] == [("assistant", "- 6 reports/h"), ("user", "4 reports/h")]
+
+
+def test_a_question_that_makes_no_sense_goes_back_to_the_model_to_fix(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    seen = []
+    chat = scripted_chat([[tool_call("ask_user", {"question": "Which?", "kind": "single", "options": ["A"]})],
+                          [tool_call("ask_user", ASK)]], seen)
+    s = start_session(monkeypatch, chat=chat)
+
+    events = list(s.ask("battery life?"))
+
+    assert "single needs 2-6 options" in seen[1][-1]["content"]
+    assert isinstance(events[-1], session.Ask)

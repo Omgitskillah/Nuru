@@ -353,6 +353,38 @@ def test_a_confirmed_write_runs(setup):
     assert ("write_note", {"note": PRIYA, "content": "Prefers async"}) in tools.calls
 
 
+@pytest.mark.parametrize("answer, runs, said", [(["Yes"], True, None), (["No"], False, "you declined it"),
+                                               (None, False, "nobody was there to give it")])
+def test_without_confirm_write_the_question_goes_to_answer_question(setup, answer, runs, said):
+    responses = [
+        [call("search", {"query": "Priya"})],
+        [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
+        ["Done."],
+    ]
+    s, seen, tools = setup(["gate_write"], responses, script={**DEFAULT_SCRIPT, "verdict": {"confirm": 0.9}})
+    asked = []
+    s.answer_question = lambda question: asked.append(question) or answer
+    list(s.ask(REQUEST))
+    assert [q.text for q in asked] == [f"Nuru wants to run write_note on {PRIYA}. Allow it?"]
+    assert (("write_note", {"note": PRIYA, "content": "Prefers async"}) in tools.calls) is runs
+    if said:
+        assert any(said in m["content"] for m in seen[-1]["messages"] if m["role"] == "tool")
+
+
+def test_a_gated_write_the_message_ruled_out_is_asked_about_once(setup):
+    responses = [
+        [call("search", {"query": "Priya"})],
+        [call("write_note", {"note": PRIYA, "content": "Prefers async"})],
+        ["Done."],
+    ]
+    s, _, tools = setup(["gate_write"], responses, script={**DEFAULT_SCRIPT, "verdict": {"confirm": 0.9}})
+    asked = []
+    s.answer_question = lambda question: asked.append(question) or ["Yes"]
+    list(s.ask(REQUEST + " Do not save it yet, though."))
+    assert len(asked) == 1 and asked[0].text.startswith('Your message said "Do not save it yet, though", but')
+    assert ("write_note", {"note": PRIYA, "content": "Prefers async"}) in tools.calls
+
+
 def test_cannot_do_is_a_failure_and_nothing_is_written(setup):
     responses = [
         [call("search", {"query": "Zed"})],

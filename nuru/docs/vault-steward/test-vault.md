@@ -1,8 +1,10 @@
 # Proposed evaluation vault: VaultStewardFixture
 
-This is a construction specification, not a generated vault or an executed test.
-Create it in the evaluation fixtures when implementing the first package. Do not
-replace, modify, or extend the existing DummyVault in place.
+This specifies the full proposed evaluation sets. A smaller supplemental fixture
+and a separate copy of DummyVault were materialized on 2026-10-09; see
+[the implementation and measured results](../../evals/vault_steward/validation-vaults-2026-10-09.md).
+They do not satisfy every size, independent-label or pilot requirement below.
+Do not replace, modify, or extend the existing DummyVault in place.
 
 ## Layout and ownership
 

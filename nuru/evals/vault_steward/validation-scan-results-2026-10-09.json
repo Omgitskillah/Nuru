@@ -1,0 +1,3534 @@
+{
+  "fixture": {
+    "grade": {
+      "exact": true,
+      "tp": 16,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "missing": [],
+      "extra": []
+    },
+    "checks": {
+      "complete": true,
+      "model_calls_zero": true,
+      "exact_groups": true,
+      "asset_groups": true,
+      "asset_bytes": true,
+      "graph_edges": true,
+      "claims": true,
+      "table_total": true,
+      "triage_protected": true,
+      "no_change_same_findings": true,
+      "source_bytes_unchanged": true
+    },
+    "wall_ms": 32.4543749447912,
+    "report": {
+      "version": "1",
+      "snapshot": "53ffad516b6527a44af498ba4c68a4a7152e8a064799c1a9dfce1dd3722cae7a",
+      "packages": [
+        "properties",
+        "links",
+        "attachments",
+        "tasks",
+        "tables",
+        "reviews",
+        "triage",
+        "duplicates",
+        "claims",
+        "graph"
+      ],
+      "complete": true,
+      "findings": [
+        {
+          "id": "2c469af724fab8709d7b461a891f0a927f5e26b108cd27bb6c49813db6c73af6",
+          "entity_key": "a206899164780c48faaf0a961bd2a6d358c4a4c56fc6d02f3790b74c61c160a2",
+          "rule": "attachment.missing_embed",
+          "rule_version": "1",
+          "source": "References/asset.md",
+          "line": 2,
+          "revision": "f08648c60f66f95016c003b7decd194fb0aacae406ae594131ab4e30a2638e38",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "References/asset.md",
+            "revision": "f08648c60f66f95016c003b7decd194fb0aacae406ae594131ab4e30a2638e38",
+            "line": 2,
+            "raw": "![[Attachments/not-present.png]]",
+            "target": "Attachments/not-present.png",
+            "syntax": "wiki",
+            "embed": true,
+            "finding_id": "a206899164780c48faaf0a961bd2a6d358c4a4c56fc6d02f3790b74c61c160a2"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "attachments"
+        },
+        {
+          "id": "5fe66b0846c18af6a02cfc732f0f9a98344a308dcadc5c4262dac90dab3a41a0",
+          "entity_key": "0:Claims/conflict-b.md:0",
+          "rule": "claim.conflict",
+          "rule_version": "1",
+          "source": "Claims/conflict-a.md",
+          "line": 2,
+          "revision": "4b7924148abc065756357af2bd1038bc26f73a4b89c2c6c4a213b51ea0a54497",
+          "evidence": {
+            "entity": "receiver-R",
+            "field": "duration",
+            "classification": "conflict",
+            "left": {
+              "entity": "receiver-R",
+              "field": "duration",
+              "value": "5",
+              "unit": "s",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "5000",
+              "source": "Claims/conflict-a.md",
+              "revision": "4b7924148abc065756357af2bd1038bc26f73a4b89c2c6c4a213b51ea0a54497",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            "right": {
+              "entity": "receiver-R",
+              "field": "duration",
+              "value": "6000",
+              "unit": "ms",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "6000",
+              "source": "Claims/conflict-b.md",
+              "revision": "e308558bba4da3d846a0905b7fc57788625496658b099db6f95f0eb9dc778370",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            }
+          },
+          "severity": "review",
+          "proposed_action": "Review same-scope incompatible claims; neither source is selected as true",
+          "status": "open",
+          "namespace": "claims"
+        },
+        {
+          "id": "c9081dcb8225bdb12aa69d35d4e291cb3d0465366d091d023d0d234a686580b7",
+          "entity_key": "![[Attachments/not-present.png]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "References/asset.md",
+          "line": 2,
+          "revision": "f08648c60f66f95016c003b7decd194fb0aacae406ae594131ab4e30a2638e38",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "References/asset.md",
+            "revision": "f08648c60f66f95016c003b7decd194fb0aacae406ae594131ab4e30a2638e38",
+            "line": 2,
+            "raw": "![[Attachments/not-present.png]]",
+            "target": "Attachments/not-present.png",
+            "syntax": "wiki",
+            "embed": true,
+            "finding_id": "a206899164780c48faaf0a961bd2a6d358c4a4c56fc6d02f3790b74c61c160a2"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "7a1f0d64d6e67eafa1dfcf03e3a22d8fc3964b0af64b301d5b7910ac1f6e8938",
+          "entity_key": "[[No Such Expedition]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "References/broken.md",
+          "line": 1,
+          "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "References/broken.md",
+            "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f",
+            "line": 1,
+            "raw": "[[No Such Expedition]]",
+            "target": "No Such Expedition",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "95c9391a6ea3cdc3f4a3b9c1c3d72f42f5b8d17e18a604c98b0163ad779f9b43"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "9fe81a0f3b09599392b4336aef9dd13c205c6760d9207e7627c74c3aecdf04ee",
+          "entity_key": "[[Projects/Juniper#Absent heading]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "References/broken.md",
+          "line": 2,
+          "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_heading",
+            "path": "Projects/Juniper.md",
+            "target_revision": "0086170cfa43371e1f65d7c8908d8159dba47dce47af2c107a82584976d848bc",
+            "candidates": [],
+            "source": "References/broken.md",
+            "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f",
+            "line": 2,
+            "raw": "[[Projects/Juniper#Absent heading]]",
+            "target": "Projects/Juniper#Absent heading",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "8e5f25907981f89ff30da3dddfd942b57cb3f89dd81a1226518b02b73a11d8e7"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "81193ac3a9ceb0233924fa365bc461794bfffe6af8242baf54663aaf4663eed8",
+          "entity_key": "projects:owner",
+          "rule": "property.missing",
+          "rule_version": "1",
+          "source": "Projects/Juniper.md",
+          "line": 1,
+          "revision": "0086170cfa43371e1f65d7c8908d8159dba47dce47af2c107a82584976d848bc",
+          "evidence": {
+            "property": "owner",
+            "actual": null,
+            "expected": {
+              "type": "string",
+              "required": true
+            }
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "properties"
+        },
+        {
+          "id": "312051e96969fa1190236aefc0f685519df14c56681324a91b1fd5161ef0bba1",
+          "entity_key": "tags:tags",
+          "rule": "property.type",
+          "rule_version": "1",
+          "source": "Properties/scalar.md",
+          "line": 3,
+          "revision": "6b40c72e9352359c8ae51820fea04e6c64efbd0e698777ffdb242e06c2a06cbc",
+          "evidence": {
+            "property": "tags",
+            "actual": "operations",
+            "expected": {
+              "type": "list",
+              "item_type": "string",
+              "required": true
+            }
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "properties"
+        },
+        {
+          "id": "f992e7bb5e52b3144533fc47e4500ba6256d8724201d896572ff03a2f61a3932",
+          "entity_key": "next_action",
+          "rule": "review.missing_next_action",
+          "rule_version": "1",
+          "source": "Projects/Juniper.md",
+          "line": 1,
+          "revision": "0086170cfa43371e1f65d7c8908d8159dba47dce47af2c107a82584976d848bc",
+          "evidence": {
+            "project": "Juniper"
+          },
+          "severity": "review",
+          "proposed_action": "Review project and choose a next action; none is inferred",
+          "status": "open",
+          "namespace": "reviews"
+        },
+        {
+          "id": "35fd1d863ded3b8d6615cb1be7661cd55481adef37461150be3c9a4a7dea7598",
+          "entity_key": "due",
+          "rule": "review.due",
+          "rule_version": "1",
+          "source": "Projects/Juniper.md",
+          "line": 6,
+          "revision": "0086170cfa43371e1f65d7c8908d8159dba47dce47af2c107a82584976d848bc",
+          "evidence": {
+            "review_due": "2026-10-02",
+            "as_of": "2026-10-09"
+          },
+          "severity": "review",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "reviews"
+        },
+        {
+          "id": "5dd6e8cb3bd4a2d74c0723630592bc2b3a0075d89e1461a8fdf1076f04890e45",
+          "entity_key": "costs:0:Cost",
+          "rule": "table.total",
+          "rule_version": "1",
+          "source": "Datasets/costs.md",
+          "line": 5,
+          "revision": "008622c47c4a8904904d7aa9f97b4787417c65d02513c216879c5f8f0130777e",
+          "evidence": {
+            "expected": "17.50",
+            "actual": "20.00",
+            "inputs": [
+              {
+                "line": 3,
+                "raw": {
+                  "Item": "Cable",
+                  "Cost": "€12.25"
+                }
+              },
+              {
+                "line": 4,
+                "raw": {
+                  "Item": "Plug",
+                  "Cost": "€5.25"
+                }
+              }
+            ],
+            "rule": {
+              "label_column": "Item",
+              "label": "Total",
+              "column": "Cost",
+              "tolerance": "0"
+            }
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "tables"
+        },
+        {
+          "id": "a0e651a0d2c9ebaac07b2473a7ad90ccd58f6d1775f48a7f97e2b59ea7271034",
+          "entity_key": "mic:1",
+          "rule": "task.mirror_conflict",
+          "rule_version": "1",
+          "source": "Tasks/done.md",
+          "line": 5,
+          "revision": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+          "evidence": {
+            "identity": "Juniper:mic",
+            "occurrences": [
+              {
+                "source": "Tasks/done.md",
+                "line": 5,
+                "revision": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+                "occurrence_id": "ebe3d5dc08186229dd49b36de4ccdc2903e105d3921efff0d12a3e08b0426a9d",
+                "entity_key": "mic:1",
+                "identity": "Juniper:mic",
+                "project": "Juniper",
+                "text": "Check the microphone [task:mic]",
+                "status": "completed",
+                "due": null,
+                "recurrence": null,
+                "historical": false,
+                "overdue": false
+              },
+              {
+                "source": "Tasks/open.md",
+                "line": 5,
+                "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+                "occurrence_id": "d947b9155f0ff1e3dface8913bb10871ebea31385d53b517c7cddad813090147",
+                "entity_key": "mic:1",
+                "identity": "Juniper:mic",
+                "project": "Juniper",
+                "text": "Check the microphone [task:mic] [due:2026-10-03]",
+                "status": "open",
+                "due": "2026-10-03",
+                "recurrence": null,
+                "historical": false,
+                "overdue": true
+              }
+            ],
+            "occurrence_count": 2
+          },
+          "severity": "review",
+          "proposed_action": "Compare active mirrors; do not infer completion from prose",
+          "status": "open",
+          "namespace": "tasks"
+        },
+        {
+          "id": "59c296a0d5264446af365354488239f085dadc1704fde6a05c71124ecacdb352",
+          "entity_key": "mic:1",
+          "rule": "task.mirror_conflict",
+          "rule_version": "1",
+          "source": "Tasks/open.md",
+          "line": 5,
+          "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+          "evidence": {
+            "identity": "Juniper:mic",
+            "occurrences": [
+              {
+                "source": "Tasks/done.md",
+                "line": 5,
+                "revision": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+                "occurrence_id": "ebe3d5dc08186229dd49b36de4ccdc2903e105d3921efff0d12a3e08b0426a9d",
+                "entity_key": "mic:1",
+                "identity": "Juniper:mic",
+                "project": "Juniper",
+                "text": "Check the microphone [task:mic]",
+                "status": "completed",
+                "due": null,
+                "recurrence": null,
+                "historical": false,
+                "overdue": false
+              },
+              {
+                "source": "Tasks/open.md",
+                "line": 5,
+                "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+                "occurrence_id": "d947b9155f0ff1e3dface8913bb10871ebea31385d53b517c7cddad813090147",
+                "entity_key": "mic:1",
+                "identity": "Juniper:mic",
+                "project": "Juniper",
+                "text": "Check the microphone [task:mic] [due:2026-10-03]",
+                "status": "open",
+                "due": "2026-10-03",
+                "recurrence": null,
+                "historical": false,
+                "overdue": true
+              }
+            ],
+            "occurrence_count": 2
+          },
+          "severity": "review",
+          "proposed_action": "Compare active mirrors; do not infer completion from prose",
+          "status": "open",
+          "namespace": "tasks"
+        },
+        {
+          "id": "ebc133ff1d1df01471e0c63bd54f2307d272abe3b3fb4be42b113a5d19b86ce1",
+          "entity_key": "mic:1",
+          "rule": "task.overdue",
+          "rule_version": "1",
+          "source": "Tasks/open.md",
+          "line": 5,
+          "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+          "evidence": {
+            "source": "Tasks/open.md",
+            "line": 5,
+            "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+            "occurrence_id": "d947b9155f0ff1e3dface8913bb10871ebea31385d53b517c7cddad813090147",
+            "entity_key": "mic:1",
+            "identity": "Juniper:mic",
+            "project": "Juniper",
+            "text": "Check the microphone [task:mic] [due:2026-10-03]",
+            "status": "open",
+            "due": "2026-10-03",
+            "recurrence": null,
+            "historical": false,
+            "overdue": true
+          },
+          "severity": "review",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "tasks"
+        },
+        {
+          "id": "486271f5f0f071e742d5fdb32422124957dd822cb0a28bf879501b419e8de5c1",
+          "entity_key": "route",
+          "rule": "triage.abstain",
+          "rule_version": "1",
+          "source": "Inbox/novel.md",
+          "line": 1,
+          "revision": "4ee58d27088dc01afb99b23c59fad123fa0a0117a29d83774b3c7fda9d3fb7b2",
+          "evidence": {
+            "source": "Inbox/novel.md",
+            "revision": "4ee58d27088dc01afb99b23c59fad123fa0a0117a29d83774b3c7fda9d3fb7b2",
+            "destination": null,
+            "decision": "leave_in_inbox",
+            "reason": "no_explicit_route",
+            "scope": "private",
+            "evidence": [],
+            "requires_revalidation": true
+          },
+          "severity": "review",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "triage"
+        },
+        {
+          "id": "198f008e23bfa58f4d3fcbf892abe975ad32a5cc63dbd4e4d21058027b3eb433",
+          "entity_key": "route",
+          "rule": "triage.abstain",
+          "rule_version": "1",
+          "source": "Inbox/protected.md",
+          "line": 1,
+          "revision": "eb5c1b59d73629ce4d11dc60804f0cbdf2a8d4d4cf557ad2242bd35aa38471c5",
+          "evidence": {
+            "source": "Inbox/protected.md",
+            "revision": "eb5c1b59d73629ce4d11dc60804f0cbdf2a8d4d4cf557ad2242bd35aa38471c5",
+            "destination": null,
+            "decision": "leave_in_inbox",
+            "reason": "scope_unknown_or_mismatch",
+            "scope": "shared",
+            "evidence": [
+              {
+                "field": "project",
+                "value": "Juniper",
+                "destination": "Projects"
+              }
+            ],
+            "requires_revalidation": true
+          },
+          "severity": "review",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "triage"
+        },
+        {
+          "id": "f77a106a7e54734e9a02a4f88b0b6e10be2d0b418241a9afd2389a316b2104a2",
+          "entity_key": "route",
+          "rule": "triage.route",
+          "rule_version": "1",
+          "source": "Inbox/route.md",
+          "line": 1,
+          "revision": "824c1ad3b2735ff3758f7fc0b82cf29affd57f5102c5a73e550f8b08df76229a",
+          "evidence": {
+            "source": "Inbox/route.md",
+            "revision": "824c1ad3b2735ff3758f7fc0b82cf29affd57f5102c5a73e550f8b08df76229a",
+            "destination": "Projects",
+            "decision": "preview_move",
+            "reason": "explicit_metadata",
+            "scope": "private",
+            "evidence": [
+              {
+                "field": "project",
+                "value": "Juniper",
+                "destination": "Projects"
+              }
+            ],
+            "requires_revalidation": true
+          },
+          "severity": "review",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "triage"
+        }
+      ],
+      "finding_count": 16,
+      "next_offset": null,
+      "counts": {
+        "attachment.missing_embed": 1,
+        "claim.conflict": 1,
+        "link.broken": 3,
+        "property.missing": 1,
+        "property.type": 1,
+        "review.missing_next_action": 1,
+        "review.due": 1,
+        "table.total": 1,
+        "task.mirror_conflict": 2,
+        "task.overdue": 1,
+        "triage.abstain": 2,
+        "triage.route": 1
+      },
+      "review_states": {
+        "open": 16
+      },
+      "diagnostics": [],
+      "stats": {
+        "parsed_notes": 33,
+        "notes": 33,
+        "assets": 2,
+        "bytes_read": 8156,
+        "link_parsed_notes": 33
+      },
+      "details": {
+        "properties": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "property.missing": 1,
+            "property.type": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "schemas": [
+            "projects",
+            "tags"
+          ]
+        },
+        "links": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "link.broken": 3
+          },
+          "diagnostics": [],
+          "model_calls": 0
+        },
+        "attachments": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "attachment.missing_embed": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "inventory": [
+            {
+              "path": "Attachments/pixel-a.png",
+              "revision": "1e3084c779c1f2892590abab46c93e1b8e7a272c116bc861b11efa8b7f23b369",
+              "bytes": 68,
+              "large": false,
+              "owners": [
+                {
+                  "source": "References/asset.md",
+                  "line": 1,
+                  "syntax": "wiki"
+                }
+              ],
+              "ownership": "referenced",
+              "deletion_eligible": false
+            },
+            {
+              "path": "Attachments/pixel-b.png",
+              "revision": "1e3084c779c1f2892590abab46c93e1b8e7a272c116bc861b11efa8b7f23b369",
+              "bytes": 68,
+              "large": false,
+              "owners": [],
+              "ownership": "unknown",
+              "deletion_eligible": false
+            }
+          ],
+          "duplicate_groups": [
+            {
+              "sha256": "1e3084c779c1f2892590abab46c93e1b8e7a272c116bc861b11efa8b7f23b369",
+              "paths": [
+                "Attachments/pixel-a.png",
+                "Attachments/pixel-b.png"
+              ],
+              "potential_duplicate_bytes": 68
+            }
+          ],
+          "potential_duplicate_bytes": 68,
+          "coverage_warning": "Unrecognized plugin references and excluded sources can own assets; no deletion eligibility is asserted."
+        },
+        "tasks": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "task.mirror_conflict": 2,
+            "task.overdue": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "tasks": [
+            {
+              "source": "Tasks/done.md",
+              "line": 5,
+              "revision": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+              "occurrence_id": "ebe3d5dc08186229dd49b36de4ccdc2903e105d3921efff0d12a3e08b0426a9d",
+              "entity_key": "mic:1",
+              "identity": "Juniper:mic",
+              "project": "Juniper",
+              "text": "Check the microphone [task:mic]",
+              "status": "completed",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "Tasks/future.md",
+              "line": 4,
+              "revision": "d73805edfe7ecd3ec5d42170f69fb145764b75db8a1ff80c960a4066df344e04",
+              "occurrence_id": "ba960454865b494d58976138f21692a78ab1f58f752d67e36e6f91ff45fdd62d",
+              "entity_key": "Buy a valve [due:2026-11-12]:1:1",
+              "identity": null,
+              "project": "Willow",
+              "text": "Buy a valve [due:2026-11-12]",
+              "status": "open",
+              "due": "2026-11-12",
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "Tasks/history.md",
+              "line": 4,
+              "revision": "3aaa60cce7323cfff3e8175b8f7d312807948b9468fee5ceea243abb697d261b",
+              "occurrence_id": "eee3afff174a453d20f631a2dd53630ce8b4d265059a0339474239d26f220bac",
+              "entity_key": "Old archived task [due:2025-01-01]:1:1",
+              "identity": null,
+              "project": "Juniper",
+              "text": "Old archived task [due:2025-01-01]",
+              "status": "open",
+              "due": "2025-01-01",
+              "recurrence": null,
+              "historical": true,
+              "overdue": false
+            },
+            {
+              "source": "Tasks/open.md",
+              "line": 5,
+              "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+              "occurrence_id": "d947b9155f0ff1e3dface8913bb10871ebea31385d53b517c7cddad813090147",
+              "entity_key": "mic:1",
+              "identity": "Juniper:mic",
+              "project": "Juniper",
+              "text": "Check the microphone [task:mic] [due:2026-10-03]",
+              "status": "open",
+              "due": "2026-10-03",
+              "recurrence": null,
+              "historical": false,
+              "overdue": true
+            },
+            {
+              "source": "Tasks/other-project.md",
+              "line": 4,
+              "revision": "8272a39645510b580ebdad5a74a091ef9700f459ec4abab20c1ec214629db95b",
+              "occurrence_id": "d74074c1be3e199c86926d19a07fcf61e7ac73966403552da89047e57ad51c73",
+              "entity_key": "mic:1",
+              "identity": "Willow:mic",
+              "project": "Willow",
+              "text": "Check the microphone [task:mic]",
+              "status": "completed",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            }
+          ],
+          "as_of": "2026-10-09",
+          "timezone": "Europe/Berlin",
+          "coverage_warning": "Only declared checkbox syntax and explicit project-scoped task IDs are reconciled. Recurrence and prose completion require review."
+        },
+        "tables": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "table.total": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "tables": [
+            {
+              "source": "Datasets/clean.md",
+              "revision": "a7593b34406486508271f81524ce01f84bc1cd225c7bca1e09149df42eeaf10d",
+              "line": 1,
+              "schema": "costs",
+              "rows": [
+                {
+                  "line": 3,
+                  "raw": {
+                    "Item": "Clip",
+                    "Cost": "€1.25"
+                  },
+                  "values": {
+                    "Item": "Clip",
+                    "Cost": "1.25"
+                  }
+                },
+                {
+                  "line": 4,
+                  "raw": {
+                    "Item": "Rail",
+                    "Cost": "€8.75"
+                  },
+                  "values": {
+                    "Item": "Rail",
+                    "Cost": "8.75"
+                  }
+                },
+                {
+                  "line": 5,
+                  "raw": {
+                    "Item": "Total",
+                    "Cost": "€10.00"
+                  },
+                  "values": {
+                    "Item": "Total",
+                    "Cost": "10.00"
+                  }
+                }
+              ]
+            },
+            {
+              "source": "Datasets/costs.md",
+              "revision": "008622c47c4a8904904d7aa9f97b4787417c65d02513c216879c5f8f0130777e",
+              "line": 1,
+              "schema": "costs",
+              "rows": [
+                {
+                  "line": 3,
+                  "raw": {
+                    "Item": "Cable",
+                    "Cost": "€12.25"
+                  },
+                  "values": {
+                    "Item": "Cable",
+                    "Cost": "12.25"
+                  }
+                },
+                {
+                  "line": 4,
+                  "raw": {
+                    "Item": "Plug",
+                    "Cost": "€5.25"
+                  },
+                  "values": {
+                    "Item": "Plug",
+                    "Cost": "5.25"
+                  }
+                },
+                {
+                  "line": 5,
+                  "raw": {
+                    "Item": "Total",
+                    "Cost": "€20.00"
+                  },
+                  "values": {
+                    "Item": "Total",
+                    "Cost": "20.00"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "reviews": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "review.missing_next_action": 1,
+            "review.due": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "reviews": [
+            {
+              "project": "Cedar",
+              "source": "Projects/Cedar.md",
+              "revision": "22a62e1a6b8185d81d9f70d5b19e75e990f983a8015f53015102306c3cc3bda1",
+              "status": "paused",
+              "review_due": "2026-09-01",
+              "next_action": null,
+              "tasks": [],
+              "task_count": 0,
+              "decisions": [],
+              "decision_count": 0,
+              "unresolved_decision_count": 0,
+              "evidence_truncated": false,
+              "evidence_gaps": [
+                "prose decisions not interpreted",
+                "recent changes require a historical snapshot"
+              ]
+            },
+            {
+              "project": "Juniper",
+              "source": "Projects/Juniper.md",
+              "revision": "0086170cfa43371e1f65d7c8908d8159dba47dce47af2c107a82584976d848bc",
+              "status": "active",
+              "review_due": "2026-10-02",
+              "next_action": null,
+              "tasks": [
+                {
+                  "source": "Tasks/done.md",
+                  "line": 5,
+                  "revision": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+                  "occurrence_id": "ebe3d5dc08186229dd49b36de4ccdc2903e105d3921efff0d12a3e08b0426a9d",
+                  "entity_key": "mic:1",
+                  "identity": "Juniper:mic",
+                  "project": "Juniper",
+                  "text": "Check the microphone [task:mic]",
+                  "status": "completed",
+                  "due": null,
+                  "recurrence": null,
+                  "historical": false,
+                  "overdue": false
+                },
+                {
+                  "source": "Tasks/history.md",
+                  "line": 4,
+                  "revision": "3aaa60cce7323cfff3e8175b8f7d312807948b9468fee5ceea243abb697d261b",
+                  "occurrence_id": "eee3afff174a453d20f631a2dd53630ce8b4d265059a0339474239d26f220bac",
+                  "entity_key": "Old archived task [due:2025-01-01]:1:1",
+                  "identity": null,
+                  "project": "Juniper",
+                  "text": "Old archived task [due:2025-01-01]",
+                  "status": "open",
+                  "due": "2025-01-01",
+                  "recurrence": null,
+                  "historical": true,
+                  "overdue": false
+                },
+                {
+                  "source": "Tasks/open.md",
+                  "line": 5,
+                  "revision": "6ddc6263878c2e4b0524a852c3730995ff86c4f18af4a3e55363c68498bd90d2",
+                  "occurrence_id": "d947b9155f0ff1e3dface8913bb10871ebea31385d53b517c7cddad813090147",
+                  "entity_key": "mic:1",
+                  "identity": "Juniper:mic",
+                  "project": "Juniper",
+                  "text": "Check the microphone [task:mic] [due:2026-10-03]",
+                  "status": "open",
+                  "due": "2026-10-03",
+                  "recurrence": null,
+                  "historical": false,
+                  "overdue": true
+                }
+              ],
+              "task_count": 3,
+              "decisions": [],
+              "decision_count": 0,
+              "unresolved_decision_count": 0,
+              "evidence_truncated": false,
+              "evidence_gaps": [
+                "prose decisions not interpreted",
+                "recent changes require a historical snapshot"
+              ]
+            },
+            {
+              "project": "Orchid",
+              "source": "Projects/Orchid.md",
+              "revision": "5f212de5432a0ff99833cb6a97679c746fff4cd274e88f909304a7f7f0063539",
+              "status": "completed",
+              "review_due": null,
+              "next_action": null,
+              "tasks": [],
+              "task_count": 0,
+              "decisions": [],
+              "decision_count": 0,
+              "unresolved_decision_count": 0,
+              "evidence_truncated": false,
+              "evidence_gaps": [
+                "prose decisions not interpreted",
+                "recent changes require a historical snapshot"
+              ]
+            },
+            {
+              "project": "Willow",
+              "source": "Projects/Willow.md",
+              "revision": "8dd02df0b8fcdd645a27457fa99f0770fdaed881ed0a3bdc3099d226107034b0",
+              "status": "active",
+              "review_due": "2026-11-01",
+              "next_action": "Test the irrigation valve",
+              "tasks": [
+                {
+                  "source": "Tasks/future.md",
+                  "line": 4,
+                  "revision": "d73805edfe7ecd3ec5d42170f69fb145764b75db8a1ff80c960a4066df344e04",
+                  "occurrence_id": "ba960454865b494d58976138f21692a78ab1f58f752d67e36e6f91ff45fdd62d",
+                  "entity_key": "Buy a valve [due:2026-11-12]:1:1",
+                  "identity": null,
+                  "project": "Willow",
+                  "text": "Buy a valve [due:2026-11-12]",
+                  "status": "open",
+                  "due": "2026-11-12",
+                  "recurrence": null,
+                  "historical": false,
+                  "overdue": false
+                },
+                {
+                  "source": "Tasks/other-project.md",
+                  "line": 4,
+                  "revision": "8272a39645510b580ebdad5a74a091ef9700f459ec4abab20c1ec214629db95b",
+                  "occurrence_id": "d74074c1be3e199c86926d19a07fcf61e7ac73966403552da89047e57ad51c73",
+                  "entity_key": "mic:1",
+                  "identity": "Willow:mic",
+                  "project": "Willow",
+                  "text": "Check the microphone [task:mic]",
+                  "status": "completed",
+                  "due": null,
+                  "recurrence": null,
+                  "historical": false,
+                  "overdue": false
+                }
+              ],
+              "task_count": 2,
+              "decisions": [],
+              "decision_count": 0,
+              "unresolved_decision_count": 0,
+              "evidence_truncated": false,
+              "evidence_gaps": [
+                "prose decisions not interpreted",
+                "recent changes require a historical snapshot"
+              ]
+            }
+          ],
+          "as_of": "2026-10-09",
+          "timezone": "Europe/Berlin"
+        },
+        "triage": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "triage.abstain": 2,
+            "triage.route": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "queue": [
+            {
+              "source": "Inbox/novel.md",
+              "revision": "4ee58d27088dc01afb99b23c59fad123fa0a0117a29d83774b3c7fda9d3fb7b2",
+              "destination": null,
+              "decision": "leave_in_inbox",
+              "reason": "no_explicit_route",
+              "scope": "private",
+              "evidence": [],
+              "requires_revalidation": true
+            },
+            {
+              "source": "Inbox/protected.md",
+              "revision": "eb5c1b59d73629ce4d11dc60804f0cbdf2a8d4d4cf557ad2242bd35aa38471c5",
+              "destination": null,
+              "decision": "leave_in_inbox",
+              "reason": "scope_unknown_or_mismatch",
+              "scope": "shared",
+              "evidence": [
+                {
+                  "field": "project",
+                  "value": "Juniper",
+                  "destination": "Projects"
+                }
+              ],
+              "requires_revalidation": true
+            },
+            {
+              "source": "Inbox/route.md",
+              "revision": "824c1ad3b2735ff3758f7fc0b82cf29affd57f5102c5a73e550f8b08df76229a",
+              "destination": "Projects",
+              "decision": "preview_move",
+              "reason": "explicit_metadata",
+              "scope": "private",
+              "evidence": [
+                {
+                  "field": "project",
+                  "value": "Juniper",
+                  "destination": "Projects"
+                }
+              ],
+              "requires_revalidation": true
+            }
+          ],
+          "coverage_warning": "Explicit property rules only; novel/implicit/multi-project captures require review. No files are moved."
+        },
+        "duplicates": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "exact_groups": [
+            {
+              "fingerprint": "afd85fb959e5a5dc9cd28d06d238f7975f41b1f8a4d3d96b0a4eca72c875fc53",
+              "paths": [
+                "Copies/one.md",
+                "Copies/two.md"
+              ],
+              "revisions": {
+                "Copies/one.md": "afd85fb959e5a5dc9cd28d06d238f7975f41b1f8a4d3d96b0a4eca72c875fc53",
+                "Copies/two.md": "afd85fb959e5a5dc9cd28d06d238f7975f41b1f8a4d3d96b0a4eca72c875fc53"
+              }
+            }
+          ],
+          "normalized_text_groups": [
+            {
+              "fingerprint": "b62a587601cf021670d4f2b86dc36bdfecfe4799e5d29b8d29f3568758d5a332",
+              "paths": [
+                "Copies/one.md",
+                "Copies/two.md"
+              ],
+              "revisions": {
+                "Copies/one.md": "afd85fb959e5a5dc9cd28d06d238f7975f41b1f8a4d3d96b0a4eca72c875fc53",
+                "Copies/two.md": "afd85fb959e5a5dc9cd28d06d238f7975f41b1f8a4d3d96b0a4eca72c875fc53"
+              }
+            }
+          ],
+          "pairs": [
+            {
+              "paths": [
+                "Tasks/done.md",
+                "Tasks/other-project.md"
+              ],
+              "revisions": {
+                "Tasks/done.md": "8ede5a315499143a5a30832ce79adbc9ff1ad92f467aaa073f5051db87137e40",
+                "Tasks/other-project.md": "8272a39645510b580ebdad5a74a091ef9700f459ec4abab20c1ec214629db95b"
+              },
+              "classification": "uncertain",
+              "basis": "bounded_five_word_shingles",
+              "similarity": 1.0,
+              "metadata_differences": {
+                "project": [
+                  "Juniper",
+                  "Willow"
+                ]
+              },
+              "protected_token_difference": [],
+              "passages": {
+                "Tasks/done.md": "\n\n\n\n- [x] Check the microphone [task:mic]\n",
+                "Tasks/other-project.md": "\n\n\n- [x] Check the microphone [task:mic]\n"
+              },
+              "merge_eligible": false
+            }
+          ],
+          "candidate_pairs_examined": 4,
+          "max_pairs": 500,
+          "per_note": 10,
+          "candidate_coverage_warning": "Posting lists cap at 100, features at 512, candidates are bounded and scope-declared only. Lexical retrieval can miss pairs. Normalized text is not semantic equivalence; pairs are not transitive groups."
+        },
+        "claims": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "claim.conflict": 1
+          },
+          "diagnostics": [],
+          "model_calls": 0,
+          "claims": [
+            {
+              "entity": "timer-T",
+              "field": "duration",
+              "value": "4",
+              "unit": "s",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "qualifier": "at 20 degrees C",
+              "normalized": "4000",
+              "source": "Claims/condition-a.md",
+              "revision": "3074dbcee4f737b0774d7bd39acdaa2d864c5779cdd3165e76e17a86ae0125bc",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            {
+              "entity": "timer-T",
+              "field": "duration",
+              "value": "8",
+              "unit": "s",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "qualifier": "at minus 15 degrees C",
+              "normalized": "8000",
+              "source": "Claims/condition-b.md",
+              "revision": "ca78eb6278ee254d6abca89ad89370519aec02cc1d3ced3b0fca06e77f62439c",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            {
+              "entity": "receiver-R",
+              "field": "duration",
+              "value": "5",
+              "unit": "s",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "5000",
+              "source": "Claims/conflict-a.md",
+              "revision": "4b7924148abc065756357af2bd1038bc26f73a4b89c2c6c4a213b51ea0a54497",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            {
+              "entity": "receiver-R",
+              "field": "duration",
+              "value": "6000",
+              "unit": "ms",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "6000",
+              "source": "Claims/conflict-b.md",
+              "revision": "e308558bba4da3d846a0905b7fc57788625496658b099db6f95f0eb9dc778370",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            {
+              "entity": "probe-P",
+              "field": "duration",
+              "value": "2.5",
+              "unit": "s",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "2500.0",
+              "source": "Claims/equal-a.md",
+              "revision": "99a50ab3ea737224112aac1ca00da9744f70070682b7a7624a63590fb288dd5f",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            },
+            {
+              "entity": "probe-P",
+              "field": "duration",
+              "value": "2500",
+              "unit": "ms",
+              "scope": "standby",
+              "date": "2026-10-09",
+              "kind": "measurement",
+              "normalized": "2500",
+              "source": "Claims/equal-b.md",
+              "revision": "f99390b2ddf5356165be174b8103aab77d9d7783dc047ed3e2b4ac7f039ad2ca",
+              "line": 2,
+              "ordinal": 0,
+              "status": "current"
+            }
+          ],
+          "comparisons": [
+            {
+              "entity": "probe-P",
+              "field": "duration",
+              "classification": "equivalent",
+              "left": {
+                "entity": "probe-P",
+                "field": "duration",
+                "value": "2.5",
+                "unit": "s",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "normalized": "2500.0",
+                "source": "Claims/equal-a.md",
+                "revision": "99a50ab3ea737224112aac1ca00da9744f70070682b7a7624a63590fb288dd5f",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              },
+              "right": {
+                "entity": "probe-P",
+                "field": "duration",
+                "value": "2500",
+                "unit": "ms",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "normalized": "2500",
+                "source": "Claims/equal-b.md",
+                "revision": "f99390b2ddf5356165be174b8103aab77d9d7783dc047ed3e2b4ac7f039ad2ca",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              }
+            },
+            {
+              "entity": "receiver-R",
+              "field": "duration",
+              "classification": "conflict",
+              "left": {
+                "entity": "receiver-R",
+                "field": "duration",
+                "value": "5",
+                "unit": "s",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "normalized": "5000",
+                "source": "Claims/conflict-a.md",
+                "revision": "4b7924148abc065756357af2bd1038bc26f73a4b89c2c6c4a213b51ea0a54497",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              },
+              "right": {
+                "entity": "receiver-R",
+                "field": "duration",
+                "value": "6000",
+                "unit": "ms",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "normalized": "6000",
+                "source": "Claims/conflict-b.md",
+                "revision": "e308558bba4da3d846a0905b7fc57788625496658b099db6f95f0eb9dc778370",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              }
+            },
+            {
+              "entity": "timer-T",
+              "field": "duration",
+              "classification": "different_condition",
+              "left": {
+                "entity": "timer-T",
+                "field": "duration",
+                "value": "4",
+                "unit": "s",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "qualifier": "at 20 degrees C",
+                "normalized": "4000",
+                "source": "Claims/condition-a.md",
+                "revision": "3074dbcee4f737b0774d7bd39acdaa2d864c5779cdd3165e76e17a86ae0125bc",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              },
+              "right": {
+                "entity": "timer-T",
+                "field": "duration",
+                "value": "8",
+                "unit": "s",
+                "scope": "standby",
+                "date": "2026-10-09",
+                "kind": "measurement",
+                "qualifier": "at minus 15 degrees C",
+                "normalized": "8000",
+                "source": "Claims/condition-b.md",
+                "revision": "ca78eb6278ee254d6abca89ad89370519aec02cc1d3ced3b0fca06e77f62439c",
+                "line": 2,
+                "ordinal": 0,
+                "status": "current"
+              }
+            }
+          ],
+          "candidate_pairs_examined": 3,
+          "comparisons_truncated": false,
+          "coverage_warning": "Declared numerical frontmatter claims only. No prose extraction, truth selection, or silent correction."
+        },
+        "graph": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "edges": [
+            {
+              "source": "Graph/Map.md",
+              "target": "Projects/Juniper.md",
+              "line": 5,
+              "revision": "a4d6ea9c5abf1cf6ebdba9ec268f0b97f9e73de262f5dbb9b41ce3a682a1a719"
+            },
+            {
+              "source": "Graph/Map.md",
+              "target": "Graph/Sensor.md",
+              "line": 6,
+              "revision": "a4d6ea9c5abf1cf6ebdba9ec268f0b97f9e73de262f5dbb9b41ce3a682a1a719"
+            },
+            {
+              "source": "References/broken.md",
+              "target": "Projects/Juniper.md",
+              "line": 3,
+              "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f"
+            }
+          ],
+          "edge_count": 3,
+          "edges_truncated": false,
+          "node_count": 33,
+          "components": [
+            [
+              "Claims/condition-a.md"
+            ],
+            [
+              "Claims/condition-b.md"
+            ],
+            [
+              "Claims/conflict-a.md"
+            ],
+            [
+              "Claims/conflict-b.md"
+            ],
+            [
+              "Claims/equal-a.md"
+            ],
+            [
+              "Claims/equal-b.md"
+            ],
+            [
+              "Copies/one.md"
+            ],
+            [
+              "Copies/two.md"
+            ],
+            [
+              "Datasets/clean.md"
+            ],
+            [
+              "Datasets/costs.md"
+            ],
+            [
+              "Graph/Map.md",
+              "Graph/Sensor.md",
+              "Projects/Juniper.md"
+            ],
+            [
+              "Inbox/novel.md"
+            ],
+            [
+              "Inbox/protected.md"
+            ],
+            [
+              "Inbox/route.md"
+            ],
+            [
+              "People/Zoë.md"
+            ],
+            [
+              "Projects/Cedar.md"
+            ],
+            [
+              "Projects/Orchid.md"
+            ],
+            [
+              "Projects/Willow.md"
+            ],
+            [
+              "Properties/clean.md"
+            ],
+            [
+              "Properties/scalar.md"
+            ],
+            [
+              "References/asset.md"
+            ],
+            [
+              "References/broken.md"
+            ],
+            [
+              "References/external.md"
+            ],
+            [
+              "Tasks/done.md"
+            ],
+            [
+              "Tasks/future.md"
+            ],
+            [
+              "Tasks/history.md"
+            ],
+            [
+              "Tasks/open.md"
+            ],
+            [
+              "Tasks/other-project.md"
+            ],
+            [
+              "Topics/Bicycle.md"
+            ],
+            [
+              "Topics/Gluten-free.md"
+            ],
+            [
+              "Topics/Observatory.md"
+            ]
+          ],
+          "isolated_notes": [
+            "Claims/condition-a.md",
+            "Claims/condition-b.md",
+            "Claims/conflict-a.md",
+            "Claims/conflict-b.md",
+            "Claims/equal-a.md",
+            "Claims/equal-b.md",
+            "Copies/one.md",
+            "Copies/two.md",
+            "Datasets/clean.md",
+            "Datasets/costs.md",
+            "Inbox/novel.md",
+            "Inbox/protected.md",
+            "Inbox/route.md",
+            "People/Zoë.md",
+            "Projects/Cedar.md",
+            "Projects/Orchid.md",
+            "Projects/Willow.md",
+            "Properties/clean.md",
+            "Properties/scalar.md",
+            "References/asset.md",
+            "References/external.md",
+            "Tasks/done.md",
+            "Tasks/future.md",
+            "Tasks/history.md",
+            "Tasks/open.md",
+            "Tasks/other-project.md",
+            "Topics/Bicycle.md",
+            "Topics/Gluten-free.md",
+            "Topics/Observatory.md"
+          ],
+          "navigation": [
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Claims",
+              "notes": [
+                "Claims/condition-a.md",
+                "Claims/condition-b.md",
+                "Claims/conflict-a.md",
+                "Claims/conflict-b.md",
+                "Claims/equal-a.md",
+                "Claims/equal-b.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Copies",
+              "notes": [
+                "Copies/one.md",
+                "Copies/two.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Graph",
+              "notes": [
+                "Graph/Map.md",
+                "Graph/Sensor.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Inbox",
+              "notes": [
+                "Inbox/novel.md",
+                "Inbox/route.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "People",
+              "notes": [
+                "People/Zoë.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Projects",
+              "notes": [
+                "Projects/Cedar.md",
+                "Projects/Juniper.md",
+                "Projects/Orchid.md",
+                "Projects/Willow.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Properties",
+              "notes": [
+                "Properties/clean.md",
+                "Properties/scalar.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Tasks",
+              "notes": [
+                "Tasks/done.md",
+                "Tasks/future.md",
+                "Tasks/history.md",
+                "Tasks/open.md",
+                "Tasks/other-project.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "folder",
+              "value": "Topics",
+              "notes": [
+                "Topics/Bicycle.md",
+                "Topics/Gluten-free.md",
+                "Topics/Observatory.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "tag",
+              "value": "archive",
+              "notes": [
+                "Properties/clean.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "tag",
+              "value": "research",
+              "notes": [
+                "Properties/clean.md"
+              ]
+            },
+            {
+              "scope": "private",
+              "kind": "type",
+              "value": "project",
+              "notes": [
+                "Projects/Cedar.md",
+                "Projects/Juniper.md",
+                "Projects/Orchid.md",
+                "Projects/Willow.md"
+              ]
+            },
+            {
+              "scope": "shared",
+              "kind": "folder",
+              "value": "Inbox",
+              "notes": [
+                "Inbox/protected.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "Datasets",
+              "notes": [
+                "Datasets/clean.md",
+                "Datasets/costs.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "References",
+              "notes": [
+                "References/asset.md",
+                "References/broken.md",
+                "References/external.md"
+              ]
+            }
+          ],
+          "boundary_edges": [
+            {
+              "source": "References/broken.md",
+              "target": "Projects/Juniper.md",
+              "line": 3,
+              "revision": "52bfc03fbd7c996bf1bdc663620f4f83ec16cd1b44d4f70f12ffbf9884cbf07f"
+            }
+          ],
+          "boundary_edge_count": 1,
+          "incoming": [],
+          "outgoing": [],
+          "graph_diagnostics": [],
+          "coverage_warning": "Existing resolved links and explicit folder/type/frontmatter tags only. Isolation is not a defect. Components never join differing scopes. No semantic suggestions or generated notes."
+        }
+      },
+      "model_calls": 0
+    },
+    "pass": true
+  },
+  "benchmark_copy": {
+    "grading": "UNLABELED coverage scan; findings are not measured true defects",
+    "config": {
+      "packages": [
+        "properties",
+        "links",
+        "attachments",
+        "tasks",
+        "duplicates",
+        "graph"
+      ],
+      "as_of": "2026-10-09",
+      "timezone": "Europe/Berlin"
+    },
+    "report": {
+      "version": "1",
+      "snapshot": "7f103911636973f991e2a14d2b6330cc41bf63ebe7ddca21c578e3c277d7ad04",
+      "packages": [
+        "properties",
+        "links",
+        "attachments",
+        "tasks",
+        "duplicates",
+        "graph"
+      ],
+      "complete": true,
+      "findings": [
+        {
+          "id": "a6f4fb2eb31efc63fc08f0362e03436eb549b6793077938f0566c8b8651b19c9",
+          "entity_key": "[[Certifications and Courses]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 58,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 58,
+            "raw": "[[Certifications and Courses]]",
+            "target": "Certifications and Courses",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "cf47ed63e89026647f832d8fff238e844431f5d3190e470475fc22c2828dee34"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "bd34fde2747069d1c9a8ce62323e8b5973d461614f986999789a82ce83b71a72",
+          "entity_key": "[[Power Management Strategies]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 59,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 59,
+            "raw": "[[Power Management Strategies]]",
+            "target": "Power Management Strategies",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "837d4c1b217942bcae0749cd695c0d5424265a7d35bcbebfe057bf06ea2358b4"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "59a5d9dbff141c696f1b169cb7057cb843e322de5de3636ae27ab2f65ccfc0a9",
+          "entity_key": "[[u-blox Modem Configuration]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 60,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "user/modem-configuration-update.md",
+                "basis": "filename_similarity",
+                "similarity": 0.692,
+                "revision": "a953105c99eaa5319c4ed406ff88243464e18403913bd9e742fc500875aeb691"
+              }
+            ],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 60,
+            "raw": "[[u-blox Modem Configuration]]",
+            "target": "u-blox Modem Configuration",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "e0ae0adea6126b860071d19fc9c6d881b05f85b3291b10bbf35373f00d11fae5"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "ee06784fa4cc3d1da20faf250bf9b7061a9da2e0de992e6bc15cc916badf57b0",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 63,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 63,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "4578a8d66b5e550c74e6505932c5cf242a8d24a3bb97c64ea5451e96f92d2c2a"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "efaea28761e80d291c80c2c4f52aa858d7e08544f53bc9ba4c306f56cc0caf86",
+          "entity_key": "[[Memfault Integration Initiative]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 64,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/memfault-integration-initiative.md",
+                "basis": "filename_similarity",
+                "similarity": 0.935,
+                "revision": "cc381bd85ba09ef8226449cbdd2150e441b76211917b455d292440fe953ad72c"
+              }
+            ],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 64,
+            "raw": "[[Memfault Integration Initiative]]",
+            "target": "Memfault Integration Initiative",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "a6fb1a3af2372d41b26817af829df670762dd1b4d5a7764e37ad31923089bc79"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "90a72d352ca86883c0446de93569a404da76c8d67bcf8f141c3b90ed7972c2e9",
+          "entity_key": "[[FreeRTOS Task Management]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Indexes/technical-knowledge-base.md",
+          "line": 65,
+          "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/Topics/freertos-task-management.md",
+                "basis": "filename_similarity",
+                "similarity": 0.917,
+                "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee"
+              }
+            ],
+            "source": "nuru/Indexes/technical-knowledge-base.md",
+            "revision": "9668e7abb41ddf4a88448f87b07145da1f97952f4b8a20de6367875d4fdce886",
+            "line": 65,
+            "raw": "[[FreeRTOS Task Management]]",
+            "target": "FreeRTOS Task Management",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "053c8d4be6c8f259941944bd4bb16b2651480aa0e5ac705fbcf2beb554412c25"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "2b8c8a29b8378ac0dd9ea74b8c3e80d932e63601c1bda35558bd01cb1205b03f",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Topics/freertos-task-management.md",
+          "line": 57,
+          "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/Topics/freertos-task-management.md",
+            "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee",
+            "line": 57,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "4c995768792514951a265bede1a62f522144ce06427420508fb13380969b259f"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "bcb04c6cb49f66aa204b6ae3be69a210b52b9adcb87c55681046cec04acb46c6",
+          "entity_key": "[[Memfault Integration Initiative]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/Topics/freertos-task-management.md",
+          "line": 58,
+          "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/memfault-integration-initiative.md",
+                "basis": "filename_similarity",
+                "similarity": 0.935,
+                "revision": "cc381bd85ba09ef8226449cbdd2150e441b76211917b455d292440fe953ad72c"
+              }
+            ],
+            "source": "nuru/Topics/freertos-task-management.md",
+            "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee",
+            "line": 58,
+            "raw": "[[Memfault Integration Initiative]]",
+            "target": "Memfault Integration Initiative",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "c726505d3960fddfba58c3e82bf6e5972088dfb335139582e13ac9805a2fd34c"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "35bc568af87a89b49c33f7e1715595a0a7f4cd88ef30e0bd8e71d810e02502de",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/battery-life-modeling-revised.md",
+          "line": 45,
+          "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/battery-life-modeling-revised.md",
+            "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be",
+            "line": 45,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "f23c14455bb5fd09e044a23d563d152fd92e6ee93cf0125f4e60d0cac1c9421b"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "3f76fa7c4e0087f6abe52290228ffbe63ef087cbca8f451e98707168f63be11e",
+          "entity_key": "[[Battery Life Modeling]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/battery-life-modeling-revised.md",
+          "line": 45,
+          "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/battery-life-modeling.md",
+                "basis": "filename_similarity",
+                "similarity": 0.905,
+                "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e"
+              },
+              {
+                "path": "nuru/battery-life-modeling-revised.md",
+                "basis": "filename_similarity",
+                "similarity": 0.76,
+                "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be"
+              }
+            ],
+            "source": "nuru/battery-life-modeling-revised.md",
+            "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be",
+            "line": 45,
+            "raw": "[[Battery Life Modeling]]",
+            "target": "Battery Life Modeling",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "b5fa7344004099d4fc7367ea06e7442857d1d822f253199e58696688a31f5aba"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "6ebddae098c4c4619c69fca4cb628e249bb4512de1785032513d34610a48ed5b",
+          "entity_key": "[[FreeRTOS Task Management]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/battery-life-modeling.md",
+          "line": 58,
+          "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/Topics/freertos-task-management.md",
+                "basis": "filename_similarity",
+                "similarity": 0.917,
+                "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee"
+              }
+            ],
+            "source": "nuru/battery-life-modeling.md",
+            "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+            "line": 58,
+            "raw": "[[FreeRTOS Task Management]]",
+            "target": "FreeRTOS Task Management",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "b109c46b41cdeeeb6508c3fa59035c0f3e11630daf10b20580de2e589ee48505"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "8af25e347dd89fcc1af53da1fcd17723b1c20c69cddd46ab00425013f3b99f40",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/battery-life-modeling.md",
+          "line": 58,
+          "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/battery-life-modeling.md",
+            "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+            "line": 58,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "29e5033b5e95f286829142ebf1151317c7f78d4790e61f14dd84d23551a9197b"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "7de6e5c13dd15cb115823b6b0c0f937d09fd4d9ce30d54e743d1003d1284f0f1",
+          "entity_key": "[[Memfault Integration Initiative]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/priya-raman.md",
+          "line": 36,
+          "revision": "dba63805c3892b9d2b9f417faee65448f0e5be2829f6eb74e1191e2c53680c32",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/memfault-integration-initiative.md",
+                "basis": "filename_similarity",
+                "similarity": 0.935,
+                "revision": "cc381bd85ba09ef8226449cbdd2150e441b76211917b455d292440fe953ad72c"
+              }
+            ],
+            "source": "nuru/priya-raman.md",
+            "revision": "dba63805c3892b9d2b9f417faee65448f0e5be2829f6eb74e1191e2c53680c32",
+            "line": 36,
+            "raw": "[[Memfault Integration Initiative]]",
+            "target": "Memfault Integration Initiative",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "5fa236eb88367a60d5a21de662c610f12c7e7b18cc2dbe1232ec31234166b50c"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "731becd8ec3301f4d4311b94f89ac76ee4eb371709635466227f8d42d6ed2f65",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/priya-raman.md",
+          "line": 37,
+          "revision": "dba63805c3892b9d2b9f417faee65448f0e5be2829f6eb74e1191e2c53680c32",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/priya-raman.md",
+            "revision": "dba63805c3892b9d2b9f417faee65448f0e5be2829f6eb74e1191e2c53680c32",
+            "line": 37,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "2b74381c5a46aa695d25e2b8666f1ee1be50943a36f1a182e6a643bdec2284b0"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "324944fdddc321168c4bb96a23831e909f844eb867948a4729e6fb8a5fd4c145",
+          "entity_key": "[[Area Monitor Device Redesign]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/sensor-calibration-data.md",
+          "line": 52,
+          "revision": "bf27c88553eb060d9f25e17fd17b56a84179b65f51f00a4a91e09a81ea6011da",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "shared/Projects/area-monitor-device-redesign.md",
+                "basis": "filename_similarity",
+                "similarity": 0.893,
+                "revision": "397310799f7af631eeb55acd6c50123a53872443bde2cdd5e9fef7b490a1e87c"
+              }
+            ],
+            "source": "nuru/sensor-calibration-data.md",
+            "revision": "bf27c88553eb060d9f25e17fd17b56a84179b65f51f00a4a91e09a81ea6011da",
+            "line": 52,
+            "raw": "[[Area Monitor Device Redesign]]",
+            "target": "Area Monitor Device Redesign",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "902942dd9e9430d2e2b01deb2cbdac547254b89b167cdb273ab91456059f626e"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "b8e547336a985b58daf419e8c5d8f04128a36a06d72abb89d7d4c6b4570e197c",
+          "entity_key": "[[FreeRTOS Task Management]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/uart-ring-buffer-snippets.md",
+          "line": 67,
+          "revision": "b0071907e25e489837767460dd53fd244fd654274e4d1e989dbb27aa7482767c",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/Topics/freertos-task-management.md",
+                "basis": "filename_similarity",
+                "similarity": 0.917,
+                "revision": "6ef023671229ed3388c516046a97c8dea686f73c794a6cbb53802fbad9fe4eee"
+              }
+            ],
+            "source": "nuru/uart-ring-buffer-snippets.md",
+            "revision": "b0071907e25e489837767460dd53fd244fd654274e4d1e989dbb27aa7482767c",
+            "line": 67,
+            "raw": "[[FreeRTOS Task Management]]",
+            "target": "FreeRTOS Task Management",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "921cc43cb5b31a62d5be4ad0e59704357c9ad4983a0335c56e28e8e0ce08fb38"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "7309104cbf9dd862989219375711b2e1bdce3ea9e9b633af5d89494826532ce4",
+          "entity_key": "[[Nonexistent Note Alpha]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/unicode-and-formatting-torture.md",
+          "line": 60,
+          "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [],
+            "source": "nuru/unicode-and-formatting-torture.md",
+            "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+            "line": 60,
+            "raw": "[[Nonexistent Note Alpha]]",
+            "target": "Nonexistent Note Alpha",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "563c118dcf3f689f81e511418d19771b4d9a52e7ad0800e8491783c835c47597"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "d6ba5ae5f433b419dbc9d5d91377407d54457a8ff2b3875982c4ce58ac9b8631",
+          "entity_key": "[[Battery Life Modeling Revised]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/unicode-and-formatting-torture.md",
+          "line": 60,
+          "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/battery-life-modeling-revised.md",
+                "basis": "filename_similarity",
+                "similarity": 0.897,
+                "revision": "11b1c10c8daafd4cd8590e21ff97608b926c20dc337847dc6bc3a40afec2a9be"
+              },
+              {
+                "path": "nuru/battery-life-modeling.md",
+                "basis": "filename_similarity",
+                "similarity": 0.76,
+                "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e"
+              }
+            ],
+            "source": "nuru/unicode-and-formatting-torture.md",
+            "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+            "line": 60,
+            "raw": "[[Battery Life Modeling Revised]]",
+            "target": "Battery Life Modeling Revised",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "86b38187002fd0f259fe19cf2c7654c22d619ca08aaf937a9c70b6b68ffd9bab"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        },
+        {
+          "id": "dda8ff4eae62112eaa0ef173f9f8ebcc5bc6e970166aea98a10bc6eaa12462c7",
+          "entity_key": "[[Sensor Calibration Data|calibration]]:1",
+          "rule": "link.broken",
+          "rule_version": "1",
+          "source": "nuru/unicode-and-formatting-torture.md",
+          "line": 60,
+          "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+          "evidence": {
+            "status": "broken",
+            "reason": "missing_file",
+            "candidates": [
+              {
+                "path": "nuru/sensor-calibration-data.md",
+                "basis": "filename_similarity",
+                "similarity": 0.913,
+                "revision": "bf27c88553eb060d9f25e17fd17b56a84179b65f51f00a4a91e09a81ea6011da"
+              }
+            ],
+            "source": "nuru/unicode-and-formatting-torture.md",
+            "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+            "line": 60,
+            "raw": "[[Sensor Calibration Data|calibration]]",
+            "target": "Sensor Calibration Data",
+            "syntax": "wiki",
+            "embed": false,
+            "finding_id": "17ac75d5dcfad4cbcf4d38767f0416ce9479e39e7d37ed1683cde1808307b30f"
+          },
+          "severity": "defect",
+          "proposed_action": "Review the cited evidence",
+          "status": "open",
+          "namespace": "links"
+        }
+      ],
+      "finding_count": 19,
+      "next_offset": null,
+      "counts": {
+        "link.broken": 19
+      },
+      "review_states": {
+        "open": 19
+      },
+      "diagnostics": [],
+      "stats": {
+        "parsed_notes": 40,
+        "notes": 40,
+        "assets": 0,
+        "bytes_read": 105418,
+        "link_parsed_notes": 40
+      },
+      "details": {
+        "properties": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "schemas": []
+        },
+        "links": {
+          "version": "1",
+          "complete": true,
+          "counts": {
+            "link.broken": 19
+          },
+          "diagnostics": [],
+          "model_calls": 0
+        },
+        "attachments": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "inventory": [],
+          "duplicate_groups": [],
+          "potential_duplicate_bytes": 0,
+          "coverage_warning": "Unrecognized plugin references and excluded sources can own assets; no deletion eligibility is asserted."
+        },
+        "tasks": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "tasks": [
+            {
+              "source": "nuru/battery-life-modeling.md",
+              "line": 54,
+              "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+              "occurrence_id": "0faa1a603f6b199e221c1b8b261db39f8c664bd6c85b38d9964e66e8e16c2c49",
+              "entity_key": "Reconcile always-connected vs. periodic-attach architectures:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Reconcile always-connected vs. periodic-attach architectures",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/battery-life-modeling.md",
+              "line": 55,
+              "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+              "occurrence_id": "6ad470c888bae70b48286400b33f091e51cce2796305eeae6c27ef3f0e7d2a08",
+              "entity_key": "Add temperature derating: Li-SOCl2 capacity drops hard below −20 °C:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Add temperature derating: Li-SOCl2 capacity drops hard below −20 °C",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/battery-life-modeling.md",
+              "line": 56,
+              "revision": "28ef483ac7ee4294179b79f2856e09fef59cce58965da233af18c41124d4429e",
+              "occurrence_id": "895301e2289503b4f77469b318828ae74730d3d471233186090cf0f7d786c1b6",
+              "entity_key": "Add passivation layer voltage delay to the model (first-pulse droop):1:1",
+              "identity": null,
+              "project": null,
+              "text": "Add passivation layer voltage delay to the model (first-pulse droop)",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/one-on-one-with-manager.md",
+              "line": 47,
+              "revision": "c0913977b9ee8a66910df9a7566c027e07f4f4717a624ff07097c186db0e744d",
+              "occurrence_id": "bd802f9ea7cfee1b0d22f6dc8ce6a816e2d05b9fd8fc89a3b0a608553d0fb56a",
+              "entity_key": "Battery life range with assumptions by Thursday 2026-09-24:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Battery life range with assumptions by Thursday 2026-09-24",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/one-on-one-with-manager.md",
+              "line": 48,
+              "revision": "c0913977b9ee8a66910df9a7566c027e07f4f4717a624ff07097c186db0e744d",
+              "occurrence_id": "6dc3f3028d26ebd6f5468d967056680a150407705c4153b41b7420c85cc1a22c",
+              "entity_key": "Draft a one-pager on Memfault data-plan cost (see 26% of data budget issue):1:1",
+              "identity": null,
+              "project": null,
+              "text": "Draft a one-pager on Memfault data-plan cost (see 26% of data budget issue)",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/one-on-one-with-manager.md",
+              "line": 49,
+              "revision": "c0913977b9ee8a66910df9a7566c027e07f4f4717a624ff07097c186db0e744d",
+              "occurrence_id": "bde4e7bc3869a8271348637633a8ab3f430a5d6ac973504809c5e531923558ea",
+              "entity_key": "Book time with Alice re: supercap vs bulk cap:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Book time with Alice re: supercap vs bulk cap",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/one-on-one-with-manager.md",
+              "line": 50,
+              "revision": "c0913977b9ee8a66910df9a7566c027e07f4f4717a624ff07097c186db0e744d",
+              "occurrence_id": "734eee0a59231c1f14b4819bb3dbbab4176fcd2fb7773d1f71e0c73f906793b7",
+              "entity_key": "Ask HR about conference budget (Embedded World?):1:1",
+              "identity": null,
+              "project": null,
+              "text": "Ask HR about conference budget (Embedded World?)",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/unicode-and-formatting-torture.md",
+              "line": 37,
+              "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+              "occurrence_id": "6082a4b64ddca0aace8a838b8e9e1b7026274240a7a374aeb10559eb03f0dbb8",
+              "entity_key": "unchecked task:1:1",
+              "identity": null,
+              "project": null,
+              "text": "unchecked task",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/unicode-and-formatting-torture.md",
+              "line": 38,
+              "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+              "occurrence_id": "96d1989f350f84fb5f381afe9deb852830a00fbdb123b6474e016023dd27de31",
+              "entity_key": "checked task:1:1",
+              "identity": null,
+              "project": null,
+              "text": "checked task",
+              "status": "completed",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/unicode-and-formatting-torture.md",
+              "line": 39,
+              "revision": "15dee9650810a1f68ec8bb127416dd0d7f5598e1700ac390659c308069727a88",
+              "occurrence_id": "afb7a4aa5e9cf8b0dbdce991337279b435c2ef5302fa5089d96a2e0725de1464",
+              "entity_key": "task with **bold**, *italic*, `code`, and ~~strikethrough~~:1:1",
+              "identity": null,
+              "project": null,
+              "text": "task with **bold**, *italic*, `code`, and ~~strikethrough~~",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 36,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "b40fdfc6bef8dcae614140bb5ce606e736704e7a1e5e7c79dbd8bc5f473311a7",
+              "entity_key": "Update design documentation:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Update design documentation",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 37,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "89ccddac262db33cad5322e2091bf5aa02abbd23ce8cb2f64e63e19e4a594787",
+              "entity_key": "Create security threat model:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Create security threat model",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 61,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "005d35b8b365fe6050bb24798f4d04ad8c2bc2b1200550f848dd08a6a1052a15",
+              "entity_key": "Implement exponential backoff with jitter:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Implement exponential backoff with jitter",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 62,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "a40ea792ec86ea0e1a365c89c0ceddc9fee8911da1fd2b3e961bc06d9106dd82",
+              "entity_key": "Implement exponential backoff with jitter (dupe on purpose):1:1",
+              "identity": null,
+              "project": null,
+              "text": "Implement exponential backoff with jitter (dupe on purpose)",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 63,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "fc7de26317faf911a1916cbbfcc0156b3b6f31abd0f4c3b3d97842bb7b9123d7",
+              "entity_key": "Pin intermediate CA, not leaf:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Pin intermediate CA, not leaf",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 64,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "2c8c35eb6e5ce51e9e16cc16c70197b1c2d6af6702a44f88b2f5ee925a350734",
+              "entity_key": "Find the sticky note:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Find the sticky note",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/architecture-review-meeting.md",
+              "line": 65,
+              "revision": "090fb39f1b153c26c814f0e05d24abb40b8f5e76274fa84b8f266b10a6602162",
+              "occurrence_id": "2a87c68e85fe4949f9ba9a685972173ee49e4594ea21e554c12e759e066340fd",
+              "entity_key": "Complain about Mondays:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Complain about Mondays",
+              "status": "completed",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/team-standup-discussion.md",
+              "line": 32,
+              "revision": "07124338a9d7002ce147ac89afdf1db3b58389c71f716d10b69f94b0bba98911",
+              "occurrence_id": "02cf9a51e279f2126d9fda7ed059ab7dbe60e12ac94f0c5142120357e570948d",
+              "entity_key": "Complete MQTT testing by Friday:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Complete MQTT testing by Friday",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/team-standup-discussion.md",
+              "line": 33,
+              "revision": "07124338a9d7002ce147ac89afdf1db3b58389c71f716d10b69f94b0bba98911",
+              "occurrence_id": "8d4f6df6b393ef8cc877acedb4d226cb59fe22257741771ac2c760458cf9a7cd",
+              "entity_key": "Schedule hardware integration meeting:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Schedule hardware integration meeting",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            },
+            {
+              "source": "nuru/Transcripts/team-standup-discussion.md",
+              "line": 34,
+              "revision": "07124338a9d7002ce147ac89afdf1db3b58389c71f716d10b69f94b0bba98911",
+              "occurrence_id": "1290dc3d1ecccec4b6afa572f482a262a74867e793bdd5b0e41747b50db6fe31",
+              "entity_key": "Document modem API integration guide:1:1",
+              "identity": null,
+              "project": null,
+              "text": "Document modem API integration guide",
+              "status": "open",
+              "due": null,
+              "recurrence": null,
+              "historical": false,
+              "overdue": false
+            }
+          ],
+          "as_of": "2026-10-09",
+          "timezone": "Europe/Berlin",
+          "coverage_warning": "Only declared checkbox syntax and explicit project-scoped task IDs are reconciled. Recurrence and prose completion require review."
+        },
+        "duplicates": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "exact_groups": [],
+          "normalized_text_groups": [],
+          "pairs": [],
+          "candidate_pairs_examined": 0,
+          "max_pairs": 500,
+          "per_note": 10,
+          "candidate_coverage_warning": "Posting lists cap at 100, features at 512, candidates are bounded and scope-declared only. Lexical retrieval can miss pairs. Normalized text is not semantic equivalence; pairs are not transitive groups."
+        },
+        "graph": {
+          "version": "1",
+          "complete": true,
+          "counts": {},
+          "diagnostics": [],
+          "model_calls": 0,
+          "edges": [],
+          "edge_count": 0,
+          "edges_truncated": false,
+          "node_count": 40,
+          "components": [
+            [
+              "nuru/Indexes/area-monitor-project-index.md"
+            ],
+            [
+              "nuru/Indexes/technical-knowledge-base.md"
+            ],
+            [
+              "nuru/People/alice-chen.md"
+            ],
+            [
+              "nuru/People/bob-martinez.md"
+            ],
+            [
+              "nuru/Preferences/communication-preferences.md"
+            ],
+            [
+              "nuru/Preferences/work-environment-preferences.md"
+            ],
+            [
+              "nuru/Profiles/sample-profile-one.md"
+            ],
+            [
+              "nuru/Profiles/sample-profile-two.md"
+            ],
+            [
+              "nuru/Topics/berlin-startup-ecosystem.md"
+            ],
+            [
+              "nuru/Topics/freertos-task-management.md"
+            ],
+            [
+              "nuru/Transcripts/architecture-review-meeting.md"
+            ],
+            [
+              "nuru/Transcripts/team-standup-discussion.md"
+            ],
+            [
+              "nuru/battery-life-modeling-revised.md"
+            ],
+            [
+              "nuru/battery-life-modeling.md"
+            ],
+            [
+              "nuru/berlin-admin-chaos-notes.md"
+            ],
+            [
+              "nuru/gym-and-life-log.md"
+            ],
+            [
+              "nuru/home-lab-parts-inventory.md"
+            ],
+            [
+              "nuru/one-on-one-with-manager.md"
+            ],
+            [
+              "nuru/priya-raman.md"
+            ],
+            [
+              "nuru/sensor-calibration-data.md"
+            ],
+            [
+              "nuru/shower-thoughts-on-electronics.md"
+            ],
+            [
+              "nuru/sunday-chapati-for-mom.md"
+            ],
+            [
+              "nuru/suspicious-vendor-email-paste.md"
+            ],
+            [
+              "nuru/uart-ring-buffer-snippets.md"
+            ],
+            [
+              "nuru/unicode-and-formatting-torture.md"
+            ],
+            [
+              "shared/Projects/area-monitor-device-redesign.md"
+            ],
+            [
+              "shared/Projects/memfault-integration-initiative.md"
+            ],
+            [
+              "shared/Sessions/firmware-development-session.md"
+            ],
+            [
+              "shared/Sessions/learning-session-mcp-architecture.md"
+            ],
+            [
+              "shared/debugging-session-psm-not-engaging.md"
+            ],
+            [
+              "user/code-review-standards.md"
+            ],
+            [
+              "user/correction-the-47-minute-mystery.md"
+            ],
+            [
+              "user/daily-2026-09-17.md"
+            ],
+            [
+              "user/daily-2026-09-18.md"
+            ],
+            [
+              "user/daily-note.md"
+            ],
+            [
+              "user/directives-for-local-model.md"
+            ],
+            [
+              "user/meeting-participation-guidelines.md"
+            ],
+            [
+              "user/modem-configuration-update.md"
+            ],
+            [
+              "user/september-15-daily.md"
+            ],
+            [
+              "user/team-standup-action-items-resolved.md"
+            ]
+          ],
+          "isolated_notes": [
+            "nuru/Indexes/area-monitor-project-index.md",
+            "nuru/Indexes/technical-knowledge-base.md",
+            "nuru/People/alice-chen.md",
+            "nuru/People/bob-martinez.md",
+            "nuru/Preferences/communication-preferences.md",
+            "nuru/Preferences/work-environment-preferences.md",
+            "nuru/Profiles/sample-profile-one.md",
+            "nuru/Profiles/sample-profile-two.md",
+            "nuru/Topics/berlin-startup-ecosystem.md",
+            "nuru/Topics/freertos-task-management.md",
+            "nuru/Transcripts/architecture-review-meeting.md",
+            "nuru/Transcripts/team-standup-discussion.md",
+            "nuru/battery-life-modeling-revised.md",
+            "nuru/battery-life-modeling.md",
+            "nuru/berlin-admin-chaos-notes.md",
+            "nuru/gym-and-life-log.md",
+            "nuru/home-lab-parts-inventory.md",
+            "nuru/one-on-one-with-manager.md",
+            "nuru/priya-raman.md",
+            "nuru/sensor-calibration-data.md",
+            "nuru/shower-thoughts-on-electronics.md",
+            "nuru/sunday-chapati-for-mom.md",
+            "nuru/suspicious-vendor-email-paste.md",
+            "nuru/uart-ring-buffer-snippets.md",
+            "nuru/unicode-and-formatting-torture.md",
+            "shared/Projects/area-monitor-device-redesign.md",
+            "shared/Projects/memfault-integration-initiative.md",
+            "shared/Sessions/firmware-development-session.md",
+            "shared/Sessions/learning-session-mcp-architecture.md",
+            "shared/debugging-session-psm-not-engaging.md",
+            "user/code-review-standards.md",
+            "user/correction-the-47-minute-mystery.md",
+            "user/daily-2026-09-17.md",
+            "user/daily-2026-09-18.md",
+            "user/daily-note.md",
+            "user/directives-for-local-model.md",
+            "user/meeting-participation-guidelines.md",
+            "user/modem-configuration-update.md",
+            "user/september-15-daily.md",
+            "user/team-standup-action-items-resolved.md"
+          ],
+          "navigation": [
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru",
+              "notes": [
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md",
+                "nuru/berlin-admin-chaos-notes.md",
+                "nuru/gym-and-life-log.md",
+                "nuru/home-lab-parts-inventory.md",
+                "nuru/one-on-one-with-manager.md",
+                "nuru/priya-raman.md",
+                "nuru/sensor-calibration-data.md",
+                "nuru/shower-thoughts-on-electronics.md",
+                "nuru/sunday-chapati-for-mom.md",
+                "nuru/suspicious-vendor-email-paste.md",
+                "nuru/uart-ring-buffer-snippets.md",
+                "nuru/unicode-and-formatting-torture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/Indexes",
+              "notes": [
+                "nuru/Indexes/area-monitor-project-index.md",
+                "nuru/Indexes/technical-knowledge-base.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/People",
+              "notes": [
+                "nuru/People/alice-chen.md",
+                "nuru/People/bob-martinez.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/Preferences",
+              "notes": [
+                "nuru/Preferences/communication-preferences.md",
+                "nuru/Preferences/work-environment-preferences.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/Profiles",
+              "notes": [
+                "nuru/Profiles/sample-profile-one.md",
+                "nuru/Profiles/sample-profile-two.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/Topics",
+              "notes": [
+                "nuru/Topics/berlin-startup-ecosystem.md",
+                "nuru/Topics/freertos-task-management.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "nuru/Transcripts",
+              "notes": [
+                "nuru/Transcripts/architecture-review-meeting.md",
+                "nuru/Transcripts/team-standup-discussion.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "shared",
+              "notes": [
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "shared/Projects",
+              "notes": [
+                "shared/Projects/area-monitor-device-redesign.md",
+                "shared/Projects/memfault-integration-initiative.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "shared/Sessions",
+              "notes": [
+                "shared/Sessions/firmware-development-session.md",
+                "shared/Sessions/learning-session-mcp-architecture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "folder",
+              "value": "user",
+              "notes": [
+                "user/code-review-standards.md",
+                "user/correction-the-47-minute-mystery.md",
+                "user/daily-2026-09-17.md",
+                "user/daily-2026-09-18.md",
+                "user/daily-note.md",
+                "user/directives-for-local-model.md",
+                "user/meeting-participation-guidelines.md",
+                "user/modem-configuration-update.md",
+                "user/september-15-daily.md",
+                "user/team-standup-action-items-resolved.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "analysis-test",
+              "notes": [
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md",
+                "nuru/berlin-admin-chaos-notes.md",
+                "nuru/gym-and-life-log.md",
+                "nuru/home-lab-parts-inventory.md",
+                "nuru/one-on-one-with-manager.md",
+                "nuru/sensor-calibration-data.md",
+                "nuru/shower-thoughts-on-electronics.md",
+                "nuru/suspicious-vendor-email-paste.md",
+                "nuru/uart-ring-buffer-snippets.md",
+                "nuru/unicode-and-formatting-torture.md",
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "architecture",
+              "notes": [
+                "nuru/Transcripts/architecture-review-meeting.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "berlin",
+              "notes": [
+                "nuru/Topics/berlin-startup-ecosystem.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "bug-hunt",
+              "notes": [
+                "nuru/uart-ring-buffer-snippets.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "career",
+              "notes": [
+                "nuru/Topics/berlin-startup-ecosystem.md",
+                "nuru/one-on-one-with-manager.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "code",
+              "notes": [
+                "nuru/uart-ring-buffer-snippets.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "colleague",
+              "notes": [
+                "nuru/People/alice-chen.md",
+                "nuru/priya-raman.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "contact",
+              "notes": [
+                "nuru/People/bob-martinez.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "correction",
+              "notes": [
+                "user/correction-the-47-minute-mystery.md",
+                "user/modem-configuration-update.md",
+                "user/team-standup-action-items-resolved.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "daily",
+              "notes": [
+                "user/daily-2026-09-17.md",
+                "user/daily-2026-09-18.md",
+                "user/daily-note.md",
+                "user/september-15-daily.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "data",
+              "notes": [
+                "nuru/gym-and-life-log.md",
+                "nuru/home-lab-parts-inventory.md",
+                "nuru/sensor-calibration-data.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "debugging",
+              "notes": [
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "development",
+              "notes": [
+                "shared/Sessions/firmware-development-session.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "directives",
+              "notes": [
+                "user/code-review-standards.md",
+                "user/directives-for-local-model.md",
+                "user/meeting-participation-guidelines.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "eccentric",
+              "notes": [
+                "nuru/shower-thoughts-on-electronics.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "edge-case",
+              "notes": [
+                "nuru/suspicious-vendor-email-paste.md",
+                "nuru/unicode-and-formatting-torture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "embedded",
+              "notes": [
+                "nuru/Topics/freertos-task-management.md",
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md",
+                "nuru/uart-ring-buffer-snippets.md",
+                "shared/Projects/area-monitor-device-redesign.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "formatting",
+              "notes": [
+                "nuru/unicode-and-formatting-torture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "hobby",
+              "notes": [
+                "nuru/home-lab-parts-inventory.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "index",
+              "notes": [
+                "nuru/Indexes/area-monitor-project-index.md",
+                "nuru/Indexes/technical-knowledge-base.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "inventory",
+              "notes": [
+                "nuru/home-lab-parts-inventory.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "knowledge-base",
+              "notes": [
+                "nuru/Indexes/technical-knowledge-base.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "learning",
+              "notes": [
+                "shared/Sessions/learning-session-mcp-architecture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "math",
+              "notes": [
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "modem",
+              "notes": [
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "mom",
+              "notes": [
+                "nuru/sunday-chapati-for-mom.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "monitoring",
+              "notes": [
+                "shared/Projects/memfault-integration-initiative.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "multilingual",
+              "notes": [
+                "nuru/berlin-admin-chaos-notes.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "person",
+              "notes": [
+                "nuru/People/alice-chen.md",
+                "nuru/People/bob-martinez.md",
+                "nuru/priya-raman.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "personal",
+              "notes": [
+                "nuru/berlin-admin-chaos-notes.md",
+                "nuru/gym-and-life-log.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "power",
+              "notes": [
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "preferences",
+              "notes": [
+                "nuru/Preferences/communication-preferences.md",
+                "nuru/Preferences/work-environment-preferences.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "procedures",
+              "notes": [
+                "user/meeting-participation-guidelines.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "profile",
+              "notes": [
+                "nuru/Profiles/sample-profile-one.md",
+                "nuru/Profiles/sample-profile-two.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "project",
+              "notes": [
+                "shared/Projects/area-monitor-device-redesign.md",
+                "shared/Projects/memfault-integration-initiative.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "project-hub",
+              "notes": [
+                "nuru/Indexes/area-monitor-project-index.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "prompt-injection-test",
+              "notes": [
+                "nuru/suspicious-vendor-email-paste.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "random",
+              "notes": [
+                "nuru/shower-thoughts-on-electronics.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "recipe",
+              "notes": [
+                "nuru/sunday-chapati-for-mom.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "rtos",
+              "notes": [
+                "nuru/Topics/freertos-task-management.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "sample",
+              "notes": [
+                "nuru/Indexes/area-monitor-project-index.md",
+                "nuru/Indexes/technical-knowledge-base.md",
+                "nuru/People/alice-chen.md",
+                "nuru/People/bob-martinez.md",
+                "nuru/Preferences/communication-preferences.md",
+                "nuru/Preferences/work-environment-preferences.md",
+                "nuru/Profiles/sample-profile-one.md",
+                "nuru/Profiles/sample-profile-two.md",
+                "nuru/Topics/berlin-startup-ecosystem.md",
+                "nuru/Topics/freertos-task-management.md",
+                "nuru/Transcripts/architecture-review-meeting.md",
+                "nuru/Transcripts/team-standup-discussion.md",
+                "shared/Projects/area-monitor-device-redesign.md",
+                "shared/Projects/memfault-integration-initiative.md",
+                "shared/Sessions/firmware-development-session.md",
+                "shared/Sessions/learning-session-mcp-architecture.md",
+                "user/code-review-standards.md",
+                "user/daily-note.md",
+                "user/meeting-participation-guidelines.md",
+                "user/modem-configuration-update.md",
+                "user/september-15-daily.md",
+                "user/team-standup-action-items-resolved.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "sensors",
+              "notes": [
+                "nuru/sensor-calibration-data.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "session",
+              "notes": [
+                "shared/Sessions/firmware-development-session.md",
+                "shared/Sessions/learning-session-mcp-architecture.md",
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "standards",
+              "notes": [
+                "user/code-review-standards.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "standup",
+              "notes": [
+                "nuru/Transcripts/team-standup-discussion.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "status-update",
+              "notes": [
+                "user/team-standup-action-items-resolved.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "sunday",
+              "notes": [
+                "nuru/sunday-chapati-for-mom.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "technical",
+              "notes": [
+                "user/modem-configuration-update.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "topic",
+              "notes": [
+                "nuru/Topics/berlin-startup-ecosystem.md",
+                "nuru/Topics/freertos-task-management.md",
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md",
+                "nuru/berlin-admin-chaos-notes.md",
+                "nuru/gym-and-life-log.md",
+                "nuru/home-lab-parts-inventory.md",
+                "nuru/sensor-calibration-data.md",
+                "nuru/shower-thoughts-on-electronics.md",
+                "nuru/sunday-chapati-for-mom.md",
+                "nuru/suspicious-vendor-email-paste.md",
+                "nuru/uart-ring-buffer-snippets.md",
+                "nuru/unicode-and-formatting-torture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "tag",
+              "value": "transcript",
+              "notes": [
+                "nuru/Transcripts/architecture-review-meeting.md",
+                "nuru/Transcripts/team-standup-discussion.md",
+                "nuru/one-on-one-with-manager.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "correction",
+              "notes": [
+                "user/correction-the-47-minute-mystery.md",
+                "user/modem-configuration-update.md",
+                "user/team-standup-action-items-resolved.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "daily",
+              "notes": [
+                "user/daily-2026-09-17.md",
+                "user/daily-2026-09-18.md",
+                "user/daily-note.md",
+                "user/september-15-daily.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "directives",
+              "notes": [
+                "user/code-review-standards.md",
+                "user/directives-for-local-model.md",
+                "user/meeting-participation-guidelines.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "index",
+              "notes": [
+                "nuru/Indexes/area-monitor-project-index.md",
+                "nuru/Indexes/technical-knowledge-base.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "person",
+              "notes": [
+                "nuru/People/alice-chen.md",
+                "nuru/People/bob-martinez.md",
+                "nuru/priya-raman.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "preferences",
+              "notes": [
+                "nuru/Preferences/communication-preferences.md",
+                "nuru/Preferences/work-environment-preferences.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "profile",
+              "notes": [
+                "nuru/Profiles/sample-profile-one.md",
+                "nuru/Profiles/sample-profile-two.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "project",
+              "notes": [
+                "shared/Projects/area-monitor-device-redesign.md",
+                "shared/Projects/memfault-integration-initiative.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "session",
+              "notes": [
+                "shared/Sessions/firmware-development-session.md",
+                "shared/Sessions/learning-session-mcp-architecture.md",
+                "shared/debugging-session-psm-not-engaging.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "topic",
+              "notes": [
+                "nuru/Topics/berlin-startup-ecosystem.md",
+                "nuru/Topics/freertos-task-management.md",
+                "nuru/battery-life-modeling-revised.md",
+                "nuru/battery-life-modeling.md",
+                "nuru/berlin-admin-chaos-notes.md",
+                "nuru/gym-and-life-log.md",
+                "nuru/home-lab-parts-inventory.md",
+                "nuru/sensor-calibration-data.md",
+                "nuru/shower-thoughts-on-electronics.md",
+                "nuru/sunday-chapati-for-mom.md",
+                "nuru/suspicious-vendor-email-paste.md",
+                "nuru/uart-ring-buffer-snippets.md",
+                "nuru/unicode-and-formatting-torture.md"
+              ]
+            },
+            {
+              "scope": "undeclared",
+              "kind": "type",
+              "value": "transcript",
+              "notes": [
+                "nuru/Transcripts/architecture-review-meeting.md",
+                "nuru/Transcripts/team-standup-discussion.md",
+                "nuru/one-on-one-with-manager.md"
+              ]
+            }
+          ],
+          "boundary_edges": [],
+          "boundary_edge_count": 0,
+          "incoming": [],
+          "outgoing": [],
+          "graph_diagnostics": [],
+          "coverage_warning": "Existing resolved links and explicit folder/type/frontmatter tags only. Isolation is not a defect. Components never join differing scopes. No semantic suggestions or generated notes."
+        }
+      },
+      "model_calls": 0
+    },
+    "unchanged": true
+  },
+  "model_calls": 0
+}

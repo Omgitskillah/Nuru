@@ -8,6 +8,11 @@ The user authorized a separate Qwen-only local evaluation; see
 [protocol and findings](qwen-steward-2026-10-09.md). Other live runs still require
 authorization. The original WP02-only results below are unchanged.
 
+The subsequent [validation vaults and results](validation-vaults-2026-10-09.md)
+cover a new 35-note fixture, the isolated DummyVault copy, passing Nomic v2 index
+checks, and failed Qwen advisory quality controls. Oracles/results stay outside
+the locally materialized vaults; neither the source vault nor its index is changed.
+
 WP02 is a model-free link-audit implementation.
 [Results and limitations](wp02-link-integrity-2026-10-07.md) record the first offline validation. The reproducible fixture manifest
 and oracle are [wp02_fixture.json](wp02_fixture.json); the harness is

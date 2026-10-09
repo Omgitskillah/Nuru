@@ -20,6 +20,7 @@ from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontMetrics,
     QIcon,
     QKeyEvent,
     QPainter,
@@ -56,8 +57,8 @@ from PyQt6.QtWidgets import (
 
 from core import questions
 from core.questions import MULTI, YES_NO, Question
-from core.reply_markdown import Code, Prose, Reply, format_tool_call, split_fences
-from core.session import Ask, Event, RetryWithoutThinking, Session, Thinking, ToolCall
+from core.reply_markdown import Code, Prose, Reply, format_tool_call, qt_safe, split_fences
+from core.session import Ask, Event, RetryWithoutThinking, Session, Thinking, ThinkingChunk, ToolCall
 
 # Monochrome palette taken from the lantern logo: its ink color (#242021), plus tints of it on white
 INK = "#242021"
@@ -384,7 +385,7 @@ class MarkdownView(QTextBrowser):
         if part.text == self.content:
             return
         self.content = part.text
-        self.setMarkdown(part.text)
+        self.setMarkdown(qt_safe(part.text))
         style_document(self.document())
 
 
@@ -632,12 +633,16 @@ class ReplyHeader(QFrame):
     """The card above a reply: what Nuru is doing, with its working folded under it - the tool
     calls it made, kept together at the top, and what it reasoned below them.
 
-    It stays open while the reply streams, so the working can be watched as it happens, and shuts
-    itself once the reply lands, leaving one line that says what was done. A reply with no working
-    behind it has nothing to fold away, so the card goes with it.
+    While the reply streams, the working shows through a window TICKER_LINES lines tall that
+    follows whatever changed last - the reasoning as it grows, or a call as it's made - so it can be
+    watched without pushing the reply down. Once the reply lands it shuts, leaving one line that says
+    what was done; opened again, it shows all of the working. A reply with no working behind it has
+    nothing to fold away, so the card goes with it.
     """
 
     OPEN, SHUT = "▾", "▸"  # the chevron on the line, pointing down while the working is showing
+    LIVE_MS = 30
+    TICKER_LINES = 2
 
     def __init__(self) -> None:
         super().__init__()
@@ -647,6 +652,16 @@ class ReplyHeader(QFrame):
         self.rows: list[QLabel] = []  # the calls, then the reasoning; each group in its own order
         self.tools = 0  # how many of those rows are tool calls, and so where the reasoning starts
         self.retried = False  # a silent call was asked again with thinking off
+        self.finished = False  # the reply has landed: opened again, the working shows in full
+        self.recent: QLabel | None = None  # the row that changed last, which the ticker follows
+        # The reasoning streaming in now: its row, and the text so far. Redrawn at most every
+        # LIVE_MS, since the pieces come a few characters at a time.
+        self.live: QLabel | None = None
+        self.live_text = ""
+        self.live_timer = QTimer(self)
+        self.live_timer.setSingleShot(True)
+        self.live_timer.setInterval(self.LIVE_MS)
+        self.live_timer.timeout.connect(self.draw_live)
 
         self.toggle = QPushButton()
         self.toggle.setObjectName("replyToggle")
@@ -658,11 +673,27 @@ class ReplyHeader(QFrame):
         self.rows_column.setContentsMargins(16, 0, 0, 2)
         self.rows_column.setSpacing(4)
 
+        # The rows scroll inside this; it's TICKER_LINES tall while the reply streams.
+        self.working = QScrollArea()
+        self.working.setWidget(self.rows_box)
+        self.working.setWidgetResizable(True)
+        self.working.setFrameShape(QFrame.Shape.NoFrame)
+        self.working.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.working.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.working.viewport().setAutoFillBackground(False)
+        self.rows_box.setAutoFillBackground(False)
+        # Follow once the layout has caught up with a change: a new row's place isn't known before.
+        self.follow_timer = QTimer(self)
+        self.follow_timer.setSingleShot(True)
+        self.follow_timer.setInterval(0)
+        self.follow_timer.timeout.connect(self.follow)
+        self.working.verticalScrollBar().rangeChanged.connect(lambda *_: self.follow_timer.start())
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 10, 24, 10)
         layout.setSpacing(8)
         layout.addWidget(self.toggle)
-        layout.addWidget(self.rows_box)
+        layout.addWidget(self.working)
         self.draw()
 
     def add_call(self, call: ToolCall) -> None:
@@ -671,8 +702,29 @@ class ReplyHeader(QFrame):
         self.add_row(f"tool: {format_tool_call(call.name, call.arguments)}", wrap=False, at=self.tools)
         self.tools += 1
 
+    def add_thinking_chunk(self, chunk: ThinkingChunk) -> None:
+        """Reasoning as it streams: one row that grows until its call's Thinking settles it."""
+        if self.live is None:
+            self.live_text = ""
+            self.add_row("thinking: ", wrap=True, at=len(self.rows))
+            self.live = self.rows[-1]
+        self.live_text += chunk.text
+        if not self.live_timer.isActive():
+            self.live_timer.start()
+
+    def draw_live(self) -> None:
+        if self.live is not None:
+            self.live.setText(f"thinking: {self.live_text}")
+            self.changed(self.live)
+
     def add_thinking(self, thinking: Thinking) -> None:
         # Reasoning is prose and runs long, so it wraps rather than being cut off like a call
+        if self.live is not None:  # it streamed in: the whole replaces the pieces, in the same row
+            self.live_timer.stop()
+            self.live.setText(f"thinking: {thinking.text}")
+            self.changed(self.live)
+            self.live = None
+            return
         self.add_row(f"thinking: {thinking.text}", wrap=True, at=len(self.rows))
 
     def add_retry(self, _retry: RetryWithoutThinking) -> None:
@@ -691,7 +743,31 @@ class ReplyHeader(QFrame):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.rows.insert(at, label)
         self.rows_column.insertWidget(at, label)
+        self.changed(label)
         self.draw()
+
+    def changed(self, row: QLabel) -> None:
+        self.recent = row
+        self.follow_timer.start()
+
+    def follow(self) -> None:
+        """While the reply streams: scroll so the ticker shows the end of the row that changed last."""
+        if self.finished or self.recent is None:
+            return
+        self.draw()  # the content's height may have changed, and the ticker never shows more than there is
+        bar = self.working.verticalScrollBar()
+        bar.setValue(max(0, min(bar.maximum(), self.recent.geometry().bottom() + 1 - self.working.viewport().height())))
+
+    def content_height(self) -> int:
+        """The rows' height at the current width. Only wrapped reasoning depends on the width; with
+        none, the layout reports no height-for-width (-1) and its plain size hint is the height."""
+        width = self.working.viewport().width()
+        height = self.rows_column.totalHeightForWidth(width) if width > 0 else -1
+        return height if height >= 0 else self.rows_box.sizeHint().height()
+
+    def ticker_height(self) -> int:
+        lines = QFontMetrics(font(13, MONO, QFont.StyleHint.Monospace)).lineSpacing() * self.TICKER_LINES
+        return lines + self.rows_column.contentsMargins().bottom()
 
     def flip(self) -> None:
         self.expanded = not self.expanded
@@ -699,6 +775,11 @@ class ReplyHeader(QFrame):
 
     def finish(self) -> None:
         """The reply has landed: say what was done, in the past, and fold it away."""
+        if self.live is not None:  # stopped mid-reasoning: no Thinking came to settle it
+            self.live_timer.stop()
+            self.draw_live()
+            self.live = None
+        self.finished = True
         if self.tools:
             self.status = f"Used {self.tools} tool" + ("" if self.tools == 1 else "s")
         else:
@@ -716,7 +797,13 @@ class ReplyHeader(QFrame):
         chevron = f"{self.OPEN if self.expanded else self.SHUT}  " if self.rows else ""
         self.toggle.setText(chevron + self.status)
         self.toggle.setCursor(Qt.CursorShape.PointingHandCursor if self.rows else Qt.CursorShape.ArrowCursor)
-        self.rows_box.setVisible(self.expanded and bool(self.rows))
+        self.working.setVisible(self.expanded and bool(self.rows))
+        full = self.content_height()
+        self.working.setFixedHeight(full if self.finished else min(full, self.ticker_height()))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.draw()  # a new width rewraps the reasoning, and so changes its height
 
 
 class AssistantMessage(QWidget):
@@ -1093,6 +1180,8 @@ class ChatWindow(QWidget):
             self.message.header.add_call(event)
         elif isinstance(event, Thinking):
             self.message.header.add_thinking(event)
+        elif isinstance(event, ThinkingChunk):
+            self.message.header.add_thinking_chunk(event)
         elif isinstance(event, RetryWithoutThinking):
             self.message.header.add_retry(event)
         self.reply.add(event)

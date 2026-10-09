@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from core import questions
 from core.conversation_store import ConversationStore
 from core.questions import MULTI, NO, YES, YES_NO, Question
-from core.session import Ask, Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall
+from core.session import Ask, Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ThinkingChunk, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -25,22 +25,30 @@ Anything else you type is sent to the model as a prompt (this also loads the mod
 
 
 def print_turn(events: Iterator[Event]) -> Question | None:
-    """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply, `[thinking] ` for
-    what the model reasoned, `[tool] ` for tool calls, and `[retry] ` where a silent call is being
-    asked again with thinking off - everything printed after that line comes from the second call.
-    Returns the question the turn ended on, if the model asked one; answer() puts it to you."""
-    mid_line = False  # reply text is on screen and its line isn't finished yet
+    """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply, `[thinking] ` ahead
+    of what the model reasons as it reasons it, `[tool] ` for tool calls, and `[retry] ` where a
+    silent call is being asked again with thinking off - everything printed after that line comes
+    from the second call. Returns the question the turn ended on, if the model asked one; answer()
+    puts it to you."""
+    streaming = None  # "reply" or "thinking": text of that kind is on screen and its line isn't finished
     asked = None
     for event in events:
-        if isinstance(event, Text):
-            if not mid_line:
-                print("[nuru] ", end="", flush=True)
-                mid_line = True
+        if isinstance(event, Text | ThinkingChunk):
+            kind = "reply" if isinstance(event, Text) else "thinking"
+            if streaming != kind:
+                if streaming:
+                    print()
+                print("[nuru] " if kind == "reply" else "[thinking] ", end="", flush=True)
+                streaming = kind
             print(event.text, end="", flush=True)
             continue
-        if mid_line:
+        if isinstance(event, Thinking) and streaming == "thinking":
+            print()  # its pieces are already on screen: the whole only ends the line
+            streaming = None
+            continue
+        if streaming:
             print()
-            mid_line = False
+            streaming = None
         if isinstance(event, ToolCall):
             print(f"[tool] {event.name}({event.arguments})")
         elif isinstance(event, Thinking):
@@ -53,7 +61,7 @@ def print_turn(events: Iterator[Event]) -> Question | None:
             asked = event.question
         else:
             print(f"[error] {event.message}")
-    if mid_line:
+    if streaming:
         print()
     return asked
 

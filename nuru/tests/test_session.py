@@ -9,7 +9,7 @@ from core import session
 from core.conversation_store import ConversationStore
 from core.model_profile import ModelProfile
 from core.providers.mcp_tools import ToolResult
-from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ToolCall
+from core.session import Failure, RetryWithoutThinking, Session, Text, Thinking, ThinkingChunk, ToolCall
 
 
 @pytest.fixture(autouse=True)
@@ -359,6 +359,23 @@ def test_ask_shows_the_thinking_alongside_a_reply_the_model_did_write(monkeypatc
     )
 
     assert list(s.ask("what is 2+2?")) == [Text("4"), Thinking("2+2")]
+
+
+def test_ask_streams_the_reasoning_as_it_comes_then_gives_the_whole(monkeypatch):
+    responses = iter([
+        [{"thinking_chunk": "I should "}, {"thinking_chunk": "look this up"}, {"thinking": "I should look this up"},
+         {"tool_calls": [tool_call("get_temperature", {"city": "Berlin"})]}, {"prompt_tokens": 1, "completion_tokens": 1}],
+        ["It's 17C", {"prompt_tokens": 2, "completion_tokens": 2}],
+    ])
+    s = start_session(monkeypatch, chat=lambda *a, **k: next(responses),
+                      tools=FakeMCPTools(tool_results={"get_temperature": "17C"}))
+
+    events = list(s.ask("what's the weather in Berlin?"))
+
+    assert events == [
+        ThinkingChunk("I should "), ThinkingChunk("look this up"), Thinking("I should look this up"),
+        ToolCall("get_temperature", {"city": "Berlin"}), Text("It's 17C"),
+    ]
 
 
 def test_ask_shows_the_thinking_that_comes_with_a_tool_call(monkeypatch):

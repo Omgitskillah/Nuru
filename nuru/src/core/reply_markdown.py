@@ -6,7 +6,7 @@ Kept free of Qt so it can be tested without a display.
 import re
 from dataclasses import dataclass
 
-from core.session import Ask, Event, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Event, RetryWithoutThinking, Text, Thinking, ThinkingChunk, ToolCall
 
 # A thematic break. The blank lines around it matter: directly under a line of text, `---`
 # would turn that line into a heading instead.
@@ -16,6 +16,23 @@ BREAK = "\n\n---\n\n"
 TOOL_CALL_LIMIT = 80
 
 FENCE = re.compile(r"^```(\w*)[ \t]*\n(.*?)(?:^```[ \t]*$|\Z)", re.S | re.M)
+
+
+# Qt's markdown parser (6.11) loses everything after an unclosed <br>, and in a table that is every
+# cell and row after it: models put <br> in table cells, and a 7-row audit table drew 378 of its
+# 4,882 characters (2026-10-09). The self-closed <br/> it handles, as a line break, tables included.
+_BR = re.compile(r"<br\s*>", re.IGNORECASE)
+_CODE_SPAN = re.compile(r"(`+)(?:.*?)\1", re.S)
+
+
+def qt_safe(text: str) -> str:
+    """`text` with each <br> written <br/> for Qt's parser, except in inline code, where it is the
+    model's literal text."""
+    out, last = [], 0
+    for span in _CODE_SPAN.finditer(text):
+        out += [_BR.sub("<br/>", text[last:span.start()]), span.group(0)]
+        last = span.end()
+    return "".join(out) + _BR.sub("<br/>", text[last:])
 
 
 def escape_md(text: str) -> str:
@@ -50,7 +67,7 @@ class Reply:
             else:
                 self._pieces.append(event.text)
                 self._growing = True
-        elif isinstance(event, ToolCall | Thinking | RetryWithoutThinking | Ask):
+        elif isinstance(event, ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Ask):
             # A call, the reasoning behind it and the note that a silent call is being retried are
             # shown above the reply, not in it; a question has its own card under it. Ending the piece
             # here still sets what the model said before them apart from what it says after.

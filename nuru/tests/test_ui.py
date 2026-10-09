@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QPushButton
 
 from core import questions, ui
 from core.reply_markdown import BREAK, Code, Prose
-from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ThinkingChunk, ToolCall
 
 
 @pytest.fixture(scope="session")
@@ -1156,3 +1156,106 @@ def test_a_question_raised_mid_turn_that_runs_out_of_time_has_no_answer(started)
     assert got == [None]
     assert window.message.findChild(ui.QuestionCard).note.text() == "No answer in 1 s - taken as No."
     assert bubble_text(window) == "Saving it. Done."
+
+
+def test_reasoning_streams_into_one_row_that_the_whole_then_settles(qapp):
+    header = ui.ReplyHeader()
+    header.add_call(ToolCall("search", {"query": "x"}))
+    header.add_thinking_chunk(ThinkingChunk("the vault "))
+    header.add_thinking_chunk(ThinkingChunk("should"))
+    wait_until(lambda: header.rows[-1].text() == "thinking: the vault should")
+
+    header.add_thinking(Thinking("the vault should have it"))
+
+    assert [row.text() for row in header.rows] == ["tool: search({'query': 'x'})", "thinking: the vault should have it"]
+    header.add_thinking_chunk(ThinkingChunk("next call"))  # a later call's reasoning gets its own row
+    assert len(header.rows) == 3
+
+
+def test_reasoning_cut_off_by_stop_keeps_what_had_streamed(qapp):
+    header = ui.ReplyHeader()
+    header.add_thinking_chunk(ThinkingChunk("half a tho"))
+    header.finish()
+    assert [row.text() for row in header.rows] == ["thinking: half a tho"]
+
+
+def test_streamed_reasoning_shows_in_the_window_while_the_turn_runs(started):
+    release = threading.Event()
+
+    def thinks_then_waits(cancel):
+        yield ThinkingChunk("checking the notes")
+        release.wait(5)
+        yield Thinking("checking the notes")
+        yield Text("Done.")
+
+    window, _ = started(thinks_then_waits)
+    type_and_send(window, "go")
+    header = window.message.header
+    wait_until(lambda: header.rows and header.rows[-1].text() == "thinking: checking the notes")
+    release.set()
+    finish(window)
+    assert [row.text() for row in header.rows] == ["thinking: checking the notes"]
+    assert bubble_text(window) == "Done."
+
+
+def test_a_table_with_br_in_its_cells_keeps_every_row(qapp):
+    # Qt dropped everything after an unclosed <br> in a cell: a 7-row audit table drew one row.
+    view = ui.MarkdownView()
+    view.set_content(Prose("| # | Finding |\n|---|---|\n| 1 | first<br>second |\n| 2 | `code` and more |\n| 3 | last row |\n"))
+    text = view.toPlainText()
+    for kept in ("first", "second", "code and more", "last row"):
+        assert kept in text
+
+
+@pytest.fixture
+def shown_header(qapp):
+    header = ui.ReplyHeader()
+    header.resize(500, 200)
+    header.show()
+    yield header
+    header.close()
+
+
+def settle_header(header):
+    for _ in range(5):
+        QApplication.processEvents()
+
+
+def test_while_streaming_the_working_shows_two_lines_and_follows_the_newest(shown_header):
+    header = shown_header
+    header.add_call(ToolCall("search", {"query": "x"}))
+    header.add_thinking_chunk(ThinkingChunk("reasoning that runs on " * 40))
+    header.draw_live()
+    settle_header(header)
+
+    assert header.working.height() == header.ticker_height() < header.content_height()
+    bar = header.working.verticalScrollBar()
+    reasoning = header.rows[-1]
+    assert bar.value() > 0  # scrolled: the end of the reasoning is in view, not its start
+    assert bar.value() + header.working.viewport().height() >= reasoning.geometry().bottom()
+
+    header.add_call(ToolCall("read_note", {"name": "a"}))  # a call goes in above the reasoning
+    settle_header(header)
+    call = header.rows[1]
+    viewport = header.working.viewport().height()
+    assert bar.value() <= call.geometry().bottom() <= bar.value() + viewport  # and the ticker shows it
+
+
+def test_a_single_line_of_working_is_not_padded_to_two(shown_header):
+    shown_header.add_call(ToolCall("search", {"query": "x"}))
+    settle_header(shown_header)
+    assert shown_header.working.height() == shown_header.content_height() < shown_header.ticker_height()
+
+
+def test_once_the_reply_lands_the_working_folds_and_opens_again_in_full(shown_header):
+    header = shown_header
+    header.add_thinking_chunk(ThinkingChunk("reasoning that runs on " * 40))
+    header.draw_live()
+    settle_header(header)
+    header.finish()
+    assert not header.working.isVisibleTo(header)
+
+    header.toggle.click()
+    settle_header(header)
+    assert header.working.isVisibleTo(header)
+    assert header.working.height() == header.content_height() > header.ticker_height()

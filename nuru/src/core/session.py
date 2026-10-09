@@ -372,7 +372,17 @@ class ToolCall:
 @dataclass(frozen=True)
 class Thinking:
     """What the model reasoned on its way to a reply or a tool call. One per model call, and it
-    arrives once that call is done, so it follows the reply text it was reasoning towards."""
+    arrives once that call is done, so it follows the reply text it was reasoning towards. In
+    ask(), ThinkingChunk events have streamed the same text as it came."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ThinkingChunk:
+    """A piece of the model's reasoning, as it streams in. The Thinking event that ends the call
+    carries the whole of it again: a viewer that showed the pieces settles them with that rather
+    than showing the reasoning twice, and one that only wants the whole can ignore these."""
 
     text: str
 
@@ -406,7 +416,7 @@ class Ask:
     question: Question
 
 
-Event = Text | ToolCall | Thinking | RetryWithoutThinking | Steered | Failure | Ask
+Event = Text | ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Steered | Failure | Ask
 
 
 class Session:
@@ -739,6 +749,7 @@ class Session:
                         return
                     if isinstance(out, dict):
                         if "thinking_chunk" in out:
+                            yield ThinkingChunk(out["thinking_chunk"])
                             if watch and (signal := watch.feed(out["thinking_chunk"])):
                                 if signal.source == "code":
                                     self.shadow.watch_signal(signal.kind, signal.tokens, signal.detail)

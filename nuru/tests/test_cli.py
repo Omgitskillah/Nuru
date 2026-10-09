@@ -4,7 +4,7 @@ import pytest
 
 from core import cli, questions
 from core.conversation_store import ConversationStore
-from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ThinkingChunk, ToolCall
 
 
 class FakeSession:
@@ -411,3 +411,18 @@ def test_write_reconciliation_command_does_not_send_a_model_prompt(fake_session,
     cli.main()
     assert not s.asked and not s.store.pending_writes('scratch')
     assert 'No write was executed.' in capsys.readouterr().out
+
+
+def test_main_streams_the_reasoning_on_one_line_and_does_not_repeat_it(monkeypatch, capsys, fake_session):
+    fake_session(turns=[[ThinkingChunk("the vault "), ThinkingChunk("should have it"), Thinking("the vault should have it"),
+                         ToolCall("search", {"query": "x"}), ThinkingChunk("found"), Text("Found it.")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["find x"]))
+
+    cli.main()
+
+    assert (
+        "[thinking] the vault should have it\n"
+        "[tool] search({'query': 'x'})\n"
+        "[thinking] found\n"
+        "[nuru] Found it.\n"
+    ) in capsys.readouterr().out

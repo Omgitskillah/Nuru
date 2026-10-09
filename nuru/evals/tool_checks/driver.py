@@ -75,6 +75,8 @@ try:
             reply.append(ev.text)
         elif isinstance(ev, S.Thinking):
             thinking.append(ev.text)
+        elif isinstance(ev, S.ThinkingChunk):
+            continue  # the whole arrives as Thinking
         elif isinstance(ev, S.ToolCall):
             events.append({"tool_call": ev.name})
         else:

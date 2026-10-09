@@ -1,3 +1,5 @@
+import pytest
+
 from core.reply_markdown import (
     BREAK,
     TOOL_CALL_LIMIT,
@@ -6,10 +8,11 @@ from core.reply_markdown import (
     Reply,
     escape_md,
     format_tool_call,
+    qt_safe,
     split_fences,
 )
 from core import questions
-from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ThinkingChunk, ToolCall
 
 
 def reply_of(*events):
@@ -197,3 +200,21 @@ def test_a_question_leaves_the_reply_alone_for_its_card_to_show():
     reply.add(Text("The notes disagree."))
     reply.add(Ask(questions.yes_no("Use the revised one?")))
     assert reply.markdown == "The notes disagree."
+
+
+def test_streamed_reasoning_leaves_the_reply_alone_like_the_whole_does():
+    reply = Reply()
+    reply.add(ThinkingChunk("hmm"))
+    reply.add(Text("Answer."))
+    assert reply.markdown == "Answer."
+
+
+@pytest.mark.parametrize("text, safe", [
+    ("| x<br>y | z |", "| x<br/>y | z |"),
+    ("a<BR >b<br/>c<br />d", "a<br/>b<br/>c<br />d"),
+    ("keep `x<br>y` literal, fix this<br>one", "keep `x<br>y` literal, fix this<br/>one"),
+    ("``code with ` and <br>`` then<br>", "``code with ` and <br>`` then<br/>"),
+    ("no breaks here", "no breaks here"),
+])
+def test_qt_safe_closes_br_tags_outside_inline_code(text, safe):
+    assert qt_safe(text) == safe

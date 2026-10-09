@@ -63,7 +63,7 @@ full-rebuild state equivalence, stale review/interpretation, and fake budget gua
 
 ## Timing protocol
 
-[Raw results](steward-results-2026-10-08.json) record all five repeats, commits,
+[Raw results](steward-results-2026-10-08.json.gz) record all five repeats, commits,
 source hashes, fixture hash, platform/Python, and peak process RSS. Reference
 machine: Apple M4, 16 GiB RAM. The scale lane runs properties, links, tasks,
 duplicates, and graph; it does not time all feature-specific schemas/assets or

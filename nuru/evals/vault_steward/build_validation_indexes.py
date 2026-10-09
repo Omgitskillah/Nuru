@@ -1,4 +1,5 @@
 """Build dedicated local indexes; never adopt or overwrite an existing database."""
+from core.eval_artifacts import write_json
 import argparse
 import json
 from pathlib import Path
@@ -38,7 +39,7 @@ def main(root, output):
         result['indexes'].append({'vault':name,'environment':env,'embedded_notes':len(refreshed.embedded),
                                   'requests':len(calls),'wall_ms':(time.perf_counter()-start)*1000,
                                   'status':status,'source_unchanged':True,'no_change_zero_calls':True})
-    output.write_text(json.dumps(result,indent=2)+'\n')
+    write_json(output, result)
     (directory/'configuration.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps({r['vault']:{'notes':r['embedded_notes'],'requests':r['requests']} for r in result['indexes']}))
 

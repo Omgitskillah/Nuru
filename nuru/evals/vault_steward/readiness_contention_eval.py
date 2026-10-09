@@ -3,6 +3,7 @@
 Five matched query lanes with Nomic v2 background indexing off/on. p95 gate <=10%.
 This tests retrieval latency, not a complete Nuru answer or real-vault UX.
 """
+from core.eval_artifacts import write_json
 import argparse
 from dataclasses import replace
 import hashlib
@@ -42,7 +43,7 @@ def main(output,repeats):
             'workload':{'query_count_per_mode':20,'backlog_notes':32,'chunk_chars':400,'batch_chunks':2,
                         'query_top_k':5,'gate_max_p95_increase':.10,'order':'off then on; warm cache and sequential-order bias disclosed'},
             'queries':QUERIES,'runs':[]}
-    output.write_text(json.dumps(report,indent=2)+'\n')
+    write_json(output, report)
     for repeat in range(repeats):
         with tempfile.TemporaryDirectory(prefix='nuru-contention-') as temporary:
             vault=Path(temporary).resolve()/'vault';vault.mkdir()
@@ -111,14 +112,14 @@ def main(output,repeats):
             row['p95_ratio']=row['modes']['on']['p95_ms']/row['modes']['off']['p95_ms']
             row['gate_pass']=row['p95_ratio']<=1.10 and row['modes']['on']['overlapped_queries']>0
             row['topic_bytes_unchanged']=all(source[f'topic-{i}.md']==hashlib.sha256((vault/f'topic-{i}.md').read_bytes()).hexdigest() for i in range(4))
-            output.write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({'repeat':repeat+1,'ratio':row['p95_ratio'],'gate':row['gate_pass']}),flush=True)
+            write_json(output, report);print(json.dumps({'repeat':repeat+1,'ratio':row['p95_ratio'],'gate':row['gate_pass']}),flush=True)
     ratios=[r['p95_ratio'] for r in report['runs']]
     report['summary']={'gate_pass':all(r['gate_pass'] for r in report['runs']),
         'median_p95_ratio':statistics.median(ratios),'min_p95_ratio':min(ratios),'max_p95_ratio':max(ratios),
         'source_topic_bytes_unchanged':all(r['topic_bytes_unchanged'] for r in report['runs']),
         'worker_stop_and_recovery_pass':all(not r['modes']['on']['worker_alive_after_stop'] and not r['modes']['on']['worker_error'] and r['modes']['on']['no_change_zero_calls'] and r['modes']['on']['resumed_pending_count']==0 for r in report['runs']),
         'scope':'Retrieval stage only; no full-turn latency or personal-vault acceptance claim.'}
-    output.write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report['summary']),flush=True)
+    write_json(output, report);print(json.dumps(report['summary']),flush=True)
 
 
 if __name__=='__main__':

@@ -92,10 +92,12 @@ def test_active_thread_restart_reconciles_persisted_queue(vault):
     worker._stop.set()  # Request stop while inference is active, then release it.
     release.set();worker.stop()
     assert not worker._thread.is_alive()
-    assert worker.status['pending'] == ['b.md']
+    with semantic.connect(worker.config) as conn:
+        assert semantic.maintenance_status(conn, worker.config)['pending'] == ['b.md']
     resumed=indexer_for(vault)
     assert resumed.run_once().embedded == ['b.md']
-    assert resumed.status['pending'] == []
+    with semantic.connect(worker.config) as conn:
+        assert semantic.maintenance_status(conn, worker.config)['pending'] == []
 
 
 def test_real_lock_is_observable_in_worker_and_recovers(vault):

@@ -1,0 +1,10 @@
+{
+  "source_bytes_unchanged": true,
+  "pass": true,
+  "raw_evidence": {
+    "file": "readiness-local-results-2026-10-09.json.gz",
+    "sha256": "434c90652ca0e8dbbf40e8a5b55f5f5b9ad2aed2d5d61c756627e710d38712fc",
+    "bytes": 821,
+    "compressed_bytes": 306
+  }
+}

@@ -29,7 +29,7 @@ changes: five sequences on each test vault, all ten passing; 20/20 new-vault and
 25/25 benchmark expected notes ranked first. No-change passes made zero embedding
 requests, incremental/rebuilt vectors matched with maximum error 0.0, and source
 vault bytes stayed unchanged. Model, parser and harness hashes are in
-[readiness-nomic-results-2026-10-09.json](readiness-nomic-results-2026-10-09.json).
+[readiness-nomic-results-2026-10-09.json.gz](readiness-nomic-results-2026-10-09.json.gz).
 Earlier acceptance is historical, not pooled with the new backend revision.
 
 The benchmark-copy lane requires `../DummyVault` (or the prepared authorized copy).
@@ -76,4 +76,4 @@ fails the declared gate. Do not generalize the ratio to all workloads.
 .venv/bin/python nuru/evals/vault_steward/readiness_contention_eval.py --repeats 5 --output /tmp/readiness-contention.json
 ```
 
-Raw results: [readiness-contention-results-2026-10-09.json](readiness-contention-results-2026-10-09.json).
+Raw results: [readiness-contention-results-2026-10-09.json.gz](readiness-contention-results-2026-10-09.json.gz).

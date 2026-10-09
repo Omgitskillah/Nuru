@@ -1,4 +1,5 @@
 """Approved Nomic v2-only live index acceptance on isolated copies of both vaults."""
+from core.eval_artifacts import write_json
 import argparse
 from dataclasses import replace
 import hashlib
@@ -128,7 +129,7 @@ def evaluate(source, queries, repeats, revision, output, report):
             except Exception as exc:
                 sample['pass'] = False
                 sample['error'] = f'{type(exc).__name__}: {exc}'
-            output.write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n')
+            write_json(output, report)
             print(json.dumps({'vault': source.name, 'repeat': repeat+1, 'pass': sample['pass'],
                               'requests': len(sample['embedding_requests']), 'error': sample.get('error')}), flush=True)
             if not sample['pass']:
@@ -159,6 +160,6 @@ if __name__ == '__main__':
     evaluate(root / 'VaultStewardValidation', ORACLE['retrieval'], args.repeats, tag['digest'], args.output, report)
     if report['lanes'][0]['summary']['pass']:
         evaluate(root / 'DummyVaultValidation', BENCHMARK_QUERIES, args.repeats, tag['digest'], args.output, report)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n')
+    write_json(args.output, report)
     print(json.dumps({r['vault']: r['summary'] for r in report['lanes']}))
     raise SystemExit(0 if len(report['lanes']) == 2 and all(r['summary']['pass'] for r in report['lanes']) else 1)

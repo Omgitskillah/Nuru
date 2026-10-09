@@ -1,0 +1,68 @@
+[
+  {
+    "file": "nomic-validation-results-2026-10-09.json.gz",
+    "sha256": "a3460f2e89ebfffc06201bf34c1fb1367a730052d0663d14e87f12805da08a5f",
+    "bytes": 405198,
+    "compressed_bytes": 78504
+  },
+  {
+    "file": "qwen-steward-results-2026-10-09.json.gz",
+    "sha256": "dd71297fd1d2cbecf98fd9da3a6ccb432228343ca5059d3e5ac0167a85591bd8",
+    "bytes": 147101,
+    "compressed_bytes": 8095
+  },
+  {
+    "file": "qwen-vault-results-2026-10-09.json.gz",
+    "sha256": "6e16e08339777c4c2f3803381156de124b7ae0a2ebf3274e92ae9ddfadb3249c",
+    "bytes": 190231,
+    "compressed_bytes": 27680
+  },
+  {
+    "file": "readiness-advisory-results-2026-10-09.json.gz",
+    "sha256": "bdf98d07443392b5478304db3d0e99f32a6721a2fd0511347aea8d5329ef7f8e",
+    "bytes": 892248,
+    "compressed_bytes": 100422
+  },
+  {
+    "file": "readiness-contention-results-2026-10-09.json.gz",
+    "sha256": "58e5faa7ac937c41ac887aa88cf1d83bed531748e8336a257261b49d8ef60daf",
+    "bytes": 47068,
+    "compressed_bytes": 7289
+  },
+  {
+    "file": "readiness-local-results-2026-10-09.json.gz",
+    "sha256": "434c90652ca0e8dbbf40e8a5b55f5f5b9ad2aed2d5d61c756627e710d38712fc",
+    "bytes": 821,
+    "compressed_bytes": 306
+  },
+  {
+    "file": "readiness-nomic-results-2026-10-09.json.gz",
+    "sha256": "9a16aa1650b409f9d6d189d80e2be7da21306566901822549ac8e0259dda108b",
+    "bytes": 405270,
+    "compressed_bytes": 78584
+  },
+  {
+    "file": "readiness-replay-results-2026-10-09.json.gz",
+    "sha256": "2768b7dad7c84fe386fb3e44f003514efdd55cba6f683202958ccecdfd9f3750",
+    "bytes": 20195,
+    "compressed_bytes": 699
+  },
+  {
+    "file": "steward-results-2026-10-08.json.gz",
+    "sha256": "2bf42452bb02e26f07a0ac1b67b474b4e6c2a11d4dec48ba495d185d6d9fae73",
+    "bytes": 4871,
+    "compressed_bytes": 1730
+  },
+  {
+    "file": "validation-scan-results-2026-10-09.json.gz",
+    "sha256": "dc7ddedb9a76d1b36dba2fa63ea9c7bda685acadf97c702817e808e42b4f98db",
+    "bytes": 129256,
+    "compressed_bytes": 15706
+  },
+  {
+    "file": "wp02-results-2026-10-07.json.gz",
+    "sha256": "7bcf3c24a3df1be5bb575f54b9a84d58b88f050600a84a4ac959dc8382a73340",
+    "bytes": 4313,
+    "compressed_bytes": 1654
+  }
+]

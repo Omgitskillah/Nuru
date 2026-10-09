@@ -2,7 +2,7 @@
 members = ["servers/obsidian", "servers/deep-think", "servers/laya", "nuru"]
 
 [tool.pytest.ini_options]
-testpaths = ["nuru/tests", "servers/deep-think/tests", "servers/laya/tests"]
+testpaths = ["nuru/tests", "servers/deep-think/tests", "servers/laya/tests", "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
 
 [dependency-groups]
 dev = [

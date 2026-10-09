@@ -1,4 +1,5 @@
 """Create new local vaults without overwriting files or copying runtime indexes."""
+from core.eval_artifacts import write_json
 import argparse
 import hashlib
 import json
@@ -44,7 +45,7 @@ def main(source, target_root, output):
                 'copy': str(copy), 'copy_hashes': copied, 'skipped': skipped,
                 'fixture': str(fixture), 'fixture_hashes': hashes(fixture), 'config': CONFIG, 'oracle': ORACLE,
                 'grading_scope': 'supplemental first-use fixture; not independently human-labeled held-out acceptance'}
-    output.write_text(json.dumps(artifact, ensure_ascii=False, indent=2) + '\n')
+    write_json(output, artifact)
     print(json.dumps({'fixture_notes': len(FILES), 'fixture_assets': len(ASSETS), 'copied_files': len(copied), 'source_unchanged': True}))
 
 

@@ -1,4 +1,5 @@
 """Grade the explicit fixture and inventory the benchmark copy without invented labels."""
+from core.eval_artifacts import write_json
 import argparse
 import json
 from pathlib import Path
@@ -40,7 +41,7 @@ def main(root, output):
               'benchmark_copy': {'grading': 'UNLABELED coverage scan; findings are not measured true defects',
                                  'config': copy_config, 'report': inventory, 'unchanged': copy_before == hashes(copy)},
               'model_calls': 0}
-    output.write_text(json.dumps(result, indent=2, ensure_ascii=False)+'\n')
+    write_json(output, result)
     print(json.dumps({'fixture': finding_grade, 'checks': checks, 'benchmark_findings': inventory['finding_count'],
                       'benchmark_complete': inventory['complete']}))
     raise SystemExit(0 if result['fixture']['pass'] and result['benchmark_copy']['unchanged'] else 1)

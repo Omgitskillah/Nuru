@@ -1,0 +1,17 @@
+{
+  "model": "qwen3.5:4b",
+  "summary": {
+    "calls": 60,
+    "format_and_citation_passes": 50,
+    "decision_matches": 45,
+    "median_wall_ms": 3853.1615630490705,
+    "all_source_bytes_unchanged": true,
+    "human_semantic_review": "PENDING"
+  },
+  "raw_evidence": {
+    "file": "qwen-vault-results-2026-10-09.json.gz",
+    "sha256": "6e16e08339777c4c2f3803381156de124b7ae0a2ebf3274e92ae9ddfadb3249c",
+    "bytes": 190231,
+    "compressed_bytes": 27680
+  }
+}

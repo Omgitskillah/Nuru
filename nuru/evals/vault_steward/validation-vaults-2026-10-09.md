@@ -36,7 +36,7 @@ its measured model responses.
 
 ## Deterministic scan
 
-[Results](validation-scan-results-2026-10-09.json): 16 expected finding/review
+[Results](validation-scan-results-2026-10-09.json.gz): 16 expected finding/review
 occurrences matched exactly, with zero missing or extra occurrences. Exact-copy
 groups, asset hashes/duplicate bytes, graph edges, scoped claim classifications,
 the 17.50 EUR expected total, protected triage, no-change reconciliation and
@@ -56,7 +56,7 @@ and metadata, so they were not silently inferred for this coverage scan.
 ## Nomic v2 live index validation
 
 [Harness](nomic_index_eval.py) and
-[five-repeat results](nomic-validation-results-2026-10-09.json) use the production
+[five-repeat results](nomic-validation-results-2026-10-09.json.gz) use the production
 Ollama embedder and semantic index backend on temporary isolated copies. Paths
 are resolved before scanning, fixing the earlier invalid macOS harness setup.
 The live model is `nomic-embed-text-v2-moe:latest`, digest
@@ -101,7 +101,7 @@ citations. Preserve these as failures; no prompt changes are made between the
 smoke and repeated run. Human semantic labels and production efficacy remain
 pending.
 
-[Five-repeat raw results](qwen-vault-results-2026-10-09.json): **60 calls**,
+[Five-repeat raw results](qwen-vault-results-2026-10-09.json.gz): **60 calls**,
 **50/60** pass format/citation checking, **45/60** match the expected decision
 category. Median generation-request wall time is **3,853.162 ms**, maximum
 **7,478.151 ms**. Measured input/output tokens: **26,740 / 7,405**, with zero

@@ -1,0 +1,51 @@
+{
+  "model_calls": 0,
+  "notes": 2000,
+  "bytes_per_note_approx": 4200,
+  "rolling_cap": 100,
+  "passes": [
+    {
+      "repeat": 1,
+      "ms": 35.37,
+      "reads": 100,
+      "note_updates": 0,
+      "dml": 2,
+      "embedded": []
+    },
+    {
+      "repeat": 2,
+      "ms": 34.04,
+      "reads": 100,
+      "note_updates": 0,
+      "dml": 2,
+      "embedded": []
+    },
+    {
+      "repeat": 3,
+      "ms": 35.46,
+      "reads": 100,
+      "note_updates": 0,
+      "dml": 2,
+      "embedded": []
+    },
+    {
+      "repeat": 4,
+      "ms": 33.67,
+      "reads": 100,
+      "note_updates": 0,
+      "dml": 2,
+      "embedded": []
+    },
+    {
+      "repeat": 5,
+      "ms": 34.45,
+      "reads": 100,
+      "note_updates": 0,
+      "dml": 2,
+      "embedded": []
+    }
+  ],
+  "all_archived_hashes_match": true,
+  "compression_manifest_files": 11,
+  "semantic_sha256": "1cf84a4143df6ed3ebfddebac1c651f986a8e00ba4caeb4135636d491b1fe7ae"
+}

@@ -1,4 +1,5 @@
 """Independent explicit oracle and model-free scale timings for stewardship stages."""
+from core.eval_artifacts import write_json
 import argparse
 from collections import Counter
 import hashlib
@@ -105,7 +106,7 @@ def main():
               'timings': [timing(n, args.repeats) for n in sizes],
               'peak_rss_bytes': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if platform.system() == 'Darwin' else 1024),
               'live_models': 'NOT RUN', 'human_efficacy': 'NOT RUN'}
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    write_json(args.output, result)
     print(json.dumps({'accuracy': result['accuracy'], 'output': str(args.output)}, ensure_ascii=False))
     if not result['accuracy']['pass']:
         raise SystemExit(1)

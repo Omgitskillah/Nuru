@@ -1,4 +1,5 @@
 """Reconstruct tracked synthetic inputs; smoke real CLI/MCP without inference."""
+from core.eval_artifacts import write_json
 import argparse
 import asyncio
 import hashlib
@@ -41,7 +42,7 @@ def main(output):
                   'fixture_hash':hashlib.sha256(json.dumps([FILES,CONFIG,ORACLE],sort_keys=True).encode()).hexdigest(),
                   'external_vault_required':False,'model_calls':0}
         artifact['pass']=all(r['grade']['exact'] and r['complete'] and r['model_calls']==0 for r in reports.values()) and artifact['mcp_tool_registered'] and artifact['mcp_call_success'] and artifact['source_bytes_unchanged']
-        output.write_text(json.dumps(artifact,indent=2)+'\n');print(json.dumps(artifact))
+        write_json(output, artifact);print(json.dumps(artifact))
         raise SystemExit(0 if artifact['pass'] else 1)
 
 

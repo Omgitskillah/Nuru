@@ -49,7 +49,7 @@ or safe automatic actions.
 
 ## Results
 
-[Raw results](qwen-steward-results-2026-10-09.json) contain all 50 responses,
+[Raw results](qwen-steward-results-2026-10-09.json.gz) contain all 50 responses,
 usage, approved budgets, per-call timing, citations and source revisions. Ollama
 version: 0.35.1. Model digest:
 `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`.

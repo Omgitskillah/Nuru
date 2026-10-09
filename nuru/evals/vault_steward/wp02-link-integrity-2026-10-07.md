@@ -64,7 +64,7 @@ uv run --locked --package core nuru-vault-links /path/to/vault --watch --interva
 
 The evaluator always creates its own temporary vault; the last command is an
 explicit user-selected, read-only vault audit. [Usage](README.md),
-[fixture/oracle](wp02_fixture.json), and [raw results](wp02-results-2026-10-07.json).
+[fixture/oracle](wp02_fixture.json), and [raw results](wp02-results-2026-10-07.json.gz).
 The raw artifact records exact source hashes and dependency commit
 `96c7d62d36613a778be2923c6543d1bc1c226b92`. Nuru's base is the work-package branch at
 `6126307d997712aadd54e3aff5fd369c1c3c417e`; the accompanying implementation commit contains the

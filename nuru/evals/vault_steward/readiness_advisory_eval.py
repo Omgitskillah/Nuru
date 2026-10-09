@@ -3,6 +3,7 @@
 No external vault required. Sources are generated in disposable directories.
 Expected labels remain outside the model prompt. No retries or prompt tuning.
 """
+from core.eval_artifacts import write_json
 import argparse
 import hashlib
 import json
@@ -67,7 +68,7 @@ def main(output, repeats):
               'hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in [Path(__file__),Path(steward_interpretation.__file__),Path(steward_evidence.__file__),Path(__file__).with_name('validation_fixture.py')]},
               'fixture_hash':hashlib.sha256(json.dumps([FILES,FRESH_FILES,CONFIG,CASES],sort_keys=True).encode()).hexdigest(), 'runs':[]}
     # Write frozen protocol before the first generation, including rubric and inputs.
-    output.write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+    write_json(output, report)
     with tempfile.TemporaryDirectory(prefix='nuru-readiness-advisory-') as temporary:
         root=Path(temporary).resolve()
         for lane, files in [('development',FILES),('fresh-v1',FRESH_FILES)]:
@@ -105,7 +106,7 @@ def main(output, repeats):
                     'result':result,'constraints_pass':valid,'useful_proposal_pass':accepted,
                     'time_to_accepted_result_ms':code_ms+measured.get('wall_ms',0) if accepted else None,
                     'advisory_semantic_grade':'PENDING_SEPARATE_INSPECTION'})
-                output.write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+                write_json(output, report)
                 print(json.dumps({'repeat':repeat+1,'case':index,'feature':case['feature'],'valid':valid,'useful':accepted}),flush=True)
         rows=report['runs']
         report['summary']={'calls':sum(r['result']['model_calls'] for r in rows),'constraints_passes':sum(r['constraints_pass'] for r in rows),
@@ -114,7 +115,7 @@ def main(output, repeats):
             'median_code_only_ms':statistics.median(r['code_only_ms'] for r in rows),
             'median_advisory_wall_ms':statistics.median(r['measurement']['wall_ms'] for r in rows if r['measurement']),
             'budget_invalid':any(r['result']['budget_invalid'] for r in rows),'independent_human_labels':'PENDING'}
-        output.write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n');print(json.dumps(report['summary']),flush=True)
+        write_json(output, report);print(json.dumps(report['summary']),flush=True)
 
 
 if __name__=='__main__':

@@ -1,0 +1,22 @@
+{
+  "protocol": "M4-evidence-v1",
+  "model": "qwen3.5:4b",
+  "summary": {
+    "calls": 100,
+    "constraints_passes": 95,
+    "useful_proposals": 90,
+    "source_bytes_unchanged": true,
+    "input_tokens": 109520,
+    "output_tokens": 27065,
+    "median_code_only_ms": 4.458082956261933,
+    "median_advisory_wall_ms": 9971.628729137592,
+    "budget_invalid": false,
+    "independent_human_labels": "PENDING"
+  },
+  "raw_evidence": {
+    "file": "readiness-advisory-results-2026-10-09.json.gz",
+    "sha256": "bdf98d07443392b5478304db3d0e99f32a6721a2fd0511347aea8d5329ef7f8e",
+    "bytes": 892248,
+    "compressed_bytes": 100422
+  }
+}

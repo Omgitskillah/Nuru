@@ -1,4 +1,5 @@
 """New-vault and benchmark-note Qwen-only advisory controls; oracle stays outside prompts."""
+from core.eval_artifacts import write_json
 import argparse
 import hashlib
 import json
@@ -76,7 +77,7 @@ def main(root, repeats, output):
                 row = {'case':case,'result':result,'measurement':measured,'format_and_citations':valid,
                        'decision_matches':valid and decision in case['decisions']}
                 run['cases'].append(row)
-                output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+                write_json(output, report)
                 print(json.dumps({'repeat':repeat+1,'feature':case['feature'],'vault':case['vault'],'valid':valid,'decision':decision,'matches':row['decision_matches']}),flush=True)
             run['isolated_bytes_unchanged'] = all(source_hashes[name]==hashes(isolated/name) for name in source_hashes)
     rows = [row for run in report['runs'] for row in run['cases']]
@@ -84,7 +85,7 @@ def main(root, repeats, output):
         'decision_matches':sum(r['decision_matches'] for r in rows), 'median_wall_ms':statistics.median(r['measurement']['wall_ms'] for r in rows if 'wall_ms' in r['measurement']),
         'all_source_bytes_unchanged':all(source_hashes[name]==hashes(root/name) for name in source_hashes) and all(run['isolated_bytes_unchanged'] for run in report['runs']),
         'human_semantic_review':'PENDING'}
-    output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+    write_json(output, report)
     print(json.dumps(report['summary']),flush=True)
 
 

@@ -1,0 +1,10 @@
+{
+  "source_bytes_unchanged": true,
+  "pass": true,
+  "raw_evidence": {
+    "file": "readiness-replay-results-2026-10-09.json.gz",
+    "sha256": "2768b7dad7c84fe386fb3e44f003514efdd55cba6f683202958ccecdfd9f3750",
+    "bytes": 20195,
+    "compressed_bytes": 699
+  }
+}

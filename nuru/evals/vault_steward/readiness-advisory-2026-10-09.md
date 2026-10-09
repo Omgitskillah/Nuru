@@ -78,11 +78,11 @@ failed; experimental/default-off status is retained.** Thinking-on comparison wa
 optional and was not run: code already provides the authoritative values, and
 these results do not justify paying the latency of advisory inference by default.
 
-Raw evidence: [readiness-advisory-results-2026-10-09.json](readiness-advisory-results-2026-10-09.json).
+Raw evidence: [readiness-advisory-results-2026-10-09.json.gz](readiness-advisory-results-2026-10-09.json.gz).
 Earlier failed artifacts remain historical and are not pooled with this run.
 
 Final review subsequently added stale-asset and incomplete-coverage guards only;
-it did not tune this inspected set. [Cached replay](readiness-replay-results-2026-10-09.json)
+it did not tune this inspected set. [Cached replay](readiness-replay-results-2026-10-09.json.gz)
 checks all 100 original responses against the stricter final boundary: identical
 candidate inputs and validation outcomes, zero model calls. Its separate hashes
 identify the final source revision; it is not fresh semantic acceptance.

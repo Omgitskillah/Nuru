@@ -72,8 +72,8 @@ are deferred; failed quality/contention gates remain explicit release limitation
 
 ## M7: authorized publication
 
-Descriptions are ready: [backend](pr-backend-description.md) and
-[Nuru](pr-nuru-description.md). Target main in both repos, backend first; repin Nuru
+Descriptions are ready: [backend PR](https://github.com/Omgitskillah/obsidian-4-llms/pull/3) and
+[Nuru PR](https://github.com/Omgitskillah/Nuru/pull/11). Target main in both repos, backend first; repin Nuru
 to the eventual backend merge commit and rerun integration before Nuru merging.
 The user authorized publication with "Publish". Obsidian's branch was pushed
 as a fast-forward; Nuru's rebase was pushed with an explicit lease against
@@ -84,3 +84,10 @@ Nuru pins backend `03724fa7c16e3b8250b799c2edf3f490d1c1ea7d`.
 Backend CI passed on that head. GitHub push/PR events triggered the configured
 test workflows; no paid model or manual scale job was started. Final Nuru CI is
 checked after the publication record commit. No merge was performed.
+
+## Review-fix follow-up
+
+After PR10 merged, PR11 was rebased onto main 8c47624. The [review-fix report](review-fixes-2026-10-09.md)
+records macOS fixes, archived evidence, 1,507 passing integrated tests (one skipped),
+and the remaining actual-backend-merge repin. Windows concerns are deferred at the
+user's request. Historical live contention evidence remains failed.

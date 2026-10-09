@@ -8,6 +8,7 @@ down again. A turn is a generator of events, so cli.py prints them and ui.py ren
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections import Counter
@@ -499,12 +500,20 @@ class Session:
                 )
                 session.indexer.start()
                 opened.callback(session.indexer.stop)
-            session.link_auditor = VaultLinkAuditor.from_env()
+            try:
+                session.link_auditor = VaultLinkAuditor.from_env()
+            except (ValueError, OSError) as exc:
+                print(f"Nuru: link auditor disabled: {exc}", file=sys.stderr)
+                session.link_auditor = None
             if session.link_auditor:
                 session.link_auditor.on_change = logger.link_audit
                 session.link_auditor.start()
                 opened.callback(session.link_auditor.stop)
-            session.steward = VaultSteward.from_env()
+            try:
+                session.steward = VaultSteward.from_env()
+            except (ValueError, OSError) as exc:
+                print(f"Nuru: vault steward disabled: {exc}", file=sys.stderr)
+                session.steward = None
             if session.steward:
                 session.steward.on_change = logger.stewardship
                 session.steward.start()

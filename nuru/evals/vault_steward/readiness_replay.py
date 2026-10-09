@@ -3,6 +3,7 @@
 Verify unchanged prompt contracts after stricter stale-asset/coverage guards;
 replay is regression evidence, not new model-quality sampling.
 """
+from core.eval_artifacts import read_json, write_json
 import argparse
 import hashlib
 import json
@@ -17,7 +18,7 @@ from steward_eval import hashes
 
 
 def main(source,output):
-    saved=json.loads(source.read_text());results=[]
+    saved=read_json(source);results=[]
     with tempfile.TemporaryDirectory(prefix='nuru-readiness-replay-') as temporary:
         root=Path(temporary).resolve()
         for lane,files in [('development',e.FILES),('fresh-v1',e.FRESH_FILES)]:
@@ -46,7 +47,7 @@ def main(source,output):
                   'current_evidence_sha256':hashlib.sha256(Path(e.steward_evidence.__file__).read_bytes()).hexdigest(),
                   'results':results,'source_bytes_unchanged':before==hashes(root),'model_calls':0,
                   'pass':all(r['candidate_identical'] and r['status_identical'] for r in results) and before==hashes(root)}
-    output.write_text(json.dumps(artifact,indent=2)+'\n');print(json.dumps({k:v for k,v in artifact.items() if k!='results'}))
+    write_json(output, artifact);print(json.dumps({k:v for k,v in artifact.items() if k!='results'}))
     raise SystemExit(0 if artifact['pass'] else 1)
 
 

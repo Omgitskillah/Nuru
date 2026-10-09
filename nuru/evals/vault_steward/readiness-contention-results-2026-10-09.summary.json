@@ -1,0 +1,20 @@
+{
+  "protocol": "M5-retrieval-contention-v1",
+  "model": "nomic-embed-text-v2-moe:latest",
+  "semantic_sha256": "1cd9bd96473aaa2ec4b9aeef4cc2c6632a6c2c445d8f28daa795ff190dbf9192",
+  "summary": {
+    "gate_pass": false,
+    "median_p95_ratio": 1.360900729548996,
+    "min_p95_ratio": 1.2975475120722684,
+    "max_p95_ratio": 1.4079197861860322,
+    "source_topic_bytes_unchanged": true,
+    "worker_stop_and_recovery_pass": true,
+    "scope": "Retrieval stage only; no full-turn latency or personal-vault acceptance claim."
+  },
+  "raw_evidence": {
+    "file": "readiness-contention-results-2026-10-09.json.gz",
+    "sha256": "58e5faa7ac937c41ac887aa88cf1d83bed531748e8336a257261b49d8ef60daf",
+    "bytes": 47068,
+    "compressed_bytes": 7289
+  }
+}

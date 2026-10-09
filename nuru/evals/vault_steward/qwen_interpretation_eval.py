@@ -3,6 +3,7 @@
 Synthetic decision/citation controls, not a production efficacy benchmark.
 Uses a fully rendered raw prompt and conservative UTF-8 byte token reservation.
 """
+from core.eval_artifacts import write_json
 import argparse
 from dataclasses import asdict
 import hashlib
@@ -102,7 +103,7 @@ def main(repeats, output):
                           'decision_matches': valid and decision in expected, 'measurement': measured, 'result': result,
                           'approval': asdict(approval)}
                 run['cases'].append(sample)
-                output.write_text(json.dumps(report, indent=2) + '\n')
+                write_json(output, report)
                 print(json.dumps({'repeat': repeat+1, 'feature': CASES[i][0], 'valid': valid, 'decision': decision,
                                   'matches': sample['decision_matches'], 'wall_ms': measured.get('wall_ms')}), flush=True)
             run['source_bytes_unchanged'] = before == {p.name: p.read_bytes() for p in root.iterdir()}
@@ -113,7 +114,7 @@ def main(repeats, output):
                          'median_wall_ms': statistics.median(c['measurement']['wall_ms'] for c in samples if 'wall_ms' in c['measurement']),
                          'source_bytes_unchanged': all(run['source_bytes_unchanged'] for run in report['runs']),
                          'human_semantic_review': 'PENDING; decision matching alone does not grade the suggestion'}
-    output.write_text(json.dumps(report, indent=2) + '\n')
+    write_json(output, report)
     print(json.dumps(report['summary']), flush=True)
 
 

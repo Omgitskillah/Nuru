@@ -26,7 +26,7 @@ Independent human efficacy and personal-vault pilots remain unmeasured.
 This is the first deterministic milestone of each work package, not completion
 of all proposed semantic/plugin features. No production model adapter, autonomous
 repair, semantic duplicate search or generated connection feature is included.
-The companion Nuru PR contains worker integration, evaluation protocols/raw
+The companion [Nuru PR #11](https://github.com/Omgitskillah/Nuru/pull/11) contains worker integration, evaluation protocols/raw
 results, default-off settings and the exact dependency pin. Merge this backend
-first, then repin Nuru to its actual main commit. CI/publication status will be
-updated once the two PRs are created.
+first, then repin Nuru to its actual main commit. Backend GitHub CI passes on
+the published head; the integration PR checks its pinned private dependency.

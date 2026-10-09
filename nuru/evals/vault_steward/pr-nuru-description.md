@@ -5,7 +5,7 @@ changes and reconcile missed events; optional state remembers evidence-scoped
 review decisions without editing notes. The new MCP tools are not added to the
 default model tool list and the stewardship worker is disabled by default.
 
-The linked Obsidian backend owns parsers, facts, revisions, findings/state and index
+The linked [Obsidian PR #3](https://github.com/Omgitskillah/obsidian-4-llms/pull/3) owns parsers, facts, revisions, findings/state and index
 maintenance. This PR pins its reviewed feature commit, adds reproducible fixtures,
 evaluation protocols/raw results and individual milestone commits. CI runs the
 dependency's tests at the exact pin; scale runs remain manual and model-free.
@@ -26,5 +26,6 @@ Earlier failures are retained, not pooled into newer-source accuracy claims.
 
 Dependency ordering: merge the companion Obsidian backend PR first, repin this
 PR to its actual main commit, then rerun integration checks. These are first
-deterministic milestones, not completion of every original work package. CI and
-linked PR URLs will be recorded after approved publication.
+deterministic milestones, not completion of every original work package.
+CI validates the published integration head and private dependency checkout.
+Backend feature pin: `03724fa7c16e3b8250b799c2edf3f490d1c1ea7d`.

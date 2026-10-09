@@ -70,11 +70,17 @@ configured (metadata presence checked, no value read); CI still needs an actual
 published run to verify access. Independent human labels/personal-vault efficacy
 are deferred; failed quality/contention gates remain explicit release limitations.
 
-## M7: prepared publication, awaiting approval
+## M7: authorized publication
 
 Descriptions are ready: [backend](pr-backend-description.md) and
 [Nuru](pr-nuru-description.md). Target main in both repos, backend first; repin Nuru
 to the eventual backend merge commit and rerun integration before Nuru merging.
-No push, CI trigger, PR creation or merge has been performed by this execution.
-Nuru's rebased branch requires a lease-protected history update; Obsidian is a
-fast-forward publication. Final publication approval is required by the plan.
+The user authorized publication with "Publish". Obsidian's branch was pushed
+as a fast-forward; Nuru's rebase was pushed with an explicit lease against
+`e78e1461a7d8dc63b412a2cd8a0fbc3aa5574623`. Both PRs target main:
+[Obsidian #3](https://github.com/Omgitskillah/obsidian-4-llms/pull/3) and
+[Nuru #11](https://github.com/Omgitskillah/Nuru/pull/11).
+Nuru pins backend `03724fa7c16e3b8250b799c2edf3f490d1c1ea7d`.
+Backend CI passed on that head. GitHub push/PR events triggered the configured
+test workflows; no paid model or manual scale job was started. Final Nuru CI is
+checked after the publication record commit. No merge was performed.

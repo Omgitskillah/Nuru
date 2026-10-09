@@ -80,6 +80,40 @@ def test_stopping_ends_a_pass_between_notes(vault):
     assert indexer.pending == 0
 
 
+def test_active_thread_restart_reconciles_persisted_queue(vault):
+    entered, release = threading.Event(), threading.Event()
+    def blocking(texts):
+        entered.set()
+        assert release.wait(3)
+        return fake_embed(texts)
+    worker=indexer_for(vault,blocking)
+    worker.start()
+    assert entered.wait(3)
+    worker._stop.set()  # Request stop while inference is active, then release it.
+    release.set();worker.stop()
+    assert not worker._thread.is_alive()
+    assert worker.status['pending'] == ['b.md']
+    resumed=indexer_for(vault)
+    assert resumed.run_once().embedded == ['b.md']
+    assert resumed.status['pending'] == []
+
+
+def test_real_lock_is_observable_in_worker_and_recovers(vault):
+    import sqlite3
+    worker=indexer_for(vault,interval=.01)
+    worker.run_once()
+    locker=sqlite3.connect(worker.config.db_path)
+    locker.execute('BEGIN IMMEDIATE')
+    worker.start()
+    try:
+        wait_until(lambda:worker.error is not None,timeout=3)
+        assert 'locked' in worker.error
+        locker.rollback()
+        wait_until(lambda:worker.error is None,timeout=3)
+    finally:
+        locker.close();worker.stop()
+
+
 def test_the_thread_picks_up_notes_that_change_while_nuru_runs(vault):
     embedded = []
 

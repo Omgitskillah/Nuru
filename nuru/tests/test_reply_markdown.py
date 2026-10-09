@@ -8,7 +8,8 @@ from core.reply_markdown import (
     format_tool_call,
     split_fences,
 )
-from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core import questions
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 def reply_of(*events):
@@ -189,3 +190,10 @@ def test_a_rule_after_a_code_block_survives_being_split_out_of_the_fence():
 
     assert parts[1] == Code("sh", "ls")
     assert isinstance(parts[2], Prose) and "---" in parts[2].text and "Done." in parts[2].text
+
+
+def test_a_question_leaves_the_reply_alone_for_its_card_to_show():
+    reply = Reply()
+    reply.add(Text("The notes disagree."))
+    reply.add(Ask(questions.yes_no("Use the revised one?")))
+    assert reply.markdown == "The notes disagree."

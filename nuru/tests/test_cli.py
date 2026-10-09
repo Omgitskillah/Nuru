@@ -2,9 +2,9 @@ import builtins
 
 import pytest
 
-from core import cli
+from core import cli, questions
 from core.conversation_store import ConversationStore
-from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 class FakeSession:
@@ -301,18 +301,105 @@ def test_main_help_command_lists_commands_without_asking_the_model(monkeypatch, 
     assert s.asked == []
 
 
-@pytest.mark.parametrize("reply, approved", [("y", True), ("YES", True), ("", False), ("n", False)])
-def test_a_write_is_confirmed_only_by_a_yes(monkeypatch, reply, approved):
-    monkeypatch.setattr("builtins.input", lambda prompt: reply)
-    assert cli.confirm_write("append_note", {"id": "x", "content": "y"}) is approved
+@pytest.fixture
+def typed_in_time(monkeypatch):
+    monkeypatch.setattr(cli, "_input_ready", lambda timeout: True)
 
 
-def test_no_answer_is_no(monkeypatch):
-    def eof(prompt):
+@pytest.mark.parametrize("reply, approved", [("y", True), ("YES", True), ("", False), ("n", False), ("sure", False)])
+def test_a_write_is_confirmed_only_by_a_yes(monkeypatch, typed_in_time, reply, approved):
+    monkeypatch.setattr("builtins.input", lambda *prompt: reply)
+    assert questions.is_yes(cli.answer(questions.write("write_note", {"note": "x", "content": "y"}))) is approved
+
+
+def test_no_answer_is_none(monkeypatch, typed_in_time):
+    def eof(*prompt):
         raise EOFError
 
     monkeypatch.setattr("builtins.input", eof)
-    assert cli.confirm_write("append_note", {}) is False
+    assert cli.answer(questions.write("write_note", {})) is None
+
+
+def test_a_timed_question_says_how_long_it_waits_and_gives_up_when_nothing_is_typed(monkeypatch, capsys):
+    waited = []
+    monkeypatch.setattr(cli, "_input_ready", lambda timeout: waited.append(timeout) or False)
+    monkeypatch.setattr("builtins.input", lambda *prompt: pytest.fail("nothing was typed to read"))
+
+    assert cli.answer(questions.write("write_note", {"note": "x"})) is None
+
+    assert waited == [10]
+    out = capsys.readouterr().out
+    assert "Allow it? (No in 10 s)" in out
+    assert "No answer in 10 s - taken as No." in out
+
+
+def test_where_stdin_cannot_be_waited_on_a_timed_question_waits_for_the_line(monkeypatch):
+    monkeypatch.setattr(cli.sys, "stdin", object())
+    assert cli._input_ready(10) is True
+
+
+def test_enter_takes_the_recommended_answer(monkeypatch, capsys):
+    prompts = []
+    monkeypatch.setattr("builtins.input", fake_input_recording_prompts([""], prompts))
+    assert cli.answer(questions.yes_no("Save it anyway?", recommend="No")) == ["No"]
+    monkeypatch.setattr("builtins.input", fake_input_recording_prompts([""], prompts))
+    assert cli.answer(questions.yes_no("Use the new figure?", recommend="Yes")) == ["Yes"]
+    assert prompts == ["[answer] [y/N] ", "[answer] [Y/n] "]
+    assert "[ask] Save it anyway?" in capsys.readouterr().out
+
+
+QUESTION = questions.from_tool({"question": "Which reporting rate?", "kind": "single", "options": [
+    {"label": "4 reports/h", "description": "the revised note", "recommended": True}, {"label": "6 reports/h"}]})
+
+
+def test_options_are_numbered_with_the_recommended_one_marked(monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", fake_input(["2"]))
+    assert cli.answer(QUESTION) == ["6 reports/h"]
+    out = capsys.readouterr().out
+    assert "1. 4 reports/h (recommended) - the revised note" in out
+    assert "2. 6 reports/h" in out
+
+
+@pytest.mark.parametrize("reply, chosen", [("", ["4 reports/h"]), ("5", ["5"]), ("one an hour", ["one an hour"])])
+def test_enter_picks_the_recommended_option_and_other_words_are_your_own_answer(monkeypatch, reply, chosen):
+    monkeypatch.setattr("builtins.input", fake_input([reply]))
+    assert cli.answer(QUESTION) == chosen
+
+
+def test_a_checkbox_question_takes_several_numbers(monkeypatch):
+    question = questions.from_tool({"question": "Which notes?", "kind": "multi", "options": ["A", "B", "C"]})
+    monkeypatch.setattr("builtins.input", fake_input(["3, 1,3"]))
+    assert cli.answer(question) == ["C", "A"]
+
+
+def test_a_single_choice_asks_again_for_a_number_out_of_range_when_it_takes_no_own_answer(monkeypatch, capsys):
+    question = questions.Question("Which?", questions.SINGLE, (questions.Option("A"), questions.Option("B")))
+    monkeypatch.setattr("builtins.input", fake_input(["1,2", "7", "2"]))
+    assert cli.answer(question) == ["B"]
+    assert capsys.readouterr().out.count("isn't one of the options") == 2
+
+
+def test_main_answers_a_question_the_turn_ended_on_and_sends_the_answer(monkeypatch, capsys, fake_session):
+    s = fake_session(turns=[[Text("Two notes disagree."), Ask(QUESTION)], [Text("At 4 reports/h: 3.47 years.")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["battery life?", "1"]))
+    cli.main()
+    assert s.asked == ["battery life?", "4 reports/h"]
+    assert "3.47 years" in capsys.readouterr().out
+
+
+def test_main_goes_back_to_the_prompt_when_a_question_is_skipped(monkeypatch, fake_session):
+    question = questions.Question("Which?", questions.SINGLE, (questions.Option("A"), questions.Option("B")))
+    s = fake_session(turns=[[Ask(question)], [Text("ok")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["go", "", "something else"]))
+    cli.main()
+    assert s.asked == ["go", "something else"]
+
+
+def test_main_hands_the_session_its_question_renderer(monkeypatch, fake_session):
+    s = fake_session()
+    monkeypatch.setattr(builtins, "input", fake_input([]))
+    cli.main()
+    assert s.answer_question is cli.answer
 
 
 def test_write_reconciliation_command_does_not_send_a_model_prompt(fake_session, monkeypatch, capsys):

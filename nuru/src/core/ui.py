@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -53,8 +54,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import questions
+from core.questions import MULTI, YES_NO, Question
 from core.reply_markdown import Code, Prose, Reply, format_tool_call, split_fences
-from core.session import Event, RetryWithoutThinking, Session, Thinking, ToolCall
+from core.session import Ask, Event, RetryWithoutThinking, Session, Thinking, ToolCall
 
 # Monochrome palette taken from the lantern logo: its ink color (#242021), plus tints of it on white
 INK = "#242021"
@@ -103,6 +106,18 @@ QPushButton#copy:hover {{ color: {TEXT}; }}
 QPushButton#send {{ background: {SEND}; border: none; border-radius: 9px; }}
 QPushButton#send:hover {{ background: {SEND_HOVER}; }}
 QPushButton#send:disabled {{ background: rgba(36, 32, 33, 80); }}
+QFrame#question {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 14px; }}
+QLabel#questionText {{ color: {TEXT}; }}
+QLabel#questionDetails, QLabel#questionNote, QLabel#choiceNote {{ color: {MUTED}; }}
+QPushButton#choice {{ background: white; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px 14px; color: {TEXT}; text-align: left; }}
+QPushButton#choice:hover {{ border-color: {MUTED}; }}
+QPushButton#choice[recommended="true"] {{ border: 2px solid {INK}; }}
+QPushButton#choice:disabled {{ color: {MUTED}; }}
+QPushButton#answer {{ background: {SEND}; border: none; border-radius: 10px; padding: 8px 18px; color: white; }}
+QPushButton#answer:hover {{ background: {SEND_HOVER}; }}
+QPushButton#answer:disabled {{ background: rgba(36, 32, 33, 80); }}
+QCheckBox#check {{ color: {TEXT}; spacing: 10px; }}
+QLineEdit#other {{ background: white; border: 1px solid {BORDER}; border-radius: 10px; padding: 7px 12px; color: {TEXT}; }}
 """
 
 SERIF = ["Charter", "Georgia"]
@@ -410,6 +425,159 @@ class UserMessage(QWidget):
         row.addWidget(bubble)
 
 
+class QuestionCard(QFrame):
+    """A question Nuru puts to the user, in the reply: a button per answer for yes/no and single
+    choice, checkboxes and a Send button for a multi-choice question, and a line for an answer of
+    your own where the question allows one. The recommended option is outlined and says why.
+
+    `answered` carries the labels chosen; the card then shows the answer and takes no more input.
+    A question with a timeout counts down under the options, and `expired` says it ran out."""
+
+    answered = pyqtSignal(list)
+    expired = pyqtSignal()
+
+    def __init__(self, question: Question) -> None:
+        super().__init__()
+        self.setObjectName("question")
+        self.question = question
+        self.choices: list[QPushButton] = []
+        self.checks: list[QCheckBox] = []
+        self.other: QLineEdit | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+        text = QLabel(question.text)
+        text.setObjectName("questionText")
+        text.setFont(font(16))
+        text.setWordWrap(True)
+        text.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(text)
+        if question.details:
+            details = QLabel(question.details)
+            details.setObjectName("questionDetails")
+            details.setFont(font(12, MONO, QFont.StyleHint.Monospace))
+            details.setWordWrap(True)
+            details.setTextFormat(Qt.TextFormat.PlainText)
+            layout.addWidget(details)
+
+        self.inputs = QWidget()
+        inputs = QVBoxLayout(self.inputs)
+        inputs.setContentsMargins(0, 2, 0, 0)
+        inputs.setSpacing(8)
+        if question.kind == MULTI:
+            for option in question.choices:
+                check = QCheckBox(option.label + ("  · recommended" if option.recommended else ""))
+                check.setObjectName("check")
+                check.setFont(font(15))
+                check.setChecked(option.recommended)
+                self.checks.append(check)
+                inputs.addWidget(check)
+                self.add_note(inputs, option.description, indent=28)
+        else:
+            row = QHBoxLayout() if question.kind == YES_NO else None
+            for option in question.choices:
+                button = QPushButton(option.label + ("  · recommended" if option.recommended else ""))
+                button.setObjectName("choice")
+                button.setFont(font(15))
+                button.setProperty("recommended", option.recommended)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.clicked.connect(lambda _, label=option.label: self.choose([label]))
+                self.choices.append(button)
+                if row is not None:
+                    row.addWidget(button)
+                else:
+                    inputs.addWidget(button)
+                    self.add_note(inputs, option.description, indent=16)
+            if row is not None:
+                row.addStretch(1)
+                inputs.addLayout(row)
+                if question.recommended and question.recommended.description:
+                    self.add_note(inputs, question.recommended.description, indent=0)
+        if question.allow_other or question.kind == MULTI:
+            row = QHBoxLayout()
+            if question.allow_other:
+                self.other = QLineEdit()
+                self.other.setObjectName("other")
+                self.other.setFont(font(14))
+                self.other.setPlaceholderText("Or type your own answer…")
+                self.other.returnPressed.connect(self.send_other)
+                row.addWidget(self.other, 1)
+            else:
+                row.addStretch(1)
+            if question.kind == MULTI:
+                send = QPushButton("Send")
+                send.setObjectName("answer")
+                send.setFont(font(14))
+                send.setCursor(Qt.CursorShape.PointingHandCursor)
+                send.clicked.connect(self.send_checked)
+                row.addWidget(send)
+            inputs.addLayout(row)
+        layout.addWidget(self.inputs)
+
+        self.note = QLabel()
+        self.note.setObjectName("questionNote")
+        self.note.setFont(font(13))
+        self.note.setWordWrap(True)
+        self.note.hide()
+        layout.addWidget(self.note)
+
+        self.seconds_left = math.ceil(question.timeout) if question.timeout else 0
+        self.countdown = QTimer(self)
+        self.countdown.setInterval(1000)
+        self.countdown.timeout.connect(self.tick)
+        if self.seconds_left:
+            self.note.show()
+            self.show_seconds_left()
+            self.countdown.start()
+
+    def show_seconds_left(self) -> None:
+        self.note.setText(f"Taken as No in {self.seconds_left} s")
+
+    def tick(self) -> None:
+        self.seconds_left -= 1
+        if self.seconds_left > 0:
+            self.show_seconds_left()
+            return
+        self.close_with(f"No answer in {self.question.timeout:g} s - taken as No.")
+        self.expired.emit()
+
+    @staticmethod
+    def add_note(layout: QVBoxLayout, text: str, indent: int) -> None:
+        if not text:
+            return
+        note = QLabel(text)
+        note.setObjectName("choiceNote")
+        note.setFont(font(13))
+        note.setWordWrap(True)
+        note.setContentsMargins(indent, 0, 0, 0)
+        layout.addWidget(note)
+
+    def send_checked(self) -> None:
+        typed = self.other.text().strip() if self.other else ""
+        chosen = [option.label for option, check in zip(self.question.choices, self.checks) if check.isChecked()]
+        self.choose(chosen + ([typed] if typed else []))
+
+    def send_other(self) -> None:
+        typed = self.other.text().strip()
+        if typed:
+            self.send_checked() if self.question.kind == MULTI else self.choose([typed])
+
+    def choose(self, chosen: list[str]) -> None:
+        if not self.inputs.isEnabled():
+            return
+        self.close_with(f"You answered: {questions.answer_text(chosen)}")
+        self.answered.emit(chosen)
+
+    def close_with(self, note: str) -> None:
+        """No more answers: say how the question ended, under it."""
+        self.countdown.stop()
+        self.inputs.setEnabled(False)
+        self.inputs.hide()
+        self.note.setText(note)
+        self.note.show()
+
+
 class CodeBlock(QFrame):
     """Fenced code in a shaded, rounded box with a language label and a copy button."""
 
@@ -594,12 +762,19 @@ class AssistantMessage(QWidget):
         widget.setParent(None)
         widget.deleteLater()
 
+    def add_question(self, card: QuestionCard) -> None:
+        """Under what the reply has said so far, above the logo."""
+        self.column.insertWidget(self.column.indexOf(self.logo), card)
+
     def finish(self) -> None:
         self.logo.stop()
         self.header.finish()
 
 
 class ChatWindow(QWidget):
+    # A question code raised mid-turn, from the worker thread: (the question, (answered event, answer list))
+    question_raised = pyqtSignal(object, object)
+
     FLUSH_MS = 25  # streamed text is redrawn at most this often, however fast it arrives
     TITLE = "Nuru"
     SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # the title cycles through these while notes are being embedded
@@ -627,6 +802,8 @@ class ChatWindow(QWidget):
         self.message: AssistantMessage | None = None  # the bubble that reply is drawn in
         self.reply = Reply()  # what that reply has said so far
         self.following = True  # keep the newest text in view unless the user scrolls up
+        self.open_question: QuestionCard | None = None  # the question the last reply ended on, until answered
+        self.raised_question: QuestionCard | None = None  # the last question raised mid-turn; Stop closes it
 
         self.flush_timer = QTimer(self)
         self.flush_timer.setSingleShot(True)
@@ -721,6 +898,7 @@ class ChatWindow(QWidget):
         self.root.addWidget(self.dock)
         self.root.addStretch(3)
 
+        self.question_raised.connect(self.show_raised_question)
         self.prompt.submitted.connect(self.submit)
         self.prompt.textChanged.connect(self.update_send)
         self.send.clicked.connect(self.on_send_clicked)
@@ -740,6 +918,7 @@ class ChatWindow(QWidget):
         self.session = self.start_session()
 
     def on_started(self) -> None:
+        self.session.answer_question = self.answer_question
         self.title_timer.start()
         self.greeting_title.setText(time_greeting(datetime.now().hour))
         self.greeting_logo.stop()
@@ -868,6 +1047,8 @@ class ChatWindow(QWidget):
 
     def on_send_clicked(self) -> None:
         if self.worker is not None:
+            if self.raised_question is not None and self.raised_question.inputs.isEnabled():
+                self.raised_question.close_with("Not answered - stopped.")
             self.cancel.set()
             self.update_send()
         else:
@@ -875,11 +1056,16 @@ class ChatWindow(QWidget):
 
     def submit(self) -> None:
         text = self.prompt.toPlainText().strip()
-        session = self.session
-        if not text or session is None or self.worker is not None:
+        if not text or self.session is None or self.worker is not None:
             return
-
         self.prompt.clear()
+        if self.open_question is not None:
+            self.open_question.close_with("Not answered - you wrote a message instead.")
+            self.open_question = None
+        self.send_message(text)
+
+    def send_message(self, text: str) -> None:
+        session = self.session
         self.show_chat()
         self.following = True
         self.add_message(UserMessage(text))
@@ -896,7 +1082,14 @@ class ChatWindow(QWidget):
         self.update_send()
 
     def on_event(self, event: Event) -> None:
-        if isinstance(event, ToolCall):
+        if isinstance(event, Ask):
+            # The turn ends on it; the answer is the next message.
+            self.render_reply()
+            card = self.open_question = QuestionCard(event.question)
+            card.setEnabled(False)  # until the turn has wound up (finish_reply): an answer starts the next one
+            card.answered.connect(self.answer_open_question)
+            self.message.add_question(card)
+        elif isinstance(event, ToolCall):
             self.message.header.add_call(event)
         elif isinstance(event, Thinking):
             self.message.header.add_thinking(event)
@@ -905,6 +1098,31 @@ class ChatWindow(QWidget):
         self.reply.add(event)
         if not self.flush_timer.isActive():
             self.flush_timer.start()
+
+    def answer_open_question(self, chosen: list[str]) -> None:
+        self.open_question = None
+        self.send_message(questions.answer_text(chosen))
+
+    def answer_question(self, question: Question) -> list[str] | None:
+        """Session.answer_question, called on the worker thread: shows the question in the reply in
+        flight and waits for the answer. Stop, or the question's time running out, gives up on it, and
+        the session takes that as No."""
+        answered, answer = threading.Event(), []
+        cancel = self.cancel
+        self.question_raised.emit(question, (answered, answer))
+        while not answered.wait(0.05):
+            if cancel.is_set():
+                return None
+        return answer[0] if answer else None  # none: its time ran out
+
+    def show_raised_question(self, question: Question, waiter) -> None:
+        answered, answer = waiter
+        self.render_reply()
+        card = QuestionCard(question)
+        card.answered.connect(lambda chosen: (answer.append(chosen), answered.set()))
+        card.expired.connect(answered.set)
+        self.raised_question = card
+        self.message.add_question(card)
 
     def render_reply(self) -> None:
         self.message.set_markdown(self.reply.markdown)
@@ -918,6 +1136,8 @@ class ChatWindow(QWidget):
         self.render_reply()
         self.message.finish()
         self.worker = None
+        if self.open_question is not None:
+            self.open_question.setEnabled(True)
         self.update_send()
 
     def on_range_changed(self, _low: int, high: int) -> None:

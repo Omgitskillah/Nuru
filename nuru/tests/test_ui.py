@@ -12,11 +12,11 @@ pytest.importorskip("PyQt6.QtWidgets", exc_type=ImportError)
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QFrame, QLabel
+from PyQt6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QPushButton
 
-from core import ui
+from core import questions, ui
 from core.reply_markdown import BREAK, Code, Prose
-from core.session import Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 @pytest.fixture(scope="session")
@@ -972,3 +972,187 @@ def test_pending_write_dialog_exposes_attempt_and_operator_actions(started, monk
     monkeypatch.setattr(ui.QDialog, 'exec', inspect)
     window.show_pending_writes()
     assert resolved == [(7, 'completed')] and not session.asked
+
+
+# ------------------------------------------------------------------ questions
+SINGLE = questions.from_tool({"question": "Which reporting rate?", "kind": "single", "options": [
+    {"label": "4 reports/h", "description": "the revised note", "recommended": True}, {"label": "6 reports/h"}]})
+MULTI = questions.from_tool({"question": "Which notes should the summary cover?", "kind": "multi", "options": [
+    {"label": "Battery", "recommended": True}, "Modem", "Supplier"]})
+
+
+def choices(card):
+    return {button.text(): button for button in card.findChildren(QPushButton, "choice")}
+
+
+def answers(card):
+    got = []
+    card.answered.connect(got.append)
+    return got
+
+
+def test_a_yes_no_card_answers_with_a_click_and_then_takes_no_more(qapp):
+    card = ui.QuestionCard(questions.yes_no("Save it anyway?", recommend="No"))
+    got = answers(card)
+    buttons = choices(card)
+    assert set(buttons) == {"Yes", "No  · recommended"}
+    assert buttons["No  · recommended"].property("recommended") is True
+
+    buttons["Yes"].click()
+    buttons["No  · recommended"].click()
+
+    assert got == [["Yes"]]
+    assert card.note.text() == "You answered: Yes"
+    assert not card.inputs.isVisibleTo(card)
+
+
+def test_a_single_choice_card_shows_why_an_option_is_recommended_and_takes_your_own_words(qapp):
+    card = ui.QuestionCard(SINGLE)
+    got = answers(card)
+    assert "the revised note" in [label.text() for label in card.findChildren(QLabel, "choiceNote")]
+
+    card.other.setText("one an hour")
+    card.other.returnPressed.emit()
+
+    assert got == [["one an hour"]]
+
+
+def test_a_checkbox_card_starts_with_the_recommended_box_ticked_and_sends_what_is_ticked(qapp):
+    card = ui.QuestionCard(MULTI)
+    got = answers(card)
+    boxes = card.findChildren(QCheckBox, "check")
+    assert [box.isChecked() for box in boxes] == [True, False, False]
+
+    boxes[2].setChecked(True)
+    card.findChild(QPushButton, "answer").click()
+
+    assert got == [["Battery", "Supplier"]]
+
+
+def test_a_write_card_shows_the_write_under_the_question(qapp):
+    card = ui.QuestionCard(questions.write("write_note", {"note": "a.md", "content": "x"}))
+    assert '"content": "x"' in card.findChild(QLabel, "questionDetails").text()
+
+
+def test_a_turn_ending_on_a_question_shows_its_card_and_the_answer_is_the_next_message(started):
+    window, session = started([Text("The notes disagree."), Ask(SINGLE)], [Text("3.47 years.")])
+
+    type_and_send(window, "battery life?")
+    finish(window)
+    card = window.message.findChild(ui.QuestionCard)
+    assert card.isEnabled()
+    assert bubble_text(window) == "The notes disagree."
+
+    choices(card)["4 reports/h  · recommended"].click()
+    finish(window)
+
+    assert session.asked == ["battery life?", "4 reports/h"]
+    assert [label.text() for label in window.findChildren(QLabel, "userText")] == ["battery life?", "4 reports/h"]
+    assert bubble_text(window) == "3.47 years."
+
+
+def test_the_card_waits_for_the_turn_to_wind_up_before_it_takes_an_answer(started):
+    release = threading.Event()
+    window, _ = started(waits_for(release))
+
+    def ask_then_wait(cancel):
+        yield Ask(SINGLE)
+        release.wait(5)
+
+    window.session._turns = iter([ask_then_wait])
+    type_and_send(window, "battery life?")
+    wait_until(lambda: window.message.findChild(ui.QuestionCard) is not None)
+    assert not window.message.findChild(ui.QuestionCard).isEnabled()
+    release.set()
+    finish(window)
+    assert window.message.findChild(ui.QuestionCard).isEnabled()
+
+
+def test_writing_a_message_instead_leaves_the_question_unanswered(started):
+    window, session = started([Ask(SINGLE)], [Text("ok")])
+
+    type_and_send(window, "battery life?")
+    finish(window)
+    card = window.message.findChild(ui.QuestionCard)
+    type_and_send(window, "never mind, what's on today?")
+    finish(window)
+
+    assert session.asked == ["battery life?", "never mind, what's on today?"]
+    assert card.note.text() == "Not answered - you wrote a message instead."
+
+
+def raising(question, got, windows):
+    """A scripted turn that asks `question` mid-turn through the hook the window gave the session,
+    as the session does for a write. `windows` holds the window once the test has it."""
+
+    def turn(cancel):
+        yield Text("Saving it.")
+        got.append(windows[0].session.answer_question(question))
+        yield Text(" Done.")
+
+    return turn
+
+
+def test_the_window_answers_the_sessions_questions_mid_turn(started):
+    got, windows = [], []
+    window, session = started(raising(questions.write("write_note", {"note": "a.md"}), got, windows))
+    windows.append(window)
+    assert session.answer_question == window.answer_question
+
+    type_and_send(window, "save it")
+    wait_until(lambda: window.message.findChild(ui.QuestionCard) is not None)
+    choices(window.message.findChild(ui.QuestionCard))["Yes"].click()
+    finish(window)
+
+    assert got == [["Yes"]]
+    assert bubble_text(window) == "Saving it. Done."
+
+
+def test_stop_gives_up_on_a_question_raised_mid_turn(started):
+    got, windows = [], []
+    window, _ = started(raising(questions.write("write_note", {"note": "a.md"}), got, windows))
+    windows.append(window)
+
+    type_and_send(window, "save it")
+    wait_until(lambda: window.message.findChild(ui.QuestionCard) is not None)
+    window.on_send_clicked()
+    finish(window)
+
+    assert got == [None]
+    assert window.message.findChild(ui.QuestionCard).note.text() == "Not answered - stopped."
+
+
+def test_a_timed_card_counts_down_and_says_when_it_was_taken_as_no(qapp):
+    card = ui.QuestionCard(questions.yes_no("Allow it?", timeout=2))
+    expired = []
+    card.expired.connect(lambda: expired.append(True))
+    assert card.note.text() == "Taken as No in 2 s"
+
+    card.tick()
+    assert card.note.text() == "Taken as No in 1 s"
+    card.tick()
+
+    assert expired == [True]
+    assert card.note.text() == "No answer in 2 s - taken as No."
+    assert not card.inputs.isEnabled() and not card.countdown.isActive()
+
+
+def test_answering_a_timed_card_stops_its_countdown(qapp):
+    card = ui.QuestionCard(questions.yes_no("Allow it?", timeout=10))
+    assert card.countdown.isActive()
+    choices(card)["Yes"].click()
+    assert not card.countdown.isActive()
+    assert card.note.text() == "You answered: Yes"
+
+
+def test_a_question_raised_mid_turn_that_runs_out_of_time_has_no_answer(started):
+    got, windows = [], []
+    window, _ = started(raising(questions.yes_no("Allow it?", timeout=1), got, windows))
+    windows.append(window)
+
+    type_and_send(window, "save it")
+    finish(window)  # the card's own timer runs out after a second
+
+    assert got == [None]
+    assert window.message.findChild(ui.QuestionCard).note.text() == "No answer in 1 s - taken as No."
+    assert bubble_text(window) == "Saving it. Done."

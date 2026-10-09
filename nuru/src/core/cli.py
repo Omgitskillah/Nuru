@@ -3,10 +3,14 @@ giving it access to the tools exposed by the obsidian and deep-think MCP
 servers."""
 
 import json
+import select
+import sys
 from collections.abc import Iterator
 
+from core import questions
 from core.conversation_store import ConversationStore
-from core.session import Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall
+from core.questions import MULTI, NO, YES, YES_NO, Question
+from core.session import Ask, Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -20,11 +24,13 @@ HELP_TEXT = """Available commands:
 Anything else you type is sent to the model as a prompt (this also loads the model first if it isn't loaded yet)."""
 
 
-def print_turn(events: Iterator[Event]) -> None:
+def print_turn(events: Iterator[Event]) -> Question | None:
     """Print a turn as it streams: `[nuru] ` ahead of each stretch of the reply, `[thinking] ` for
     what the model reasoned, `[tool] ` for tool calls, and `[retry] ` where a silent call is being
-    asked again with thinking off - everything printed after that line comes from the second call."""
+    asked again with thinking off - everything printed after that line comes from the second call.
+    Returns the question the turn ended on, if the model asked one; answer() puts it to you."""
     mid_line = False  # reply text is on screen and its line isn't finished yet
+    asked = None
     for event in events:
         if isinstance(event, Text):
             if not mid_line:
@@ -43,10 +49,13 @@ def print_turn(events: Iterator[Event]) -> None:
             print(f"[steer] Reasoning stopped ({event.reason}) - asking again with thinking off.")
         elif isinstance(event, RetryWithoutThinking):
             print("[retry] No reply was written - asking again with thinking off.")
+        elif isinstance(event, Ask):
+            asked = event.question
         else:
             print(f"[error] {event.message}")
     if mid_line:
         print()
+    return asked
 
 
 def _context_usage_percent(store: ConversationStore, conversation_id: int, context_window: int) -> int:
@@ -62,18 +71,73 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
     return min(100, round(latest_prompt_tokens / context_window * 100))
 
 
-def confirm_write(tool: str, arguments: dict) -> bool:
-    """Asked when an enforced gate_write wants your OK before a write runs; anything but yes is no."""
+def _input_ready(timeout: float) -> bool:
+    """Whether a line can be read within `timeout` seconds. Where stdin can't be waited on, it waits
+    as long as it takes."""
     try:
-        reply = input(f"[confirm] Run {tool}({json.dumps(arguments, ensure_ascii=False)})? [y/N] ")
+        return bool(select.select([sys.stdin], [], [], timeout)[0])
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def _read(prompt: str, timeout: float | None = None) -> str | None:
+    """A line you type, or None at EOF or when `timeout` seconds pass first."""
+    try:
+        if timeout is None:
+            return input(prompt)
+        print(prompt, end="", flush=True)
+        if not _input_ready(timeout):
+            print(f"\n[answer] No answer in {timeout:g} s - taken as No.")
+            return None
+        return input()
     except EOFError:
-        return False
-    return reply.strip().lower() in ("y", "yes")
+        return None
+
+
+def answer(question: Question) -> list[str] | None:
+    """Put `question` to you and return the labels you chose, or None for no answer.
+
+    Yes/no takes y or n; Enter gives the recommended answer, or No, and anything but yes is no.
+    Options take a number, several comma-separated for a checkbox question (e.g. 1,3), Enter for the
+    recommended one, or your own words where the question allows them. A question with a timeout
+    returns None once it passes."""
+    print(f"[ask] {question.text}" + (f" (No in {question.timeout:g} s)" if question.timeout else ""))
+    if question.details:
+        print("\n".join("      " + line for line in question.details.splitlines()))
+    recommended = question.recommended
+    if question.kind == YES_NO:
+        default = recommended.label if recommended else NO
+        reply = _read(f"[answer] {'[Y/n]' if default == YES else '[y/N]'} ", question.timeout)
+        if reply is None:
+            return None
+        reply = reply.strip().lower()
+        return [default] if not reply else [YES] if reply in ("y", "yes") else [NO]
+    choices = question.choices
+    for number, option in enumerate(choices, 1):
+        print(f"      {number}. {option.label}" + (" (recommended)" if option.recommended else "")
+              + (f" - {option.description}" if option.description else ""))
+    many = question.kind == MULTI
+    hint = "choose any, e.g. 1,3" if many else f"choose 1-{len(choices)}"
+    hint += ", Enter for the recommended one" if recommended else ", Enter to skip"
+    hint += ", or type your own answer" if question.allow_other else ""
+    while True:
+        reply = _read(f"[answer] ({hint}) ", question.timeout)
+        if reply is None:
+            return None
+        reply = reply.strip()
+        if not reply:
+            return [recommended.label] if recommended else None
+        picks = [pick.strip() for pick in reply.split(",")]
+        if (many or len(picks) == 1) and all(pick.isdigit() and 1 <= int(pick) <= len(choices) for pick in picks):
+            return list(dict.fromkeys(choices[int(pick) - 1].label for pick in picks))
+        if question.allow_other:
+            return [reply]
+        print("[answer] That isn't one of the options.")
 
 
 def main() -> None:
     session = Session.start()
-    session.confirm_write = confirm_write
+    session.answer_question = answer
     try:
         while True:
             usage_pct = _context_usage_percent(session.store, session.conversation_id, session.context_window)
@@ -102,7 +166,11 @@ def main() -> None:
             elif text.strip() == "/help":
                 print(HELP_TEXT)
             else:
-                print_turn(session.ask(text))
+                asked = print_turn(session.ask(text))
+                # Nuru ended its turn on a question: your answer is the next message. With no answer
+                # you're back at the usual prompt, where anything you type goes to Nuru as before.
+                while asked is not None and (chosen := answer(asked)) is not None:
+                    asked = print_turn(session.ask(questions.answer_text(chosen)))
     finally:
         session.close()
 

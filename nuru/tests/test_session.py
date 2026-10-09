@@ -58,6 +58,8 @@ class FakeMCPTools:
         return ToolResult(self.call_tool(name, arguments))
 
     def call_harness_tool(self, name, arguments):
+        if name == "note_info":  # the notes server's lookup: these tests' notes count as new ones
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named '{arguments['name']}'.", is_error=True)
         # No decision layer here: the shadow's calls fail, which it must shrug off.
         return ToolResult("no decision layer in this test", is_error=True)
 
@@ -1156,3 +1158,271 @@ def test_multiple_tool_results_are_omitted_if_one_is_not_enough(monkeypatch):
                 {"role": "tool", "content": "x" * 7000}, {"role": "tool", "content": "y" * 6000}]
     list(s._chat("test", messages, num_ctx=1000))
     assert all(m["content"].startswith("[left out:") for m in sent[0] if m["role"] == "tool")
+
+
+# ------------------------------------------------------------------ questions to the user
+def asking(answers):
+    """An answer_question hook that records each question and gives the next scripted answer."""
+    asked, answers = [], iter(answers)
+
+    def answer(question):
+        asked.append(question)
+        return next(answers)
+
+    return answer, asked
+
+
+def write_then_reply(seen=None):
+    return scripted_chat([[tool_call("write_note", {"note": "summary.md", "content": "- one"})], "Here it is."], seen)
+
+
+def test_a_write_the_message_ruled_out_is_not_run_with_nobody_to_ask(monkeypatch):
+    seen = []
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(seen), tools=fake_tools)
+
+    events = list(s.ask("Write a three-bullet summary here. Do not save it."))
+
+    assert fake_tools.calls == []
+    tool_message = seen[1][-1]
+    assert tool_message["role"] == "tool"
+    assert 'write_note was not run: this message says \\"Do not save it\\". Give the result in the reply instead.' in tool_message["content"]
+    assert events[-1] == Text("Here it is.")
+
+
+@pytest.mark.parametrize("answer, runs", [(["Yes"], True), (["No"], False), (None, False)])  # None: no answer in time
+def test_a_write_the_message_ruled_out_runs_only_if_the_user_says_yes_when_asked(monkeypatch, answer, runs):
+    seen = []
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(seen), tools=fake_tools)
+    s.answer_question, asked = asking([answer])
+
+    list(s.ask("Summarise it; do not save yet."))
+
+    assert [q.text for q in asked] == [
+        'Your message said "do not save yet", but Nuru wants to run write_note on summary.md. Go ahead anyway?']
+    assert asked[0].recommended.label == "No"
+    assert (fake_tools.calls == [("write_note", {"note": "summary.md", "content": "- one"})]) is runs
+    if answer == ["No"]:
+        assert "and the user didn't allow it when asked" in seen[1][-1]["content"]
+
+
+def test_a_write_the_message_asked_for_runs_without_a_question(monkeypatch):
+    fake_tools = FakeMCPTools()
+    s = start_session(monkeypatch, chat=write_then_reply(), tools=fake_tools)
+    s.answer_question, asked = asking([])
+
+    list(s.ask("Save a three-bullet summary to my notes."))
+
+    assert asked == []
+    assert fake_tools.calls == [("write_note", {"note": "summary.md", "content": "- one"})]
+
+
+ASK = {"question": "Which reporting rate should I use?", "kind": "single",
+       "options": [{"label": "4 reports/h", "description": "the revised note", "recommended": True}, "6 reports/h"]}
+
+
+def offered_tools(steps, offered):
+    """scripted_chat, also recording the tool names offered to each call. A step may be (text, calls)."""
+    steps = iter(steps)
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        offered.append([t["function"]["name"] for t in tools or []])
+        step = next(steps)
+        if isinstance(step, tuple):
+            yield step[0]
+            yield {"tool_calls": step[1]}
+        elif isinstance(step, list):
+            yield {"tool_calls": step}
+        else:
+            yield step
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    return chat
+
+
+def test_ask_user_is_not_offered_unless_switched_on(monkeypatch):
+    offered = []
+    s = start_session(monkeypatch, chat=offered_tools([[tool_call("ask_user", ASK)], "Using 4 reports/h."], offered))
+
+    events = list(s.ask("battery life?"))
+
+    assert "ask_user" not in offered[0]
+    assert not any(isinstance(e, session.Ask) for e in events)  # refused as a tool it wasn't given
+
+
+def test_ask_user_ends_the_turn_on_the_question_and_keeps_it_as_the_reply(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    offered = []
+    fake_tools = FakeMCPTools()
+    chat = offered_tools([("The two notes disagree.", [tool_call("ask_user", ASK), tool_call("calculate", {})])], offered)
+    s = start_session(monkeypatch, chat=chat, tools=fake_tools)
+
+    events = list(s.ask("battery life?"))
+
+    assert offered[0][-1] == "ask_user"
+    assert events[0] == Text("The two notes disagree.")
+    assert isinstance(events[-1], session.Ask)
+    assert events[-1].question.options[0].label == "4 reports/h"
+    assert fake_tools.calls == []  # the call after the question waits for the answer
+    kept = s.store.get_recent_messages(s.conversation_id, 10_000)[-1]
+    assert kept["role"] == "nuru"
+    assert kept["content"] == ("The two notes disagree.\n\nWhich reporting rate should I use?\n\n"
+                               "- 4 reports/h (recommended): the revised note\n- 6 reports/h")
+
+
+def test_the_answer_is_the_next_message_and_the_model_sees_the_question_before_it(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    seen = []
+    chat = scripted_chat([[tool_call("ask_user", ASK)], "At 4 reports/h: 3.47 years."], seen)
+    s = start_session(monkeypatch, chat=chat)
+
+    list(s.ask("battery life?"))
+    list(s.ask("4 reports/h"))
+
+    roles = [(m["role"], m["content"].splitlines()[-1]) for m in seen[1]]
+    assert roles[-2:] == [("assistant", "- 6 reports/h"), ("user", "4 reports/h")]
+
+
+def test_a_question_that_makes_no_sense_goes_back_to_the_model_to_fix(monkeypatch):
+    monkeypatch.setattr(session, "ASK_USER", True)
+    seen = []
+    chat = scripted_chat([[tool_call("ask_user", {"question": "Which?", "kind": "single", "options": ["A"]})],
+                          [tool_call("ask_user", ASK)]], seen)
+    s = start_session(monkeypatch, chat=chat)
+
+    events = list(s.ask("battery life?"))
+
+    assert "single needs 2-6 options" in seen[1][-1]["content"]
+    assert isinstance(events[-1], session.Ask)
+
+
+def logged_questions(log_dir):
+    (log_file,) = log_dir.glob("*.jsonl")
+    return [entry for entry in map(json.loads, log_file.read_text().splitlines()) if entry["event"] == "question"]
+
+
+@pytest.mark.parametrize("hook, answer, decision, reason", [
+    (True, ["Yes"], "Yes", "answered"), (True, None, "No", "no answer"), (False, None, "No", "nobody there")])
+def test_every_question_code_raises_is_logged_with_what_the_turn_went_on_with(monkeypatch, tmp_path, hook, answer, decision, reason):
+    monkeypatch.setattr(session, "LOG_DIR", tmp_path)
+    s = start_session(monkeypatch, chat=write_then_reply())
+    if hook:
+        s.answer_question, _ = asking([answer])
+
+    list(s.ask("Summarise it; do not save yet."))
+
+    (entry,) = logged_questions(tmp_path)
+    assert entry["question"].startswith('Your message said "do not save yet"')
+    assert (entry["answer"], entry["decision"], entry["reason"]) == (answer, decision, reason)
+    assert (entry["seconds"] is None) is (not hook)
+
+
+class SharedVault(FakeMCPTools):
+    """Notes named by title resolve as the server would: "Team Handover" is in shared/. A name it
+    doesn't know gets the server's not-found error; `lookup` replaces note_info's answer outright."""
+
+    def __init__(self, *args, lookup=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lookup = lookup
+
+    def call_harness_tool(self, name, arguments):
+        if name == "note_info":
+            if self.lookup is not None:
+                return self.lookup(arguments)
+            paths = {"Team Handover": "shared/Team Handover.md", "Priya Raman": "user/Priya Raman.md"}
+            if arguments["name"] in paths:
+                return ToolResult(json.dumps({"note": paths[arguments["name"]]}))
+            return ToolResult(f"Error executing tool note_info: FileNotFoundError: No note found named "
+                              f"'{arguments['name']}'. Use browse or search to find the right note.", is_error=True)
+        return super().call_harness_tool(name, arguments)
+
+
+@pytest.mark.parametrize("call, path", [
+    (tool_call("write_note", {"note": "shared/Team Handover.md", "content": "x"}), "shared/Team Handover.md"),
+    (tool_call("write_note", {"note": "Team Handover", "content": "x"}), "shared/Team Handover.md"),
+    (tool_call("rename_or_move_file", {"source_path": "nuru/a.md", "destination_path": "Shared/a.md"}), "Shared/a.md"),
+    # Dot components are resolved as the server resolves them (PR #10 review).
+    (tool_call("rename_or_move_file", {"source_path": "nuru/private.md", "destination_path": "nuru/../shared/leaked.md"}),
+     "shared/leaked.md"),
+    (tool_call("rename_or_move_file", {"source_path": "nuru/private.md", "destination_path": "./shared/leaked.md"}),
+     "shared/leaked.md"),
+    (tool_call("write_note", {"note": "nuru/../shared/Team Handover.md", "content": "x"}), "shared/Team Handover.md"),
+])
+def test_a_write_into_shared_is_asked_about_and_runs_only_on_a_yes(monkeypatch, call, path):
+    for answer, runs in ((["Yes"], True), (None, False)):
+        seen, tools = [], SharedVault(tool_results={"rename_or_move_file": ""})
+        s = start_session(monkeypatch, chat=scripted_chat([[call], "Done."], seen), tools=tools)
+        s.answer_question, asked = asking([answer])
+
+        list(s.ask("Put the handover where the team can see it."))
+
+        assert [q.text for q in asked] == [
+            f"Nuru wants to run {call['function']['name']} on {path}, where others can read it. Allow it?"]
+        assert asked[0].timeout == 10
+        assert bool(tools.calls) is runs
+        if not runs:
+            assert f"{path} is in shared/, which others read, and the user didn't allow it" in seen[1][-1]["content"]
+
+
+@pytest.mark.parametrize("arguments", [{"note": "Priya Raman", "content": "x"}, {"note": "Brand new", "content": "x"},
+                                       {"type": "daily", "content": "x"}])
+def test_writes_outside_shared_are_not_asked_about(monkeypatch, arguments):
+    tools = SharedVault()
+    s = start_session(monkeypatch, chat=scripted_chat([[tool_call("write_note", arguments)], "Done."]), tools=tools)
+    s.answer_question, asked = asking([])
+
+    list(s.ask("Note it down."))
+
+    assert asked == [] and tools.calls == [("write_note", arguments)]
+
+
+def test_with_nobody_there_a_write_into_shared_does_not_run(monkeypatch):
+    seen, tools = [], SharedVault()
+    chat = scripted_chat([[tool_call("write_note", {"note": "shared/Team Handover.md", "content": "x"})], "Done."], seen)
+    s = start_session(monkeypatch, chat=chat, tools=tools)
+
+    list(s.ask("Add her lunch discussion to the handover."))
+
+    assert tools.calls == []
+    assert "nobody was there to allow it" in seen[1][-1]["content"]
+
+
+def lookup_raises(arguments):
+    raise ConnectionError("obsidian server went away")
+
+
+@pytest.mark.parametrize("lookup", [
+    lookup_raises,
+    lambda arguments: ToolResult("Error executing tool note_info: ValueError: bad frontmatter", is_error=True),
+    lambda arguments: ToolResult("not json"),
+    lambda arguments: ToolResult(json.dumps({"hint": "no note key"})),
+], ids=["exception", "other error", "unparseable", "no path"])
+def test_a_write_whose_note_cant_be_looked_up_is_treated_as_possibly_shared(monkeypatch, lookup):
+    # PR #10 review: a failed lookup can't establish that the note is private; the server may still
+    # resolve "Handover" to shared/Handover.md.
+    for answer, runs in ((["Yes"], True), (["No"], False), (None, False)):
+        seen, tools = [], SharedVault(lookup=lookup)
+        chat = scripted_chat([[tool_call("write_note", {"note": "Handover", "content": "Private lunch detail"})], "Done."], seen)
+        s = start_session(monkeypatch, chat=chat, tools=tools)
+        s.answer_question, asked = asking([answer])
+
+        list(s.ask("Add the lunch detail to the handover."))
+
+        assert len(asked) == 1
+        assert asked[0].text.startswith("Nuru couldn't check where write_note on Handover would land")
+        assert asked[0].timeout == 10
+        assert bool(tools.calls) is runs
+        if not runs:
+            assert "couldn't confirm that Handover is outside shared/" in seen[1][-1]["content"]
+
+
+def test_with_nobody_there_a_write_whose_note_cant_be_looked_up_does_not_run(monkeypatch):
+    seen, tools = [], SharedVault(lookup=lookup_raises)
+    chat = scripted_chat([[tool_call("write_note", {"note": "Handover", "content": "x"})], "Done."], seen)
+    s = start_session(monkeypatch, chat=chat, tools=tools)
+
+    list(s.ask("Add it to the handover."))
+
+    assert tools.calls == []
+    assert "nobody was there to allow it" in seen[1][-1]["content"]

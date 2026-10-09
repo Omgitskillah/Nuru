@@ -430,9 +430,11 @@ class QuestionCard(QFrame):
     choice, checkboxes and a Send button for a multi-choice question, and a line for an answer of
     your own where the question allows one. The recommended option is outlined and says why.
 
-    `answered` carries the labels chosen; the card then shows the answer and takes no more input."""
+    `answered` carries the labels chosen; the card then shows the answer and takes no more input.
+    A question with a timeout counts down under the options, and `expired` says it ran out."""
 
     answered = pyqtSignal(list)
+    expired = pyqtSignal()
 
     def __init__(self, question: Question) -> None:
         super().__init__()
@@ -520,6 +522,26 @@ class QuestionCard(QFrame):
         self.note.hide()
         layout.addWidget(self.note)
 
+        self.seconds_left = math.ceil(question.timeout) if question.timeout else 0
+        self.countdown = QTimer(self)
+        self.countdown.setInterval(1000)
+        self.countdown.timeout.connect(self.tick)
+        if self.seconds_left:
+            self.note.show()
+            self.show_seconds_left()
+            self.countdown.start()
+
+    def show_seconds_left(self) -> None:
+        self.note.setText(f"Taken as No in {self.seconds_left} s")
+
+    def tick(self) -> None:
+        self.seconds_left -= 1
+        if self.seconds_left > 0:
+            self.show_seconds_left()
+            return
+        self.close_with(f"No answer in {self.question.timeout:g} s - taken as No.")
+        self.expired.emit()
+
     @staticmethod
     def add_note(layout: QVBoxLayout, text: str, indent: int) -> None:
         if not text:
@@ -549,6 +571,7 @@ class QuestionCard(QFrame):
 
     def close_with(self, note: str) -> None:
         """No more answers: say how the question ended, under it."""
+        self.countdown.stop()
         self.inputs.setEnabled(False)
         self.inputs.hide()
         self.note.setText(note)
@@ -1082,20 +1105,22 @@ class ChatWindow(QWidget):
 
     def answer_question(self, question: Question) -> list[str] | None:
         """Session.answer_question, called on the worker thread: shows the question in the reply in
-        flight and waits for the answer. Stop gives up on it, and the session takes that as no answer."""
+        flight and waits for the answer. Stop, or the question's time running out, gives up on it, and
+        the session takes that as No."""
         answered, answer = threading.Event(), []
         cancel = self.cancel
         self.question_raised.emit(question, (answered, answer))
         while not answered.wait(0.05):
             if cancel.is_set():
                 return None
-        return answer[0]
+        return answer[0] if answer else None  # none: its time ran out
 
     def show_raised_question(self, question: Question, waiter) -> None:
         answered, answer = waiter
         self.render_reply()
         card = QuestionCard(question)
         card.answered.connect(lambda chosen: (answer.append(chosen), answered.set()))
+        card.expired.connect(answered.set)
         self.raised_question = card
         self.message.add_question(card)
 

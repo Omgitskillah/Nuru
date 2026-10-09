@@ -15,6 +15,8 @@ from dataclasses import dataclass
 YES_NO, SINGLE, MULTI = "yes_no", "single", "multi"
 YES, NO = "Yes", "No"
 MAX_OPTIONS = 6
+# How long a question code raises mid-turn waits for an answer; none in time is taken as No.
+ANSWER_SECONDS = 10
 
 TOOL_NAME = "ask_user"
 TOOL = {
@@ -68,6 +70,7 @@ class Question:
     options: tuple[Option, ...] = ()
     details: str = ""  # shown under the question, e.g. the write that is waiting
     allow_other: bool = False  # the user may type their own answer instead
+    timeout: float | None = None  # seconds to wait for an answer before it is taken as No
 
     @property
     def choices(self) -> tuple[Option, ...]:
@@ -78,8 +81,9 @@ class Question:
         return next((o for o in self.choices if o.recommended), None)
 
 
-def yes_no(text: str, *, recommend: str | None = None, details: str = "") -> Question:
-    return Question(text, YES_NO, tuple(Option(label, recommended=label == recommend) for label in (YES, NO)), details)
+def yes_no(text: str, *, recommend: str | None = None, details: str = "", timeout: float | None = None) -> Question:
+    return Question(text, YES_NO, tuple(Option(label, recommended=label == recommend) for label in (YES, NO)), details,
+                    timeout=timeout)
 
 
 def from_tool(arguments) -> Question:
@@ -140,16 +144,27 @@ def is_yes(chosen: list[str] | None) -> bool:
 
 
 # --------------------------------------------------------------------------- questions code raises
+# Each waits ANSWER_SECONDS for an answer, mid-turn; none in time is taken as No.
 def write(tool: str, arguments: dict) -> Question:
     """gate_write wants the user's OK before a write runs."""
     return yes_no(f"Nuru wants to run {tool} on {_target(arguments)}. Allow it?",
-                  details=json.dumps(arguments, ensure_ascii=False, indent=1)[:2000])
+                  details=_details(arguments), timeout=ANSWER_SECONDS)
 
 
 def against_no_save(tool: str, arguments: dict, said: str) -> Question:
     """A write in a turn whose message ruled writes out."""
     return yes_no(f'Your message said "{said}", but Nuru wants to run {tool} on {_target(arguments)}. Go ahead anyway?',
-                  recommend=NO, details=json.dumps(arguments, ensure_ascii=False, indent=1)[:2000])
+                  recommend=NO, details=_details(arguments), timeout=ANSWER_SECONDS)
+
+
+def shared_write(tool: str, arguments: dict, path: str) -> Question:
+    """A write that lands in shared/, which other people read."""
+    return yes_no(f"Nuru wants to run {tool} on {path}, where others can read it. Allow it?",
+                  details=_details(arguments), timeout=ANSWER_SECONDS)
+
+
+def _details(arguments: dict) -> str:
+    return json.dumps(arguments, ensure_ascii=False, indent=1)[:2000]
 
 
 def _target(arguments: dict) -> str:

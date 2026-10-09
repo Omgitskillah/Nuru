@@ -949,17 +949,46 @@ class Session:
         """Operator action, never exposed as a model tool. Stop active sessions first."""
         self.store.resolve_write(attempt_id, self._vault_scope, state)
 
-    def _answer(self, question: Question) -> list[str] | None:
-        """The user's answer to a question code raises, or None with nobody there to ask."""
-        return self.answer_question(question) if self.answer_question else None
+    def _answer(self, turn_id: str, question: Question) -> list[str] | None:
+        """The user's answer to a question code raises, or None with nobody there to ask. A question
+        left unanswered (its time ran out, or the turn was stopped) is taken as No. Either way the
+        outcome is logged."""
+        if self.answer_question is None:
+            self.logger.question(turn_id, question.text, None, questions.NO, "nobody there", None)
+            return None
+        started = time.monotonic()
+        answer = self.answer_question(question)
+        seconds = time.monotonic() - started
+        if answer is None:
+            self.logger.question(turn_id, question.text, None, questions.NO, "no answer", seconds)
+            return [questions.NO]
+        self.logger.question(turn_id, question.text, answer, questions.answer_text(answer), "answered", seconds)
+        return answer
 
-    def _confirmed(self, name: str, args: dict) -> bool | None:
+    def _shared_target(self, name: str, args: dict) -> str | None:
+        """The shared/ path a write would land on, if it lands there. A note named by its title is
+        found the way the server finds it; one that doesn't exist yet is created in nuru/."""
+        if name == "rename_or_move_file":
+            target = str(args.get("destination_path") or "")
+        elif name == "write_note" and args.get("type") != "daily" and args.get("note"):
+            target = str(args["note"])
+            if not target.lower().startswith("shared/"):
+                try:
+                    result = self.tools.call_harness_tool("note_info", {"name": target})
+                    target = "" if result.is_error else str(json.loads(result.text).get("note") or "")
+                except Exception:
+                    target = ""
+        else:
+            return None
+        return target if target.lower().startswith("shared/") else None
+
+    def _confirmed(self, turn_id: str, name: str, args: dict) -> bool | None:
         """The user's OK for a write gate_write wants confirmed; None if nobody was there to give it."""
-        if questions.no_save_phrase(self._turn_text):
-            return True  # the "do not save" question asks instead, once (_call_tool)
+        if questions.no_save_phrase(self._turn_text) or self._shared_target(name, args):
+            return True  # the "do not save" or shared/ question asks instead, once (_call_tool)
         if self.confirm_write:
             return self.confirm_write(name, args)
-        answer = self._answer(questions.write(name, args))
+        answer = self._answer(turn_id, questions.write(name, args))
         return None if answer is None else questions.is_yes(answer)
 
     def _end_with_question(self, turn_id: str, question: Question, said: str):
@@ -1019,16 +1048,23 @@ class Session:
                 verdict = write_gate["verdict"] if write_gate else "ask"
                 if verdict == "block":
                     outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: write gate blocked it.")
-                elif verdict == "ask" and not self._confirmed(name, args):
+                elif verdict == "ask" and not self._confirmed(turn_id, name, args):
                     outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: confirmation was not given.")
                 if outcome and self.shadow:
                     self.shadow.gate_action(write_gate, "blocked")
+        # Worded for the model, which reads them; a hint addressed to "the user" gets repeated to them.
         if outcome is None and name in MUTATIONS and (said := questions.no_save_phrase(self._turn_text)):
-            answer = self._answer(questions.against_no_save(name, args, said))
+            answer = self._answer(turn_id, questions.against_no_save(name, args, said))
             if not questions.is_yes(answer):
-                # Worded for the model, which reads it; a hint addressed to "the user" gets repeated to them.
                 outcome = tool_dispatch.failure("policy", "NOT_RUN", f'{name} was not run: this message says "{said}"'
-                    + (", and the user said no when asked." if answer is not None else ".")
+                    + (", and the user didn't allow it when asked." if answer is not None else ".")
+                    + " Give the result in the reply instead.")
+        if outcome is None and name in MUTATIONS and (shared := self._shared_target(name, args)):
+            answer = self._answer(turn_id, questions.shared_write(name, args, shared))
+            if not questions.is_yes(answer):
+                outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: {shared} is in shared/, "
+                    "which others read, and " + ("the user didn't allow it when asked." if answer is not None
+                                                 else "nobody was there to allow it.")
                     + " Give the result in the reply instead.")
         if outcome is None and name in MUTATIONS:
             attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args)
@@ -1163,7 +1199,7 @@ class Session:
         if verdict == "block":
             return not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked")
         if verdict == "ask":
-            confirmed = self._confirmed(name, args)
+            confirmed = self._confirmed(turn_id, name, args)
             if confirmed is None:
                 return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
             if not confirmed:

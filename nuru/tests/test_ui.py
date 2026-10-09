@@ -1120,3 +1120,39 @@ def test_stop_gives_up_on_a_question_raised_mid_turn(started):
 
     assert got == [None]
     assert window.message.findChild(ui.QuestionCard).note.text() == "Not answered - stopped."
+
+
+def test_a_timed_card_counts_down_and_says_when_it_was_taken_as_no(qapp):
+    card = ui.QuestionCard(questions.yes_no("Allow it?", timeout=2))
+    expired = []
+    card.expired.connect(lambda: expired.append(True))
+    assert card.note.text() == "Taken as No in 2 s"
+
+    card.tick()
+    assert card.note.text() == "Taken as No in 1 s"
+    card.tick()
+
+    assert expired == [True]
+    assert card.note.text() == "No answer in 2 s - taken as No."
+    assert not card.inputs.isEnabled() and not card.countdown.isActive()
+
+
+def test_answering_a_timed_card_stops_its_countdown(qapp):
+    card = ui.QuestionCard(questions.yes_no("Allow it?", timeout=10))
+    assert card.countdown.isActive()
+    choices(card)["Yes"].click()
+    assert not card.countdown.isActive()
+    assert card.note.text() == "You answered: Yes"
+
+
+def test_a_question_raised_mid_turn_that_runs_out_of_time_has_no_answer(started):
+    got, windows = [], []
+    window, _ = started(raising(questions.yes_no("Allow it?", timeout=1), got, windows))
+    windows.append(window)
+
+    type_and_send(window, "save it")
+    finish(window)  # the card's own timer runs out after a second
+
+    assert got == [None]
+    assert window.message.findChild(ui.QuestionCard).note.text() == "No answer in 1 s - taken as No."
+    assert bubble_text(window) == "Saving it. Done."

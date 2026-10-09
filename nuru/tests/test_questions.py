@@ -66,6 +66,19 @@ def test_a_write_question_names_the_note_and_shows_the_arguments():
     assert '"content": "x"' in question.details
 
 
+def test_questions_code_raises_wait_ten_seconds_and_those_the_model_asks_do_not():
+    raised = [questions.write("write_note", {}), questions.against_no_save("write_note", {}, "no edits"),
+              questions.shared_write("write_note", {}, "shared/a.md")]
+    assert [q.timeout for q in raised] == [10, 10, 10]
+    assert questions.from_tool({"question": "Go?", "kind": "yes_no"}).timeout is None
+
+
+def test_a_write_into_shared_names_the_path_and_who_can_read_it():
+    question = questions.shared_write("rename_or_move_file", {"destination_path": "shared/a.md"}, "shared/a.md")
+    assert question.text == "Nuru wants to run rename_or_move_file on shared/a.md, where others can read it. Allow it?"
+    assert question.recommended is None
+
+
 def test_a_save_the_message_ruled_out_is_asked_about_with_no_recommended():
     question = questions.against_no_save("write_note", {"content": "x"}, "Do not save it")
     assert question.text.startswith('Your message said "Do not save it", but Nuru wants to run write_note on a new note.')

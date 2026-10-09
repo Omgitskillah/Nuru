@@ -301,18 +301,41 @@ def test_main_help_command_lists_commands_without_asking_the_model(monkeypatch, 
     assert s.asked == []
 
 
+@pytest.fixture
+def typed_in_time(monkeypatch):
+    monkeypatch.setattr(cli, "_input_ready", lambda timeout: True)
+
+
 @pytest.mark.parametrize("reply, approved", [("y", True), ("YES", True), ("", False), ("n", False), ("sure", False)])
-def test_a_write_is_confirmed_only_by_a_yes(monkeypatch, reply, approved):
-    monkeypatch.setattr("builtins.input", lambda prompt: reply)
+def test_a_write_is_confirmed_only_by_a_yes(monkeypatch, typed_in_time, reply, approved):
+    monkeypatch.setattr("builtins.input", lambda *prompt: reply)
     assert questions.is_yes(cli.answer(questions.write("write_note", {"note": "x", "content": "y"}))) is approved
 
 
-def test_no_answer_is_none(monkeypatch):
-    def eof(prompt):
+def test_no_answer_is_none(monkeypatch, typed_in_time):
+    def eof(*prompt):
         raise EOFError
 
     monkeypatch.setattr("builtins.input", eof)
     assert cli.answer(questions.write("write_note", {})) is None
+
+
+def test_a_timed_question_says_how_long_it_waits_and_gives_up_when_nothing_is_typed(monkeypatch, capsys):
+    waited = []
+    monkeypatch.setattr(cli, "_input_ready", lambda timeout: waited.append(timeout) or False)
+    monkeypatch.setattr("builtins.input", lambda *prompt: pytest.fail("nothing was typed to read"))
+
+    assert cli.answer(questions.write("write_note", {"note": "x"})) is None
+
+    assert waited == [10]
+    out = capsys.readouterr().out
+    assert "Allow it? (No in 10 s)" in out
+    assert "No answer in 10 s - taken as No." in out
+
+
+def test_where_stdin_cannot_be_waited_on_a_timed_question_waits_for_the_line(monkeypatch):
+    monkeypatch.setattr(cli.sys, "stdin", object())
+    assert cli._input_ready(10) is True
 
 
 def test_enter_takes_the_recommended_answer(monkeypatch, capsys):

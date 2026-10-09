@@ -3,6 +3,8 @@ giving it access to the tools exposed by the obsidian and deep-think MCP
 servers."""
 
 import json
+import select
+import sys
 from collections.abc import Iterator
 
 from core import questions
@@ -69,9 +71,25 @@ def _context_usage_percent(store: ConversationStore, conversation_id: int, conte
     return min(100, round(latest_prompt_tokens / context_window * 100))
 
 
-def _read(prompt: str) -> str | None:
+def _input_ready(timeout: float) -> bool:
+    """Whether a line can be read within `timeout` seconds. Where stdin can't be waited on, it waits
+    as long as it takes."""
     try:
-        return input(prompt)
+        return bool(select.select([sys.stdin], [], [], timeout)[0])
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def _read(prompt: str, timeout: float | None = None) -> str | None:
+    """A line you type, or None at EOF or when `timeout` seconds pass first."""
+    try:
+        if timeout is None:
+            return input(prompt)
+        print(prompt, end="", flush=True)
+        if not _input_ready(timeout):
+            print(f"\n[answer] No answer in {timeout:g} s - taken as No.")
+            return None
+        return input()
     except EOFError:
         return None
 
@@ -81,14 +99,15 @@ def answer(question: Question) -> list[str] | None:
 
     Yes/no takes y or n; Enter gives the recommended answer, or No, and anything but yes is no.
     Options take a number, several comma-separated for a checkbox question (e.g. 1,3), Enter for the
-    recommended one, or your own words where the question allows them."""
-    print(f"[ask] {question.text}")
+    recommended one, or your own words where the question allows them. A question with a timeout
+    returns None once it passes."""
+    print(f"[ask] {question.text}" + (f" (No in {question.timeout:g} s)" if question.timeout else ""))
     if question.details:
         print("\n".join("      " + line for line in question.details.splitlines()))
     recommended = question.recommended
     if question.kind == YES_NO:
         default = recommended.label if recommended else NO
-        reply = _read(f"[answer] {'[Y/n]' if default == YES else '[y/N]'} ")
+        reply = _read(f"[answer] {'[Y/n]' if default == YES else '[y/N]'} ", question.timeout)
         if reply is None:
             return None
         reply = reply.strip().lower()
@@ -102,7 +121,7 @@ def answer(question: Question) -> list[str] | None:
     hint += ", Enter for the recommended one" if recommended else ", Enter to skip"
     hint += ", or type your own answer" if question.allow_other else ""
     while True:
-        reply = _read(f"[answer] ({hint}) ")
+        reply = _read(f"[answer] ({hint}) ", question.timeout)
         if reply is None:
             return None
         reply = reply.strip()

@@ -354,7 +354,7 @@ def test_a_confirmed_write_runs(setup):
 
 
 @pytest.mark.parametrize("answer, runs, said", [(["Yes"], True, None), (["No"], False, "you declined it"),
-                                               (None, False, "nobody was there to give it")])
+                                               (None, False, "you declined it")])  # None: unanswered in time, taken as No
 def test_without_confirm_write_the_question_goes_to_answer_question(setup, answer, runs, said):
     responses = [
         [call("search", {"query": "Priya"})],

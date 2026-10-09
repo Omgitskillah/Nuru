@@ -156,6 +156,14 @@ class CLILogger:
             }
         )
 
+    def question(self, turn_id: str, question: str, answer: list[str] | None, decision: str, reason: str,
+                 seconds: float | None) -> None:
+        """A question code raised mid-turn and what came of it: `decision` is what the turn went on
+        with, and `reason` whether the user answered, didn't in time, or wasn't there to ask."""
+        self._log({"event": "question", "turn_id": turn_id, "question": question, "answer": answer,
+                   "decision": decision, "reason": reason,
+                   "seconds": round(seconds, 1) if seconds is not None else None})
+
     def index_pass(self, embedded: list[str], moved: list[tuple[str, str]], removed: list[str]) -> None:
         """A background indexing pass that changed the semantic index. Called from the indexer's
         own thread; logging's handlers are thread-safe."""

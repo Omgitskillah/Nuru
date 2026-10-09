@@ -20,11 +20,12 @@ tool-list change is implied by exposing new read-only MCP tools.
 | WP07.1 | Exact copies and bounded lexical candidate pairs | Backend tested: 3 cases |
 | WP08.1 | Scoped structured claims and explicit unit comparisons | Backend tested: 3 cases |
 | WP10.1 | Resolved link graph and explicit navigation indexes | Backend tested: 2 cases |
-| WP11.1 | Existing index compatibility/freshness and fake-embedder validation | Backend/worker tested; Nomic v2 live index/retrieval checks PASS on two test vaults; contention/fault stress pending |
+| WP11.1 | Index compatibility/freshness, ownership and fault recovery | Nomic v2 sequences PASS; real lock/corruption/edit/worker restart checks PASS; live retrieval contention gate FAIL, no overlapping rollout recommended |
 | Shared.1 | Opt-in worker, findings lifecycle, CLI/MCP, restart/reconciliation | Tested; default disabled |
 | Validation.1 | Independent fixtures, CI correctness, measured offline results | Local PASS; new GitHub CI awaits publication |
 | Validation.2 | New supplemental vault, isolated benchmark copy, local model checks | Deterministic and Nomic index checks PASS; Qwen advisory quality FAIL; independently labeled held-out work pending |
-| Interpretation | Bounded injectable stage, approval/budget/citation checks | Fake-provider and explicit Qwen eval adapters tested; production adapter/semantic acceptance incomplete |
+| Interpretation | Parsed evidence IDs, code-attached citations, constrained proposals | Structural checks pass; Qwen readiness 95/100 validation and 90/100 proposal controls; advisory prose quality FAIL; experimental/default-off |
+| Readiness M1–M5 | Rebase, evidence constraints, fresh controls, faults/contention | Locally committed with complete raw results and failed gates retained |
 | Pilot | Held-out human labels and consenting real-vault review efficacy | Requires approval |
 
 Backend code lives in the Obsidian dependency; orchestration/evals live in Nuru.
@@ -38,3 +39,8 @@ Optional semantic quality and human efficacy need independent acceptance evidenc
 
 See [2026-10-09 validation vaults and results](../../evals/vault_steward/validation-vaults-2026-10-09.md)
 for the exact scope, oracle correction, repeat protocol and model failures.
+
+Current release evidence: [advisories](../../evals/vault_steward/readiness-advisory-2026-10-09.md)
+and [index recovery/contention](../../evals/vault_steward/readiness-index-2026-10-09.md).
+Code-only reports remain the first-release authority. No human efficacy claim,
+automatic repair, semantic duplicate/connection feature or default inference is added.

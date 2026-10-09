@@ -80,3 +80,9 @@ these results do not justify paying the latency of advisory inference by default
 
 Raw evidence: [readiness-advisory-results-2026-10-09.json](readiness-advisory-results-2026-10-09.json).
 Earlier failed artifacts remain historical and are not pooled with this run.
+
+Final review subsequently added stale-asset and incomplete-coverage guards only;
+it did not tune this inspected set. [Cached replay](readiness-replay-results-2026-10-09.json)
+checks all 100 original responses against the stricter final boundary: identical
+candidate inputs and validation outcomes, zero model calls. Its separate hashes
+identify the final source revision; it is not fresh semantic acceptance.

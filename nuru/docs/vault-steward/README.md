@@ -5,6 +5,13 @@ Work-package definitions, 2026-10-07; implementation began on 2026-10-08.
 deterministic stages from remaining inference, held-out, and pilot acceptance.
 Do not treat proposed efficacy thresholds below as measured results.
 
+The first release keeps optional inference experimental. Current readiness
+measurements pass deterministic recovery but fail advisory semantic quality and
+the retrieval contention gate. Schedule embedding maintenance outside interactive
+use; overlapping indexing is not recommended by these results. See the
+[milestone ledger](implementation-milestones.md) and
+[execution record](../../evals/vault_steward/pr-readiness-execution.md).
+
 Goal: reduce the effort required to keep an Obsidian vault consistent, useful,
 and searchable. Most checks should run without Obsidian open or a model loaded.
 Interpretation should run only on candidates selected by deterministic checks.

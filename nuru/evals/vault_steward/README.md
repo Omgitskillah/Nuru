@@ -1,5 +1,13 @@
 # Vault stewardship evaluations
 
+The PR-readiness execution adds [constrained advisory results](readiness-advisory-2026-10-09.md)
+and [index faults/contention results](readiness-index-2026-10-09.md).
+Advisory semantic acceptance and the 10% contention gate **fail**; structured
+evidence/proposal checks and index recovery pass. Use `readiness_advisory_eval.py`
+for the current evidence-ID contract. The earlier quotation-format Qwen harnesses
+and results are historical; reproduce them at their recorded prior source revision,
+not against today's boundary. They are retained to avoid hiding prior failures.
+
 The remaining packages now have deterministic first milestones. See
 [implementation results and scope](steward-implementation-2026-10-08.md),
 [combined independent fixture](steward_fixture.json), and

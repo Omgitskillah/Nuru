@@ -49,6 +49,13 @@ pre-readiness-fix source; readiness-nomic records the post-fix source. Their sou
 hashes and raw runs distinguish them. Neither is a new run of the current review
 fixes.
 
-Merge order remains Obsidian PR3, then repin Nuru to the actual merged backend
-commit and rerun integration checks before merging PR11. While PR3 is open, Nuru
-pins backend review-fix commit 8a72029; the final main-commit repin is pending.
+## Merged dependency verification
+
+Obsidian PR3 is merged as `70131275727385355bd60047d8467c8653df5e6f`.
+Nuru now pins that exact main commit. Its tree matches the reviewed backend
+8a72029 without differences. Against the merged pin, the full integrated suite
+passes again: **1,507 passed, one opt-in live test skipped, 14.64 seconds**.
+The workspace lockfile passes its offline check. Both fixture CLI paths still
+score 16/16, MCP registration/call succeeds, and source bytes remain unchanged.
+No inference was used. The previously pending backend repin is complete; CI will
+validate the resulting published Nuru head.

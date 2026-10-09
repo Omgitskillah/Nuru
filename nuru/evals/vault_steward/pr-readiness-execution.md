@@ -91,3 +91,7 @@ After PR10 merged, PR11 was rebased onto main 8c47624. The [review-fix report](r
 records macOS fixes, archived evidence, 1,507 passing integrated tests (one skipped),
 and the remaining actual-backend-merge repin. Windows concerns are deferred at the
 user's request. Historical live contention evidence remains failed.
+
+Obsidian PR3 merged as 70131275727385355bd60047d8467c8653df5e6f; Nuru now
+pins that exact main commit. The integrated suite passes again (1,507 passed,
+one skipped), and fixture CLI/MCP plus offline lockfile checks pass.

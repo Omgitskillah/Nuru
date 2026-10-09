@@ -1,0 +1,10 @@
+{
+  "model": "nomic-embed-text-v2-moe:latest",
+  "semantic_sha256": "1cd9bd96473aaa2ec4b9aeef4cc2c6632a6c2c445d8f28daa795ff190dbf9192",
+  "raw_evidence": {
+    "file": "readiness-nomic-results-2026-10-09.json.gz",
+    "sha256": "9a16aa1650b409f9d6d189d80e2be7da21306566901822549ac8e0259dda108b",
+    "bytes": 405270,
+    "compressed_bytes": 78584
+  }
+}

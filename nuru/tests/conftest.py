@@ -42,6 +42,7 @@ def no_real_model_build_or_sandbox(monkeypatch):
 def no_background_indexer(monkeypatch):
     """Session.start() would otherwise start embedding the real vault through the real Ollama."""
     monkeypatch.setattr(session, "VaultIndexer", _NoIndexer)
+    monkeypatch.setattr(session, "VaultLinkAuditor", _NoIndexer)
 
 
 @pytest.fixture(autouse=True)
@@ -57,3 +58,8 @@ def isolate_conversation_files(monkeypatch, tmp_path):
     """Every Session test uses scratch history/logs, including executor tests."""
     monkeypatch.setattr(session, "LOG_DIR", tmp_path)
     monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")
+
+
+@pytest.fixture(autouse=True)
+def isolate_optional_steward(monkeypatch):
+    monkeypatch.setattr(session.VaultSteward, 'from_env', lambda: None)

@@ -1156,6 +1156,7 @@ version = "0.1.0"
 source = { editable = "servers/obsidian" }
 dependencies = [
     { name = "access-logging" },
+    { name = "markdown-it-py" },
     { name = "mcp" },
     { name = "python-dotenv" },
     { name = "python-ulid" },
@@ -1173,6 +1174,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
+    { name = "markdown-it-py", specifier = ">=4.0,<5" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-ulid", specifier = ">=4.0.1" },

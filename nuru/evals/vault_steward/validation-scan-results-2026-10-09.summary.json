@@ -1,0 +1,8 @@
+{
+  "raw_evidence": {
+    "file": "validation-scan-results-2026-10-09.json.gz",
+    "sha256": "dc7ddedb9a76d1b36dba2fa63ea9c7bda685acadf97c702817e808e42b4f98db",
+    "bytes": 129256,
+    "compressed_bytes": 15706
+  }
+}

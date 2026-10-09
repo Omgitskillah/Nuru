@@ -1426,3 +1426,16 @@ def test_with_nobody_there_a_write_whose_note_cant_be_looked_up_does_not_run(mon
 
     assert tools.calls == []
     assert "nobody was there to allow it" in seen[1][-1]["content"]
+def test_link_auditor_starts_logs_summary_and_stops_with_session(monkeypatch):
+    auditor = FakeIndexer()
+    monkeypatch.setattr(session, 'VaultLinkAuditor', type('V', (), {'from_env': staticmethod(lambda: auditor)}))
+    s = start_session(monkeypatch)
+    try:
+        assert auditor.calls == ['start']
+        assert s.link_auditor is auditor
+        auditor.on_change({'snapshot': 'test', 'complete': True, 'counts': {'broken': 1},
+                           'diagnostic_count': 0, 'stats': {'model_calls': 0}})
+        assert 'link_audit' in logged_events(session.LOG_DIR)
+    finally:
+        s.close()
+    assert auditor.calls == ['start', 'stop']

@@ -1,0 +1,17 @@
+{
+  "model": "qwen3.5:4b",
+  "summary": {
+    "calls": 50,
+    "format_and_citation_passes": 50,
+    "decision_matches": 50,
+    "median_wall_ms": 3043.7426670687273,
+    "source_bytes_unchanged": true,
+    "human_semantic_review": "PENDING; decision matching alone does not grade the suggestion"
+  },
+  "raw_evidence": {
+    "file": "qwen-steward-results-2026-10-09.json.gz",
+    "sha256": "dd71297fd1d2cbecf98fd9da3a6ccb432228343ca5059d3e5ac0167a85591bd8",
+    "bytes": 147101,
+    "compressed_bytes": 8095
+  }
+}

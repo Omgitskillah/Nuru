@@ -3,10 +3,17 @@ name: Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      stewardship_scale:
+        description: Run model-free 1K/10K stewardship scale evaluation
+        type: boolean
+        default: false
 
 jobs:
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -14,7 +21,7 @@ jobs:
         id: obsidian
         run: echo "revision=$(git rev-parse HEAD:servers/obsidian)" >> "$GITHUB_OUTPUT"
 
-      # Nuru and Laya import Obsidian code; only Nuru-owned tests run below.
+      # Pin the dependency: stewardship checks run its tests alongside Nuru's.
       - name: Check out Obsidian dependency
         uses: actions/checkout@v5
         with:
@@ -33,8 +40,22 @@ jobs:
       - name: Run tests
         env:
           VAULT_PATH: /tmp/ci-vault
-        run: uv run --locked pytest -v --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov-report=term-missing
+          OBSIDIAN_SEMANTIC_DB: ''
+          NURU_STEWARD_ENABLED: '0'
+        run: uv run --locked pytest -v nuru/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing
 
       - name: Coverage summary
         if: always()
         run: uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Model-free stewardship scale evaluation
+        if: github.event_name == 'workflow_dispatch' && inputs.stewardship_scale
+        run: uv run --locked python nuru/evals/vault_steward/steward_eval.py --sizes 1000,10000 --repeats 5 --output "$RUNNER_TEMP/steward-results.json"
+
+      - name: Save stewardship scale results
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.stewardship_scale
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: stewardship-scale-results
+          path: ${{ runner.temp }}/steward-results.json
+          retention-days: 7

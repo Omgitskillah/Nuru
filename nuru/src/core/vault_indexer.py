@@ -91,8 +91,10 @@ class VaultIndexer:
         `last_change` for the window, and `on_change` for the session log."""
         try:
             with contextlib.closing(semantic.connect(self.config)) as conn:
+                conn.execute("PRAGMA busy_timeout=1000")  # background work yields promptly; interactive connections keep 30 s
                 result = semantic.refresh(
-                    conn, self.config, self.embed, on_progress=self._set_pending, should_stop=self._stop.is_set
+                    conn, self.config, self.embed, on_progress=self._set_pending,
+                    should_stop=self._stop.is_set
                 )
         finally:
             self.pending = 0

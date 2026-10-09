@@ -26,3 +26,8 @@ logs/
 db/
 file_cache.db
 .coverage
+
+# Local validation copies and isolated indexes; tracked manifests live in evals.
+/DummyVaultValidation/
+/VaultStewardValidation/
+/.validation-indexes/

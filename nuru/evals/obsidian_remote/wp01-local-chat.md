@@ -4,7 +4,7 @@ Each claim is marked as one of: proposed, automated-tested, manually-tested or l
 
 ## M1: protocol and fixtures (2026-10-09, branch wp01-m1-protocol)
 
-Machine: macOS 26.6.2, Obsidian 1.10.6, Python 3.14 (uv.lock), Node 24.21.0.
+Machine: macOS 26.6.2, Obsidian installer 1.10.6 (app API 1.13.7), Python 3.14 (uv.lock), Node 24.21.0.
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ Machine: macOS 26.6.2, Obsidian 1.10.6, Python 3.14 (uv.lock), Node 24.21.0.
 | Request IDs are scoped to principal, vault and operation, and bound to their content | automated-tested | `test_request_ids_are_scoped_and_bound_to_their_content` |
 | Every Session event type maps to a protocol event | automated-tested | `test_every_session_event_has_a_protocol_event` |
 | The fake server refuses a missing token (401), a foreign Origin (403) and a rebinding Host (403), answers CORS preflight, and streams events as they are produced | manually-tested (curl) | Events arrived 0.2 s apart with `--delay 0.2` |
-| An authenticated, streamed reply reaches a plugin in real Obsidian, and resumes after a drop | pending | Needs the spike vault opened in Obsidian (see below) |
+| An authenticated, streamed reply reaches a plugin in real Obsidian, and resumes after a drop | manually-tested | 2026-10-09 22:01 UTC, origin `app://obsidian.md`, `--delay 0.2`, `spike-result.json` `ok: true`. Without a token: a readable 401 (CORS on errors works). With one: status 200, first response in 3 ms. 4 events, then the reader was cancelled, then 8 more from `after=4`; seqs 1-12 in order, no duplicates. Arrival gaps 201-211 ms, so the stream was not buffered. Server-to-plugin latency 0-1 ms per event. `after=999` gave 410 `cursor_expired`. The final reply rendered as Markdown with `MarkdownRenderer` (wikilinks, emoji, code block) |
 
 Suite: `uv run --locked pytest -q`, 1562 passed and 1 skipped (1522 before M1).
 

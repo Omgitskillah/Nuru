@@ -1,0 +1,1477 @@
+{
+ "about": "Frozen protocol v1 examples (WP01 M1). Generated once, then kept as is: a change that breaks them is a protocol change. Additions are fine.",
+ "streams": {
+  "completed_with_tools": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "queued",
+    "data": {
+     "position": 1
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "reasoning",
+    "data": {
+     "text": "The user wants the ",
+     "final": false
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "reasoning",
+    "data": {
+     "text": "meeting notes.",
+     "final": false
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "reasoning",
+    "data": {
+     "text": "The user wants the meeting notes.",
+     "final": true
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 7,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call00search",
+     "name": "search",
+     "arguments": {
+      "query": "meeting notes Grüße"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 8,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_result",
+    "data": {
+     "call_id": "call00search",
+     "ok": true,
+     "summary": "3 notes"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 9,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Found **3** notes: [[Grü"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 10,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "ße]], [[🌍 Trip]] and "
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 11,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "[[user/Plan]].\n\n```py\nprint(1)\n```"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 12,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "Found **3** notes: [[Grüße]], [[🌍 Trip]] and [[user/Plan]].\n\n```py\nprint(1)\n```"
+    }
+   }
+  ],
+  "write_approved": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call0000write",
+     "name": "write_note",
+     "arguments": {
+      "note": "shared/Team plan.md",
+      "mode": "append",
+      "content": "- ship M1"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000001",
+     "operation": "e8ff5dd1459e550efd6f34873ce7b8e41c8916d0bea529b7ab67555b475ca2a8",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "yes_no",
+      "text": "Nuru wants to run write_note on shared/Team plan.md, where others can read it. Allow it?",
+      "options": [
+       {
+        "label": "Yes"
+       },
+       {
+        "label": "No"
+       }
+      ],
+      "details": "{\n \"note\": \"shared/Team plan.md\",\n \"mode\": \"append\"\n}"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000001",
+     "outcome": "answered",
+     "chosen": [
+      "Yes"
+     ],
+     "decision": "Yes"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "write_receipt",
+    "data": {
+     "call_id": "call0000write",
+     "tool": "write_note",
+     "state": "applied",
+     "path": "shared/Team plan.md"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 7,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_result",
+    "data": {
+     "call_id": "call0000write",
+     "ok": true,
+     "summary": "appended 1 line"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 8,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Added it to shared/Team plan.md."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000002",
+    "seq": 9,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "Added it to shared/Team plan.md."
+    }
+   }
+  ],
+  "write_expired": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call0000write",
+     "name": "write_note",
+     "arguments": {
+      "note": "shared/Team plan.md",
+      "mode": "append",
+      "content": "- ship M1"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000002",
+     "operation": "94ee3aaf2ecb926c70aaf5289621335afa71e8819cecba7739d7e7f94e1379ca",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "yes_no",
+      "text": "Nuru wants to run write_note on shared/Team plan.md, where others can read it. Allow it?",
+      "options": [
+       {
+        "label": "Yes"
+       },
+       {
+        "label": "No"
+       }
+      ],
+      "details": "{\n \"note\": \"shared/Team plan.md\",\n \"mode\": \"append\"\n}"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000002",
+     "outcome": "expired",
+     "decision": "No"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "write_receipt",
+    "data": {
+     "call_id": "call0000write",
+     "tool": "write_note",
+     "state": "refused",
+     "path": "shared/Team plan.md",
+     "detail": "no answer in 10 seconds, taken as No"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 7,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_result",
+    "data": {
+     "call_id": "call0000write",
+     "ok": false,
+     "summary": "refused"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 8,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "I didn't write it: nobody approved the change."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000003",
+    "seq": 9,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "I didn't write it: nobody approved the change."
+    }
+   }
+  ],
+  "write_refused": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call0000write",
+     "name": "write_note",
+     "arguments": {
+      "note": "shared/Team plan.md",
+      "mode": "append",
+      "content": "- ship M1"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000003",
+     "operation": "1d212442626c354dac85ebca5624353fc4e855e3267878f77acb6f48c1d045c5",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "yes_no",
+      "text": "Nuru wants to run write_note on shared/Team plan.md, where others can read it. Allow it?",
+      "options": [
+       {
+        "label": "Yes"
+       },
+       {
+        "label": "No"
+       }
+      ],
+      "details": "{\n \"note\": \"shared/Team plan.md\",\n \"mode\": \"append\"\n}"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000003",
+     "outcome": "answered",
+     "chosen": [
+      "No"
+     ],
+     "decision": "No"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "write_receipt",
+    "data": {
+     "call_id": "call0000write",
+     "tool": "write_note",
+     "state": "refused",
+     "path": "shared/Team plan.md"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 7,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_result",
+    "data": {
+     "call_id": "call0000write",
+     "ok": false,
+     "summary": "refused"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000004",
+    "seq": 8,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": ""
+    }
+   }
+  ],
+  "failed": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000005",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000005",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000005",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Let me look"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000005",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "failed",
+    "data": {
+     "code": "turn_failed",
+     "message": "The model stopped answering. Try again."
+    }
+   }
+  ],
+  "cancelled_while_asking": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "I'll save that. "
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call0000write",
+     "name": "write_note",
+     "arguments": {
+      "note": "shared/Team plan.md",
+      "mode": "append",
+      "content": "- ship M1"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000004",
+     "operation": "5fe47f1c7b38517b47df611e1e99b2b35669c9a7949b83006b20818c9664bc41",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "yes_no",
+      "text": "Nuru wants to run write_note on shared/Team plan.md, where others can read it. Allow it?",
+      "options": [
+       {
+        "label": "Yes"
+       },
+       {
+        "label": "No"
+       }
+      ],
+      "details": "{\n \"note\": \"shared/Team plan.md\",\n \"mode\": \"append\"\n}"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000004",
+     "outcome": "cancelled",
+     "decision": "No"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 7,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "write_receipt",
+    "data": {
+     "call_id": "call0000write",
+     "tool": "write_note",
+     "state": "refused",
+     "path": "shared/Team plan.md",
+     "detail": "stopped"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000006",
+    "seq": 8,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "cancelled",
+    "data": {
+     "reason": "user",
+     "partial_reply": "I'll save that. "
+    }
+   }
+  ],
+  "cancelled_in_queue": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000007",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000007",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "queued",
+    "data": {
+     "position": 2
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000007",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "cancelled",
+    "data": {
+     "reason": "user"
+    }
+   }
+  ],
+  "model_asks": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000008",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000008",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000008",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Two notes match."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000008",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "Two notes match.",
+     "ask": {
+      "kind": "single",
+      "text": "Which one did you mean?",
+      "options": [
+       {
+        "label": "user/Plan.md",
+        "recommended": true,
+        "description": "edited today"
+       },
+       {
+        "label": "nuru/Plan.md"
+       }
+      ],
+      "allow_other": true
+     }
+    }
+   }
+  ],
+  "retry": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "reasoning",
+    "data": {
+     "text": "The answer is 42.",
+     "final": true
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "retry",
+    "data": {
+     "reason": "silent"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "42."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000009",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "42."
+    }
+   }
+  ],
+  "uncertain_write": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000a",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000a",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000a",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "tool_start",
+    "data": {
+     "call_id": "call000edit1",
+     "name": "write_note",
+     "arguments": {
+      "note": "nuru/Log.md",
+      "mode": "append",
+      "content": "x"
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000a",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "write_receipt",
+    "data": {
+     "call_id": "call000edit1",
+     "tool": "write_note",
+     "state": "uncertain",
+     "path": "nuru/Log.md",
+     "detail": "the service restarted before the write's result came back; it is not retried"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000a",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "failed",
+    "data": {
+     "code": "service_restarted",
+     "message": "Nuru restarted during this turn. Check nuru/Log.md before trying again."
+    }
+   }
+  ],
+  "hostile_markdown": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000b",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000b",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000b",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "<script>alert(1)</script><img src=x onerror=alert(2)> [click](javascript:alert(3)) <a href=\"file:///etc/passwd\">f</a>"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000b",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "<script>alert(1)</script><img src=x onerror=alert(2)> [click](javascript:alert(3)) <a href=\"file:///etc/passwd\">f</a>"
+    }
+   }
+  ],
+  "multi_answered_none": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000005",
+     "operation": "9137aadea9accdf13f914a9d89346197ee85cad4bba93a551a1aab65426fe0bf",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "multi",
+      "text": "Which notes should Nuru tag #trip?",
+      "options": [
+       {
+        "label": "user/Rome.md"
+       },
+       {
+        "label": "user/Oslo.md"
+       },
+       {
+        "label": "nuru/Packing.md"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000005",
+     "outcome": "answered",
+     "chosen": [],
+     "decision": "None of these."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "I left the tags alone."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000c",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "I left the tags alone."
+    }
+   }
+  ],
+  "single_answered_other": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question",
+    "data": {
+     "question_id": "ques00000006",
+     "operation": "2c0dd28e5b4f9e63189caf5fc35262bc3d0c1db0bcc9c35657065a3d747814a8",
+     "expires_at": "2026-10-09T12:00:10.000Z",
+     "question": {
+      "kind": "single",
+      "text": "Where should the summary go?",
+      "options": [
+       {
+        "label": "nuru/Summary.md",
+        "recommended": true
+       },
+       {
+        "label": "user/Summary.md"
+       }
+      ],
+      "allow_other": true
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "question_closed",
+    "data": {
+     "question_id": "ques00000006",
+     "outcome": "answered",
+     "chosen": [],
+     "other": "nuru/Trips/Summary.md",
+     "decision": "nuru/Trips/Summary.md"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "Saved to nuru/Trips/Summary.md."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn0000000d",
+    "seq": 6,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "Saved to nuru/Trips/Summary.md."
+    }
+   }
+  ]
+ },
+ "requests": {
+  "submit_turn": {
+   "valid": [
+    {
+     "request_id": "req-0000000000000001",
+     "text": "What did I plan for Friday?"
+    },
+    {
+     "request_id": "req-0000000000000002",
+     "text": "Summarise this",
+     "attachments": [
+      {
+       "path": "user/Plan.md",
+       "selection": "Friday: ship"
+      }
+     ]
+    }
+   ],
+   "invalid": {
+    "no request_id": {
+     "text": "hi"
+    },
+    "short request_id": {
+     "request_id": "abc",
+     "text": "hi"
+    },
+    "empty text": {
+     "request_id": "req-0000000000000001",
+     "text": ""
+    },
+    "unknown field": {
+     "request_id": "req-0000000000000001",
+     "text": "hi",
+     "vault": "/Users/x"
+    },
+    "absolute attachment": {
+     "request_id": "req-0000000000000001",
+     "text": "hi",
+     "attachments": [
+      {
+       "path": "/etc/passwd"
+      }
+     ]
+    },
+    "traversal attachment": {
+     "request_id": "req-0000000000000001",
+     "text": "hi",
+     "attachments": [
+      {
+       "path": "user/../../x.md"
+      }
+     ]
+    },
+    "windows attachment": {
+     "request_id": "req-0000000000000001",
+     "text": "hi",
+     "attachments": [
+      {
+       "path": "C:\\\\x.md"
+      }
+     ]
+    },
+    "too many attachments": {
+     "request_id": "req-0000000000000001",
+     "text": "hi",
+     "attachments": [
+      {
+       "path": "a.md"
+      },
+      {
+       "path": "a.md"
+      },
+      {
+       "path": "a.md"
+      },
+      {
+       "path": "a.md"
+      },
+      {
+       "path": "a.md"
+      },
+      {
+       "path": "a.md"
+      }
+     ]
+    }
+   }
+  },
+  "answer_question": {
+   "valid": [
+    {
+     "request_id": "req-0000000000000003",
+     "operation": "0000000000000000000000000000000000000000000000000000000000000000",
+     "chosen": [
+      "Yes"
+     ]
+    }
+   ],
+   "invalid": {
+    "no operation": {
+     "request_id": "req-0000000000000003",
+     "chosen": [
+      "Yes"
+     ]
+    },
+    "bad operation": {
+     "request_id": "req-0000000000000003",
+     "operation": "zz",
+     "chosen": [
+      "Yes"
+     ]
+    }
+   }
+  },
+  "create_conversation": {
+   "valid": [
+    {
+     "request_id": "req-0000000000000004"
+    },
+    {
+     "request_id": "req-0000000000000005",
+     "title": "Plans"
+    }
+   ],
+   "invalid": {
+    "no request_id": {
+     "title": "x"
+    }
+   }
+  },
+  "cancel_turn": {
+   "valid": [
+    {
+     "request_id": "req-0000000000000006"
+    }
+   ],
+   "invalid": {
+    "empty": {}
+   }
+  },
+  "status": {
+   "valid": [
+    {
+     "v": 1,
+     "service": "nuru",
+     "version": "0.1.0",
+     "vault": {
+      "id": "vault0000demo",
+      "name": "NuruPluginTestVault"
+     },
+     "ready": {
+      "chat": "idle",
+      "notes": "ready",
+      "queue": {
+       "active": 0,
+       "waiting": 0,
+       "limit": 4
+      }
+     }
+    }
+   ],
+   "invalid": {
+    "host path leaked": {
+     "v": 1,
+     "service": "nuru",
+     "version": "0.1.0",
+     "vault": {
+      "id": "vault0000demo",
+      "name": "x",
+      "path": "/Users/me/Vault"
+     },
+     "ready": {
+      "chat": "idle",
+      "notes": "ready"
+     }
+    }
+   }
+  },
+  "error": {
+   "valid": [
+    {
+     "v": 1,
+     "error": {
+      "code": "cursor_expired",
+      "message": "no event 99 in this turn",
+      "resync": {
+       "turn": "/v1/conversations/conv0000demo"
+      }
+     }
+    },
+    {
+     "v": 1,
+     "error": {
+      "code": "queue_full",
+      "message": "busy",
+      "retry_after_seconds": 5
+     }
+    }
+   ],
+   "invalid": {
+    "unknown code": {
+     "v": 1,
+     "error": {
+      "code": "teapot",
+      "message": "x"
+     }
+    }
+   }
+  }
+ },
+ "request_binding": {
+  "about": "Each case is a request already accepted, then a second one with the same request_id: replay returns the first result, conflict is 409.",
+  "cases": [
+   {
+    "why": "identical retry",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "expect": "replay"
+   },
+   {
+    "why": "same body, other conversation",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000othr",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "same conversation, other text",
+    "operation": "submit_turn",
+    "first": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Friday?"
+     }
+    },
+    "second": {
+     "target": "conv0000demo",
+     "body": {
+      "request_id": "req-0000000000000001",
+      "text": "What did I plan for Saturday?"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "cancel retried",
+    "operation": "cancel_turn",
+    "first": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "second": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "expect": "replay"
+   },
+   {
+    "why": "cancel aimed at another turn",
+    "operation": "cancel_turn",
+    "first": {
+     "target": "turn00000001",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "second": {
+     "target": "turn00000002",
+     "body": {
+      "request_id": "req-0000000000000006"
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "answer sent to another question",
+    "operation": "answer_question",
+    "first": {
+     "target": "ques00000001",
+     "body": {
+      "request_id": "req-0000000000000003",
+      "operation": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chosen": [
+       "Yes"
+      ]
+     }
+    },
+    "second": {
+     "target": "ques00000002",
+     "body": {
+      "request_id": "req-0000000000000003",
+      "operation": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chosen": [
+       "Yes"
+      ]
+     }
+    },
+    "expect": "conflict"
+   },
+   {
+    "why": "new conversation retried",
+    "operation": "create_conversation",
+    "first": {
+     "target": "",
+     "body": {
+      "request_id": "req-0000000000000004",
+      "title": "Plans"
+     }
+    },
+    "second": {
+     "target": "",
+     "body": {
+      "request_id": "req-0000000000000004",
+      "title": "Plans"
+     }
+    },
+    "expect": "replay"
+   }
+  ]
+ }
+}

@@ -45,16 +45,20 @@ Machine: macOS 26.6.2, Python 3.14.7 (uv.lock). No model was loaded and no vault
 | Another principal's conversations, turns, questions and requests are `not_found` | automated-tested | `test_another_principal_finds_nothing`, `test_answers_that_dont_fit_are_refused_and_change_nothing` |
 | A retried request replays its result and never starts a second turn; the same ID for something else is a conflict; 8 simultaneous retries make one turn | automated-tested, manually-tested (curl) | `test_a_retried_submit_replays_the_turn_and_never_starts_another`, `test_a_reused_request_id_for_something_else_is_a_conflict`, `test_simultaneous_identical_retries_make_one_turn` |
 | One shared Session, built on the first turn, switches conversation per turn; histories don't mix | automated-tested | `test_one_shared_session_switches_conversation_and_history_stays_apart` |
+| Each conversation keeps its own decision-layer evidence (note IDs seen, last search) when the Session switches | automated-tested | `test_each_conversation_keeps_its_own_evidence_when_the_session_switches` (real Session, fake providers) |
+| The notes server, the write ledger and status all use the service's one vault, whatever `.env.obsidian` says | automated-tested | `test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger`, `test_the_served_vault_is_the_one_the_session_gets` |
+| One process owns the service database; a second `nuru-serve` is refused before it migrates or recovers anything | automated-tested, manually-tested | `test_a_second_host_on_the_same_database_is_refused_and_changes_nothing`; a second real process on another port exited with "another nuru-serve is using …", and the first kept serving |
+| A change that fails to store leaves memory as it was: the queue keeps working and an uncommitted answer isn't used | automated-tested | `test_a_cancel_that_fails_to_store_leaves_the_queue_working`, `test_an_answer_that_fails_to_commit_is_not_used_and_can_be_sent_again` (both fail without the fix) |
 | One generation at a time; a bounded queue says `queued`, refuses overflow with 429, and status answers while a turn runs | automated-tested | `test_turns_wait_their_turn_and_status_stays_responsive` |
 | Questions: Yes, No, expiry on the host clock (taken as No), late, duplicate, foreign and wrong-operation answers | automated-tested | the four question tests in `test_service_host.py` |
 | Stop while queued, while running and while a question waits; Stop on an ended turn changes nothing | automated-tested | the three `test_stop_*` tests |
-| After a crash, unfinished turns end `failed` (`service_restarted`), open questions `expired`, and nothing is rerun; a retry of their request ID replays | automated-tested | `test_a_restart_ends_unfinished_turns_and_never_reruns_them` |
-| Shutdown cancels queued and running turns and closes the Session without stopping Ollama | automated-tested, manually-tested (SIGTERM) | `test_shutdown_cancels_turns_in_hand_and_closes_without_stopping_ollama` |
+| After a crash, unfinished turns end `failed` (`service_restarted`), open questions `expired`, and nothing is rerun; a retry of their request ID replays | automated-tested | `test_after_a_crash_unfinished_turns_end_and_are_never_rerun`: a real child process dies (`os._exit`) mid-question with a turn queued |
+| Shutdown cancels queued and running turns and closes the Session without stopping Ollama; a port already in use exits cleanly and releases the database | automated-tested, manually-tested (SIGTERM, a taken port) | `test_shutdown_cancels_turns_in_hand_and_closes_without_stopping_ollama` |
 | Over HTTP, a stream replays from every cursor, follows a live turn with keepalives, and a cursor past the end gets 410 with `resync` | automated-tested | `test_a_turn_over_http_streams_and_resumes_from_any_cursor`, `test_a_live_stream_follows_the_turn_with_keepalives` |
 | After 30 days a turn keeps only its final display state | automated-tested | `test_old_turns_keep_their_final_state_after_their_events_are_dropped` |
 | Service and conversation databases are separate but join with ATTACH | automated-tested | `test_migrations_run_once_and_the_two_databases_join` |
 | Tokens: only a hash is stored; files 0600 in a 0700 directory | automated-tested | `test_token_commands_keep_only_a_hash_and_files_private` |
-| CLI and Qt behaviour unchanged | automated-tested | full suite: 1627 passed, 1 skipped |
+| CLI and Qt behaviour unchanged | automated-tested | full suite: 1633 passed, 1 skipped |
 
 Not in M2:
 - Tool results and write receipts (M3). Session yields no event for either yet, so a stream has

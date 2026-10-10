@@ -2,7 +2,8 @@
 
 One worker thread runs every turn, one at a time, from a bounded FIFO queue. It builds the one shared
 Session on the first turn (the model loads then, not at startup) and switches its conversation before
-each turn, so nothing conversation-specific may live on the Session between turns. The HTTP threads
+each turn with Session.use_conversation, which keeps each conversation's evidence (the note IDs its
+tools have shown) apart. The HTTP threads
 only store and read: they never wait on the model, so status, history, Stop and answers stay quick
 while a turn runs or waits on a question.
 
@@ -13,6 +14,7 @@ when the service stopped ends `failed` (service_restarted) when it starts again:
 import dataclasses
 import threading
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from importlib import metadata
 from pathlib import Path
@@ -82,6 +84,10 @@ class Service:
         self._session = None
         self.chat = "idle"  # idle, loading, ready, unavailable (status)
         self._closing = False
+        # While a change is in progress (_atomic): turn ID -> (its _Live, whether it was in _live), for
+        # each turn the change touched, to put back if the transaction rolls back.
+        self._touched: dict[str, tuple[_Live, bool]] | None = None
+        self._active_before: str | None = None
         try:
             self.version = metadata.version("core")
         except metadata.PackageNotFoundError:
@@ -96,7 +102,7 @@ class Service:
         """Compact old turns, and end every turn a stop left unfinished: its questions expire, and it
         fails with service_restarted. A write it may have made stays as the conversation store left it
         (in_flight or uncertain), blocking the next write until the operator resolves it."""
-        with self.store.transaction():
+        with self._atomic():
             self.store.compact(retention_days)
             for turn in self.store.unfinished_turns():
                 live = _Live(TurnStream.resume(turn["conversation_id"], turn["id"], self.store.events(turn["id"])), 0, "")
@@ -134,7 +140,7 @@ class Service:
                 return known["status"], body
             if self._closing:
                 raise ProtocolError("shutting_down", "Nuru is shutting down")
-            with self.store.transaction():
+            with self._atomic():
                 status, body, conversation_id, turn_id, then = act()
                 self.store.add_request(key, operation, payload["request_id"], digest, status, body, conversation_id, turn_id)
             if then:
@@ -266,8 +272,9 @@ class Service:
             data["chosen"] = chosen
             if other is not None:
                 data["other"] = other
-        self._emit(live, lambda s: s.emit("question_closed", data))
-        self.store.close_question(question_id)
+        with self._atomic():
+            self._emit(live, lambda s: s.emit("question_closed", data))
+            self.store.close_question(question_id)
         return data
 
     # ------------------------------------------------------------------ reading
@@ -337,29 +344,53 @@ class Service:
             return events, turn_id not in self._live
 
     # ------------------------------------------------------------------ the worker
+    @contextmanager
+    def _atomic(self):
+        """One change, all or nothing (with the lock held): what it stores commits together, and if it
+        fails, what it changed in memory is put back as well: each touched turn's stream is rebuilt
+        from its stored events, and its place in _live and the active slot are restored. Inside
+        another, it joins that one. A change's effects beyond the store and these (the queue, a
+        waiting worker) come after the commit (_request's `then`)."""
+        if self._touched is not None:
+            yield
+            return
+        self._touched, self._active_before = {}, self._active
+        try:
+            with self.store.transaction():
+                yield
+        except BaseException:
+            for turn_id, (live, was_live) in self._touched.items():
+                live.stream = TurnStream.resume(live.stream.conversation_id, turn_id, self.store.events(turn_id))
+                if was_live:
+                    self._live[turn_id] = live
+            self._active = self._active_before
+            raise
+        finally:
+            self._touched = None
+
     def _emit(self, live: _Live, make: Callable[[TurnStream], object]) -> list[dict]:
         """Make events on `live`'s stream and store them (with the lock held). The stream checks each
         one, so nothing a client would reject is stored or sent."""
-        before = len(live.stream.events)
-        try:
+        with self._atomic():
+            turn_id = live.stream.turn_id
+            self._touched.setdefault(turn_id, (live, turn_id in self._live))
+            before = len(live.stream.events)
             make(live.stream)
-        finally:
             new = live.stream.events[before:]
-            if new:
-                with self.store.transaction():
-                    for event in new:
-                        self.store.add_event(event)
-                    if any(event["type"] == "started" for event in new):
-                        self.store.set_turn_state(live.stream.turn_id, "running")
-                    if live.stream.ended:
-                        shown = Display()
-                        for event in live.stream.events:
-                            shown.apply(event)
-                        self.store.end_turn(live.stream.turn_id, new[-1]["type"], dataclasses.asdict(shown))
-                        self._live.pop(live.stream.turn_id, None)
-                        if self._active == live.stream.turn_id:
-                            self._active = None  # it holds the slot no longer, whatever Session does next
-                self._changed.notify_all()
+            for event in new:
+                self.store.add_event(event)
+            if any(event["type"] == "started" for event in new):
+                self.store.set_turn_state(turn_id, "running")
+            if new and live.stream.ended:
+                shown = Display()
+                for event in live.stream.events:
+                    shown.apply(event)
+                self.store.end_turn(turn_id, new[-1]["type"], dataclasses.asdict(shown))
+                self._live.pop(turn_id, None)
+                if self._active == turn_id:
+                    self._active = None  # it holds the slot no longer, whatever Session does next
+        if new:
+            self._changed.notify_all()
         return new
 
     def _run(self) -> None:
@@ -391,7 +422,7 @@ class Service:
                 self._emit(live, lambda s: s.emit("failed", {"code": "model_unavailable",
                                                              "message": "Nuru couldn't start its model and tools."}))
             return
-        session.conversation_id = live.store_id
+        session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
         try:
             for event in session.ask(live.prompt, live.cancel):
@@ -435,9 +466,10 @@ class Service:
             if live.cancel.is_set():
                 return None
             expires = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-            (event,) = self._emit(live, lambda s: s.question(question, _stamp(expires)))
-            data = event["data"]
-            self.store.add_question(data["question_id"], live.stream.turn_id, data["operation"], data["expires_at"])
+            with self._atomic():
+                (event,) = self._emit(live, lambda s: s.question(question, _stamp(expires)))
+                data = event["data"]
+                self.store.add_question(data["question_id"], live.stream.turn_id, data["operation"], data["expires_at"])
             waiter = live.waiter = _Waiter(data["question_id"], data["question"], _parse(data["expires_at"]))
         waiter.done.wait(max(0.0, (waiter.expires - datetime.now(timezone.utc)).total_seconds()))
         with self._lock:

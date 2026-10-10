@@ -461,16 +461,21 @@ class Session:
         self._vault_scope = str(Path(os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH") or ".").resolve())
         self._turn_writes: list[tuple[str, dict, ToolOutcome]] = []
         self._repair_rounds = 0
+        # conversation_id -> (known_ids, last_search_ids) of the conversations not in use (use_conversation)
+        self._evidence: dict[int, tuple[set[str], list[str]]] = {}
 
     @classmethod
-    def start(cls, conversation_id: int | None = None, *, load_model: bool = True) -> "Session":
+    def start(cls, conversation_id: int | None = None, *, load_model: bool = True, vault: Path | None = None) -> "Session":
         """Build the custom model, connect the MCP servers, open the log and the database, load the
         model, and return the session that ties them together. Whatever was opened is closed
         again if a later step fails.
 
         `conversation_id` resumes a stored conversation instead of starting a new one. With
         load_model=False the model loads on the first ask(), as nuru-serve wants: its status and
-        history must work while no model is loaded."""
+        history must work while no model is loaded. `vault` names the vault outright, for the notes
+        server and the write ledger alike; without it each finds its own (VAULT_PATH, else
+        .env.obsidian), and the notes server, which doesn't get this process's VAULT_PATH, may find
+        another."""
         rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
         system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
 
@@ -478,8 +483,13 @@ class Session:
 
         with ExitStack() as opened:
             python_server = python_server_params()
+            obsidian, deep_think = OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS
+            if vault is not None:
+                vault = Path(vault).resolve()
+                obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault)}})
+                deep_think = deep_think.model_copy(update={"env": {**deep_think.env, "DEEP_THINK_BASE_DIR": str(vault)}})
             tools = MCPTools(
-                [OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS,
+                [obsidian, deep_think, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS,
                  *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
@@ -508,6 +518,8 @@ class Session:
             if conversation_id is None:
                 conversation_id = store.create_conversation()
             session = cls(tools, tool_definitions, logger, store, conversation_id, shadow, enforcement, system_text, server_tools)
+            if vault is not None:
+                session._vault_scope = str(vault)
             if load_model:
                 session.load_model()
             session.indexer = VaultIndexer.from_env()
@@ -537,6 +549,17 @@ class Session:
                 opened.callback(session.steward.stop)
             opened.pop_all()  # it worked, so the session owns them now
         return session
+
+    def use_conversation(self, conversation_id: int) -> None:
+        """Go on in another stored conversation (nuru-serve shares one Session between them). The note
+        IDs the decision layer has seen and the last search's results are evidence for the conversation
+        they came from: they're kept for it, and the other conversation gets its own back, or none."""
+        if conversation_id == self.conversation_id:
+            return
+        if self.shadow:
+            self._evidence[self.conversation_id] = (self.shadow.known_ids, self.shadow.last_search_ids)
+            self.shadow.known_ids, self.shadow.last_search_ids = self._evidence.pop(conversation_id, (set(), []))
+        self.conversation_id = conversation_id
 
     @property
     def indexing(self) -> int:

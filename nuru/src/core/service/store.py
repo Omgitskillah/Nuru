@@ -7,9 +7,14 @@ hold a foreign key across files: the service writes the conversation store first
 side being behind.
 
 Callers hold the service's lock: one connection is shared by its HTTP threads and its worker.
+
+One process at a time owns the database: opening it takes an exclusive lock on `<database>.lock`, held
+until close(), before migrating or recovering anything. A second nuru-serve on the same database is
+refused (ServiceBusy) instead of ending the first one's turns as if it had stopped.
 """
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -70,16 +75,45 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+class ServiceBusy(RuntimeError):
+    """Another process has the service database open."""
+
+
+def _lock(path: Path):
+    """An open file holding an exclusive lock on `path`, released when the process ends or the file is
+    closed; ServiceBusy if someone else holds it."""
+    handle = open(path, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise ServiceBusy(f"another nuru-serve is using {path.with_suffix('')}") from None
+    return handle
+
+
 class ServiceStore:
     def __init__(self, db_path: Path) -> None:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+        self._owner = _lock(db_path.with_name(db_path.name + ".lock"))
+        try:
+            self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+        except Exception:
+            self._owner.close()
+            raise
         self._conn.execute("PRAGMA foreign_keys = ON")
         try:
             self._migrate()
         except Exception:
-            self._conn.close()
+            self.close()
             raise
 
     def _migrate(self) -> None:
@@ -103,6 +137,13 @@ class ServiceStore:
 
     def close(self) -> None:
         self._conn.close()
+        if not self._owner.closed:
+            if os.name == "nt":
+                import msvcrt
+
+                self._owner.seek(0)
+                msvcrt.locking(self._owner.fileno(), msvcrt.LK_UNLCK, 1)
+            self._owner.close()
 
     # ------------------------------------------------------------------ requests
     def request(self, key: str) -> dict | None:

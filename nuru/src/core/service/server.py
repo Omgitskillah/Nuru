@@ -238,18 +238,36 @@ def _vault() -> Path:
     return Path(os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH") or ".")
 
 
+def _session_factory(vault: Path):
+    """Builds the shared Session for nuru-serve: no model until the first turn, and the service's own
+    vault for the notes server and the write ledger, so tools read and write the vault that status
+    names and attachments are checked against."""
+    from core.session import Session
+
+    return lambda conversation_id: Session.start(conversation_id, load_model=False, vault=vault)
+
+
 def serve(port: int, queue_limit: int) -> None:
     from core import session
     from core.conversation_store import ConversationStore
-    from core.service.store import ServiceStore
+    from core.service.store import ServiceBusy, ServiceStore
 
     credentials = Credentials()
     if not credentials.clients():
         print("nuru-serve: no clients can sign in yet; add one with `uv run nuru-serve token add obsidian`", file=sys.stderr)
-    service = Service(ServiceStore(session.DB_PATH.with_name("service.db")), ConversationStore(session.DB_PATH),
-                      lambda conversation_id: session.Session.start(conversation_id, load_model=False),
-                      _vault(), queue_limit=queue_limit)
-    server = NuruServer(service, credentials, port)
+    try:
+        store = ServiceStore(session.DB_PATH.with_name("service.db"))  # owns the database before recovering it
+    except ServiceBusy as error:
+        sys.exit(f"nuru-serve: {error}")
+    vault = _vault().resolve()
+    service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit)
+    try:
+        server = NuruServer(service, credentials, port)
+    except OSError as error:
+        service.close()
+        store.close()
+        service.conversations.close()
+        sys.exit(f"nuru-serve: can't listen on 127.0.0.1:{port}: {error.strerror}")
 
     def stop(signum, frame):
         raise KeyboardInterrupt
@@ -264,7 +282,7 @@ def serve(port: int, queue_limit: int) -> None:
         server.closing = True
         service.close()
         server.server_close()
-        service.store.close()
+        store.close()
         service.conversations.close()
 
 

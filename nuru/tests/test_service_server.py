@@ -13,6 +13,7 @@ from core.conversation_store import ConversationStore
 from core.service import protocol
 from core.service.credentials import Credentials
 from core.service.host import Service
+from core.service import server as nuru_serve
 from core.service.server import NuruServer, main
 from core.service.store import ServiceStore
 from test_service_host import ScriptedSession, held, reply
@@ -41,6 +42,8 @@ def served(tmp_path):
     service.close()
     server.shutdown()
     server.server_close()
+    service.store.close()
+    service.conversations.close()
 
 
 class Client:
@@ -189,3 +192,12 @@ def test_token_commands_keep_only_a_hash_and_files_private(tmp_path, monkeypatch
     assert capsys.readouterr().out.splitlines()[1] == "obsidian"
     with pytest.raises(SystemExit):
         main(["token", "add", "../escape"])
+
+
+def test_the_served_vault_is_the_one_the_session_gets(monkeypatch, tmp_path):
+    from core import session
+
+    started = []
+    monkeypatch.setattr(session.Session, "start", classmethod(lambda cls, *args, **kwargs: started.append((args, kwargs))))
+    nuru_serve._session_factory(tmp_path)(5)
+    assert started == [((5,), {"load_model": False, "vault": tmp_path})]

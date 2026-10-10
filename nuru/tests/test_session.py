@@ -109,6 +109,44 @@ def test_start_can_resume_a_conversation_and_leave_the_model_for_the_first_turn(
     s.close()
 
 
+def test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger(monkeypatch, tmp_path):
+    """nuru-serve names its vault. The notes server doesn't inherit this process's VAULT_PATH, so
+    without it the server would take .env.obsidian's vault while the ledger took VAULT_PATH's."""
+    served, elsewhere = tmp_path / "served", tmp_path / "elsewhere"
+    monkeypatch.setenv("VAULT_PATH", str(elsewhere))
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    given = []
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: given.extend(server_params) or FakeMCPTools())
+    default = dict(session.OBSIDIAN_SERVER_PARAMS.env)
+
+    s = Session.start(vault=served)
+
+    obsidian = next(p for p in given if p.args == ["run", "obsidian-mcp"])
+    deep_think = next(p for p in given if p.args == ["run", "deep-think-mcp"])
+    assert obsidian.env["VAULT_PATH"] == str(served.resolve()) and obsidian.env["OBSIDIAN_PROTECT_USER_AUTHORED"] == "1"
+    assert deep_think.env["DEEP_THINK_BASE_DIR"] == str(served.resolve())
+    assert s._vault_scope == str(served.resolve())
+    assert session.OBSIDIAN_SERVER_PARAMS.env == default  # the shared default is untouched
+    s.close()
+
+
+def test_each_conversation_keeps_its_own_evidence_when_the_session_switches(monkeypatch):
+    s = start_session(monkeypatch)
+    a, b = s.conversation_id, s.store.create_conversation()
+    s.shadow.known_ids, s.shadow.last_search_ids = {"id-a"}, ["id-a"]
+
+    s.use_conversation(b)
+    assert (s.conversation_id, s.shadow.known_ids, s.shadow.last_search_ids) == (b, set(), [])
+    s.shadow.known_ids, s.shadow.last_search_ids = {"id-b"}, ["id-b"]
+
+    s.use_conversation(a)
+    assert (s.shadow.known_ids, s.shadow.last_search_ids) == ({"id-a"}, ["id-a"])
+    s.use_conversation(b)
+    assert (s.shadow.known_ids, s.shadow.last_search_ids) == ({"id-b"}, ["id-b"])
+    s.close()
+
+
 def test_plan_turn_uses_the_planners_profile_and_sampling(monkeypatch):
     profile = session.model_profile.for_model("qwen3.5")
     monkeypatch.setattr(session, "PLANNER_PROFILE", profile)

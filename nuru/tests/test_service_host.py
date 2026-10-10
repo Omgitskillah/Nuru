@@ -4,7 +4,10 @@ must wait are held by threading.Events the test releases, never by sleeps."""
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -14,7 +17,7 @@ from core.conversation_store import ConversationStore
 from core.service import protocol
 from core.service.host import Service
 from core.service.protocol import Display, ProtocolError
-from core.service.store import ServiceStore
+from core.service.store import ServiceBusy, ServiceStore
 from core.session import Ask, Failure, Text, ToolCall
 
 ME, SOMEONE_ELSE = "operator", "intruder"
@@ -32,6 +35,9 @@ class ScriptedSession:
         self.asked = []  # (conversation_id, text)
         self.answers = []  # what answer_question returned
         self.closed = self.shut_down = False
+
+    def use_conversation(self, conversation_id):
+        self.conversation_id = conversation_id
 
     def ask(self, text, cancel=None):
         self.asked.append((self.conversation_id, text))
@@ -120,6 +126,8 @@ class Harness:
 
     def close(self):
         self.service.close()
+        self.service.store.close()
+        self.service.conversations.close()
 
 
 @pytest.fixture
@@ -444,27 +452,70 @@ def test_stop_while_a_question_waits_closes_it_as_cancelled_never_yes(harness):
 
 
 # --------------------------------------------------------------------------- restart and shutdown
-def test_a_restart_ends_unfinished_turns_and_never_reruns_them(harness):
-    # The first service "crashes": it's abandoned with a turn waiting on a question nobody answers.
-    h = harness([asks(questions.write("write_note", {"note": "x"}))], answer_seconds=3600)
-    conversation = h.conversation()
-    asking = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
-    h.first(asking, "question")
-    queued = h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"]
+CRASHING_HOST = """
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from core import questions
+from core.conversation_store import ConversationStore
+from core.service.host import Service
+from core.service.store import ServiceStore
+from test_service_host import ScriptedSession, asks
 
-    restarted = h.service = h.open()  # same databases, as after a crash
-    for turn in (asking, queued):
-        events = restarted.store.events(turn)
-        protocol.check_stream(events)
-        assert events[-1]["data"]["code"] == "service_restarted"
-        for cursor in range(len(events) + 1):  # a client that reconnects from anywhere sees it once
-            restarted.check_cursor(ME, turn, cursor)
-    closed = next(e for e in restarted.store.events(asking) if e["type"] == "question_closed")
-    assert closed["data"]["outcome"] == "expired" and closed["data"]["decision"] == "No"
-    assert restarted.request_state(ME, "req-turn-00000001", "submit_turn")["state"] == "failed"
-    status, again = restarted.submit_turn(ME, conversation, {"request_id": "req-turn-00000002", "text": "hello"})
-    assert again["turn_id"] == queued and again["replayed"] is True
-    assert len(h.session.asked) == 1
+root = Path(sys.argv[1])
+session = ScriptedSession([asks(questions.write("write_note", {"note": "x"}))])
+service = Service(ServiceStore(root / "service.db"), ConversationStore(root / "conversation.db"),
+                  lambda conversation_id: session, root / "vault", answer_seconds=3600)
+conversation = service.create_conversation("operator", {"request_id": "req-conversation-0001"})[1]["conversation_id"]
+turn = service.submit_turn("operator", conversation, {"request_id": "req-turn-00000001", "text": "hello"})[1]["turn_id"]
+service.submit_turn("operator", conversation, {"request_id": "req-turn-00000002", "text": "hello"})
+seen = []
+while not any(e["type"] == "question" for e in seen):
+    seen += service.wait_events(turn, len(seen), 5)[0]
+print(conversation, flush=True)
+os._exit(9)  # dies with a turn waiting on a question and another queued: no cleanup at all
+"""
+
+
+def test_after_a_crash_unfinished_turns_end_and_are_never_rerun(tmp_path):
+    (tmp_path / "vault").mkdir()
+    crashed = subprocess.run([sys.executable, "-c", CRASHING_HOST, str(tmp_path), str(Path(__file__).parent)],
+                             capture_output=True, text=True, timeout=60)
+    assert crashed.returncode == 9, crashed.stderr
+    conversation = crashed.stdout.strip()
+    session = ScriptedSession([])
+    restarted = Service(ServiceStore(tmp_path / "service.db"), ConversationStore(tmp_path / "conversation.db"),
+                        lambda conversation_id: session, tmp_path / "vault")
+    try:
+        turns = [restarted.request_state(ME, f"req-turn-0000000{i}", "submit_turn")["turn_id"] for i in (1, 2)]
+        for turn in turns:
+            events = restarted.store.events(turn)
+            protocol.check_stream(events)
+            assert events[-1]["data"]["code"] == "service_restarted"
+            for cursor in range(len(events) + 1):  # a client that reconnects from anywhere sees it once
+                restarted.check_cursor(ME, turn, cursor)
+        closed = next(e for e in restarted.store.events(turns[0]) if e["type"] == "question_closed")
+        assert closed["data"]["outcome"] == "expired" and closed["data"]["decision"] == "No"
+        assert restarted.request_state(ME, "req-turn-00000001", "submit_turn")["state"] == "failed"
+        status, again = restarted.submit_turn(ME, conversation, {"request_id": "req-turn-00000002", "text": "hello"})
+        assert again["turn_id"] == turns[1] and again["replayed"] is True
+        assert session.asked == []
+    finally:
+        restarted.close()
+        restarted.store.close()
+
+
+def test_a_second_host_on_the_same_database_is_refused_and_changes_nothing(harness, tmp_path):
+    gate = threading.Event()
+    h = harness([held(gate, "working")])
+    turn = h.submit(h.conversation())[1]["turn_id"]
+    h.first(turn, "text")
+    before = h.service.store.events(turn)
+    with pytest.raises(ServiceBusy):
+        h.open()
+    assert h.service.store.events(turn) == before
+    gate.set()
+    assert h.finished(turn)[-1]["type"] == "completed"
 
 
 def test_shutdown_cancels_turns_in_hand_and_closes_without_stopping_ollama(harness):
@@ -523,6 +574,7 @@ def test_migrations_run_once_and_the_two_databases_join(harness, tmp_path):
     conversation = h.conversation()
     h.finished(h.submit(conversation)[1]["turn_id"])
     h.service.conversations.add_message(h.service.store.conversation(conversation, ME)["store_id"], "user", "hello")
+    h.close()
     ServiceStore(tmp_path / "service.db").close()  # opening again changes nothing
     with sqlite3.connect(tmp_path / "service.db") as db:
         assert db.execute("SELECT version FROM service_migrations").fetchall() == [(1,)]
@@ -530,3 +582,55 @@ def test_migrations_run_once_and_the_two_databases_join(harness, tmp_path):
         joined = db.execute("SELECT c.id, m.content FROM conversations c "
                             "JOIN history.messages m ON m.conversation_id = c.store_id").fetchall()
     assert joined == [(conversation, "hello")]
+
+
+# --------------------------------------------------------------------------- a change that fails to commit
+class FailingCommit:
+    """A transaction that rolls back and raises, as a commit hitting a full disk would."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __enter__(self):
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def __exit__(self, *raised):
+        self._conn.execute("ROLLBACK")
+        raise sqlite3.OperationalError("disk I/O error")
+
+
+def test_a_cancel_that_fails_to_store_leaves_the_queue_working(harness, monkeypatch):
+    gate = threading.Event()
+    h = harness([held(gate, "first"), reply("second")])
+    conversation = h.conversation()
+    first = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
+    second = h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"]
+
+    def failing(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(h.service.store, "add_request", failing)
+    with pytest.raises(sqlite3.OperationalError):
+        h.service.cancel_turn(ME, second, {"request_id": "req-cancel-0000001"})
+    monkeypatch.undo()
+    assert [e["type"] for e in h.service.store.events(second)] == ["accepted", "queued"]
+    gate.set()
+    h.finished(first)
+    assert h.finished(second)[-1]["data"]["reply"] == "second"  # still queued, and it ran
+
+
+def test_an_answer_that_fails_to_commit_is_not_used_and_can_be_sent_again(harness, monkeypatch):
+    h = harness([asks(questions.write("write_note", {"note": "x"}))])
+    turn = h.submit(h.conversation())[1]["turn_id"]
+    asked = h.first(turn, "question")
+    store = h.service.store
+    real = store.transaction
+    monkeypatch.setattr(store, "transaction", lambda: FailingCommit(store._conn))
+    with pytest.raises(sqlite3.OperationalError):
+        answer(h, asked, ["Yes"])
+    monkeypatch.setattr(store, "transaction", real)
+    assert store.question(asked["data"]["question_id"], ME)["open"] == 1
+    assert h.service._live[turn].stream.open_questions == [asked["data"]["question_id"]]
+    assert answer(h, asked, ["No"])[1]["decision"] == "No"
+    h.finished(turn)
+    assert h.session.answers == [["No"]]

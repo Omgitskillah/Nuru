@@ -37,7 +37,8 @@ The service makes no tool or model call before all four checks pass.
 - **Pairing.** The plugin keeps its token in an OS-local file outside the vault. Synced
   plugin data, settings and URLs never hold it.
 - **Vault identity.** Status gives the vault's `id`, a hash of its resolved path, and never
-  the path itself. The plugin computes the same hash for its own vault, and refuses to
+  the path itself: the first 32 hex digits of the SHA-256 of the absolute path with symlinks
+  resolved, as UTF-8 (`protocol.vault_id`). The plugin computes the same hash for its own vault, and refuses to
   pair or chat if the two differ.
 - **Paths.** Paths in requests are vault-relative (see `vault_path` in the schema). The
   service resolves them against its own vault and refuses any that leave it, including
@@ -49,12 +50,12 @@ The service makes no tool or model call before all four checks pass.
 | --- | --- | --- |
 | `GET /v1/status` | none | `status`. It works before any model is loaded. |
 | `POST /v1/conversations` | `create_conversation` | `{v, conversation_id}` |
-| `GET /v1/conversations?before=&limit=` | none | Summaries, newest first. `limit` is at most 50. |
-| `GET /v1/conversations/{id}?before=&limit=` | none | Messages and each turn's final display state, at most 50 turns per page. |
+| `GET /v1/conversations?before=&limit=` | none | `{v, conversations: [{id, title, created_at}]}`, newest first. `limit` is at most 50 (default 20); `before` is the last ID of the previous page. |
+| `GET /v1/conversations/{id}?before=&limit=` | none | `{v, conversation_id, title, created_at, turns: [{turn_id, text, state, display}]}`, newest first, at most 50 turns per page. `display` is what `Display` shows for the turn. |
 | `POST /v1/conversations/{id}/turns` | `submit_turn` | 202 `accepted_turn`, sent once acceptance is stored and before generation starts |
 | `GET /v1/turns/{id}/events?after={seq}` | none | Replays the events after `seq`, then follows live ones until the terminal event |
-| `POST /v1/turns/{id}/cancel` | `cancel_turn` | 202, also for a turn that has already ended |
-| `POST /v1/questions/{id}/answers` | `answer_question` | 200 with the `question_closed` data, or 409 `question_closed` / `wrong_operation` |
+| `POST /v1/turns/{id}/cancel` | `cancel_turn` | 202 `{v, conversation_id, turn_id}`, also for a turn that has already ended |
+| `POST /v1/questions/{id}/answers` | `answer_question` | 200 `{v, ...}` with the `question_closed` data, or 409 `question_closed` / `wrong_operation` |
 | `GET /v1/requests/{request_id}?operation=` | none | `request_state`, for a client that lost the response |
 
 ### Request IDs

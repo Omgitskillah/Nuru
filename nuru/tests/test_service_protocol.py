@@ -235,6 +235,25 @@ def test_a_closed_question_is_checked_against_the_question_asked():
     assert "only an answered" in broken("write_expired", lambda e: e[4]["data"].update(other="late"))
 
 
+@pytest.mark.parametrize("bad", [{"outcome": "answered", "chosen": ["Maybe"], "decision": "Maybe"},
+                                 {"outcome": "answered", "chosen": ["Yes"], "decision": "No"},
+                                 {"outcome": "expired", "chosen": ["Yes"], "decision": "No"}])
+def test_a_refused_closure_leaves_the_question_open(bad):
+    turn = TurnStream("conv0000demo", "turn00000001")
+    turn.emit("accepted", {"request_id": "req-0000000000000001"})
+    turn.emit("started", {})
+    asked = turn.question(questions.write("write_note", {"note": "x"}), "2026-10-09T12:00:10.000Z")["data"]
+    with pytest.raises(ProtocolError):
+        turn.emit("question_closed", {"question_id": asked["question_id"], **bad})
+    with pytest.raises(ProtocolError, match="still open"):
+        turn.completed()
+    closed = turn.emit("question_closed", {"question_id": asked["question_id"], "outcome": "answered",
+                                           "chosen": ["Yes"], "decision": "Yes"})
+    assert closed["seq"] == 4
+    turn.completed()
+    protocol.check_stream(turn.events)
+
+
 @pytest.mark.parametrize("chosen,other,decided", [([], None, "None of these."), (None, None, "No"),
                                                   ([], "nuru/Trips/Summary.md", "nuru/Trips/Summary.md")])
 def test_a_turn_stream_can_close_every_kind_of_answer(chosen, other, decided):

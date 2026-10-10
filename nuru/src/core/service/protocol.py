@@ -206,7 +206,7 @@ class StreamCheck:
                 broken("operation doesn't match the question")
             self.open_questions[data["question_id"]] = data["question"]
         elif kind == "question_closed":
-            question = self.open_questions.pop(data["question_id"], None)
+            question = self.open_questions.get(data["question_id"])
             if question is None:
                 broken("closes a question that isn't open")
             answered = data["outcome"] == "answered"
@@ -217,6 +217,7 @@ class StreamCheck:
             chosen = data["chosen"] if answered else None
             if data["decision"] != decision(chosen, data.get("other")):
                 broken("decision doesn't match the answer")
+            del self.open_questions[data["question_id"]]
             self.closed_questions.add(data["question_id"])
         elif kind in TERMINAL:
             if self.open_questions:

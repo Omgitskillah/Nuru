@@ -1,9 +1,0 @@
-{
-  "id": "nuru-spike",
-  "name": "Nuru streaming spike",
-  "version": "0.0.1",
-  "minAppVersion": "1.5.0",
-  "description": "WP01 M1 throwaway: checks that an authenticated, streamed reply from a local service reaches a plugin.",
-  "author": "Nuru",
-  "isDesktopOnly": true
-}

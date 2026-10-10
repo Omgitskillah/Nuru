@@ -1,0 +1,18 @@
+.nuru-chat { display: flex; flex-direction: column; height: 100%; padding: 0; }
+.nuru-header { display: flex; gap: var(--size-4-2); padding: var(--size-4-2); border-bottom: 1px solid var(--background-modifier-border); }
+.nuru-picker { flex: 1; min-width: 0; }
+.nuru-status:not(:empty) { padding: var(--size-4-2); color: var(--text-muted); }
+.nuru-error { color: var(--text-error); }
+.nuru-messages { flex: 1; overflow-y: auto; padding: var(--size-4-2); }
+.nuru-turn { margin-bottom: var(--size-4-4); }
+.nuru-user { white-space: pre-wrap; background: var(--background-secondary); border-radius: var(--radius-m); padding: var(--size-4-2); margin-bottom: var(--size-4-2); }
+.nuru-state:not(:empty), .nuru-tool, .nuru-receipt, .nuru-decision { font-size: var(--font-ui-small); color: var(--text-muted); }
+.nuru-receipt-uncertain, .nuru-receipt-failed { color: var(--text-error); }
+.nuru-card { border: 1px solid var(--interactive-accent); border-radius: var(--radius-m); padding: var(--size-4-2); margin-top: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
+.nuru-card-details { font-size: var(--font-ui-small); color: var(--text-muted); white-space: pre-wrap; }
+.nuru-countdown { font-size: var(--font-ui-small); }
+.nuru-composer { border-top: 1px solid var(--background-modifier-border); padding: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
+.nuru-input { width: 100%; resize: vertical; }
+.nuru-buttons { display: flex; gap: var(--size-4-2); justify-content: flex-end; flex-wrap: wrap; }
+.nuru-attachments { display: flex; gap: var(--size-4-1); flex-wrap: wrap; }
+.nuru-chip { display: flex; align-items: center; gap: var(--size-4-1); background: var(--background-secondary); border-radius: var(--radius-s); padding: 0 var(--size-4-1); font-size: var(--font-ui-small); }

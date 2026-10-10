@@ -44,6 +44,23 @@ jobs:
           NURU_STEWARD_ENABLED: '0'
         run: uv run --locked pytest -v nuru/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing
 
+      # The Obsidian plugin: unit tests, then end to end against the real nuru-serve over scripted
+      # scenarios (nuru/tests/scripted_serve.py, run with the uv environment above), then the bundle.
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: plugins/obsidian/package-lock.json
+
+      - name: Obsidian plugin
+        working-directory: plugins/obsidian
+        run: |
+          npm ci
+          npm test
+          npm run test:e2e
+          npm run build
+
       - name: Coverage summary
         if: always()
         run: uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"

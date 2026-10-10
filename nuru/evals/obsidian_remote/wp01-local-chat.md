@@ -92,3 +92,22 @@ No model was loaded and no vault was written.
 | Long tool arguments are cut for display, so a turn never fails for the size of its display | automated-tested | `test_a_huge_write_is_shown_cut_and_the_turn_still_completes` (400,000 characters), `test_shown_arguments_keep_short_values_and_cut_the_rest` |
 | Attachments name the note; the model reads it with its tools | automated-tested | `test_attachments_are_named_in_the_message_and_cant_leave_the_vault` |
 | `nuru/tests/scripted_serve.py` runs the real host and HTTP server over scripted scenarios, for the plugin's end-to-end tests | automated-tested | `test_the_scripted_server_runs_scenarios_end_to_end` |
+
+## M3b: the Obsidian plugin (2026-10-11, branch wp01-m3b-plugin)
+
+Machine: macOS 26.6.2, Node 24.21.0, npm 11.19.0, esbuild 0.28.2, jsdom 30.1.2 (package-lock.json).
+No model was loaded and no real vault was written.
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| Every terminal state and every approval result, end to end against the real nuru-serve (scripted scenarios) | automated-tested | `npm run test:e2e` (`test/e2e/scenarios.test.js`): completed, failed, uncertain write, refused write; approval Yes, No, expired, Stop while asked, and a late answer refused; a choice with the user's own words; the model's own question; Stop while running and while queued |
+| A dropped connection resumes from the last event shown, with nothing twice | automated-tested | e2e `a dropped connection picks up where it left off…`; unit `test/turns.test.js` (cursors 0, 3, 6) |
+| The plugin's Display and vault ID are Python's | automated-tested | e2e `Python's vault ID and Display are the plugin's`: all 13 fixture streams |
+| Raw HTML in a reply shows as text; scripts, event attributes, `javascript:`/`obsidian:`/`file:` links and remote images don't survive | automated-tested (stand-in renderer) | `test/render.test.js`, `test/view.test.js`. The stand-in passes raw HTML through as Obsidian's renderer would; the real renderer is checked by hand below |
+| Questions get a card with the host's countdown; answers send the question's operation; closing the panel stops following but neither answers nor cancels | automated-tested | `test/view.test.js` |
+| A message carries only what was attached | automated-tested | `test/view.test.js` |
+| The plugin says why it can't chat: no token, no service, refused token, another vault | automated-tested | `test/client.test.js` |
+| A lost POST is retried with the same request ID | automated-tested | `test/client.test.js` |
+| In real Obsidian: stream a long answer, open a citation, approve and refuse a write, let a question expire, Stop, reload the plugin and resume | **pending (manual)** | Needs a person: Obsidian can't open a vault from the command line. Run `scripted_serve.py`, open its vault, and record the result here |
+
+The M1 spike (`plugins/obsidian/spike/`) is removed; its result stays recorded under M1.

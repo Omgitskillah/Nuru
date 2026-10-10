@@ -99,6 +99,15 @@ class ConversationStore:
         return [{"id": rid, "tool": tool, "arguments": json.loads(args), "state": state, "diagnostic": diagnostic}
                 for rid, tool, args, state, diagnostic in rows]
 
+    def unresolved_writes(self, vault: str, conversation_id: int, since: str) -> list[dict]:
+        """The writes in `conversation_id` begun at or after `since` (an ISO timestamp, as stored) that
+        never got an outcome: in_flight or uncertain."""
+        rows = self._conn.execute(
+            "SELECT id, tool, state FROM write_attempts WHERE vault = ? AND conversation_id = ? AND created_at >= ? "
+            "AND state IN ('in_flight', 'uncertain') ORDER BY id", (vault, conversation_id, since)
+        ).fetchall()
+        return [{"id": rid, "tool": tool, "state": state} for rid, tool, state in rows]
+
     def begin_write(self, conversation_id: int, turn_id: str, vault: str, tool: str, args: dict) -> int | None:
         # Serialize the pending check and intent record across concurrent sessions on this database.
         with self._conn:

@@ -450,6 +450,10 @@ class Session:
         # Asked a question code raises mid-turn (a write to OK, a save the message ruled out); returns
         # the chosen labels, or None if nobody answered. Used when confirm_write isn't set.
         self.answer_question: Callable[[Question], list[str] | None] | None = None
+        # Told how each tool call the model made turned out - (name, arguments, outcome, whether it's a
+        # write) - once it has run or been refused; nuru-serve reports it to its clients. Calls Nuru
+        # makes for itself (the notes run_python reads) aren't reported.
+        self.on_tool_outcome: Callable[[str, dict, ToolOutcome, bool], None] | None = None
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.link_auditor: VaultLinkAuditor | None = None
@@ -1206,6 +1210,8 @@ class Session:
                                              duration_ms, gate_id, error=outcome.hint)
             if outcome.success and reranked and enforcing and enforcing.on("rerank"):
                 outcome = replace(outcome, text=reranked)
+        if self.on_tool_outcome and not harness:
+            self.on_tool_outcome(name, shown_args, outcome, name in MUTATIONS)
         return outcome
 
     def _partial_actions(self) -> str:

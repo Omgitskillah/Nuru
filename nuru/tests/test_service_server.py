@@ -228,3 +228,29 @@ def test_an_open_stream_ends_cleanly_when_the_database_becomes_unsafe(served, mo
     assert [e["type"] for e in protocol.parse_sse(seen)] == ["accepted", "started", "text"]
     status, body, _ = client.call("GET", f"{accepted['events']}?after=3")
     assert (status, body["error"]["code"]) == (500, "internal")
+
+
+def test_the_scripted_server_runs_scenarios_end_to_end(tmp_path):
+    """nuru/tests/scripted_serve.py, as the plugin's end-to-end tests start it: a real process."""
+    import signal
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).with_name("scripted_serve.py")
+    process = subprocess.Popen([sys.executable, str(script), "--dir", str(tmp_path)], stdout=subprocess.PIPE, text=True)
+    try:
+        started = json.loads(process.stdout.readline())
+        client = Client(started["port"], started["token"])
+        status = client.call("GET", "/v1/status")[1]
+        assert status["vault"]["id"] == started["vault_id"] == protocol.vault_id(Path(started["vault"]))
+        conversation = client.call("POST", "/v1/conversations", {"request_id": "req-conversation-0001"})[1]["conversation_id"]
+        accepted = client.call("POST", f"/v1/conversations/{conversation}/turns",
+                               {"request_id": "req-turn-00000001", "text": "scenario:tools"})[1]
+        events = protocol.parse_sse(client.call("GET", accepted["events"])[1])
+        protocol.check_stream(events)
+        assert [r["state"] for r in (e["data"] for e in events if e["type"] == "write_receipt")] == ["applied"]
+        assert events[-1]["data"]["reply"] == "I read [[nuru/Trip.md]] and wrote [[nuru/Summary.md]]."
+    finally:
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=10) == 0

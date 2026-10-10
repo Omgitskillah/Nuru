@@ -581,6 +581,19 @@ def test_ask_runs_a_tool_call_and_sends_the_result_back_to_the_model(monkeypatch
     assert sent[1][-1] == {"role": "tool", "content": "17C"}
 
 
+def test_each_model_tool_call_reports_its_outcome_but_nuru_s_own_calls_dont(monkeypatch):
+    fake_tools = FakeMCPTools(tool_results={"get_temperature": "17C", "read_note": "a note"})
+    responses = iter([[{"tool_calls": [tool_call("get_temperature", {"city": "Berlin"})]}], ["It's 17C"]])
+    s = start_session(monkeypatch, chat=lambda *a, **k: iter(next(responses)), tools=fake_tools)
+    reported = []
+    s.on_tool_outcome = lambda name, arguments, outcome, write: reported.append((name, arguments, outcome.success, write))
+
+    list(s.ask("what's the weather in Berlin?"))
+    s._call_tool("turn", "read_note", {"name": "x"}, None, None, harness=True)  # as run_python reads its notes
+
+    assert reported == [("get_temperature", {"city": "Berlin"}, True, False)]
+
+
 def test_ask_yields_the_tool_call_before_running_it(monkeypatch):
     fake_tools = FakeMCPTools()
     responses = iter([[{"tool_calls": [tool_call("slow_tool", {})]}], []])

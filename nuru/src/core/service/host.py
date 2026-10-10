@@ -30,12 +30,15 @@ from core.questions import Question
 from core.service import protocol
 from core.service.protocol import Display, ProtocolError, TurnStream
 from core.service.store import ServiceStore
+from core.tool_dispatch import MUTATIONS, ToolOutcome
 
 QUEUE_LIMIT = 4  # turns waiting behind the running one
 RETENTION_DAYS = 30
 MAX_PAGE = 50
 RESTARTED = "Nuru restarted before this turn finished. Nothing was retried; check any write it made."
 UNSAFE = "Nuru's database is in an uncertain state; restart nuru-serve"
+UNKNOWN_WRITE = "Nuru stopped before this write's outcome was known. It was not retried; check the note."
+REFUSED_KINDS = frozenset({"policy", "repair", "dependency", "replay"})  # ToolOutcome.kind of a call not run on purpose
 
 
 def _stamp(moment: datetime) -> str:
@@ -110,9 +113,24 @@ class Service:
             self.store.compact(retention_days)
             for turn in self.store.unfinished_turns():
                 live = _Live(TurnStream.resume(turn["conversation_id"], turn["id"], self.store.events(turn["id"])), 0, "")
+                self._receipt_for_unknown_write(live, turn)
                 for question_id in live.stream.open_questions:
                     self._close_question(live, question_id, "expired")
                 self._emit(live, lambda s: s.emit("failed", {"code": "service_restarted", "message": RESTARTED}))
+
+    def _receipt_for_unknown_write(self, live: _Live, turn: dict) -> None:
+        """A turn cut short while a write was running: if the conversation store has that write without
+        an outcome (in_flight or uncertain), its call gets an `uncertain` receipt. It stays blocked
+        there until the operator resolves it, and is never run again."""
+        call = _open_call(live.stream)
+        if call is None or call[1] not in MUTATIONS:
+            return
+        call_id, tool = call
+        unresolved = self.conversations.unresolved_writes(str(self.vault), self.store.store_id(turn["conversation_id"]),
+                                                          turn["created_at"])
+        if any(write["tool"] == tool for write in unresolved):
+            self._emit(live, lambda s: s.emit("write_receipt", {"call_id": call_id, "tool": tool, "state": "uncertain",
+                                                                "detail": UNKNOWN_WRITE}))
 
     def close(self, timeout: float = 30) -> bool:
         """Stop taking work, cancel the queued turns and the running one, and wait for the worker. The
@@ -199,10 +217,9 @@ class Service:
         return self._request(principal, "submit_turn", payload, conversation_id, act)
 
     def _prompt(self, payload: dict) -> str:
-        """The message as Session gets it: the text, then what the user attached, if anything.
-
-        TODO(WP01 M3): settle how attachments reach the model with the plugin; for now each is named,
-        with its selection quoted."""
+        """The message as Session gets it: the text, then what the user attached, if anything. A note is
+        named, never pasted in: the model reads it with its own tools, under the same rules as any
+        other read. A selection the user made is quoted."""
         parts = [payload["text"]]
         for attachment in payload.get("attachments", []):
             path = self._vault_relative(attachment["path"])
@@ -477,6 +494,7 @@ class Service:
             return
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
+        session.on_tool_outcome = lambda name, arguments, outcome, write: self._tool_outcome(live, name, outcome, write, arguments)
         try:
             for event in session.ask(live.prompt, live.cancel):
                 with self._lock:
@@ -496,9 +514,32 @@ class Service:
             return
         finally:
             session.answer_question = None
+            session.on_tool_outcome = None
         with self._lock:
             if not live.stream.ended and not self._unsafe:
                 self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+
+    def _tool_outcome(self, live: _Live, name: str, outcome: ToolOutcome, write: bool, arguments: dict) -> None:
+        """Session.on_tool_outcome, on the worker thread: the result of the call the stream last
+        started, and for a write, its receipt. An outcome with no open call of that name is for a call
+        that was never shown (a refusal after tools closed, a sibling skipped after a failure): it
+        isn't reported."""
+        with self._lock:
+            call = None if self._unsafe or live.stream.ended else _open_call(live.stream)
+            if call is None or call[1] != name:
+                return
+            call_id = call[0]
+
+            def report(stream: TurnStream) -> None:
+                stream.emit("tool_result", {"call_id": call_id, "ok": outcome.success,
+                                            **({"summary": outcome.code[:2000]} if not outcome.success and outcome.code else {})})
+                if write:
+                    stream.emit("write_receipt", _receipt(call_id, name, outcome, arguments))
+
+            try:
+                self._emit(live, report)
+            except Exception:  # display only: the turn goes on, and a store failure has been handled
+                print(f"nuru-serve: couldn't report the outcome of {name}", file=sys.stderr)
 
     def _ensure_session(self, conversation_id: int):
         """The shared Session, built on the first turn (in this, the worker thread)."""
@@ -535,3 +576,39 @@ class Service:
                 self._close_question(live, waiter.id, "expired")
                 return None
             return waiter.answer
+
+
+def _open_call(stream: TurnStream) -> tuple[str, str] | None:
+    """(call_id, tool) of the last tool_start, if it has no tool_result yet. Tools run one at a time,
+    so no earlier call can still be running; one left without a result (an enforced write starts again
+    with corrected arguments) stays that way."""
+    for event in reversed(stream.events):
+        if event["type"] == "tool_result":
+            return None
+        if event["type"] == "tool_start":
+            return event["data"]["call_id"], event["data"]["name"]
+    return None
+
+
+def _receipt(call_id: str, tool: str, outcome: ToolOutcome, arguments: dict) -> dict:
+    """What a write actually did, for a write_receipt: applied, refused (not run on purpose: a policy,
+    a No, a blocked write), failed, or uncertain (it may have run; never retried)."""
+    if outcome.success:
+        state = "applied"
+    elif outcome.certainty == "uncertain":
+        state = "uncertain"
+    elif outcome.kind in REFUSED_KINDS:
+        state = "refused"
+    else:
+        state = "failed"
+    receipt = {"call_id": call_id, "tool": tool, "state": state}
+    target = arguments.get("destination_path" if tool == "rename_or_move_file" else "note")
+    if isinstance(target, str):
+        try:
+            protocol.validate("vault_path", target)
+            receipt["path"] = target
+        except ProtocolError:
+            pass  # not a vault path a client could open
+    if state != "applied" and outcome.code:
+        receipt["detail"] = outcome.code[:500]
+    return receipt

@@ -77,3 +77,16 @@ uv run --locked nuru-serve token add obsidian
 uv run --locked nuru-serve --port 27199
 curl -H "Authorization: Bearer $(cat <scratch>/service/clients/obsidian.token)" http://127.0.0.1:27199/v1/status
 ```
+
+## M3a: tool results, write receipts and a scripted server (2026-10-11, branch wp01-m3a-service)
+
+No model was loaded and no vault was written.
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| Each tool call the model made gets a `tool_result`; each write a `write_receipt` with what it did (`applied`, `refused`, `failed`, `uncertain`) | automated-tested | `test_each_tool_gets_its_result_and_each_write_a_receipt_of_what_it_did`; Session's hook: `test_each_model_tool_call_reports_its_outcome_but_nuru_s_own_calls_dont` |
+| An outcome for a call never shown (a refusal after tools closed, a skipped sibling) isn't reported, and never paired with another call | automated-tested | `test_an_outcome_for_a_call_that_was_never_shown_isnt_reported` |
+| A write cut short by a crash gets an `uncertain` receipt at the next start, stays blocking, and isn't retried | automated-tested | `test_a_write_cut_short_by_a_crash_gets_an_uncertain_receipt_and_is_not_retried` (a real child process dies mid-write) |
+| Long tool arguments are cut for display, so a turn never fails for the size of its display | automated-tested | `test_a_huge_write_is_shown_cut_and_the_turn_still_completes` (400,000 characters), `test_shown_arguments_keep_short_values_and_cut_the_rest` |
+| Attachments name the note; the model reads it with its tools | automated-tested | `test_attachments_are_named_in_the_message_and_cant_leave_the_vault` |
+| `nuru/tests/scripted_serve.py` runs the real host and HTTP server over scripted scenarios, for the plugin's end-to-end tests | automated-tested | `test_the_scripted_server_runs_scenarios_end_to_end` |

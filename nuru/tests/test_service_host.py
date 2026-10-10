@@ -634,3 +634,62 @@ def test_an_answer_that_fails_to_commit_is_not_used_and_can_be_sent_again(harnes
     assert answer(h, asked, ["No"])[1]["decision"] == "No"
     h.finished(turn)
     assert h.session.answers == [["No"]]
+
+
+def test_a_commit_refused_by_a_reader_is_rolled_back_and_memory_matches_the_store(harness, tmp_path):
+    """Real SQLite: another connection reading the database makes COMMIT fail with "database is locked",
+    which leaves the transaction open unless it's rolled back."""
+    gate = threading.Event()
+    h = harness([held(gate, "first"), reply("second")])
+    conversation = h.conversation()
+    first = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
+    second = h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"]
+    h.first(first, "text")
+    store = h.service.store
+    store._conn.execute("PRAGMA busy_timeout = 1")
+    reader = sqlite3.connect(tmp_path / "service.db", isolation_level=None)
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM turns").fetchone()
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        h.service.cancel_turn(ME, second, {"request_id": "req-cancel-0000001"})
+    reader.execute("COMMIT")
+    assert not store.in_transaction
+    committed = [json.loads(body)["type"] for (body,) in reader.execute(
+        "SELECT body FROM events WHERE turn_id = ? ORDER BY seq", (second,))]
+    assert committed == ["accepted", "queued"] == [e["type"] for e in h.service._live[second].stream.events]
+    assert reader.execute("SELECT state FROM turns WHERE id = ?", (second,)).fetchone() == ("accepted",)
+    assert reader.execute("SELECT count(*) FROM requests WHERE operation = 'cancel_turn'").fetchone() == (0,)
+    reader.close()
+    store._conn.execute("PRAGMA busy_timeout = 5000")
+    assert h.service.cancel_turn(ME, second, {"request_id": "req-cancel-0000001"})[0] == 202  # judged afresh
+    assert h.finished(second)[-1]["data"]["reason"] == "user"
+    gate.set()
+    assert h.finished(first)[-1]["type"] == "completed"
+    assert len(h.session.asked) == 1
+
+
+class StuckTransaction(FailingCommit):
+    """A commit that fails and can't even be rolled back: the transaction stays open."""
+
+    def __exit__(self, *raised):
+        raise sqlite3.OperationalError("disk I/O error")
+
+
+def test_a_change_that_cant_be_rolled_back_stops_the_service_taking_work(harness, monkeypatch):
+    gate = threading.Event()
+    h = harness([held(gate, "first")])
+    conversation = h.conversation()
+    first = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
+    h.first(first, "text")
+    store = h.service.store
+    real = store.transaction
+    monkeypatch.setattr(store, "transaction", lambda: StuckTransaction(store._conn))
+    with pytest.raises(sqlite3.OperationalError):
+        h.submit(conversation, request_id="req-turn-00000002")
+    monkeypatch.setattr(store, "transaction", real)
+    store._conn.execute("ROLLBACK")  # what a restart would find: the change never committed
+    for retry in ("req-turn-00000002", "req-turn-00000001"):  # neither new work nor a replay is trusted
+        with pytest.raises(ProtocolError) as refused:
+            h.submit(conversation, request_id=retry)
+        assert refused.value.code == "internal"
+    gate.set()

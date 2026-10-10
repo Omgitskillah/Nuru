@@ -49,6 +49,7 @@ Machine: macOS 26.6.2, Python 3.14.7 (uv.lock). No model was loaded and no vault
 | The notes server, the write ledger and status all use the service's one vault, whatever `.env.obsidian` says | automated-tested | `test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger`, `test_the_served_vault_is_the_one_the_session_gets` |
 | One process owns the service database; a second `nuru-serve` is refused before it migrates or recovers anything | automated-tested, manually-tested | `test_a_second_host_on_the_same_database_is_refused_and_changes_nothing`; a second real process on another port exited with "another nuru-serve is using …", and the first kept serving |
 | A change that fails to store leaves memory as it was: the queue keeps working and an uncommitted answer isn't used | automated-tested | `test_a_cancel_that_fails_to_store_leaves_the_queue_working`, `test_an_answer_that_fails_to_commit_is_not_used_and_can_be_sent_again` (both fail without the fix) |
+| A COMMIT that SQLite itself refuses is rolled back before memory is rebuilt, and leaves no replayable request; if even the rollback fails, the service takes no more work | automated-tested | `test_a_commit_refused_by_a_reader_is_rolled_back_and_memory_matches_the_store` (a real second connection holds a read, so COMMIT fails "database is locked"; fails without the fix), `test_a_change_that_cant_be_rolled_back_stops_the_service_taking_work` |
 | One generation at a time; a bounded queue says `queued`, refuses overflow with 429, and status answers while a turn runs | automated-tested | `test_turns_wait_their_turn_and_status_stays_responsive` |
 | Questions: Yes, No, expiry on the host clock (taken as No), late, duplicate, foreign and wrong-operation answers | automated-tested | the four question tests in `test_service_host.py` |
 | Stop while queued, while running and while a question waits; Stop on an ended turn changes nothing | automated-tested | the three `test_stop_*` tests |
@@ -58,7 +59,7 @@ Machine: macOS 26.6.2, Python 3.14.7 (uv.lock). No model was loaded and no vault
 | After 30 days a turn keeps only its final display state | automated-tested | `test_old_turns_keep_their_final_state_after_their_events_are_dropped` |
 | Service and conversation databases are separate but join with ATTACH | automated-tested | `test_migrations_run_once_and_the_two_databases_join` |
 | Tokens: only a hash is stored; files 0600 in a 0700 directory | automated-tested | `test_token_commands_keep_only_a_hash_and_files_private` |
-| CLI and Qt behaviour unchanged | automated-tested | full suite: 1633 passed, 1 skipped |
+| CLI and Qt behaviour unchanged | automated-tested | full suite: 1635 passed, 1 skipped |
 
 Not in M2:
 - Tool results and write receipts (M3). Session yields no event for either yet, so a stream has

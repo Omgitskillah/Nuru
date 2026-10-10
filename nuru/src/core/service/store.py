@@ -135,6 +135,10 @@ class ServiceStore:
     def transaction(self):
         return _Transaction(self._conn)
 
+    @property
+    def in_transaction(self) -> bool:
+        return self._conn.in_transaction
+
     def close(self) -> None:
         self._conn.close()
         if not self._owner.closed:
@@ -272,5 +276,17 @@ class _Transaction:
             self._outer = True
 
     def __exit__(self, kind, error, trace):
-        if self._outer:
-            self._conn.execute("ROLLBACK" if kind else "COMMIT")
+        if not self._outer:
+            return
+        if kind is None:
+            try:
+                self._conn.execute("COMMIT")
+                return
+            except sqlite3.Error:
+                # A failed COMMIT (the database is locked, say) leaves the transaction open: end it here,
+                # so nothing after this reads rows that were never committed.
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+        if self._conn.in_transaction:
+            self._conn.execute("ROLLBACK")

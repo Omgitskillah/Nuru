@@ -12,6 +12,7 @@ when the service stopped ends `failed` (service_restarted) when it starts again:
 """
 
 import dataclasses
+import sys
 import threading
 from collections import deque
 from contextlib import contextmanager
@@ -88,6 +89,7 @@ class Service:
         # each turn the change touched, to put back if the transaction rolls back.
         self._touched: dict[str, tuple[_Live, bool]] | None = None
         self._active_before: str | None = None
+        self._unsafe = False  # a change could be neither committed nor rolled back (_atomic)
         try:
             self.version = metadata.version("core")
         except metadata.PackageNotFoundError:
@@ -132,6 +134,8 @@ class Service:
         key = protocol.request_key(principal, self.vault_id, operation, payload["request_id"])
         digest = protocol.payload_hash(target, payload)
         with self._lock:
+            if self._unsafe:
+                raise ProtocolError("internal", "Nuru's database is in an uncertain state; restart nuru-serve")
             known = self.store.request(key)
             if known:
                 if known["payload_hash"] != digest:
@@ -359,6 +363,12 @@ class Service:
             with self.store.transaction():
                 yield
         except BaseException:
+            if self.store.in_transaction:  # not even rolled back: nothing it reads can be trusted now
+                self._unsafe = self._closing = True
+                self._changed.notify_all()
+                print("nuru-serve: the service database couldn't roll back; taking no more work until restarted",
+                      file=sys.stderr)
+                raise
             for turn_id, (live, was_live) in self._touched.items():
                 live.stream = TurnStream.resume(live.stream.conversation_id, turn_id, self.store.events(turn_id))
                 if was_live:

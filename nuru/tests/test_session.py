@@ -97,6 +97,18 @@ def test_start_builds_the_custom_model_from_the_modelfile_before_loading(monkeyp
     assert calls == [(session.MODEL, session.BASE_MODEL, session._modelfile_for(session.BASE_MODEL))]
 
 
+def test_start_can_resume_a_conversation_and_leave_the_model_for_the_first_turn(monkeypatch):
+    loaded = []
+    monkeypatch.setattr(session, "ensure_server_running", lambda: loaded.append("server"))
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: loaded.append(model))
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: FakeMCPTools())
+
+    s = Session.start(7, load_model=False)
+
+    assert s.conversation_id == 7 and loaded == []
+    s.close()
+
+
 def test_plan_turn_uses_the_planners_profile_and_sampling(monkeypatch):
     profile = session.model_profile.for_model("qwen3.5")
     monkeypatch.setattr(session, "PLANNER_PROFILE", profile)

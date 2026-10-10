@@ -49,9 +49,10 @@ SCHEMA_PATH = Path(__file__).with_name("protocol-v1.schema.json")
 class ProtocolError(ValueError):
     """Something broke the protocol. `code` is the error code to answer with."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, **extra) -> None:
         super().__init__(message)
         self.code = code
+        self.extra = extra  # more for the error body: retry_after_seconds, resync
 
 
 @cache
@@ -139,6 +140,12 @@ def payload_hash(target: str, payload: dict) -> str:
 def operation_hash(turn_id: str, question_id: str, question: dict) -> str:
     """Ties an answer to the one operation it was asked about."""
     return hashlib.sha256(canonical([turn_id, question_id, question])).hexdigest()
+
+
+def vault_id(vault: Path) -> str:
+    """The vault's identity in status: a hash of its resolved path, never the path. A client computes
+    the same for its own vault and refuses to chat if the two differ."""
+    return hashlib.sha256(str(Path(vault).resolve()).encode()).hexdigest()[:32]
 
 
 def question_data(question: Question) -> dict:
@@ -334,13 +341,34 @@ class TurnStream:
         self.truncated = False  # text beyond that was dropped
         self._check = StreamCheck()
 
+    @classmethod
+    def resume(cls, conversation_id: str, turn_id: str, events: list[dict]) -> "TurnStream":
+        """The stream of a turn whose events so far are `events` (stored before a restart), ready to
+        go on from them."""
+        turn = cls(conversation_id, turn_id)
+        for event in events:
+            turn._add(event)
+        turn.truncated = len(turn.reply) >= MAX_REPLY_CHARS
+        return turn
+
+    @property
+    def ended(self) -> bool:
+        return self._check.ended
+
+    @property
+    def open_questions(self) -> list[str]:
+        return list(self._check.open_questions)
+
     def emit(self, kind: str, data: dict) -> dict:
         event = {"v": VERSION, "conversation_id": self.conversation_id, "turn_id": self.turn_id,
                  "seq": len(self.events) + 1, "at": now(), "type": kind, "data": data}
+        return self._add(event)
+
+    def _add(self, event: dict) -> dict:
         self._check.feed(event)
         self.events.append(event)
-        if kind == "text":
-            self.reply += data["text"]
+        if event["type"] == "text":
+            self.reply += event["data"]["text"]
         return event
 
     def text(self, text: str) -> list[dict]:
@@ -365,8 +393,11 @@ class TurnStream:
                                       "operation": operation_hash(self.turn_id, question_id, data)})
 
     def session_event(self, event) -> list[dict]:
-        """A Session event as protocol events. Session has no tool results or receipts yet; those come
-        from the service's tool hooks."""
+        """A Session event as protocol events.
+
+        TODO(WP01 M3): Session yields no tool results or write receipts yet, so a stream has
+        tool_start but never tool_result or write_receipt. M3 adds Session events for both (the
+        approval cards and the uncertain-write receipt after a restart need them)."""
         from core import session  # heavy (MCP, Ollama, Laya); the protocol alone doesn't need it
 
         if isinstance(event, session.Text):

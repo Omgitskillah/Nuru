@@ -463,10 +463,14 @@ class Session:
         self._repair_rounds = 0
 
     @classmethod
-    def start(cls) -> "Session":
+    def start(cls, conversation_id: int | None = None, *, load_model: bool = True) -> "Session":
         """Build the custom model, connect the MCP servers, open the log and the database, load the
         model, and return the session that ties them together. Whatever was opened is closed
-        again if a later step fails."""
+        again if a later step fails.
+
+        `conversation_id` resumes a stored conversation instead of starting a new one. With
+        load_model=False the model loads on the first ask(), as nuru-serve wants: its status and
+        history must work while no model is loaded."""
         rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
         system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
 
@@ -501,8 +505,11 @@ class Session:
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 
-            session = cls(tools, tool_definitions, logger, store, store.create_conversation(), shadow, enforcement, system_text, server_tools)
-            session.load_model()
+            if conversation_id is None:
+                conversation_id = store.create_conversation()
+            session = cls(tools, tool_definitions, logger, store, conversation_id, shadow, enforcement, system_text, server_tools)
+            if load_model:
+                session.load_model()
             session.indexer = VaultIndexer.from_env()
             if session.indexer:
                 session.indexer.on_change = lambda result: logger.index_pass(

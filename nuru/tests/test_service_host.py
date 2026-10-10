@@ -122,7 +122,11 @@ class Harness:
         return events
 
     def first(self, turn_id, kind):
-        return next(e for e in self.events_until(turn_id, lambda es: any(e["type"] == kind for e in es)) if e["type"] == kind)
+        return next(e for e in self.first_all(turn_id, kind) if e["type"] == kind)
+
+    def first_all(self, turn_id, kind):
+        """The turn's events up to and including its first `kind` event, at least."""
+        return self.events_until(turn_id, lambda es: any(e["type"] == kind for e in es))
 
     def close(self):
         self.service.close()
@@ -675,21 +679,111 @@ class StuckTransaction(FailingCommit):
         raise sqlite3.OperationalError("disk I/O error")
 
 
-def test_a_change_that_cant_be_rolled_back_stops_the_service_taking_work(harness, monkeypatch):
+def make_unsafe(h, monkeypatch, conversation, request_id):
+    """Submit a turn whose transaction can be neither committed nor rolled back. Returns the SQL the
+    service's connection runs from then on."""
+    store = h.service.store
+    monkeypatch.setattr(store, "transaction", lambda: StuckTransaction(store._conn))
+    with pytest.raises(sqlite3.OperationalError):
+        h.submit(conversation, request_id=request_id)
+    assert store.in_transaction and h.service._unsafe
+    traced = []
+    store._conn.set_trace_callback(traced.append)
+    return traced
+
+
+def restart(h) -> Service:
+    """Stop the unsafe host as nuru-serve does (the connection closes uncommitted) and start another
+    on the same files."""
+    assert h.service.close(timeout=5)  # promptly: nothing was left waiting
+    h.service.store.close()
+    h.service.conversations.close()
+    h.service = h.open()
+    return h.service
+
+
+@pytest.fixture
+def thread_errors(monkeypatch):
+    errors = []
+    monkeypatch.setattr(threading, "excepthook", errors.append)
+    return errors
+
+
+def test_once_unsafe_nothing_runs_or_is_read_and_a_restart_finds_only_what_committed(harness, monkeypatch, thread_errors):
+    gate = threading.Event()
+    h = harness([held(gate, "first"), reply("never")])
+    conversation = h.conversation()
+    running = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
+    h.first(running, "text")
+    queued = h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"]
+    traced = make_unsafe(h, monkeypatch, conversation, "req-turn-00000003")
+
+    refused = [
+        lambda: h.submit(conversation, request_id="req-turn-00000003"),
+        lambda: h.submit(conversation, request_id="req-turn-00000001"),  # not even a replay
+        lambda: h.service.request_state(ME, "req-turn-00000003", "submit_turn"),
+        lambda: h.service.request_state(ME, "req-turn-00000001", "submit_turn"),
+        lambda: h.service.list_conversations(ME, None, 10),
+        lambda: h.service.conversation(ME, conversation, None, 10),
+        lambda: h.service.check_cursor(ME, running, 0),
+        lambda: h.service.wait_events(queued, 0, 1),
+        lambda: h.service.cancel_turn(ME, queued, {"request_id": "req-cancel-0000001"}),
+    ]
+    for attempt in refused:
+        with pytest.raises(ProtocolError) as refusal:
+            attempt()
+        assert refusal.value.code == "internal"
+    assert h.service.status()["ready"]["chat"] == "unavailable"  # status reads no database
+
+    gate.set()  # the running turn goes on talking; none of it can be stored
+    restarted = restart(h)
+    assert len(h.session.asked) == 1  # the queued turn never reached Session
+    assert traced == [] and thread_errors == []
+    for turn in (running, queued):
+        events = restarted.store.events(turn)
+        protocol.check_stream(events)
+        assert events[-1]["data"]["code"] == "service_restarted"
+    assert [e["data"]["text"] for e in restarted.store.events(running) if e["type"] == "text"] == ["first"]
+    with pytest.raises(ProtocolError, match="no such request"):
+        restarted.request_state(ME, "req-turn-00000003", "submit_turn")
+
+
+def test_once_unsafe_a_waiting_question_is_woken_with_no_and_nothing_is_written(harness, monkeypatch, thread_errors):
+    h = harness([asks(questions.write("write_note", {"note": "x"}))], answer_seconds=3600)
+    conversation = h.conversation()
+    turn = h.submit(conversation)[1]["turn_id"]
+    asked = h.first(turn, "question")
+    traced = make_unsafe(h, monkeypatch, conversation, "req-turn-00000002")
+    restarted = restart(h)  # well inside the question's hour
+    assert h.session.answers == [None] and traced == [] and thread_errors == []
+    events = restarted.store.events(turn)
+    protocol.check_stream(events)
+    closed = next(e for e in events if e["type"] == "question_closed")
+    assert closed["data"] == {"question_id": asked["data"]["question_id"], "outcome": "expired", "decision": "No"}
+    assert events[-1]["data"]["code"] == "service_restarted"
+
+
+def test_once_unsafe_a_reader_already_waiting_is_let_go(harness, monkeypatch, thread_errors):
     gate = threading.Event()
     h = harness([held(gate, "first")])
     conversation = h.conversation()
-    first = h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"]
-    h.first(first, "text")
-    store = h.service.store
-    real = store.transaction
-    monkeypatch.setattr(store, "transaction", lambda: StuckTransaction(store._conn))
-    with pytest.raises(sqlite3.OperationalError):
-        h.submit(conversation, request_id="req-turn-00000002")
-    monkeypatch.setattr(store, "transaction", real)
-    store._conn.execute("ROLLBACK")  # what a restart would find: the change never committed
-    for retry in ("req-turn-00000002", "req-turn-00000001"):  # neither new work nor a replay is trusted
-        with pytest.raises(ProtocolError) as refused:
-            h.submit(conversation, request_id=retry)
-        assert refused.value.code == "internal"
+    turn = h.submit(conversation)[1]["turn_id"]
+    seen = len(h.first_all(turn, "text"))
+    outcome = {}
+
+    def read():
+        try:
+            outcome["events"] = h.service.wait_events(turn, seen, 30)
+        except ProtocolError as error:
+            outcome["code"] = error.code
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    deadline = datetime.now() + timedelta(seconds=WAIT)
+    while not h.service._changed._waiters:  # the reader is inside Condition.wait
+        assert datetime.now() < deadline
+    make_unsafe(h, monkeypatch, conversation, "req-turn-00000002")
+    reader.join(5)
+    assert not reader.is_alive() and outcome == {"code": "internal"}
     gate.set()
+    assert h.service.close(timeout=5) and thread_errors == []

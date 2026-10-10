@@ -4,6 +4,7 @@ and a stream that is replayed and followed. No model."""
 import http.client
 import json
 import os
+import sqlite3
 import stat
 import threading
 
@@ -16,7 +17,7 @@ from core.service.host import Service
 from core.service import server as nuru_serve
 from core.service.server import NuruServer, main
 from core.service.store import ServiceStore
-from test_service_host import ScriptedSession, held, reply
+from test_service_host import ScriptedSession, StuckTransaction, held, reply
 
 
 @pytest.fixture
@@ -201,3 +202,29 @@ def test_the_served_vault_is_the_one_the_session_gets(monkeypatch, tmp_path):
     monkeypatch.setattr(session.Session, "start", classmethod(lambda cls, *args, **kwargs: started.append((args, kwargs))))
     nuru_serve._session_factory(tmp_path)(5)
     assert started == [((5,), {"load_model": False, "vault": tmp_path})]
+
+
+def test_an_open_stream_ends_cleanly_when_the_database_becomes_unsafe(served, monkeypatch):
+    client, service, *_ = served
+    gate = threading.Event()
+    service._factory = lambda conversation_id: ScriptedSession([held(gate, "first")])
+    conversation = client.call("POST", "/v1/conversations", {"request_id": "req-conversation-0001"})[1]["conversation_id"]
+    accepted = client.call("POST", f"/v1/conversations/{conversation}/turns", {"request_id": "req-turn-00000001", "text": "hi"})[1]
+    connection = http.client.HTTPConnection("127.0.0.1", client.port, timeout=10)
+    connection.request("GET", accepted["events"], headers={"Host": f"127.0.0.1:{client.port}",
+                                                            "Authorization": f"Bearer {client.token}"})
+    response = connection.getresponse()
+    seen = b""
+    while b"first" not in seen:
+        seen += response.read1(65536)
+    store = service.store
+    monkeypatch.setattr(store, "transaction", lambda: StuckTransaction(store._conn))
+    with pytest.raises(sqlite3.OperationalError):
+        service.submit_turn("operator", conversation, {"request_id": "req-turn-00000002", "text": "again"})
+    seen += response.read()  # the server ends the stream
+    connection.close()
+    gate.set()
+    assert b'"error"' not in seen  # no JSON error tacked onto a 200 event stream
+    assert [e["type"] for e in protocol.parse_sse(seen)] == ["accepted", "started", "text"]
+    status, body, _ = client.call("GET", f"{accepted['events']}?after=3")
+    assert (status, body["error"]["code"]) == (500, "internal")

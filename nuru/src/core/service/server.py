@@ -208,7 +208,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         while True:
-            events, ended = service.wait_events(turn_id, cursor, self.server.keepalive_seconds)
+            try:
+                events, ended = service.wait_events(turn_id, cursor, self.server.keepalive_seconds)
+            except ProtocolError:
+                # The 200 and the stream are under way, so no error body can follow: end the stream,
+                # and the client reconnects to find out why.
+                self.close_connection = True
+                return
             for event in events:
                 self.wfile.write(protocol.sse(event))
                 cursor = event["seq"]
@@ -280,10 +286,14 @@ def serve(port: int, queue_limit: int) -> None:
         print("nuru-serve: stopping", file=sys.stderr)
     finally:
         server.closing = True
-        service.close()
+        stopped = service.close()
         server.server_close()
-        store.close()
-        service.conversations.close()
+        if stopped:
+            store.close()
+            service.conversations.close()
+        else:
+            # The worker may still be using the database: keep it owned until this process ends.
+            print("nuru-serve: a turn didn't stop in time; exiting with the database still owned", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> None:

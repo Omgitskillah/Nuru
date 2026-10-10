@@ -14,6 +14,7 @@ when the service stopped ends `failed` (service_restarted) when it starts again:
 import dataclasses
 import sys
 import threading
+import traceback
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ QUEUE_LIMIT = 4  # turns waiting behind the running one
 RETENTION_DAYS = 30
 MAX_PAGE = 50
 RESTARTED = "Nuru restarted before this turn finished. Nothing was retried; check any write it made."
+UNSAFE = "Nuru's database is in an uncertain state; restart nuru-serve"
 
 
 def _stamp(moment: datetime) -> str:
@@ -112,18 +114,27 @@ class Service:
                     self._close_question(live, question_id, "expired")
                 self._emit(live, lambda s: s.emit("failed", {"code": "service_restarted", "message": RESTARTED}))
 
-    def close(self, timeout: float = 30) -> None:
+    def close(self, timeout: float = 30) -> bool:
         """Stop taking work, cancel the queued turns and the running one, and wait for the worker. The
-        Session is closed, never shut down: the Ollama server and its models may be someone else's."""
-        with self._lock:
-            self._closing = True
-            while self._queue:
-                live = self._live[self._queue.popleft()]
-                self._emit(live, lambda s: s.cancelled("shutdown"))
-            if self._active:
-                self._cancel_running(self._live[self._active], "shutdown")
-            self._changed.notify_all()
-        self._worker.join(timeout)
+        Session is closed, never shut down: the Ollama server and its models may be someone else's.
+        Returns whether the worker stopped; until it has, the database is in use and must stay owned.
+
+        With the database unsafe (_atomic), nothing more is written: the turns in hand end when the
+        next start recovers them from what was committed."""
+        try:
+            with self._lock:
+                self._closing = True
+                if not self._unsafe:
+                    while self._queue:
+                        live = self._live[self._queue.popleft()]
+                        self._emit(live, lambda s: s.cancelled("shutdown"))
+                    if self._active:
+                        self._cancel_running(self._live[self._active], "shutdown")
+        finally:
+            with self._lock:
+                self._changed.notify_all()
+            self._worker.join(timeout)
+        return not self._worker.is_alive()
 
     # ------------------------------------------------------------------ requests
     def _request(self, principal: str, operation: str, payload: dict, target: str, act) -> tuple[int, dict]:
@@ -134,8 +145,7 @@ class Service:
         key = protocol.request_key(principal, self.vault_id, operation, payload["request_id"])
         digest = protocol.payload_hash(target, payload)
         with self._lock:
-            if self._unsafe:
-                raise ProtocolError("internal", "Nuru's database is in an uncertain state; restart nuru-serve")
+            self._check_safe()
             known = self.store.request(key)
             if known:
                 if known["payload_hash"] != digest:
@@ -291,6 +301,7 @@ class Service:
 
     def request_state(self, principal: str, request_id: str, operation: str) -> dict:
         with self._lock:
+            self._check_safe()
             known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
             if known is None:
                 raise ProtocolError("not_found", "no such request")
@@ -306,12 +317,14 @@ class Service:
 
     def list_conversations(self, principal: str, before: str | None, limit: int) -> dict:
         with self._lock:
+            self._check_safe()
             rows = self.store.conversations(principal, before, min(limit, MAX_PAGE))
         return {"v": protocol.VERSION, "conversations": rows}
 
     def conversation(self, principal: str, conversation_id: str, before: str | None, limit: int) -> dict:
         """A conversation's turns, newest first, each with what a client shows for it."""
         with self._lock:
+            self._check_safe()
             conversation = self.store.conversation(conversation_id, principal)
             if conversation is None:
                 raise ProtocolError("not_found", "no such conversation")
@@ -330,6 +343,7 @@ class Service:
     def check_cursor(self, principal: str, turn_id: str, after: int) -> None:
         """Raise unless `turn_id` is the principal's and `after` is a cursor into its stored events."""
         with self._lock:
+            self._check_safe()
             turn = self.store.turn(turn_id, principal)
             if turn is None:
                 raise ProtocolError("not_found", "no such turn")
@@ -341,9 +355,11 @@ class Service:
         """(the stored events after `after`, whether the turn has ended), waiting up to `timeout`
         seconds for one if there are none yet. An ended turn's last event is its terminal one."""
         with self._changed:
+            self._check_safe()
             events = self.store.events(turn_id, after)
             if not events and turn_id in self._live and not self._closing:
                 self._changed.wait(timeout)
+                self._check_safe()  # it may have become unsafe while this waited
                 events = self.store.events(turn_id, after)
             return events, turn_id not in self._live
 
@@ -355,6 +371,7 @@ class Service:
         from its stored events, and its place in _live and the active slot are restored. Inside
         another, it joins that one. A change's effects beyond the store and these (the queue, a
         waiting worker) come after the commit (_request's `then`)."""
+        self._check_safe()
         if self._touched is not None:
             yield
             return
@@ -364,10 +381,7 @@ class Service:
                 yield
         except BaseException:
             if self.store.in_transaction:  # not even rolled back: nothing it reads can be trusted now
-                self._unsafe = self._closing = True
-                self._changed.notify_all()
-                print("nuru-serve: the service database couldn't roll back; taking no more work until restarted",
-                      file=sys.stderr)
+                self._become_unsafe()
                 raise
             for turn_id, (live, was_live) in self._touched.items():
                 live.stream = TurnStream.resume(live.stream.conversation_id, turn_id, self.store.events(turn_id))
@@ -377,6 +391,26 @@ class Service:
             raise
         finally:
             self._touched = None
+
+    def _check_safe(self) -> None:
+        if self._unsafe:
+            raise ProtocolError("internal", UNSAFE)
+
+    def _become_unsafe(self) -> None:
+        """A transaction could be neither committed nor rolled back. From now on nothing touches the
+        database: no request, read or event, and no more turns. The running turn is told to stop and
+        its question, if any, is woken with no answer (No), all without writing; a restart recovers
+        from what was committed."""
+        self._unsafe = self._closing = True
+        self.chat = "unavailable"
+        if self._active and self._active in self._live:
+            live = self._live[self._active]
+            live.cancel_reason = "shutdown"
+            live.cancel.set()
+            if live.waiter:
+                live.waiter.done.set()  # its answer stays None
+        self._changed.notify_all()  # waiting readers and the worker see it
+        print(f"nuru-serve: the service database couldn't roll back; {UNSAFE}", file=sys.stderr)
 
     def _emit(self, live: _Live, make: Callable[[TurnStream], object]) -> list[dict]:
         """Make events on `live`'s stream and store them (with the lock held). The stream checks each
@@ -409,13 +443,19 @@ class Service:
                 with self._lock:
                     while not self._queue and not self._closing:
                         self._changed.wait()
-                    if not self._queue:
+                    if self._unsafe or not self._queue:
                         return
                     live = self._live[self._queue.popleft()]
                     self._active = live.stream.turn_id
-                    self._emit(live, lambda s: s.emit("started", {}))
                 try:
+                    with self._lock:
+                        self._emit(live, lambda s: s.emit("started", {}))
                     self._turn(live)
+                except Exception:
+                    # The store failed under the turn. It is left unfinished for the next start to
+                    # recover; the worker goes on, or stops if the database is now unsafe (loop head).
+                    print("nuru-serve: a turn couldn't be stored:", file=sys.stderr)
+                    traceback.print_exc(limit=5, file=sys.stderr)
                 finally:
                     with self._lock:
                         self._active = None
@@ -429,20 +469,25 @@ class Service:
             session = self._ensure_session(live.store_id)
         except Exception:
             with self._lock:
-                self._emit(live, lambda s: s.emit("failed", {"code": "model_unavailable",
-                                                             "message": "Nuru couldn't start its model and tools."}))
+                if not self._unsafe:
+                    self._emit(live, lambda s: s.emit("failed", {"code": "model_unavailable",
+                                                                 "message": "Nuru couldn't start its model and tools."}))
+            return
+        if self._unsafe:  # it became unsafe while the Session was starting
             return
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
         try:
             for event in session.ask(live.prompt, live.cancel):
                 with self._lock:
-                    if not live.stream.ended:  # after a Failure or an Ask, Session has nothing more to add
+                    # After a Failure or an Ask, Session has nothing more to add. Unsafe, it was told to
+                    # stop, and what it says until then can't be stored.
+                    if not live.stream.ended and not self._unsafe:
                         self._emit(live, lambda s: s.session_event(event))
         except Exception as error:
             unavailable = isinstance(error, requests.exceptions.ConnectionError)
             with self._lock:
-                if not live.stream.ended:
+                if not live.stream.ended and not self._unsafe:
                     for question_id in live.stream.open_questions:
                         self._close_question(live, question_id, "expired")
                     self._emit(live, lambda s: s.emit("failed", {
@@ -452,7 +497,7 @@ class Service:
         finally:
             session.answer_question = None
         with self._lock:
-            if not live.stream.ended:
+            if not live.stream.ended and not self._unsafe:
                 self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
 
     def _ensure_session(self, conversation_id: int):
@@ -464,7 +509,7 @@ class Service:
             except Exception:
                 self.chat = "unavailable"
                 raise
-            self.chat = "ready"
+            self.chat = "unavailable" if self._unsafe else "ready"
         return self._session
 
     def _ask_user(self, live: _Live, question: Question) -> list[str] | None:
@@ -473,7 +518,7 @@ class Service:
         is stopped."""
         seconds = self.answer_seconds if self.answer_seconds is not None else (question.timeout or questions.ANSWER_SECONDS)
         with self._lock:
-            if live.cancel.is_set():
+            if live.cancel.is_set() or self._unsafe:
                 return None
             expires = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             with self._atomic():
@@ -484,6 +529,8 @@ class Service:
         waiter.done.wait(max(0.0, (waiter.expires - datetime.now(timezone.utc)).total_seconds()))
         with self._lock:
             live.waiter = None
+            if self._unsafe:
+                return None
             if not waiter.done.is_set():
                 self._close_question(live, waiter.id, "expired")
                 return None

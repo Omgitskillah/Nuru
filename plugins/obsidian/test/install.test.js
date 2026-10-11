@@ -84,3 +84,54 @@ test("a failed copy leaves the installed version and no staging folder", (t) => 
   for (const file of FILES) assert.equal(fs.readFileSync(path.join(target, file), "utf8"), `${file} 1`);
   assert.ok(!fs.readdirSync(target).some((name) => name.startsWith(".install-")));
 });
+
+test("a rename that fails part-way puts the installed version back", (t) => {
+  // Review of #16: EPERM on manifest.json's rename left the new main.js beside the old manifest.
+  const { vault, bundle } = fixture(t);
+  const target = installFiles(vault, bundle);
+  for (const file of FILES) fs.writeFileSync(path.join(bundle, file), `${file} 2`);
+  const rename = fs.renameSync;
+  t.after(() => { fs.renameSync = rename; });
+  let failed = false;
+  fs.renameSync = (source, destination) => {
+    if (!failed && destination === path.join(target, "manifest.json")) {
+      failed = true;
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    }
+    rename(source, destination);
+  };
+  assert.throws(() => installFiles(vault, bundle), /operation not permitted/);
+  fs.renameSync = rename;
+  for (const file of FILES) assert.equal(fs.readFileSync(path.join(target, file), "utf8"), `${file} 1`);
+  assert.deepEqual(fs.readdirSync(target).sort(), [...FILES].sort());
+});
+
+test("if the installed version can't be put back either, its files are kept and the error says where", (t) => {
+  const { vault, bundle } = fixture(t);
+  const target = installFiles(vault, bundle);
+  for (const file of FILES) fs.writeFileSync(path.join(bundle, file), `${file} 2`);
+  const rename = fs.renameSync;
+  t.after(() => { fs.renameSync = rename; });
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(target, "manifest.json")) throw new Error("operation not permitted");
+    rename(source, destination);
+  };
+  assert.throws(() => installFiles(vault, bundle), /could not be put back/);
+  fs.renameSync = rename;
+  const [stage] = fs.readdirSync(target).filter((name) => name.startsWith(".install-"));
+  assert.equal(fs.readFileSync(path.join(target, stage, "old", "manifest.json"), "utf8"), "manifest.json 1");
+});
+
+test("a failed first install leaves no plugin files behind", (t) => {
+  const { vault, bundle } = fixture(t);
+  const target = path.join(fs.realpathSync(vault), ".obsidian", "plugins", "nuru");
+  const rename = fs.renameSync;
+  t.after(() => { fs.renameSync = rename; });
+  fs.renameSync = (source, destination) => {
+    if (destination === path.join(target, "styles.css")) throw new Error("operation not permitted");
+    rename(source, destination);
+  };
+  assert.throws(() => installFiles(vault, bundle), /operation not permitted/);
+  fs.renameSync = rename;
+  assert.deepEqual(fs.readdirSync(target), []);
+});

@@ -1,0 +1,24 @@
+{
+  "name": "nuru-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nuru's Obsidian plugin (WP01).",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:e2e": "node --test test/e2e/*.test.js",
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.2"
+  },
+  "allowScripts": {
+    "esbuild": false
+  },
+  "dependencies": {
+    "markdown-it": "15.0.2"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "nuru",
+  "name": "Nuru",
+  "version": "0.1.0",
+  "minAppVersion": "1.10.0",
+  "description": "Chat with Nuru, running on this computer, about the notes in this vault.",
+  "author": "Nuru",
+  "isDesktopOnly": true
+}

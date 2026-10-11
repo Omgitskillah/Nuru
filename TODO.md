@@ -22,7 +22,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - **Extra work to list in the M4 PR description** (done alongside, outside M4's scope):
     - The plugin's waiting line: "Nuru is getting ready…" while `/v1/status` says the model is loading, then "Thinking…", with seconds (`lib/view.js`).
     - Chat layout: your messages as right-aligned bubbles, replies as Markdown, one font size with the input (`styles.css`).
-    - Task format: bare `[ ] task` lines didn't render as checkboxes and were invisible to `note_info` todos. `write_note`'s description now gives the format, and `write_note` turns bare checkboxes into list items, outside code fences. This is in the obsidian-4-llms submodule, branch `write-note-task-format`; it needs its own PR there and a submodule bump here.
+    - Task format: bare `[ ] task` lines didn't render as checkboxes and were invisible to `note_info` todos. `write_note`'s description now gives the format, and `write_note` turns bare checkboxes into list items, outside code fences. This is in the obsidian-4-llms submodule (obsidian-4-llms#4, merged as 9a8f193 and pinned here).
     - Benchmark case 37 ("tasks as checkboxes") and the `writes` field for sequence cases that are meant to write (`nuru/evals/decision_layer/`).
     - Root README links TODO.md.
 - [ ] **WP01-M5** Acceptance and handoff: benchmark results, screenshots, known limits, a protocol compatibility matrix and the WP02 handoff.

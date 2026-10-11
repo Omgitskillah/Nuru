@@ -50,7 +50,7 @@ from core.providers.ollama import (
     stop_server,
     unload_all_models,
 )
-from core.vault_indexer import VaultIndexer
+from core.vault_indexer import VaultIndexer, semantic_db
 from core.vault_link_auditor import VaultLinkAuditor
 from core.vault_steward import VaultSteward
 from core.thinking_watch import ThinkingWatch
@@ -495,7 +495,8 @@ class Session:
             obsidian, deep_think = OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS
             if vault is not None:
                 vault = Path(vault).resolve()
-                obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault)}})
+                obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault),
+                                                               "OBSIDIAN_SEMANTIC_DB": semantic_db(vault)}})
                 deep_think = deep_think.model_copy(update={"env": {**deep_think.env, "DEEP_THINK_BASE_DIR": str(vault)}})
             tools = MCPTools(
                 [obsidian, deep_think, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS,

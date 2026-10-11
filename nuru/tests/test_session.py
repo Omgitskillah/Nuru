@@ -131,6 +131,28 @@ def test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger(mo
     s.close()
 
 
+def test_a_served_vault_never_gets_another_vaults_semantic_index(monkeypatch, tmp_path):
+    """The notes server gets only the env Session gives it, and would otherwise fill in .env.obsidian's
+    OBSIDIAN_SEMANTIC_DB: the index of .env.obsidian's vault, not of the one served."""
+    from core import vault_indexer
+
+    env_file = tmp_path / ".env.obsidian"
+    env_file.write_text(f"VAULT_PATH={tmp_path / 'real'}\nOBSIDIAN_SEMANTIC_DB={tmp_path / 'real.sqlite3'}\n")
+    monkeypatch.setattr(vault_indexer, "OBSIDIAN_ENV", env_file)
+    monkeypatch.delenv("OBSIDIAN_SEMANTIC_DB", raising=False)
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    given = []
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: given.extend(server_params) or FakeMCPTools())
+
+    for vault, index in ((tmp_path / "served", tmp_path / "served" / ".obsidian-mcp-semantic.sqlite3"),
+                         (tmp_path / "real", tmp_path / "real.sqlite3")):
+        given.clear()
+        Session.start(vault=vault).close()
+        obsidian = next(p for p in given if p.args == ["run", "obsidian-mcp"])
+        assert obsidian.env["OBSIDIAN_SEMANTIC_DB"] == str(index.resolve())
+
+
 def test_each_conversation_keeps_its_own_evidence_when_the_session_switches(monkeypatch):
     s = start_session(monkeypatch)
     a, b = s.conversation_id, s.store.create_conversation()

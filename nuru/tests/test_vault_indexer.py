@@ -54,6 +54,22 @@ def test_from_env_reads_the_obsidian_servers_env_with_nurus_own_environment_winn
     assert (indexer.config.model, indexer.config.chunk_chars) == ("from-file", 700)
 
 
+def test_another_vaults_index_is_never_used(clean_env, monkeypatch, tmp_path):
+    """.env.obsidian's index belongs to .env.obsidian's vault. Another vault (VAULT_PATH in the
+    environment, as for nuru-serve on a test vault) gets its own, unless OBSIDIAN_SEMANTIC_DB is set."""
+    configured, other = tmp_path / "configured", tmp_path / "other"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"VAULT_PATH={configured}\nOBSIDIAN_SEMANTIC_DB={tmp_path / 'configured.sqlite3'}\n")
+    monkeypatch.setattr(vault_indexer, "OBSIDIAN_ENV", env_file)
+
+    assert VaultIndexer.from_env().config.db_path == tmp_path / "configured.sqlite3"
+    monkeypatch.setenv("VAULT_PATH", str(other))
+    assert VaultIndexer.from_env().config.db_path == other.resolve() / semantic.DB_NAME
+    assert vault_indexer.semantic_db(other) == str(other.resolve() / semantic.DB_NAME)
+    monkeypatch.setenv("OBSIDIAN_SEMANTIC_DB", str(tmp_path / "chosen.sqlite3"))
+    assert VaultIndexer.from_env().config.db_path == tmp_path / "chosen.sqlite3"
+
+
 def test_run_once_embeds_changed_notes_and_counts_down_while_it_does(vault):
     seen = []
 

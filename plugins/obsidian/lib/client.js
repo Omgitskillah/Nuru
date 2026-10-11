@@ -20,7 +20,9 @@ class NuruError extends Error {
 const RETRIES = 2; // a POST whose response was lost is sent this many more times
 
 class NuruClient {
-  constructor({ baseUrl, token, fetch = globalThis.fetch }) {
+  // `fetch` defaults to the global one, always called as a plain function: a browser's (Obsidian's) fetch
+  // throws "Illegal invocation" when called as a method of another object.
+  constructor({ baseUrl, token, fetch = (...args) => globalThis.fetch(...args) }) {
     this.baseUrl = baseUrl;
     this.token = token;
     this.fetch = fetch;
@@ -37,7 +39,8 @@ class NuruClient {
       });
     } catch (error) {
       if (error.name === "AbortError") throw error;
-      throw new NuruError(0, "unreachable", "Nuru isn't answering. Is nuru-serve running?");
+      throw new NuruError(0, "unreachable", "Nuru isn't answering. Is nuru-serve running?",
+        { detail: `${error.name}: ${error.message}` });
     }
     if (response.ok && method === "GET" && path.includes("/events")) return response;
     let text;

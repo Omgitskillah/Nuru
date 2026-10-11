@@ -88,3 +88,22 @@ test("an answer cut off after its status is retried with the same request ID", a
   assert.equal((await client.submit("conv0000demo", "hi", [], "req-chosen-by-caller")).turn_id, "turn00000001");
   assert.deepEqual(sent, ["req-chosen-by-caller", "req-chosen-by-caller"]);
 });
+
+test("the global fetch is called as a function, as a browser's must be", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    return Promise.resolve(json(200, { v: 1, service: "nuru" }));
+  };
+  try {
+    assert.equal((await new NuruClient({ baseUrl: "http://x", token: "t" }).status()).service, "nuru");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("when no answer comes, the problem says what failed", async () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-vault-"));
+  await assert.rejects(connect({ vaultPath: vault, home: home("t"), fetch: async () => { throw new TypeError("Illegal invocation"); } }),
+    (e) => e.kind === "no-service" && e.message.includes("TypeError: Illegal invocation"));
+});

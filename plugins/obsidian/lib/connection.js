@@ -54,7 +54,7 @@ async function connect({ port = DEFAULT_PORT, vaultPath, home, fetch } = {}) {
     status = await client.status();
   } catch (error) {
     if (!(error instanceof NuruError)) throw error;
-    if (error.status === 0) throw new ConnectionProblem("no-service");
+    if (error.status === 0) throw new ConnectionProblem("no-service", error.detail); // what failed, for when it isn't that
     if (error.status === 401) throw new ConnectionProblem("unauthorized");
     throw new ConnectionProblem("other", error.message);
   }

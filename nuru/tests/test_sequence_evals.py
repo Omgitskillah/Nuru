@@ -249,18 +249,30 @@ def test_suite_uses_distinct_journals_for_fresh_case_vaults(modules, tmp_path, m
     assert len(histories) == len(set(histories)) == 4
 
 
-@pytest.mark.parametrize("path,body,passed", [
-    ("nuru/daily-2026-10-11.md", "# Daily\n\n- [ ] Confirm the appointment with Giulia\n- [ ] Prepare the forms", True),
-    ("nuru/daily-2026-10-11.md", "# Daily\n\n* [ ] confirm with Giulia\n1. [ ] fill in the forms", True),
-    ("nuru/daily-2026-10-11.md", "# Daily\n\n[ ] Confirm the appointment with Giulia\n[ ] Prepare the forms", False),
-    ("nuru/daily-2026-10-11.md", "# Daily\n\n- Confirm the appointment with Giulia\n- Prepare the forms", False),
-    ("nuru/appointments.md", "- [ ] Confirm the appointment with Giulia\n- [ ] Prepare the forms", False),
+def _daily(day, body, note_type="daily"):
+    return f"---\ntype: {note_type}\ndate: '{day}'\n---\n\n# Daily {day}\n\n{body}"
+
+
+TASKS = "- [ ] Confirm the appointment with Giulia\n- [ ] Prepare the forms"
+
+
+@pytest.mark.parametrize("path,after,passed", [
+    ("nuru/daily-2026-10-11.md", _daily("2026-10-11", TASKS), True),
+    ("nuru/daily-2026-10-11.md", _daily("2026-10-11", "* [ ] confirm with Giulia\n1. [ ] fill in the forms"), True),
+    ("nuru/daily-2026-10-11.md", _daily("2026-10-11", "[ ] Confirm the appointment with Giulia\n[ ] Prepare the forms"), False),
+    ("nuru/daily-2026-10-11.md", _daily("2026-10-11", "- Confirm the appointment with Giulia\n- Prepare the forms"), False),
+    ("nuru/appointments.md", TASKS, False),
+    # Review of #16: tasks in another day's daily aren't in today's.
+    ("nuru/daily-1999-01-01.md", _daily("1999-01-01", TASKS), False),
+    ("nuru/daily-2026-10-11.md", _daily("1999-01-01", TASKS), False),
+    ("nuru/daily-2026-10-11.md", _daily("2026-10-11", TASKS, note_type="note"), False),
 ])
-def test_task_case_wants_checkbox_list_items_in_todays_daily(modules, path, body, passed):
+def test_task_case_wants_checkbox_list_items_in_todays_daily(modules, path, after, passed):
     cases, _, scorer, _ = modules
     fixture = cases.load_cases(EVALS / "cases.json")[37]
-    changes = [{"path": path, "before": None, "after": body}]
-    turn = {**fixture["turns"][0], "reply": "Added both tasks to today's daily note.", "vault_changes": changes}
+    changes = [{"path": path, "before": None, "after": after}]
+    turn = {**fixture["turns"][0], "date": "2026-10-11", "reply": "Added both tasks to today's daily note.",
+            "vault_changes": changes}
     checks = dict(scorer.score_sequence_turn(turn)[1])
     assert "no vault changes" not in checks
     assert checks["confirm task is a checkbox in today's daily"] is passed
@@ -270,13 +282,45 @@ def test_task_case_wants_checkbox_list_items_in_todays_daily(modules, path, body
     assert (points == 5) is passed
 
 
-def test_a_case_that_writes_passes_acceptance_with_its_changes(modules, tmp_path):
-    cases, _, scorer, _ = modules
-    fixture = cases.load_cases(EVALS / "cases.json")[37]
-    changes = [{"path": "nuru/daily-2026-10-11.md", "before": None, "after": "- [ ] confirm\n- [ ] forms"}]
-    turn = {**fixture["turns"][0], "reply": "Done.", "vault_changes": changes}
-    (tmp_path / "results.jsonl").write_text(json.dumps({"test": 37, "turns": [turn], "vault_changes": changes}))
-    assert scorer.load_results(tmp_path, cases_path=EVALS / "cases.json")[0]["acceptance_passed"]
+@pytest.mark.parametrize("writes,passed", [(True, True), (False, False)])
+def test_a_driven_case_that_writes_is_scored_by_its_writes_without_a_cases_override(
+        modules, monkeypatch, tmp_path, writes, passed):
+    """Review of #16: the driver dropped `writes`, so a saved case 37 was scored as read-only."""
+    from datetime import date
+    from types import SimpleNamespace
+    cases, _, scorer, driver = modules
+    vault = tmp_path / "vault"
+    (vault / "nuru").mkdir(parents=True)
+    today = date.today().isoformat()
+    class FakeSession:
+        shadow = SimpleNamespace(failures=0)
+        logger = SimpleNamespace(session_id="test")
+        tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
+        def continuation_context(self):
+            return ""
+        def ask(self, prompt, cancel=None):
+            if writes:
+                (vault / "nuru" / f"daily-{today}.md").write_text(_daily(today, TASKS))
+            yield driver.Text("Added both tasks.")
+        def close(self):
+            pass
+    monkeypatch.setattr(driver.session.Session, "start", FakeSession)
+    for key in ("OBSIDIAN_SEMANTIC_DB", "NURU_DECISION_CONFIG", "NURU_LOG_DIR"):
+        monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.setenv("VAULT_PATH", str(vault))
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps(cases.load_cases(EVALS / "cases.json")[37]))
+    out = tmp_path / "out.json"
+    monkeypatch.setattr("sys.argv", ["drive_turn", "--case", str(case), "--think", "off", "--out", str(out)])
+    driver.main()
+    turns = json.loads(out.read_text())["turns"]
+    assert "writes" in turns[0]
+    changes = [c for t in turns for c in t["vault_changes"]]
+    (tmp_path / "results.jsonl").write_text(json.dumps(
+        {"test": 37, "turns": turns, "date": today, "vault_changes": changes}))
+    record = scorer.load_results(tmp_path)[0]
+    assert record["acceptance_passed"] is passed
+    assert (scorer.score(record)[0] == 5) is passed
 
 
 def test_writes_checks_must_be_regexes(modules, tmp_path):

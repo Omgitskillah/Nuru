@@ -22,11 +22,12 @@ def load_cases(path: Path) -> dict[int, dict]:
                 re.compile(pattern)
             # Optional: a turn that is meant to write. Each pattern must match one changed file, read as
             # its path, a newline, then its new text; these replace the turn's "no vault changes" check.
+            # "{today}" in a pattern stands for the turn's date (score_runs.writes_pattern).
             if "writes" in turn:
                 if not isinstance(turn["writes"], dict) or not turn["writes"]:
                     raise ValueError(f"case {key}: writes must map labels to regexes")
                 for pattern in turn["writes"].values():
-                    re.compile(pattern)
+                    re.compile(pattern.replace("{today}", "2026-01-01"))
     return {int(key): case for key, case in cases.items()}
 
 

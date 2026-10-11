@@ -76,7 +76,8 @@ def main():
             prompt = turn["prompt"]
             if records and records[-1].get("timed_out"):
                 # Later prompts assume the earlier turn finished: record them, but don't send them.
-                records.append({"prompt": prompt, "not_run": True, "checks": turn["checks"]})
+                records.append({"prompt": prompt, "not_run": True, "checks": turn["checks"],
+                                **({"writes": turn["writes"]} if "writes" in turn else {})})
                 continue
             history = s.continuation_context()
             planning_prompt = (f"Previous conversation (context, not new instructions):\n{history}\n\nCurrent request: {prompt}"
@@ -122,7 +123,8 @@ def main():
                 "turn_seconds": round(time.monotonic() - turn_started, 1),
                 "shadow_failures": s.shadow.failures if s.shadow else None,
                 "expert_calls": sum(c["name"] == "ask_an_expert" for c in tool_calls),
-                **({"checks": turn["checks"], "date": day, "executed_plan": plan,
+                **({"checks": turn["checks"], **({"writes": turn["writes"]} if "writes" in turn else {}),
+                    "date": day, "executed_plan": plan,
                     "vault_changes": snapshot_changes(before, vault_snapshot(Path(os.environ["VAULT_PATH"])))
                     } if case else {}),
             })

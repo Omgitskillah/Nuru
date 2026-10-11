@@ -692,13 +692,20 @@ def _writes(record: dict) -> bool:
     return any("writes" in turn for turn in record.get("turns", []))
 
 
+def writes_pattern(pattern: str, day: str) -> str:
+    """A cases.json `writes` pattern with "{today}" replaced by the turn's date."""
+    return pattern.replace("{today}", re.escape(day))
+
+
 def score_sequence_turn(record: dict) -> tuple[int, list[tuple[str, bool]]]:
     checks = [(label, bool(re.search(pattern, record.get("reply", ""))))
               for label, pattern in record["checks"].items()]
     checks.append(("turn finished with a reply", _replied(record) and not record.get("failure")))
     if "writes" in record:
         files = [f"{c['path']}\n{c['after']}" for c in record.get("vault_changes", []) if c.get("after") is not None]
-        checks += [(label, any(re.search(pattern, text) for text in files)) for label, pattern in record["writes"].items()]
+        day = record.get("date") or date.today().isoformat()
+        checks += [(label, any(re.search(writes_pattern(pattern, day), text) for text in files))
+                   for label, pattern in record["writes"].items()]
     else:
         checks.append(("no vault changes", not record.get("vault_changes")))
     return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks

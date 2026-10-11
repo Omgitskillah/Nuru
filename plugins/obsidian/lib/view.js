@@ -6,6 +6,7 @@
 
 const { ItemView, Keymap, MarkdownView, Notice } = require("obsidian");
 
+const { LANTERN } = require("./icon");
 const { answerText, newRequestId } = require("./protocol");
 const { ConnectionProblem } = require("./connection");
 const { renderReply } = require("./render");
@@ -22,6 +23,8 @@ class ChatView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.client = null;
+    this.chat = null; // the service's chat readiness from /v1/status: idle, loading, ready or unavailable
+    this.statusCheck = null; // a /v1/status call on its way
     this.conversationId = null;
     this.turns = new Map(); // turn ID -> {runner, text, el and its parts, renderTimer...}
     this.attachments = [];
@@ -39,7 +42,7 @@ class ChatView extends ItemView {
 
   getDisplayText() { return "Nuru"; }
 
-  getIcon() { return "message-circle"; }
+  getIcon() { return LANTERN; }
 
   async onOpen() {
     const root = this.contentEl;
@@ -75,7 +78,7 @@ class ChatView extends ItemView {
     this.sendButton = buttons.createEl("button", { text: "Send", cls: "mod-cta" });
     this.registerDomEvent(this.sendButton, "click", () => this.send());
 
-    this.registerInterval(window.setInterval(() => this.tick(), 1000)); // question countdowns
+    this.registerInterval(window.setInterval(() => this.tick(), 1000)); // question countdowns, waiting turns
     await this.reconnect();
   }
 
@@ -90,9 +93,9 @@ class ChatView extends ItemView {
     const generation = ++this.generation;
     this.client = null;
     this.setStatus("Connecting to Nuru…");
-    let client;
+    let client, status;
     try {
-      ({ client } = await this.plugin.connect());
+      ({ client, status } = await this.plugin.connect());
     } catch (error) {
       if (generation === this.generation) {
         this.setStatus(error instanceof ConnectionProblem ? error.message : `Couldn't connect: ${error.message}`, true);
@@ -101,6 +104,7 @@ class ChatView extends ItemView {
     }
     if (generation !== this.generation) return;
     this.client = client;
+    this.chat = status?.ready?.chat ?? null;
     this.setStatus("");
     if (await this.loadConversations(generation)) await this.openConversation(this.plugin.settings.conversationId);
   }
@@ -306,6 +310,7 @@ class ChatView extends ItemView {
       : turn.runner.connection === "lost" ? "This turn can't be followed any more; reopen the conversation."
       : display.state === "queued" ? `Waiting for Nuru (place ${display.position ?? "?"})`
       : display.state === "failed" ? `Failed: ${display.message}`
+      : this.waiting(turn) ? this.waitingWords(turn)
       : STATE_WORDS[display.state] + (display.truncated ? " (reply too long: shown in part)" : "");
     turn.stateEl.setText(words);
     turn.stateEl.toggleClass("nuru-error", display.state === "failed" || turn.runner.connection === "lost");
@@ -418,7 +423,42 @@ class ChatView extends ItemView {
     this.send();
   }
 
+  // A turn that has started but shows nothing yet: no reply, no question. Its line says what Nuru is
+  // doing meanwhile, which on the first turn after the service starts is loading the model and tools.
+  waiting(turn) {
+    const { display, connection } = turn.runner;
+    const waiting = display.state === "running" && !display.reply && !display.question && connection === "live";
+    if (!waiting) turn.waitingSince = null;
+    else turn.waitingSince ??= Date.now();
+    return waiting;
+  }
+
+  waitingWords(turn) {
+    const seconds = Math.round((Date.now() - turn.waitingSince) / 1000);
+    const time = seconds >= 2 ? ` (${seconds} s)` : "";
+    if (["idle", "loading"].includes(this.chat)) {
+      return `Nuru is getting ready: loading its model and tools${time}. Only the first message after it starts waits for this.`;
+    }
+    return (turn.runner.display.tools.length ? "Working…" : "Thinking…") + time;
+  }
+
+  // While a turn waits, the service's status says whether it is still loading. One call at a time.
+  checkReady() {
+    if (this.statusCheck || !this.client) return;
+    const client = this.client;
+    this.statusCheck = client.status()
+      .then((status) => { if (client === this.client) this.chat = status.ready.chat; })
+      .catch(() => {}) // the turn's own stream reports a lost service
+      .finally(() => {
+        this.statusCheck = null;
+        for (const turn of this.turns.values()) if (this.waiting(turn)) turn.stateEl.setText(this.waitingWords(turn));
+      });
+  }
+
   tick() {
+    const waiting = [...this.turns.values()].filter((turn) => this.waiting(turn));
+    for (const turn of waiting) turn.stateEl.setText(this.waitingWords(turn));
+    if (waiting.length) this.checkReady();
     for (const el of this.contentEl.querySelectorAll(".nuru-countdown")) {
       const left = Math.max(0, Math.round((Date.parse(el.getAttribute("data-expires")) - Date.now()) / 1000));
       el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");

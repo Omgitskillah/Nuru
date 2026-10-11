@@ -3,17 +3,19 @@
 // plugin data, which syncs. Only the port and the last conversation are saved here.
 "use strict";
 
-const { Plugin } = require("obsidian");
+const { Plugin, addIcon } = require("obsidian");
 
 const { DEFAULT_PORT, connect } = require("./lib/connection");
+const { LANTERN, LANTERN_SVG } = require("./lib/icon");
 const { NuruSettingTab } = require("./lib/settings");
 const { ChatView, VIEW_TYPE } = require("./lib/view");
 
 module.exports = class NuruPlugin extends Plugin {
   async onload() {
     this.settings = { port: DEFAULT_PORT, conversationId: null, ...((await this.loadData()) || {}) };
+    addIcon(LANTERN, LANTERN_SVG);
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
-    this.addRibbonIcon("message-circle", "Open Nuru", () => this.open());
+    this.addRibbonIcon(LANTERN, "Open Nuru", () => this.open());
     this.addCommand({ id: "open", name: "Open chat", callback: () => this.open() });
     this.addSettingTab(new NuruSettingTab(this.app, this));
   }

@@ -3,16 +3,18 @@
 .nuru-picker { flex: 1; min-width: 0; }
 .nuru-status:not(:empty) { padding: var(--size-4-2); color: var(--text-muted); }
 .nuru-error { color: var(--text-error); }
-.nuru-messages { flex: 1; overflow-y: auto; padding: var(--size-4-2); }
+.nuru-messages { flex: 1; overflow-y: auto; padding: var(--size-4-2); font-size: var(--font-ui-small); }
 .nuru-turn { margin-bottom: var(--size-4-4); }
-.nuru-user { white-space: pre-wrap; background: var(--background-secondary); border-radius: var(--radius-m); padding: var(--size-4-2); margin-bottom: var(--size-4-2); }
+/* Who said what: the user's messages are bubbles on the right; Nuru's replies are Markdown across the panel. */
+.nuru-user { white-space: pre-wrap; overflow-wrap: anywhere; width: fit-content; max-width: 85%; margin: 0 0 var(--size-4-2) auto; background: var(--interactive-accent); color: var(--text-on-accent); border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l); padding: var(--size-4-1) var(--size-4-3); }
+.nuru-reply.markdown-rendered { font-size: var(--font-ui-small); }
 .nuru-state:not(:empty), .nuru-tool, .nuru-receipt, .nuru-decision { font-size: var(--font-ui-small); color: var(--text-muted); }
 .nuru-receipt-uncertain, .nuru-receipt-failed { color: var(--text-error); }
 .nuru-card { border: 1px solid var(--interactive-accent); border-radius: var(--radius-m); padding: var(--size-4-2); margin-top: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
 .nuru-card-details { font-size: var(--font-ui-small); color: var(--text-muted); white-space: pre-wrap; }
 .nuru-countdown { font-size: var(--font-ui-small); }
 .nuru-composer { border-top: 1px solid var(--background-modifier-border); padding: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
-.nuru-input { width: 100%; resize: vertical; }
+.nuru-input { width: 100%; resize: vertical; font-size: var(--font-ui-small); }
 .nuru-buttons { display: flex; gap: var(--size-4-2); justify-content: flex-end; flex-wrap: wrap; }
 .nuru-attachments { display: flex; gap: var(--size-4-1); flex-wrap: wrap; }
 .nuru-chip { display: flex; align-items: center; gap: var(--size-4-1); background: var(--background-secondary); border-radius: var(--radius-s); padding: 0 var(--size-4-1); font-size: var(--font-ui-small); }

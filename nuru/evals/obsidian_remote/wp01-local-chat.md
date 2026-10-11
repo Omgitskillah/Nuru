@@ -117,3 +117,19 @@ No model was loaded and no real vault was written.
 | In real Obsidian: connect, stream a long answer, open a citation, tools and receipts, approve, refuse, let a question expire, Stop, reload the plugin and resume, hostile HTML, a remote image | manually-tested | 2026-10-11, Obsidian 1.10.6 on macOS 26.6.2, a scratch vault served by `scripted_serve.py` (port 27125, questions waiting 20 s). All 11 checks passed. The service's records match: `scenario:long` completed truncated; tools receipt `applied`; approval answered Yes (`applied`), timed out (`expired`, No, `refused`), answered No (`refused`); two `scenario:slow` turns `cancelled` by the user, one across a plugin off/on; `scenario:hostile` completed. A `![x](http://127.0.0.1:27199/pixel.png)` reply showed as a link, and the request logger on 27199 saw one request only, from Safari's engine (`AppleWebKit/605.1.15`, not Electron) when the tester clicked the link, which the plugin opens in the browser. The run found one bug first: the client called the global `fetch` as a method, which Obsidian's fetch refuses ("Illegal invocation"), so every request failed and the panel said Nuru wasn't running. Fixed, with a test; the checks above ran on the fixed build. Not explained: the first message after that fix showed nothing at first, although the service ran it to completion; it didn't recur, and the same panel code against the same server worked in Node |
 
 The M1 spike (`plugins/obsidian/spike/`) is removed; its result stays recorded under M1.
+
+## M4: package and install (2026-10-11, branch wp01-m4-package)
+
+Machine: macOS 26.6.2, Node 24.21.0, npm 11.19.0, esbuild 0.28.2. No model, no real vault.
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| Install and upgrade keep the notes, the plugin's `data.json` and `community-plugins.json`; only `main.js`, `manifest.json` and `styles.css` change | automated-tested | `test/install.test.js` |
+| The installer checks every path before writing: a missing build file or a vault that isn't a folder writes nothing; symlinked folders, dangling links and folders in a file's place are refused | automated-tested | `test/install.test.js` |
+| A copy that fails part-way leaves the installed version and no staging folder | automated-tested | `test/install.test.js` |
+| `node install.js <vault>` builds and installs into `<vault>/.obsidian/plugins/nuru/`; without a vault it prints its usage and exits 1 | automated-tested | run into a scratch vault |
+| Two builds from the same commit are byte-identical; the build refuses a `manifest.json` version that differs from `package.json`'s | automated-tested | `dist/` built twice from clean: `main.js` 484436ec…ab59, `manifest.json` 0d97e746…eb727, `styles.css` 9f8a3059…1157 (SHA-256) |
+| The ribbon and the sidebar tab show the Nuru lantern, in the theme's icon color | proposed | `lib/icon.js` (traced from `lantern.png`); to check in real Obsidian, light and dark |
+| A started turn with nothing to show says Nuru is getting ready while `/v1/status` says the model is loading (idle or loading), then "Thinking…", with the seconds so far; the line goes, and status checks stop, once the reply starts | automated-tested | `test/view.test.js` (2 tests) |
+| The user's messages are right-aligned bubbles; replies, messages and the input share one font size | proposed | `styles.css`; to check in real Obsidian, light and dark |
+| In real Obsidian: install into a disposable vault, enable, pair and chat; upgrade over it and reload; turn it off and delete the folder; settings and notes kept throughout | proposed | the manual run (needs a person) |

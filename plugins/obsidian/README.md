@@ -98,10 +98,21 @@ pick them in the panel. After step 3 you also need to pair again (Install, step 
 and the build checks that `manifest.json` and `package.json` carry the same version. Two builds from the
 same commit are byte-identical: compare `shasum -a 256 dist/*`.
 
-To try it without a model, `uv run --locked python nuru/tests/scripted_serve.py --dir <scratch>` serves a
-scratch vault over scripted scenarios: a message such as `scenario:approval` picks one (see `SCENARIOS`).
-Open `<scratch>/vault` in Obsidian, and use the printed token and port. `scenario:activity` shows every kind
-of step: streamed thinking, a failed and a working call, a steer and a silent retry.
+To try it without a model, serve a scratch vault over scripted scenarios:
+
+1. In the Nuru folder, start the scripted server and leave it running:
+   `uv run --locked python nuru/tests/scripted_serve.py --dir <scratch> --port 27126`.
+   Without `--port` it takes a free port, a different one each time.
+2. Give the plugin its token, which is new each time the server starts:
+   `cp <scratch>/service/clients/obsidian.token ~/.nuru/service/clients/obsidian.token`.
+   This replaces the token for the real `nuru-serve`.
+3. Open `<scratch>/vault` in Obsidian, set the plugin's **Port** to 27126 and click **Check and reconnect**.
+4. In the Nuru panel, send a scenario's name as the message, such as `scenario:approval` (see `SCENARIOS`);
+   any other text is echoed back. `scenario:activity` shows every kind of step: streamed thinking, a failed
+   and a working call, a steer and a silent retry.
+
+Afterwards, set the port back to 27125 and make a new token for the real service with
+`uv run nuru-serve token add obsidian`.
 
 ## Developing
 

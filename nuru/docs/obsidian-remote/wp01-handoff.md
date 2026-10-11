@@ -13,7 +13,7 @@ Protocol v1 is frozen ([protocol-v1.md](protocol-v1.md)). A change that breaks
 | --- | --- | --- | --- |
 | `nuru-serve` (this repo) | the M5 commit | v1 only; another `v` gets `unsupported_version` | automated-tested |
 | Obsidian plugin `nuru` | 0.1.0 (`minAppVersion` 1.10.0, desktop only) | v1 | automated-tested (jsdom stand-in), manually-tested in real Obsidian |
-| Obsidian desktop, macOS | app 1.13.7 (installer 1.10.6), macOS 26.6.2 | v1, Origin `app://obsidian.md` | manually-tested |
+| Obsidian desktop, macOS | 1.13.7 (installer 1.10.6) for M1–WP01-ACT; 1.14.4 for the M5 acceptance; macOS 26.6.2 | v1, Origin `app://obsidian.md` | manually-tested |
 | Obsidian desktop, Windows or Linux | none | n/a | not tested; not a WP01 requirement (TODO R20) |
 | Obsidian mobile (Android, iOS) | none | n/a | out of scope: the plugin is desktop only |
 | Native clients without an Origin (curl, Python, Node) | Python 3.14.7, Node 24.21.0 | v1 | automated-tested |

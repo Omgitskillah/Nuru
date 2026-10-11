@@ -25,9 +25,9 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
     - Task format: bare `[ ] task` lines didn't render as checkboxes and were invisible to `note_info` todos. `write_note`'s description now gives the format, and `write_note` turns bare checkboxes into list items, outside code fences. This is in the obsidian-4-llms submodule (obsidian-4-llms#4, merged as 9a8f193 and pinned here).
     - Benchmark case 37 ("tasks as checkboxes") and the `writes` field for sequence cases that are meant to write (`nuru/evals/decision_layer/`).
     - Root README links TODO.md.
-- [~] **WP01-M5** Acceptance and handoff: benchmark results, screenshots, known limits, a protocol compatibility matrix and the WP02 handoff.
-  - Done on branch `wp01-m5-acceptance`: test vault, Session/HTTP equivalence and notes-server-dies tests, the semantic-index fix, the benchmark (all gates pass), the live-model lane (30/30 direct, 29/30 plugin with the miss a rubric gap, no unauthorized writes), and the six review findings on #18, [wp01-handoff.md](nuru/docs/obsidian-remote/wp01-handoff.md).
-  - Left: the manual steps in the evidence file's "M5 manual acceptance" (quit Obsidian then status, byte check, screenshots).
+- [x] **WP01-M5** Acceptance and handoff: benchmark results, screenshots, known limits, a protocol compatibility matrix and the WP02 handoff. (done 2026-10-11, #18)
+  - Test vault, Session/HTTP equivalence, the semantic-index fix, the benchmark (all gates pass), the live-model lane (direct 30/30, plugin 29/30 under rubric 1, the miss a rubric gap; 0 unauthorized writes), [wp01-handoff.md](nuru/docs/obsidian-remote/wp01-handoff.md), two review rounds on #18.
+  - Manual acceptance in real Obsidian 1.14.4 passed: the No/Yes byte and receipt check with a real writer, quitting Obsidian mid-turn, screenshots in light and dark.
   - **Done when:** the plan's completion gates hold, real macOS acceptance is recorded, and the live-model lane has been run or explicitly deferred.
 
 - [x] **WP01-ACT** Show more clearly what the model is doing, in the plugin, from what protocol v1 already sends (ui-state's e107dc0 did this for the Qt window): tool arguments and why a call failed, retries and steers, a collapsible Thinking section, a live step line, a status line from `/v1/status`.

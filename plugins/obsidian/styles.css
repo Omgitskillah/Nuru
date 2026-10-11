@@ -11,6 +11,7 @@
 .nuru-state:not(:empty), .nuru-tool, .nuru-receipt, .nuru-decision { font-size: var(--font-ui-small); color: var(--text-muted); }
 /* What Nuru did: thinking and each call fold open to their text; a failed call and its reason in red. */
 .nuru-service { padding: var(--size-4-1) var(--size-4-2); font-size: var(--font-ui-smaller); color: var(--text-faint); border-bottom: 1px solid var(--background-modifier-border); }
+.nuru-service.nuru-error { color: var(--text-error); }
 /* Thought (the steps) and Vaulted (the notes written): sections that fold, with a caret on the right. */
 .nuru-activity > summary, .nuru-vaulted > summary { list-style: none; cursor: pointer; font-size: var(--font-ui-small); color: var(--text-muted); padding-bottom: var(--size-4-1); }
 .nuru-activity > summary::-webkit-details-marker, .nuru-vaulted > summary::-webkit-details-marker { display: none; }

@@ -87,10 +87,12 @@ class Activity {
   // What Nuru is doing now, for the live step line: {what, since} (since: ms), or null once it ended.
   current() {
     if (this.ended) return null;
+    // Reply text comes before the call's final reasoning (Ollama sends that at the call's end), so writing
+    // wins over a thinking step that is still open.
+    if (this.writingSince !== null) return { what: "Writing the reply", since: this.writingSince };
     if (this.thinking) return { what: "Thinking", since: this.thinking.at };
     const running = this.steps.filter((s) => s.kind === "tool" && s.ok === null).at(-1);
     if (running) return { what: `Running ${running.name}`, since: running.at };
-    if (this.writingSince !== null) return { what: "Writing the reply", since: this.writingSince };
     const last = this.steps.at(-1);
     return last ? { what: "Working", since: last.doneAt ?? last.at } : null;
   }

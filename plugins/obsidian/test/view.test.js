@@ -502,6 +502,15 @@ test("the status line shows the vault, the model, the notes and the queue, and a
   await view.close();
 });
 
+test("the status line's problem colour wins over its faint colour", () => {
+  const { JSDOM } = require("jsdom");
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "styles.css"), "utf8");
+  const { window } = new JSDOM(`<style>${css}</style><div class="nuru-service nuru-error"></div><div class="nuru-service"></div>`);
+  const [problem, fine] = window.document.querySelectorAll(".nuru-service");
+  assert.equal(window.getComputedStyle(problem).color, "var(--text-error)");
+  assert.equal(window.getComputedStyle(fine).color, "var(--text-faint)");
+});
+
 // The turn from 2026-10-11: the first write_note had no `note`, was refused before writing, and the
 // second created the note. Only the second changed anything, and the panel must read that way.
 function giuliaTurn() {

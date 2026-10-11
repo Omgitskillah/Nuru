@@ -86,6 +86,22 @@ test("what Nuru is doing now: thinking, running a tool, writing the reply, nothi
   assert.deepEqual(seen, [null, "Thinking", "Thinking", "Running search", "Working", "Writing the reply", null]);
 });
 
+test("reply text before the call's final reasoning reads as writing, and the final reasoning still replaces the pieces", () => {
+  // Ollama's order: reasoning pieces, then the reply, then the whole reasoning when the call is done.
+  const stream = events(
+    ["started", {}],
+    ["reasoning", { text: "Answer ", final: false }],
+    ["reasoning", { text: "directly.", final: false }],
+    ["text", { text: "Hello" }],
+    ["reasoning", { text: "Answer directly.", final: true }],
+    ["text", { text: " there" }],
+  );
+  const activity = new Activity();
+  const seen = stream.map((event) => { activity.apply(event); return activity.current()?.what ?? null; });
+  assert.deepEqual(seen, [null, "Thinking", "Thinking", "Writing the reply", "Writing the reply", "Writing the reply"]);
+  assert.deepEqual(activity.steps.map((s) => [s.kind, s.text, s.done]), [["thinking", "Answer directly.", true]]);
+});
+
 test("a saved display gives what it kept: the tools without arguments and the last thinking", () => {
   const display = new Display();
   for (const event of FIXTURES.streams.completed_with_tools) display.apply(event);

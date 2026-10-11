@@ -24,7 +24,8 @@ from core.service.credentials import Credentials  # noqa: E402
 from core.service.host import Service  # noqa: E402
 from core.service.server import NuruServer  # noqa: E402
 from core.service.store import ServiceStore  # noqa: E402
-from core.session import Ask, Failure, Text, ToolCall  # noqa: E402
+from core.session import (Ask, Failure, RetryWithoutThinking, Steered, Text, Thinking,  # noqa: E402
+                          ThinkingChunk, ToolCall)
 from core.tool_dispatch import MUTATIONS, ToolOutcome, failure  # noqa: E402
 
 NOTES = {
@@ -138,11 +139,40 @@ def long_reply(session, cancel):
         yield Text(f"Line {i}: " + "lorem ipsum " * 15 + "\n")
 
 
+def activity(session, cancel):
+    """What the panel shows of a turn's steps (WP01-ACT): streamed thinking, a call that works, one that
+    fails, a steer and a silent retry, then the reply. Pauses so the live line can be seen."""
+    def pause(seconds=1.5):
+        return cancel is not None and cancel.wait(seconds)
+
+    words = "The user wants today's tasks as checkboxes. I'll read the daily note first. "
+    for word in words.split(" "):
+        yield ThinkingChunk(word + " ")
+        if pause(0.1):
+            return
+    yield Thinking(words)
+    yield from session.tool("read_note", {"name": "nuru/daily-2026-10-11.md"}, failure("tool", "NOT_FOUND", "no such note"))
+    if pause():
+        return
+    yield ThinkingChunk("The note isn't there. Search for it instead, and think it over at length...")
+    if pause():
+        return
+    yield Steered("over budget")
+    yield from session.tool("search_notes", {"query": "daily 2026-10-11"}, ToolOutcome("nuru/Trip.md", True))
+    if pause():
+        return
+    yield Thinking("Only thinking, no answer.")
+    yield RetryWithoutThinking()
+    if pause():
+        return
+    yield Text("I couldn't find today's daily note, so I changed nothing.")
+
+
 SCENARIOS = {
     "scenario:completed": completed, "scenario:tools": tools, "scenario:refused-write": refused_write,
     "scenario:uncertain-write": uncertain_write, "scenario:approval": approval, "scenario:choice": choice,
     "scenario:failed": failed, "scenario:slow": slow, "scenario:ask": asks_user, "scenario:hostile": hostile,
-    "scenario:long": long_reply,
+    "scenario:long": long_reply, "scenario:activity": activity,
 }
 
 

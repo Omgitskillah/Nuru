@@ -2,6 +2,7 @@
 // applied when the connection drops. No DOM here; the view listens through onChange.
 "use strict";
 
+const { Activity } = require("./activity");
 const { Display } = require("./protocol");
 const { NuruError } = require("./client");
 
@@ -15,11 +16,13 @@ function sleep(ms, signal) {
 }
 
 class TurnRunner {
-  // onChange(runner) after every change to `display` or `connection`.
-  constructor({ client, turnId, display = new Display(), onChange = () => {}, reconnectMs = RECONNECT_MS }) {
+  // onChange(runner) after every change to `display`, `activity` or `connection`.
+  constructor({ client, turnId, display = new Display(), activity = new Activity(), onChange = () => {},
+    reconnectMs = RECONNECT_MS }) {
     this.client = client;
     this.turnId = turnId;
     this.display = display;
+    this.activity = activity; // the steps behind the display (lib/activity.js)
     this.onChange = onChange;
     this.reconnectMs = reconnectMs;
     this.connection = "live"; // live, reconnecting, or lost (the turn can't be followed; resync from history)
@@ -34,6 +37,7 @@ class TurnRunner {
       try {
         await this.client.events(this.turnId, this.display.seq, (event) => {
           if (this.display.apply(event)) {
+            this.activity.apply(event);
             failures = 0;
             this.set("live");
           }

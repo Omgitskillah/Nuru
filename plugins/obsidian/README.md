@@ -10,11 +10,23 @@ What it does:
   **Attach selection**.
 - Your messages show as bubbles on the right; Nuru's replies as Markdown across the panel, in the input box's
   font size.
-- While a turn has nothing to show yet, its line says what Nuru is doing: getting ready (loading its model
-  and tools, which only the first message after the service starts waits for) or thinking, with the
-  seconds so far.
-- Watch the turn: the reply as Markdown, the tools Nuru runs, and what each write actually did (done,
-  not run, failed, or outcome unknown).
+- While a turn runs, its line says what Nuru is doing now, with the seconds so far and the tool calls so
+  far: getting ready (loading its model and tools, which only the first message after the service
+  starts waits for), thinking, running a tool, or writing the reply.
+- Watch the turn: the reply as Markdown, and above it what Nuru did on the way, in order, in one section
+  that is open while the turn runs and folds to **Thought (N seconds)** when it ends. Inside, each model
+  call's thinking is folded under **Thought (N words)**. Each tool call shows ✓, ✗ or … with the note,
+  path or query it was given (never its content), and why it failed; open it for every argument. A retry
+  or steer gets its own line.
+  Older turns from history keep only their tools and last thinking: **Show all steps** fetches the rest
+  (events are kept 30 days after a turn ends).
+- What each write actually did, at the end of that section: done, not run, failed, not written (refused
+  before it wrote anything), or outcome unknown. When a tool wrote more than once in a turn, each says
+  which call it was ("write_note, 2nd call, nuru/giulia-bona.md: done"). Under the reply, **Vaulted**,
+  a section that folds like Thought and starts open, links every note a write created or updated. A write
+  whose outcome is unknown is shown under the reply too, since that note needs checking.
+- Under the header, the service's status: the vault, the model (not loaded yet, loading, ready,
+  unavailable), the notes server, and turns running or waiting. It refreshes every 10 seconds.
 - Answer Nuru's questions before they expire. The service's clock decides, and no answer counts as No.
   Closing the panel never answers.
 - **Stop** a turn. Closing the panel only stops following it, and reopening picks it up again.
@@ -88,7 +100,8 @@ same commit are byte-identical: compare `shasum -a 256 dist/*`.
 
 To try it without a model, `uv run --locked python nuru/tests/scripted_serve.py --dir <scratch>` serves a
 scratch vault over scripted scenarios: a message such as `scenario:approval` picks one (see `SCENARIOS`).
-Open `<scratch>/vault` in Obsidian, and use the printed token and port.
+Open `<scratch>/vault` in Obsidian, and use the printed token and port. `scenario:activity` shows every kind
+of step: streamed thinking, a failed and a working call, a steer and a silent retry.
 
 ## Developing
 

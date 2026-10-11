@@ -28,7 +28,10 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 - [ ] **WP01-M5** Acceptance and handoff: benchmark results, screenshots, known limits, a protocol compatibility matrix and the WP02 handoff.
   - **Done when:** the plan's completion gates hold, real macOS acceptance is recorded, and the live-model lane has been run or explicitly deferred.
 
-- [ ] **WP01-ACT** Show more clearly what the model is doing, in the plugin, from what protocol v1 already sends (ui-state's e107dc0 did this for the Qt window): tool arguments and why a call failed, retries and steers, a collapsible Thinking section, a live step line, a status line from `/v1/status`.
+- [~] **WP01-ACT** Show more clearly what the model is doing, in the plugin, from what protocol v1 already sends (ui-state's e107dc0 did this for the Qt window): tool arguments and why a call failed, retries and steers, a collapsible Thinking section, a live step line, a status line from `/v1/status`.
+  - Done in code (branch `wp01-act-activity`): `lib/activity.js`, the steps in the panel, the live line, the status line, `scenario:activity` in `scripted_serve.py`.
+  - Left: a look in real Obsidian (light and dark).
+  - **Done when:** a live turn and a history turn show their steps in real Obsidian, and the line and status line read right.
 - [ ] **WP01-ACT2** Later, if wanted: ui-state's data that v1 doesn't carry (thinking against the watch's budget, step against the step cap, turns Nuru ended itself, Laya's view, model/thinking level/expert budget in the status). Needs a protocol change.
 
 ## Next: WP02 and WP03

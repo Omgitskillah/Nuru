@@ -304,3 +304,61 @@ test("settling a lost message from A while in B never leaves B or mixes their tu
   assert.match(Notice.shown.at(-1) || "", /did reach Nuru/);
   await view.close();
 });
+
+// A message lost in A, then a new one written in B whose Send must first find out about A's (held back).
+async function pendingFromA(found) {
+  const client = fakeClient();
+  client.conversation = async (id) => ({ conversation_id: id, turns: [] });
+  client.submit = async (conversation, text, attachments, id) => {
+    client.calls.push(["submit", conversation, text, attachments, id]);
+    throw Object.assign(new Error("lost"), { status: 0 });
+  };
+  const lookup = deferred();
+  client.requestState = () => lookup.promise;
+  const files = { path: "nuru/B.md" };
+  const { view } = await open({ client, conversationId: "conv0000aaaa", file: files });
+  view.input.value = "for A";
+  await view.send();
+  await view.openConversation("conv0000bbbb");
+  view.input.value = "for B";
+  view.attach(false);
+  const sending = view.send();
+  const release = () => (found ? lookup.resolve({ conversation_id: "conv0000aaaa", turn_id: "turn0000aaa1", state: "running" })
+    : lookup.reject(Object.assign(new Error("not found"), { status: 404 })));
+  return { view, client, sending, release, files };
+}
+
+for (const found of [true, false]) {
+  test(`opening another conversation while a lost message is looked up sends nothing there (lookup ${found ? "found it" : "404"})`, async () => {
+    const { view, client, sending, release, files } = await pendingFromA(found);
+    await view.openConversation("conv0000cccc");
+    files.path = "nuru/C.md";
+    view.input.value = "a draft for C";
+    view.attach(false);
+    release();
+    await sending;
+    assert.equal(client.calls.filter((c) => c[0] === "submit").length, 1, "only A's first attempt was ever sent");
+    assert.equal(view.conversationId, "conv0000cccc");
+    assert.equal(view.input.value, "a draft for C");
+    assert.deepEqual(view.attachments, [{ path: "nuru/B.md" }, { path: "nuru/C.md" }], "the composer is as it was left");
+    assert.equal(view.turns.size, 0);
+    await view.close();
+  });
+}
+
+test("closing the panel while a lost message is looked up sends nothing", async () => {
+  const { view, client, sending, release } = await pendingFromA(true);
+  await view.close();
+  release();
+  await sending;
+  assert.equal(client.calls.filter((c) => c[0] === "submit").length, 1);
+});
+
+test("once the lost message is settled, Send goes on with what was written, where it was written", async () => {
+  const { view, client, sending, release } = await pendingFromA(false);
+  release();
+  await sending;
+  const [, second] = client.calls.filter((c) => c[0] === "submit");
+  assert.deepEqual(second.slice(1, 4), ["conv0000bbbb", "for B", [{ path: "nuru/B.md" }]]);
+  await view.close();
+});

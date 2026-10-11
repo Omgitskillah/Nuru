@@ -156,15 +156,18 @@ class ChatView extends ItemView {
     this.sending = true;
     this.sendButton.disabled = true;
     const generation = this.generation;
+    // Everything this message is, taken now, before anything is awaited: what's on screen may change.
+    const draft = { text, attachments: [...this.attachments], origin: this.conversationId };
     try {
       let message = this.pending;
-      if (message && (message.text !== text || message.origin !== this.conversationId)) {
+      if (message && (message.text !== text || message.origin !== draft.origin)) {
         await this.settle(message, generation);
         message = null;
+        // The panel moved on (or closed) while that was found out: send nothing, leave the composer be.
+        if (generation !== this.generation) return;
       }
       if (!message) {
-        message = { text, attachments: [...this.attachments], origin: this.conversationId,
-          conversationId: this.conversationId, createId: newRequestId(), submitId: newRequestId() };
+        message = { ...draft, conversationId: draft.origin, createId: newRequestId(), submitId: newRequestId() };
       }
       this.pending = message;
       if (!message.conversationId) {

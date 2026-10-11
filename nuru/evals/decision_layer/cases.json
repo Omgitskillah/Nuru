@@ -56,5 +56,18 @@
     }
    }
   ]
+ },
+ "37": {
+  "name": "tasks as checkboxes",
+  "turns": [
+   {
+    "prompt": "Add these to today's daily note as tasks I can tick off: confirm the appointment with Giulia, and prepare the forms for it.",
+    "checks": {},
+    "writes": {
+     "confirm task is a checkbox in today's daily": "(?ms)\\Anuru/daily-{today}\\.md\\n---\\n(?=.*^type: daily$)(?=.*^date: '?{today}'?$).*^\\s*(?:[-*+]|\\d+[.)])\\s+\\[ \\]\\s[^\\n]*(?i:confirm)",
+     "forms task is a checkbox in today's daily": "(?ms)\\Anuru/daily-{today}\\.md\\n---\\n(?=.*^type: daily$)(?=.*^date: '?{today}'?$).*^\\s*(?:[-*+]|\\d+[.)])\\s+\\[ \\]\\s[^\\n]*(?i:form)"
+    }
+   }
+  ]
  }
 }

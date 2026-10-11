@@ -663,6 +663,8 @@ def load_results(batch: Path, *, cases_path: Path | None = None) -> list[dict]:
                 raise ValueError("scoring override must preserve the recorded prompt sequence")
             for turn, fixture in zip(record["turns"], rubric):
                 turn["checks"] = fixture["checks"]
+                if "writes" in fixture:
+                    turn["writes"] = fixture["writes"]
             record["scoring_cases_sha256"] = hashlib.sha256(cases_path.read_bytes()).hexdigest()
         for i, turn in enumerate(record.get("turns", []), 1):
             turn["date"] = turn.get("date") or record["date"]
@@ -671,7 +673,7 @@ def load_results(batch: Path, *, cases_path: Path | None = None) -> list[dict]:
             turn["acceptance_passed"] = all(ok for _, ok in turn["scored_checks"])
         if "turns" in record:
             record["acceptance_passed"] = (all(t["acceptance_passed"] for t in record["turns"])
-                                           and not record.get("vault_changes"))
+                                           and (_writes(record) or not record.get("vault_changes")))
     return records
 
 
@@ -685,11 +687,27 @@ def _executed(batch: Path, session_id: str | None, turn_id: str | None = None) -
             and (turn_id is None or e.get("turn_id") == turn_id)]
 
 
+def _writes(record: dict) -> bool:
+    """Whether a sequence case has a turn that is meant to write (cases.json `writes`)."""
+    return any("writes" in turn for turn in record.get("turns", []))
+
+
+def writes_pattern(pattern: str, day: str) -> str:
+    """A cases.json `writes` pattern with "{today}" replaced by the turn's date."""
+    return pattern.replace("{today}", re.escape(day))
+
+
 def score_sequence_turn(record: dict) -> tuple[int, list[tuple[str, bool]]]:
     checks = [(label, bool(re.search(pattern, record.get("reply", ""))))
               for label, pattern in record["checks"].items()]
-    checks += [("turn finished with a reply", _replied(record) and not record.get("failure")),
-               ("no vault changes", not record.get("vault_changes"))]
+    checks.append(("turn finished with a reply", _replied(record) and not record.get("failure")))
+    if "writes" in record:
+        files = [f"{c['path']}\n{c['after']}" for c in record.get("vault_changes", []) if c.get("after") is not None]
+        day = record.get("date") or date.today().isoformat()
+        checks += [(label, any(re.search(writes_pattern(pattern, day), text) for text in files))
+                   for label, pattern in record["writes"].items()]
+    else:
+        checks.append(("no vault changes", not record.get("vault_changes")))
     return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
 
 
@@ -701,7 +719,8 @@ def score(record: dict, today: str | None = None) -> tuple[int, list[tuple[str, 
     if "turns" in record:
         checks = [(f"turn {i}: {label}", ok)
                   for i, turn in enumerate(record["turns"], 1) for label, ok in score_sequence_turn(turn)[1]]
-        checks.append(("case changed no vault files", not record.get("vault_changes")))
+        if not _writes(record):
+            checks.append(("case changed no vault files", not record.get("vault_changes")))
         return round(5 * sum(bool(ok) for _, ok in checks) / len(checks)), checks
     day = today or record.get("date") or date.today().isoformat()
     checks = SCORERS[record["test"]](record, record["vault_changes"], day)

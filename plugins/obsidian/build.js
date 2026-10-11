@@ -6,6 +6,10 @@ const { buildSync } = require("esbuild");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { version } = require("./package.json");
+const manifest = require("./manifest.json");
+if (manifest.version !== version) throw new Error(`manifest.json is ${manifest.version}, package.json ${version}: make them match`);
+
 const output = path.join(__dirname, "dist");
 fs.mkdirSync(output, { recursive: true });
 buildSync({

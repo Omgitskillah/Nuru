@@ -22,6 +22,8 @@ function fakeClient({ history = [], live = {} } = {}) {
   return {
     calls,
     aborted: 0,
+    chat: "ready", // what /v1/status says about the model
+    async status() { calls.push(["status"]); return { ready: { chat: this.chat } }; },
     async conversations() { return { conversations: [{ id: "conv0000demo", title: "Trip", created_at: "2026-10-09T12:00:00.000Z" }] }; },
     async conversation(id) { calls.push(["conversation", id]); return { conversation_id: id, turns: history }; },
     async createConversation(title) { calls.push(["create", title]); return { conversation_id: "conv0000new1" }; },
@@ -38,7 +40,7 @@ function fakeClient({ history = [], live = {} } = {}) {
   };
 }
 
-async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "" } = {}) {
+async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status } = {}) {
   const opened = [];
   const app = { workspace: {
     getActiveFile: () => file, getActiveViewOfType: () => ({ editor: { getSelection: () => selection } }),
@@ -48,7 +50,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     settings: { port: 1, conversationId },
     vaultPath: () => "/vault",
     remember: async (changes) => Object.assign(plugin.settings, changes),
-    connect: async () => { if (connectError) throw connectError; return { client }; },
+    connect: async () => { if (connectError) throw connectError; return { client, status }; },
   };
   const view = new ChatView({ app }, plugin);
   await view.open();
@@ -131,6 +133,43 @@ test("the model's own question is answered by sending the answer as the next mes
   button.click();
   await until(() => client.calls.some((c) => c[0] === "submit"));
   assert.equal(client.calls.find((c) => c[0] === "submit")[2], label);
+  await view.close();
+});
+
+test("a started turn with nothing to show says Nuru is getting ready while the model loads, then that it's thinking", async () => {
+  const events = FIXTURES.streams.completed_with_tools;
+  const started = events.findIndex((e) => e.type === "started") + 1;
+  const history = [{ turn_id: "turn00000001", text: "trip?", state: "running", display: displayOf(events.slice(0, 1)) }];
+  const client = fakeClient({ history, live: { turn00000001: events.slice(0, started) } });
+  client.chat = "loading";
+  const { view } = await open({ client, status: { ready: { chat: "idle" } } });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.state === "running");
+  assert.match(turn.stateEl.textContent, /getting ready: loading its model and tools/);
+
+  turn.waitingSince -= 5000; // as if it had waited five seconds
+  view.tick();
+  assert.match(turn.stateEl.textContent, /getting ready.*\(5 s\)/);
+  await until(() => client.calls.some((c) => c[0] === "status"));
+
+  client.chat = "ready";
+  view.tick();
+  await until(() => turn.stateEl.textContent.startsWith("Thinking…"));
+  assert.match(turn.stateEl.textContent, /^Thinking… \(\d+ s\)$/);
+  await view.close();
+});
+
+test("once the reply starts, the waiting line goes and no more status checks are made", async () => {
+  const events = FIXTURES.streams.completed_with_tools;
+  const firstText = events.findIndex((e) => e.type === "text") + 1;
+  const history = [{ turn_id: "turn00000001", text: "trip?", state: "running", display: displayOf(events.slice(0, 1)) }];
+  const client = fakeClient({ history, live: { turn00000001: events.slice(0, firstText) } });
+  const { view } = await open({ client, status: { ready: { chat: "ready" } } });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.reply);
+  view.tick();
+  assert.equal(turn.stateEl.textContent, "");
+  assert.ok(!client.calls.some((c) => c[0] === "status"));
   await view.close();
 });
 

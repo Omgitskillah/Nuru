@@ -1,6 +1,8 @@
 # Nuru
 Nuru to guide me into the AI future.  A hopeful darkness purge in a probably dystopia yonder. 
 
+What's left to do: [TODO.md](TODO.md).
+
 ## Settings
 
 Every subsystem's settings live in the repo root, one file each, and every one is gitignored. The `.example` beside each is the tracked template: copy it and fill it in.

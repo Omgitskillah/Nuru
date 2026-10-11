@@ -1,0 +1,296 @@
+{
+ "started": "2026-10-11T15:47:26+00:00",
+ "command": "nuru/evals/obsidian_remote/bench_wp01.py --out .runs/obsidian-remote/bench-20261011-174725",
+ "machine": {
+  "macos": "26.6.2",
+  "machine": "arm64",
+  "python": "3.14.7",
+  "node": "v24.21.0",
+  "commit": "009d9eb37e94dd7624b9d5d4147006ba8d43d5bc",
+  "dirty": true
+ },
+ "settings": {
+  "turns": 30,
+  "warmups": 3,
+  "cycles": 20,
+  "out": ".runs/obsidian-remote/bench-20261011-174725"
+ },
+ "raw_sha256": "70cf593143e610f865c009a5d6c50fdd4a5df8241f37a3e6e0f688c87536ea75",
+ "summary": {
+  "direct": {
+   "completed_ms": {
+    "n": 30,
+    "p50": 144.691162109375,
+    "p95": 147.938720703125,
+    "max": 148.240234375
+   },
+   "first_event_ms": {
+    "n": 30,
+    "p50": 7.55029296875,
+    "p95": 7.577880859375,
+    "max": 7.584228515625
+   },
+   "overheads_ms": {
+    "n": 600,
+    "p50": 0.008056640625,
+    "p95": 0.02099609375,
+    "max": 0.046142578125
+   },
+   "turn_states": [
+    "completed"
+   ],
+   "stop_ack_ms": {
+    "n": 30,
+    "p50": 0.02587890625,
+    "p95": 0.03369140625,
+    "max": 0.038330078125
+   },
+   "stop_cancelled_ms": {
+    "n": 30,
+    "p50": 0.02587890625,
+    "p95": 0.03369140625,
+    "max": 0.038330078125
+   },
+   "stop_states": [
+    "cancelled"
+   ]
+  },
+  "http": {
+   "accepted_ms": {
+    "n": 30,
+    "p50": 4.801025390625,
+    "p95": 6.5107421875,
+    "max": 6.550048828125
+   },
+   "completed_ms": {
+    "n": 30,
+    "p50": 182.7890625,
+    "p95": 195.201171875,
+    "max": 196.330810546875
+   },
+   "first_event_ms": {
+    "n": 30,
+    "p50": 13.52099609375,
+    "p95": 16.12109375,
+    "max": 16.63916015625
+   },
+   "overheads_ms": {
+    "n": 600,
+    "p50": 1.965087890625,
+    "p95": 3.031005859375,
+    "max": 9.5341796875
+   },
+   "turn_states": [
+    "completed"
+   ],
+   "stop_ack_ms": {
+    "n": 30,
+    "p50": 2.704833984375,
+    "p95": 3.03076171875,
+    "max": 3.173095703125
+   },
+   "stop_cancelled_ms": {
+    "n": 30,
+    "p50": 4.046875,
+    "p95": 4.472900390625,
+    "max": 4.554931640625
+   },
+   "stop_states": [
+    "cancelled"
+   ]
+  },
+  "plugin": {
+   "accepted_ms": {
+    "n": 30,
+    "p50": 4.918701171875,
+    "p95": 7.544921875,
+    "max": 7.80029296875
+   },
+   "completed_ms": {
+    "n": 30,
+    "p50": 173.948486328125,
+    "p95": 180.66064453125,
+    "max": 182.599365234375
+   },
+   "first_render_ms": {
+    "n": 30,
+    "p50": 19.7841796875,
+    "p95": 22.867431640625,
+    "max": 24.218994140625
+   },
+   "overheads_ms": {
+    "n": 600,
+    "p50": 3.770263671875,
+    "p95": 5.674072265625,
+    "max": 9.5595703125
+   },
+   "turn_states": [
+    "completed"
+   ],
+   "stop_ack_ms": {
+    "n": 30,
+    "p50": 4.036865234375,
+    "p95": 4.6328125,
+    "max": 27.787841796875
+   },
+   "stop_cancelled_ms": {
+    "n": 30,
+    "p50": 4.8955078125,
+    "p95": 5.83935546875,
+    "max": 27.845703125
+   },
+   "stop_states": [
+    "cancelled"
+   ]
+  }
+ },
+ "leaks": {
+  "plugin": {
+   "warm": {
+    "listeners": 0,
+    "intervals": 0,
+    "resources": 2,
+    "heap_used": 40469040
+   },
+   "after": {
+    "listeners": 0,
+    "intervals": 0,
+    "resources": 2,
+    "heap_used": 41202368
+   }
+  },
+  "service": {
+   "warm": {
+    "rss_kb": 99440,
+    "threads": 2
+   },
+   "after": {
+    "rss_kb": 99568,
+    "threads": 2
+   }
+  }
+ },
+ "gates": [
+  {
+   "gate": "direct every turn ended completed",
+   "value": [
+    "completed"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "direct every stop ended cancelled",
+   "value": [
+    "cancelled"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "http accepted_ms p95 <= 250 ms",
+   "value": 6.5107421875,
+   "pass": true
+  },
+  {
+   "gate": "http overheads_ms p95 <= 100 ms",
+   "value": 3.031005859375,
+   "pass": true
+  },
+  {
+   "gate": "http every turn ended completed",
+   "value": [
+    "completed"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "http stop_ack_ms p95 <= 250 ms",
+   "value": 3.03076171875,
+   "pass": true
+  },
+  {
+   "gate": "http every stop ended cancelled",
+   "value": [
+    "cancelled"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin accepted_ms p95 <= 250 ms",
+   "value": 7.544921875,
+   "pass": true
+  },
+  {
+   "gate": "plugin overheads_ms p95 <= 100 ms",
+   "value": 5.674072265625,
+   "pass": true
+  },
+  {
+   "gate": "plugin every turn ended completed",
+   "value": [
+    "completed"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin stop_ack_ms p95 <= 250 ms",
+   "value": 4.6328125,
+   "pass": true
+  },
+  {
+   "gate": "plugin every stop ended cancelled",
+   "value": [
+    "cancelled"
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin listeners after cycles == warm",
+   "value": [
+    0,
+    0
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin intervals after cycles == warm",
+   "value": [
+    0,
+    0
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin resources after cycles == warm",
+   "value": [
+    2,
+    2
+   ],
+   "pass": true
+  },
+  {
+   "gate": "plugin heap after GC within 10% of warm",
+   "value": [
+    40469040,
+    41202368
+   ],
+   "pass": true
+  },
+  {
+   "gate": "service threads after cycles == warm",
+   "value": [
+    2,
+    2
+   ],
+   "pass": true
+  },
+  {
+   "gate": "service RSS within 10% of warm",
+   "value": [
+    99440,
+    99568
+   ],
+   "pass": true
+  }
+ ],
+ "all_gates_pass": true
+}

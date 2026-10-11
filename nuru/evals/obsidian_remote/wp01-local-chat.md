@@ -152,3 +152,49 @@ twin) is unchanged; the steps are a separate `Activity` (`lib/activity.js`).
 | A write refused before it wrote reads "not written (rejected before writing; nothing changed)", and when a tool wrote more than once each receipt names its call; a call is named only by its note/path/query, never its content | automated-tested | `test/view.test.js`: the 2026-10-11 Giulia Bona turn (first `write_note` without `note`, `REJECTED_BEFORE_WRITE`; second created `nuru/giulia-bona.md`), which the panel showed as "write_note: failed" beside the created note |
 | What each write did is listed at the end of the Thought section; under the reply, a "Vaulted" section (folds like Thought, starts open, shown only once a note was written) links each note a write created or updated (opening it in Obsidian), and an uncertain write stays visible there | automated-tested | `test/view.test.js` |
 | In real Obsidian, light and dark: the steps, the live line and the status line | manually-tested | 2026-10-11, real Obsidian 1.13.7 on macOS, light and dark: `scenario:activity` through `scripted_serve.py`, and the other scripted scenarios; all read right. Then a real model turn (dark): "Look at my Trip and Budget notes, then write a short plan for the Rome trip in a new note called rome-plan...": search, two read_note and two write_note calls in order with thinking between, both receipts naming their call, Vaulted linking `nuru/rome-plan.md` (the link opened the note), status line "model ready · notes ready". Reopened from the picker, the same turn showed its history steps, and **Show all steps** brought back every step |
+
+## M5: acceptance and handoff (2026-10-11, branch wp01-m5-acceptance)
+
+Machine: macOS 26.6.2 (arm64), Python 3.14.7, Node 24.21.0. Code: 009d9eb plus this branch's uncommitted
+changes (the live batch saved them and their hash, `diff_sha256` in `live-manifest.json`). Results, with
+SHA-256 in `shasum -a 256 results-2026-10-11-m5/*`: [`results-2026-10-11-m5/`](results-2026-10-11-m5/).
+Compatibility matrix, known limits and the WP02 handoff: [`wp01-handoff.md`](../../docs/obsidian-remote/wp01-handoff.md).
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| A disposable test vault, `NuruPluginTestVault`, is built from tracked definitions: `nuru/`, `shared/`, `user/`, Unicode names, duplicate basenames (`Plan.md` ×3), hostile HTML, a ~300 KB note, a note for a stale-revision edit, an archived note. Snapshots hash every file, and `changes()` gives the exact added/changed/removed set | automated-tested | `nuru/tests/plugin_test_vault.py`; `scripted_serve.py` and the plugin's e2e tests now run on it (8/8) |
+| The same scripted turn through Session directly and through nuru-serve over HTTP (a real Session, the real notes server, only the model scripted) gives the same reply, the same tool calls in order with the same outcomes, the same stored history and the same vault: a Unicode read, a replace refused because the note changed on disk since it was read (the outside edit kept), a new note, and a shared write approved through a question | automated-tested | `test_direct_session_and_http_give_the_same_turn_and_the_same_vault`. File texts match except a new note's ULID and creation minute |
+| The notes server dying mid-turn (SIGKILL between the read and the write) makes the write `uncertain`, ends the turn `failed`, retries nothing and leaves the vault byte for byte; status still answers | automated-tested | `test_a_notes_server_that_dies_mid_turn_leaves_its_write_uncertain_and_the_service_answering` |
+| A served vault never gets another vault's semantic index. Before, the notes server (whose env Session builds) and the background indexer filled in `.env.obsidian`'s `OBSIDIAN_SEMANTIC_DB` for any vault, so a test vault's search could answer from the real vault's index, and the indexer could drop the real vault's notes from it. Now: the environment's `OBSIDIAN_SEMANTIC_DB`, else `.env.obsidian`'s only for its own vault, else `<vault>/.obsidian-mcp-semantic.sqlite3` | automated-tested | `test_a_served_vault_never_gets_another_vaults_semantic_index`, `test_another_vaults_index_is_never_used`; both fail without the fix. Proposed rule, for review in the PR |
+| Performance gates, scripted (no model), 3 warmups then 30 turns per route, routes in alternating order: p95 acceptance 6.5 ms (HTTP) and 7.5 ms (plugin client) against ≤250; p95 overhead from Session yielding a chunk to the client having it 3.0 ms (HTTP, received) and 5.7 ms (plugin, received and rendered) against ≤100; p95 Stop acknowledgement 3.0 and 4.6 ms against ≤250 (`cancelled` event 4.5 and 5.8 ms). Direct: first event 7.6 ms, completion 145 ms; HTTP 13.5 / 183 ms; plugin first render 19.8 / 174 ms (p50) | automated-tested | `bench_wp01.py`; `bench-summary.json`, `bench-raw.json.gz`. The plugin route is the plugin's own client, TurnRunner and renderer on the jsdom stand-in, over a real socket: not Obsidian's own rendering |
+| After 20 open/close cycles of the real ChatView (each: connect, send, follow to the end, close): 0 listeners and 0 intervals left (same as warm), the same active handles, heap after GC +1.8%; the service has the same threads and RSS +0.1% | automated-tested | `bench-summary.json` `leaks` |
+| Live-model lane: 6 frozen cases × 5 repetitions × 2 routes (Session directly; nuru-serve with the plugin's client), Qwen3.5 4B (digest `2a654d98…`), nomic-embed-text-v2-moe for the index, thinking off, 16k context, the same vault bytes and index for every run, alternating order. **Direct 30/30, plugin 30/30; 0 unauthorized writes; 0 timeouts or crashes.** Every shared write asked once: Yes wrote exactly `shared/Plan.md`, No wrote nothing and the reply said so. Median seconds to a correct result, direct vs plugin: read 8.1 / 7.3, search-and-answer 25.8 / 19.5, arithmetic 16.1 / 15.7, authorized write 17.0 / 16.3, refused shared write 18.1 / 19.4, follow-up (2 turns) 30.6 / 23.4 | live-model-tested | `live_wp01.py`, `live_cases.json`; `live-summary.json`, `live-runs.jsonl.gz`, `live-manifest.json`. Direct times include Session start and model load in its own process, plugin times include the service building its Session on the first turn |
+| Seen in the live replies, on both routes alike (7/35 direct, 8/35 plugin turns): when the model writes text before a tool call and again after, the reply is both pieces glued without a space ("…add the line to it.I cannot add…"), sometimes the answer twice. Session's behaviour, not the service's (F9) | live-model-tested | `live-runs.jsonl.gz` |
+| CLI and Qt behaviour unchanged | automated-tested | full suite: 1675 passed, 1 skipped; plugin 64 unit + 8 e2e |
+
+Commands:
+
+```
+uv run --locked pytest -q
+(cd plugins/obsidian && npm test && npm run test:e2e)
+uv run --locked python nuru/evals/obsidian_remote/bench_wp01.py            # ~1 min, no model
+uv run --locked python nuru/evals/obsidian_remote/live_wp01.py --repeats 5 # ~25 min, Qwen3.5 4B; ask first
+```
+
+Still to do for M5 (manual, real Obsidian on macOS): see "M5 manual acceptance" below.
+
+### M5 manual acceptance
+
+Most of the plan's macOS acceptance ran in M3b, M4 and WP01-ACT (above). Left:
+
+1. Record Obsidian's version (Settings → About) and macOS's.
+2. `uv run --locked python nuru/tests/scripted_serve.py --dir <scratch> --port 27126`, copy the token as in
+   the plugin README, open `<scratch>/NuruPluginTestVault`, and keep the `scripted_serve` JSON line.
+3. `scenario:approval`, answer Yes; `scenario:approval` again, answer No. Then
+   `uv run --locked python nuru/tests/plugin_test_vault.py <other-scratch>` and compare its hashes with
+   `<scratch>/NuruPluginTestVault`: only `shared/Team.md` may differ, matching the `applied` receipt.
+4. Quit Obsidian (⌘Q) with a `scenario:slow` turn running. `curl -H "Authorization: Bearer <token>"
+   http://127.0.0.1:27126/v1/status` still answers. Reopen Obsidian: the panel reconnects, and the turn is
+   in the picker's history.
+5. Screenshots, light and dark: a completed reply with a citation, an approval card, the Thought section
+   with steps, the Vaulted section. Into `nuru/evals/obsidian_remote/screenshots/`.

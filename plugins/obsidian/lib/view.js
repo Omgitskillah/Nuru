@@ -1,11 +1,14 @@
 // The Nuru sidebar: pick or start a conversation, send a message (with a note or selection attached
-// only when asked), and watch the turn: the reply as Markdown, tool progress, what each write actually
-// did, and questions to answer before they expire. Closing the panel stops following turns, never the
+// only when asked), and watch the turn: the reply as Markdown, what Nuru did on the way (its thinking,
+// each tool call with its arguments and why one failed, retries), a live line saying what it's doing,
+// what each write actually did, and questions to answer before they expire. A status line under the
+// header shows the service's /v1/status. Closing the panel stops following turns, never the
 // turns themselves, and never answers a question.
 "use strict";
 
 const { ItemView, Keymap, MarkdownView, Notice } = require("obsidian");
 
+const { Activity, argumentLines, mainArgument, retryWords } = require("./activity");
 const { LANTERN } = require("./icon");
 const { answerText, newRequestId } = require("./protocol");
 const { ConnectionProblem } = require("./connection");
@@ -14,7 +17,12 @@ const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
 const RENDER_MS = 80; // a streaming reply is rendered again at most this often
+const STATUS_SECONDS = 10; // the status line is refreshed this often while the panel is open
+const CHAT_WORDS = { idle: "model not loaded yet", loading: "loading the model", ready: "model ready",
+  unavailable: "model unavailable" };
 const RECEIPT_WORDS = { applied: "done", refused: "not run", failed: "failed", uncertain: "outcome unknown: check the note" };
+// A write the notes server refused before touching anything: it failed, but nothing changed.
+const NOT_WRITTEN = "not written (rejected before writing; nothing changed)";
 const STATE_WORDS = { accepted: "Sent", queued: "Waiting for Nuru", running: "", completed: "", failed: "Failed",
   cancelled: "Stopped" };
 
@@ -24,7 +32,9 @@ class ChatView extends ItemView {
     this.plugin = plugin;
     this.client = null;
     this.chat = null; // the service's chat readiness from /v1/status: idle, loading, ready or unavailable
+    this.service = null; // the last /v1/status, for the status line
     this.statusCheck = null; // a /v1/status call on its way
+    this.ticks = 0;
     this.conversationId = null;
     this.turns = new Map(); // turn ID -> {runner, text, el and its parts, renderTimer...}
     this.attachments = [];
@@ -53,6 +63,7 @@ class ChatView extends ItemView {
     this.registerDomEvent(this.picker, "change", () => this.openConversation(this.picker.value || null));
     const fresh = header.createEl("button", { text: "New", attr: { "aria-label": "New conversation" } });
     this.registerDomEvent(fresh, "click", () => this.openConversation(null));
+    this.serviceEl = root.createDiv({ cls: "nuru-service" });
     this.statusEl = root.createDiv({ cls: "nuru-status", attr: { role: "status" } });
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
     this.registerDomEvent(this.messagesEl, "click", (event) => this.onLinkClick(event));
@@ -104,7 +115,7 @@ class ChatView extends ItemView {
     }
     if (generation !== this.generation) return;
     this.client = client;
-    this.chat = status?.ready?.chat ?? null;
+    this.showService(status);
     this.setStatus("");
     if (await this.loadConversations(generation)) await this.openConversation(this.plugin.settings.conversationId);
   }
@@ -283,14 +294,21 @@ class ChatView extends ItemView {
     const turn = {
       text, el,
       stateEl: el.createDiv({ cls: "nuru-state" }),
-      toolsEl: el.createDiv({ cls: "nuru-tools" }),
+      toolsEl: el.createDiv({ cls: "nuru-tools" }), // the activity: thinking, tool calls, retries
+      shownWritten: null, stepEls: [], shownActivity: null, moreEl: null, activityEl: null, autoOpen: null, userToggled: false,
       replyEl: el.createDiv({ cls: "nuru-reply markdown-rendered" }),
+      vaultedEl: el.createEl("details", { cls: "nuru-vaulted", attr: { open: "" } }), // the notes it wrote
       receiptsEl: el.createDiv({ cls: "nuru-receipts" }),
       questionEl: el.createDiv({ cls: "nuru-question" }),
       renderTimer: null, renderedReply: null, forgotten: false, shownQuestion: null,
     };
     turn.runner = new TurnRunner({ client: this.client, turnId, onChange: () => this.update(turn) });
-    if (saved) Object.assign(turn.runner.display, saved);
+    // A finished turn from history shows its saved display; its full steps are fetched when asked for. An
+    // unfinished one is followed from its first event, so its steps are all there.
+    if (saved && ["completed", "failed", "cancelled"].includes(saved.state)) {
+      Object.assign(turn.runner.display, saved);
+      turn.runner.activity = Activity.fromDisplay(saved);
+    }
     this.turns.set(turnId, turn);
     for (const earlier of this.turns.values()) this.renderQuestion(earlier); // only the last turn's ask stays open
     this.update(turn);
@@ -310,20 +328,28 @@ class ChatView extends ItemView {
       : turn.runner.connection === "lost" ? "This turn can't be followed any more; reopen the conversation."
       : display.state === "queued" ? `Waiting for Nuru (place ${display.position ?? "?"})`
       : display.state === "failed" ? `Failed: ${display.message}`
-      : this.waiting(turn) ? this.waitingWords(turn)
+      : this.following(turn) ? this.stepWords(turn)
       : STATE_WORDS[display.state] + (display.truncated ? " (reply too long: shown in part)" : "");
     turn.stateEl.setText(words);
     turn.stateEl.toggleClass("nuru-error", display.state === "failed" || turn.runner.connection === "lost");
 
-    turn.toolsEl.empty();
-    for (const tool of display.tools) {
-      const mark = tool.ok === true ? "✓" : tool.ok === false ? "✗" : display.ended ? "–" : "…";
-      turn.toolsEl.createDiv({ cls: "nuru-tool", text: `${mark} ${tool.name}` });
-    }
+    this.renderActivity(turn);
+    // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
+    // the notes that were written, and any write whose outcome is unknown, since that note needs checking.
     turn.receiptsEl.empty();
-    for (const receipt of display.receipts) {
-      turn.receiptsEl.createDiv({ cls: `nuru-receipt nuru-receipt-${receipt.state}`,
-        text: `${receipt.tool}${receipt.path ? ` ${receipt.path}` : ""}: ${RECEIPT_WORDS[receipt.state] || receipt.state}` });
+    turn.writesEl?.empty();
+    for (const receipt of display.receipts) this.receiptElement(turn.writesEl || turn.receiptsEl, turn, receipt);
+    const written = [...new Set(display.receipts.filter((r) => r.state === "applied" && r.path).map((r) => r.path))];
+    turn.vaultedEl.hidden = !written.length;
+    if (written.join("\n") !== turn.shownWritten) { // rebuilt only when it changes: the user may have folded it
+      turn.shownWritten = written.join("\n");
+      turn.vaultedEl.empty();
+      turn.vaultedEl.createEl("summary", { text: "Vaulted" });
+      const list = turn.vaultedEl.createDiv({ cls: "nuru-vaulted-notes" });
+      for (const path of written) noteLink(list.createDiv(), path);
+    }
+    if (turn.writesEl) {
+      for (const receipt of display.receipts) if (receipt.state === "uncertain") this.receiptElement(turn.receiptsEl, turn, receipt);
     }
     for (const decision of display.decisions) {
       turn.receiptsEl.createDiv({ cls: "nuru-decision", text: `Answered: ${decision.decision}` +
@@ -423,42 +449,197 @@ class ChatView extends ItemView {
     this.send();
   }
 
-  // A turn that has started but shows nothing yet: no reply, no question. Its line says what Nuru is
-  // doing meanwhile, which on the first turn after the service starts is loading the model and tools.
-  waiting(turn) {
-    const { display, connection } = turn.runner;
-    const waiting = display.state === "running" && !display.reply && !display.question && connection === "live";
-    if (!waiting) turn.waitingSince = null;
-    else turn.waitingSince ??= Date.now();
-    return waiting;
-  }
-
-  waitingWords(turn) {
-    const seconds = Math.round((Date.now() - turn.waitingSince) / 1000);
-    const time = seconds >= 2 ? ` (${seconds} s)` : "";
-    if (["idle", "loading"].includes(this.chat)) {
-      return `Nuru is getting ready: loading its model and tools${time}. Only the first message after it starts waits for this.`;
+  // ------------------------------------------------------------------ activity
+  // The turn's steps, in order. Each step's element is kept and updated in place, so a thinking block
+  // or a call's details the user opened stay open while the turn goes on.
+  // All of them sit in one section, "Thought (N seconds)", open while the turn runs and folded once it
+  // ends, unless the user opened or folded it.
+  renderActivity(turn) {
+    const { activity, display } = turn.runner;
+    if (!activity.steps.length) return;
+    if (!turn.activityEl) {
+      turn.activityEl = turn.toolsEl.createEl("details", { cls: "nuru-activity" });
+      turn.activitySummaryEl = turn.activityEl.createEl("summary");
+      turn.stepsEl = turn.activityEl.createDiv({ cls: "nuru-steps" });
+      turn.writesEl = turn.activityEl.createDiv({ cls: "nuru-writes" });
+      this.registerDomEvent(turn.activityEl, "toggle", () => {
+        if (turn.activityEl.open !== turn.autoOpen) turn.userToggled = true;
+      });
     }
-    return (turn.runner.display.tools.length ? "Working…" : "Thinking…") + time;
+    const open = !display.ended && !activity.partial;
+    if (!turn.userToggled && turn.activityEl.open !== open) {
+      turn.autoOpen = open;
+      turn.activityEl.open = open;
+    }
+    const seconds = activity.seconds();
+    const steps = activity.steps.length;
+    turn.activitySummaryEl.setText(!display.ended ? "Thinking…"
+      : seconds !== null ? `Thought (${seconds} second${seconds === 1 ? "" : "s"})`
+      : `Thought (${steps} step${steps === 1 ? "" : "s"})`);
+    if (turn.shownActivity !== activity) { // the full steps replaced a history turn's summary
+      for (const el of turn.stepEls.splice(0)) el.remove();
+      turn.shownActivity = activity;
+    }
+    activity.steps.forEach((step, i) => {
+      if (!turn.stepEls[i]) {
+        turn.stepEls[i] = this.stepElement(step);
+        turn.stepsEl.insertBefore(turn.stepEls[i], turn.moreEl);
+      }
+      this.updateStep(turn.stepEls[i], step, display.ended);
+    });
+    // A turn from history knows only its tools and last thinking: its full steps can be fetched.
+    if (activity.partial && !turn.moreEl) {
+      turn.moreEl = turn.stepsEl.createEl("button", { text: "Show all steps", cls: "nuru-more" });
+      this.registerDomEvent(turn.moreEl, "click", () => this.loadSteps(turn));
+    } else if (!activity.partial && turn.moreEl) {
+      turn.moreEl.remove();
+      turn.moreEl = null;
+    }
   }
 
-  // While a turn waits, the service's status says whether it is still loading. One call at a time.
-  checkReady() {
+  // What a write did. When a tool wrote more than once in the turn, each says which call it was, so a
+  // failed first try isn't read as the outcome of the one that worked.
+  // A note it wrote is a link to that note.
+  receiptElement(parent, turn, receipt) {
+    const { receipts } = turn.runner.display;
+    const same = receipts.filter((r) => r.tool === receipt.tool);
+    const calls = turn.runner.activity.steps.filter((s) => s.kind === "tool" && s.name === receipt.tool);
+    const index = calls.findIndex((s) => s.call_id === receipt.call_id);
+    const n = (index >= 0 ? index : same.indexOf(receipt)) + 1;
+    const which = same.length > 1 ? `, ${ordinal(n)} call${receipt.path ? "," : ""}` : "";
+    const words = receipt.state === "failed" && receipt.detail === "REJECTED_BEFORE_WRITE" ? NOT_WRITTEN
+      : RECEIPT_WORDS[receipt.state] || receipt.state;
+    const el = parent.createDiv({ cls: `nuru-receipt nuru-receipt-${receipt.state}` });
+    el.appendText(`${receipt.tool}${which}`);
+    if (receipt.path) {
+      el.appendText(" ");
+      if (receipt.state === "applied") noteLink(el, receipt.path);
+      else el.appendText(receipt.path);
+    }
+    el.appendText(`: ${words}`);
+    return el;
+  }
+
+  stepElement(step) {
+    let el;
+    if (step.kind === "retry") {
+      el = createDiv({ cls: "nuru-step nuru-retry" });
+    } else {
+      el = createEl("details", { cls: `nuru-step nuru-${step.kind}` });
+      el.summaryEl = el.createEl("summary");
+      el.bodyEl = el.createDiv({ cls: "nuru-step-body" });
+    }
+    return el;
+  }
+
+  updateStep(el, step, ended) {
+    if (step.kind === "retry") {
+      el.setText(`↻ ${retryWords(step.reason)}`);
+      return;
+    }
+    if (step.kind === "thinking") {
+      const words = step.text.trim().split(/\s+/).filter(Boolean).length;
+      el.summaryEl.setText(step.done || ended ? `Thought (${words} word${words === 1 ? "" : "s"})` : "Thinking…");
+      if (el.bodyEl.textContent !== step.text) el.bodyEl.setText(step.text);
+      return;
+    }
+    const mark = step.ok === true ? "✓" : step.ok === false ? "✗" : ended ? "–" : "…";
+    const named = mainArgument(step.arguments);
+    const why = step.summary ? ` (${step.summary})` : "";
+    el.summaryEl.setText(`${mark} ${step.name}${named ? ` ${named}` : ""}${why}`);
+    el.toggleClass("nuru-failed", step.ok === false);
+    const lines = step.arguments ? argumentLines(step.arguments) : ["(arguments not kept in history: Show all steps)"];
+    if (step.ok === false) lines.push(`Failed: ${step.summary || "no reason given"}`);
+    else if (step.ok === null && ended) lines.push("No result: the turn ended first");
+    const text = lines.join("\n") || "(no arguments)";
+    if (el.bodyEl.textContent !== text) el.bodyEl.setText(text);
+  }
+
+  // A finished turn's full steps, from its events (kept 30 days after it ended).
+  async loadSteps(turn) {
+    if (!this.client || turn.loadingSteps) return;
+    turn.loadingSteps = true;
+    turn.moreEl?.setText("Loading steps…");
+    const activity = new Activity();
+    const controller = new AbortController();
+    try {
+      await this.client.events(turn.runner.turnId, 0, (event) => activity.apply(event), controller.signal);
+      if (turn.forgotten) return;
+      turn.runner.activity = activity;
+      this.update(turn);
+    } catch (error) {
+      if (turn.forgotten) return;
+      turn.moreEl?.setText([404, 410].includes(error.status) ? "Steps no longer kept" : "Couldn't load the steps: try again");
+    } finally {
+      turn.loadingSteps = false;
+    }
+  }
+
+  // A started turn the panel is following, not stopped at a question.
+  following(turn) {
+    const { display, connection } = turn.runner;
+    const live = display.state === "running" && !display.question && connection === "live";
+    if (!live) turn.waitingSince = null;
+    else turn.waitingSince ??= Date.now();
+    return live;
+  }
+
+  // The live step line: what Nuru is doing now and for how long. Before anything has happened on the
+  // first turn after the service starts, that's loading the model and tools.
+  stepWords(turn) {
+    const { activity, display } = turn.runner;
+    const time = (since) => {
+      const seconds = Math.max(0, Math.round((Date.now() - since) / 1000));
+      return seconds >= 2 ? ` (${seconds} s)` : "";
+    };
+    const now = activity.current();
+    if (!now && !display.reply) {
+      if (["idle", "loading"].includes(this.chat)) {
+        return `Nuru is getting ready: loading its model and tools${time(turn.waitingSince)}. Only the first message after it starts waits for this.`;
+      }
+      return `Thinking…${time(turn.waitingSince)}`;
+    }
+    const calls = activity.steps.filter((s) => s.kind === "tool").length;
+    const count = calls ? ` · ${calls} tool call${calls === 1 ? "" : "s"} so far` : "";
+    return `${now ? now.what : "Writing the reply"}…${now ? time(now.since) : ""}${count}`;
+  }
+
+  // ------------------------------------------------------------------ the service's status
+  showService(status) {
+    if (!status?.ready) return;
+    this.service = status;
+    this.chat = status.ready.chat;
+    const { ready } = status;
+    const parts = [status.vault?.name, CHAT_WORDS[ready.chat] || ready.chat,
+      ready.notes === "ready" ? "notes ready" : "notes unavailable"];
+    if (ready.queue && (ready.queue.active || ready.queue.waiting)) {
+      parts.push(`${ready.queue.active} running, ${ready.queue.waiting} waiting`);
+    }
+    this.serviceEl.setText(parts.filter(Boolean).join(" · "));
+    this.serviceEl.toggleClass("nuru-error", ready.chat === "unavailable" || ready.notes !== "ready");
+    if (status.version) this.serviceEl.setAttr("title", `nuru-serve ${status.version}`);
+  }
+
+  // Refresh the status: while a turn shows nothing yet (to see the model load), and every STATUS_SECONDS.
+  // One call at a time.
+  checkStatus() {
     if (this.statusCheck || !this.client) return;
     const client = this.client;
     this.statusCheck = client.status()
-      .then((status) => { if (client === this.client) this.chat = status.ready.chat; })
+      .then((status) => { if (client === this.client) this.showService(status); })
       .catch(() => {}) // the turn's own stream reports a lost service
       .finally(() => {
         this.statusCheck = null;
-        for (const turn of this.turns.values()) if (this.waiting(turn)) turn.stateEl.setText(this.waitingWords(turn));
+        for (const turn of this.turns.values()) if (this.following(turn)) turn.stateEl.setText(this.stepWords(turn));
       });
   }
 
   tick() {
-    const waiting = [...this.turns.values()].filter((turn) => this.waiting(turn));
-    for (const turn of waiting) turn.stateEl.setText(this.waitingWords(turn));
-    if (waiting.length) this.checkReady();
+    this.ticks += 1;
+    const live = [...this.turns.values()].filter((turn) => this.following(turn));
+    for (const turn of live) turn.stateEl.setText(this.stepWords(turn));
+    const loading = live.some((turn) => !turn.runner.activity.steps.length && !turn.runner.display.reply);
+    if (loading || this.ticks % STATUS_SECONDS === 0) this.checkStatus();
     for (const el of this.contentEl.querySelectorAll(".nuru-countdown")) {
       const left = Math.max(0, Math.round((Date.parse(el.getAttribute("data-expires")) - Date.now()) / 1000));
       el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");
@@ -488,6 +669,17 @@ class ChatView extends ItemView {
     this.statusEl.setText(text);
     this.statusEl.toggleClass("nuru-error", problem);
   }
+}
+
+// A link to a note in the vault, opened by onLinkClick like a link in a reply.
+function noteLink(parent, path) {
+  return parent.createEl("a", { cls: "internal-link", text: path, attr: { href: path, "data-href": path } });
+}
+
+function ordinal(n) {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+  return `${n}${suffix}`;
 }
 
 module.exports = { ChatView, VIEW_TYPE };

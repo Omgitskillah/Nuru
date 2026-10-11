@@ -9,6 +9,24 @@
 .nuru-user { white-space: pre-wrap; overflow-wrap: anywhere; width: fit-content; max-width: 85%; margin: 0 0 var(--size-4-2) auto; background: var(--interactive-accent); color: var(--text-on-accent); border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l); padding: var(--size-4-1) var(--size-4-3); }
 .nuru-reply.markdown-rendered { font-size: var(--font-ui-small); }
 .nuru-state:not(:empty), .nuru-tool, .nuru-receipt, .nuru-decision { font-size: var(--font-ui-small); color: var(--text-muted); }
+/* What Nuru did: thinking and each call fold open to their text; a failed call and its reason in red. */
+.nuru-service { padding: var(--size-4-1) var(--size-4-2); font-size: var(--font-ui-smaller); color: var(--text-faint); border-bottom: 1px solid var(--background-modifier-border); }
+.nuru-service.nuru-error { color: var(--text-error); }
+/* Thought (the steps) and Vaulted (the notes written): sections that fold, with a caret on the right. */
+.nuru-activity > summary, .nuru-vaulted > summary { list-style: none; cursor: pointer; font-size: var(--font-ui-small); color: var(--text-muted); padding-bottom: var(--size-4-1); }
+.nuru-activity > summary::-webkit-details-marker, .nuru-vaulted > summary::-webkit-details-marker { display: none; }
+.nuru-activity > summary::after, .nuru-vaulted > summary::after { content: " ⌄"; }
+.nuru-activity[open] > summary::after, .nuru-vaulted[open] > summary::after { content: " ⌃"; }
+.nuru-activity[open] > summary, .nuru-vaulted[open] > summary { border-bottom: 1px solid var(--background-modifier-border); margin-bottom: var(--size-4-1); }
+.nuru-vaulted { margin-top: var(--size-4-2); }
+.nuru-steps, .nuru-writes, .nuru-vaulted-notes { padding-left: var(--size-4-2); }
+.nuru-writes:not(:empty) { margin-top: var(--size-4-1); }
+.nuru-vaulted-notes { font-size: var(--font-ui-small); }
+.nuru-step { font-size: var(--font-ui-small); color: var(--text-muted); }
+.nuru-step summary { cursor: pointer; overflow-wrap: anywhere; }
+.nuru-step-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20em; overflow-y: auto; margin: var(--size-4-1) 0 var(--size-4-1) var(--size-4-4); padding-left: var(--size-4-2); border-left: 2px solid var(--background-modifier-border); color: var(--text-faint); }
+.nuru-failed summary { color: var(--text-error); }
+.nuru-more { font-size: var(--font-ui-smaller); margin: var(--size-4-1) 0; }
 .nuru-receipt-uncertain, .nuru-receipt-failed { color: var(--text-error); }
 .nuru-card { border: 1px solid var(--interactive-accent); border-radius: var(--radius-m); padding: var(--size-4-2); margin-top: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
 .nuru-card-details { font-size: var(--font-ui-small); color: var(--text-muted); white-space: pre-wrap; }

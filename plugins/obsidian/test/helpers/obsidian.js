@@ -36,6 +36,7 @@ proto.removeClass = function (...names) { this.classList.remove(...names); };
 proto.toggleClass = function (name, on) { this.classList.toggle(name, on); };
 proto.setAttr = function (name, value) { this.setAttribute(name, value); };
 globalThis.createDiv = (options) => make("div", options);
+globalThis.createEl = (tag, options) => make(tag, options);
 
 class Component {
   constructor() {

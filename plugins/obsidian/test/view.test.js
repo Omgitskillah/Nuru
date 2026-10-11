@@ -159,7 +159,7 @@ test("a started turn with nothing to show says Nuru is getting ready while the m
   await view.close();
 });
 
-test("once the reply starts, the waiting line goes and no more status checks are made", async () => {
+test("once the reply starts, the line says Nuru is writing it; the status is then checked only every 10 s", async () => {
   const events = FIXTURES.streams.completed_with_tools;
   const firstText = events.findIndex((e) => e.type === "text") + 1;
   const history = [{ turn_id: "turn00000001", text: "trip?", state: "running", display: displayOf(events.slice(0, 1)) }];
@@ -168,8 +168,10 @@ test("once the reply starts, the waiting line goes and no more status checks are
   const [turn] = view.turns.values();
   await until(() => turn.runner.display.reply);
   view.tick();
-  assert.equal(turn.stateEl.textContent, "");
+  assert.equal(turn.stateEl.textContent, "Writing the reply… · 1 tool call so far");
   assert.ok(!client.calls.some((c) => c[0] === "status"));
+  for (let i = 0; i < 9; i += 1) view.tick();
+  await until(() => client.calls.some((c) => c[0] === "status"));
   await view.close();
 });
 
@@ -399,5 +401,250 @@ test("once the lost message is settled, Send goes on with what was written, wher
   await sending;
   const [, second] = client.calls.filter((c) => c[0] === "submit");
   assert.deepEqual(second.slice(1, 4), ["conv0000bbbb", "for B", [{ path: "nuru/B.md" }]]);
+  await view.close();
+});
+
+// ------------------------------------------------------------------ activity (WP01-ACT)
+function numbered(...pairs) {
+  return pairs.map(([type, data], i) => ({ v: 1, conversation_id: "conv0000demo", turn_id: "turn00000001", seq: i + 1,
+    at: "2026-10-11T12:00:00.000Z", type, data }));
+}
+
+test("a live turn shows its thinking folded, each call with what it was given and why it failed, and retries", async () => {
+  const live = numbered(
+    ["accepted", { request_id: "req-1" }], ["started", {}],
+    ["reasoning", { text: "Read the daily note first.", final: false }],
+    ["tool_start", { call_id: "call00000001", name: "read_note", arguments: { name: "nuru/daily-2026-10-11.md" } }],
+    ["reasoning", { text: "Read the daily note first.", final: true }],
+    ["tool_result", { call_id: "call00000001", ok: false, summary: "not_found" }],
+    ["retry", { reason: "over budget" }],
+    ["tool_start", { call_id: "call00000002", name: "write_note", arguments: { note: "nuru/daily-2026-10-11.md",
+      content: "- [ ] Buy sugar", mode: "append" } }],
+  );
+  const history = [{ turn_id: "turn00000001", text: "fix it", state: "running", display: displayOf(live.slice(0, 1)) }];
+  const { view } = await open({ client: fakeClient({ history, live: { turn00000001: live } }) });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.activity.steps.length === 4);
+  const steps = [...turn.toolsEl.querySelectorAll(".nuru-step")];
+  assert.deepEqual(steps.map((el) => (el.querySelector("summary") || el).textContent), [
+    "Thought (5 words)",
+    "✗ read_note nuru/daily-2026-10-11.md (not_found)",
+    "↻ Thinking stopped (over budget): going on without it",
+    "… write_note nuru/daily-2026-10-11.md",
+  ]);
+  const [thinking, failed, , writing] = steps;
+  assert.equal(thinking.tagName, "DETAILS");
+  assert.equal(thinking.open, false, "thinking starts folded");
+  assert.equal(thinking.querySelector(".nuru-step-body").textContent, "Read the daily note first.");
+  assert.ok(failed.classList.contains("nuru-failed"));
+  assert.equal(failed.querySelector(".nuru-step-body").textContent, "name: nuru/daily-2026-10-11.md\nFailed: not_found");
+  assert.equal(writing.querySelector(".nuru-step-body").textContent,
+    "note: nuru/daily-2026-10-11.md\ncontent: - [ ] Buy sugar\nmode: append");
+  view.tick();
+  assert.match(turn.stateEl.textContent, /^Running write_note… · 2 tool calls so far$/);
+
+  // A step the user opened stays open, and the same element, as the turn goes on.
+  writing.open = true;
+  turn.runner.display.apply({ ...live[0], seq: 9, type: "tool_result", data: { call_id: "call00000002", ok: true } });
+  turn.runner.activity.apply({ ...live[0], seq: 9, type: "tool_result", data: { call_id: "call00000002", ok: true } });
+  view.update(turn);
+  assert.equal(turn.toolsEl.querySelectorAll(".nuru-step")[3], writing);
+  assert.ok(writing.open);
+  assert.equal(writing.querySelector("summary").textContent, "✓ write_note nuru/daily-2026-10-11.md");
+  await view.close();
+});
+
+test("a finished turn from history shows its tools; Show all steps fetches the rest from its events", async () => {
+  const stream = FIXTURES.streams.completed_with_tools;
+  const history = [{ turn_id: "turn00000001", text: "trip?", state: "completed", display: displayOf(stream) }];
+  const client = fakeClient({ history });
+  const fetched = [];
+  client.events = async (turnId, after, onEvent) => { fetched.push([turnId, after]); stream.forEach(onEvent); };
+  const { view } = await open({ client });
+  const [turn] = view.turns.values();
+  assert.equal(turn.toolsEl.querySelector(".nuru-tool summary").textContent, "✓ search");
+  assert.match(turn.toolsEl.querySelector(".nuru-tool .nuru-step-body").textContent, /not kept in history/);
+  assert.deepEqual(fetched, [], "nothing is fetched until asked");
+  turn.moreEl.click();
+  await until(() => !turn.runner.activity.partial);
+  assert.deepEqual(fetched, [["turn00000001", 0]]);
+  assert.equal(turn.toolsEl.querySelector(".nuru-tool summary").textContent, "✓ search meeting notes Grüße (3 notes)");
+  assert.equal(turn.moreEl, null);
+  assert.equal(turn.toolsEl.querySelectorAll(".nuru-step").length, 2);
+  await view.close();
+});
+
+test("Show all steps says so when the turn's events are no longer kept", async () => {
+  const history = [{ turn_id: "turn00000001", text: "trip?", state: "completed",
+    display: displayOf(FIXTURES.streams.completed_with_tools) }];
+  const client = fakeClient({ history });
+  client.events = async () => { throw Object.assign(new Error("expired"), { status: 410 }); };
+  const { view } = await open({ client });
+  const [turn] = view.turns.values();
+  turn.moreEl.click();
+  await until(() => turn.moreEl.textContent === "Steps no longer kept");
+  assert.ok(turn.runner.activity.partial);
+  await view.close();
+});
+
+test("the status line shows the vault, the model, the notes and the queue, and a problem in red", async () => {
+  const status = { version: "0.1.0", vault: { id: "a", name: "ThrowAway" },
+    ready: { chat: "ready", notes: "ready", queue: { active: 1, waiting: 2, limit: 8 } } };
+  const client = fakeClient();
+  const { view } = await open({ client, status });
+  assert.equal(view.serviceEl.textContent, "ThrowAway · model ready · notes ready · 1 running, 2 waiting");
+  assert.equal(view.serviceEl.getAttribute("title"), "nuru-serve 0.1.0");
+  assert.ok(!view.serviceEl.classList.contains("nuru-error"));
+  client.status = async () => ({ ...status, ready: { chat: "unavailable", notes: "ready", queue: { active: 0, waiting: 0, limit: 8 } } });
+  for (let i = 0; i < 10; i += 1) view.tick();
+  await until(() => view.serviceEl.textContent === "ThrowAway · model unavailable · notes ready");
+  assert.ok(view.serviceEl.classList.contains("nuru-error"));
+  await view.close();
+});
+
+test("the status line's problem colour wins over its faint colour", () => {
+  const { JSDOM } = require("jsdom");
+  const css = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "styles.css"), "utf8");
+  const { window } = new JSDOM(`<style>${css}</style><div class="nuru-service nuru-error"></div><div class="nuru-service"></div>`);
+  const [problem, fine] = window.document.querySelectorAll(".nuru-service");
+  assert.equal(window.getComputedStyle(problem).color, "var(--text-error)");
+  assert.equal(window.getComputedStyle(fine).color, "var(--text-faint)");
+});
+
+// The turn from 2026-10-11: the first write_note had no `note`, was refused before writing, and the
+// second created the note. Only the second changed anything, and the panel must read that way.
+function giuliaTurn() {
+  const content = "Giulia Bona\n- Birthday: 20 September\n- Loves: Japanese food";
+  const stream = numbered(
+    ["accepted", { request_id: "req-1" }], ["started", {}],
+    ["reasoning", { text: "Create a person note.", final: true }],
+    ["tool_start", { call_id: "call00000001", name: "write_note", arguments: { content, type: "person" } }],
+    ["tool_result", { call_id: "call00000001", ok: false, summary: "REJECTED_BEFORE_WRITE" }],
+    ["write_receipt", { call_id: "call00000001", tool: "write_note", state: "failed", detail: "REJECTED_BEFORE_WRITE" }],
+    ["reasoning", { text: "It needs a title.", final: true }],
+    ["tool_start", { call_id: "call00000002", name: "write_note", arguments: { content, note: "Giulia Bona", type: "person" } }],
+    ["tool_result", { call_id: "call00000002", ok: true }],
+    ["write_receipt", { call_id: "call00000002", tool: "write_note", state: "applied", path: "nuru/giulia-bona.md" }],
+    ["text", { text: "Created nuru/giulia-bona.md." }],
+    ["completed", { reply: "Created nuru/giulia-bona.md." }],
+  );
+  stream[1].at = "2026-10-11T12:00:00.000Z";
+  stream.at(-1).at = "2026-10-11T12:01:02.000Z";
+  return stream;
+}
+
+test("a write refused before writing reads as not written, and each write says which call it was", async () => {
+  const stream = giuliaTurn();
+  const history = [{ turn_id: "turn00000001", text: "Add a note for Giulia", state: "running", display: displayOf(stream.slice(0, 1)) }];
+  const { view, opened } = await open({ client: fakeClient({ history, live: { turn00000001: stream } }) });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.ended);
+  const section = turn.toolsEl.querySelector("details.nuru-activity");
+  assert.deepEqual([...section.querySelectorAll(".nuru-receipt")].map((el) => el.textContent), [
+    "write_note, 1st call: not written (rejected before writing; nothing changed)",
+    "write_note, 2nd call, nuru/giulia-bona.md: done",
+  ], "what each write did is in the Thought section");
+  assert.equal(turn.receiptsEl.textContent, "", "nothing else under the reply");
+  assert.ok(!turn.vaultedEl.hidden && turn.vaultedEl.open, "Vaulted is shown, open");
+  assert.equal(turn.vaultedEl.querySelector("summary").textContent, "Vaulted");
+  assert.deepEqual([...turn.vaultedEl.querySelectorAll(".nuru-vaulted-notes a")].map((a) => a.textContent),
+    ["nuru/giulia-bona.md"], "only the note that was written");
+  const links = [...turn.el.querySelectorAll("a.internal-link")].filter((a) => a.textContent === "nuru/giulia-bona.md");
+  assert.equal(links.length, 2, "the receipt's path and Vaulted both link to the note");
+  for (const link of links) link.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.deepEqual(opened, [["nuru/giulia-bona.md", "", false], ["nuru/giulia-bona.md", "", false]]);
+  assert.equal(section.querySelector(".nuru-receipt-failed a"), null, "a write that changed nothing links nowhere");
+  const summaries = [...turn.toolsEl.querySelectorAll(".nuru-tool summary")].map((el) => el.textContent);
+  assert.deepEqual(summaries, ["✗ write_note (REJECTED_BEFORE_WRITE)", "✓ write_note Giulia Bona"],
+    "a call without a note isn't named by its content");
+  await view.close();
+});
+
+test("all the steps sit in one section: open while the turn runs, folded with its time once it ends", async () => {
+  const stream = giuliaTurn();
+  const history = [{ turn_id: "turn00000001", text: "Add a note for Giulia", state: "running", display: displayOf(stream.slice(0, 1)) }];
+  const client = fakeClient({ history, live: { turn00000001: stream.slice(0, 5) } });
+  const { view } = await open({ client });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.activity.steps.length === 2);
+  const section = turn.toolsEl.querySelector("details.nuru-activity");
+  assert.equal(turn.toolsEl.children.length, 1, "one section holds every step");
+  assert.equal(section.querySelectorAll(".nuru-step").length, 2);
+  assert.ok(section.open);
+  assert.equal(section.querySelector("summary").textContent, "Thinking…");
+  for (const event of stream.slice(5)) {
+    turn.runner.display.apply(event);
+    turn.runner.activity.apply(event);
+  }
+  view.update(turn);
+  assert.equal(section.querySelector("summary").textContent, "Thought (62 seconds)");
+  assert.ok(!section.open, "folded once the turn ended");
+  await view.close();
+});
+
+test("the section stays as the user left it", async () => {
+  const stream = giuliaTurn();
+  const history = [{ turn_id: "turn00000001", text: "Add a note for Giulia", state: "running", display: displayOf(stream.slice(0, 1)) }];
+  const client = fakeClient({ history, live: { turn00000001: stream.slice(0, 5) } });
+  const { view } = await open({ client });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.activity.steps.length === 2);
+  const section = turn.toolsEl.querySelector("details.nuru-activity");
+  await new Promise((resolve) => setTimeout(resolve, 20)); // the toggle from opening it has fired
+  section.open = false; // the user folds it while the turn runs
+  await until(() => turn.userToggled);
+  for (const event of stream.slice(5)) {
+    turn.runner.display.apply(event);
+    turn.runner.activity.apply(event);
+    view.update(turn);
+  }
+  assert.ok(!section.open);
+  await view.close();
+});
+
+test("a finished turn from history shows its steps folded, counted rather than timed", async () => {
+  const history = [{ turn_id: "turn00000001", text: "Add a note for Giulia", state: "completed", display: displayOf(giuliaTurn()) }];
+  const { view } = await open({ client: fakeClient({ history }) });
+  const [turn] = view.turns.values();
+  const section = turn.toolsEl.querySelector("details.nuru-activity");
+  assert.ok(!section.open);
+  assert.equal(section.querySelector("summary").textContent, "Thought (3 steps)");
+  assert.equal(section.querySelector(".nuru-receipt").textContent, "write_note, 1st call: not written (rejected before writing; nothing changed)");
+  assert.equal(turn.vaultedEl.querySelector("a").getAttribute("data-href"), "nuru/giulia-bona.md");
+  await view.close();
+});
+
+test("a write whose outcome is unknown stays under the reply too: that note needs checking", async () => {
+  const stream = FIXTURES.streams.uncertain_write;
+  const history = [{ turn_id: "turn00000001", text: "log it", state: "running", display: displayOf(stream.slice(0, 1)) }];
+  const { view } = await open({ client: fakeClient({ history, live: { turn00000001: stream } }) });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.ended);
+  assert.equal(turn.toolsEl.querySelector(".nuru-writes").textContent, "write_note nuru/Log.md: outcome unknown: check the note");
+  assert.equal(turn.receiptsEl.textContent, "write_note nuru/Log.md: outcome unknown: check the note");
+  assert.equal(turn.receiptsEl.querySelector("a"), null);
+  await view.close();
+});
+
+test("Vaulted shows only once a note was written, and stays folded if the user folds it", async () => {
+  const stream = giuliaTurn();
+  const history = [{ turn_id: "turn00000001", text: "Add a note for Giulia", state: "running", display: displayOf(stream.slice(0, 1)) }];
+  const { view } = await open({ client: fakeClient({ history, live: { turn00000001: stream.slice(0, 9) } }) });
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.seq === 9);
+  assert.ok(turn.vaultedEl.hidden, "nothing written yet");
+  const event = stream[9]; // the second call's receipt: applied
+  turn.runner.display.apply(event);
+  turn.runner.activity.apply(event);
+  view.update(turn);
+  assert.ok(!turn.vaultedEl.hidden);
+  turn.vaultedEl.open = false;
+  for (const later of stream.slice(10)) {
+    turn.runner.display.apply(later);
+    turn.runner.activity.apply(later);
+    view.update(turn);
+  }
+  assert.ok(!turn.vaultedEl.open);
+  assert.equal(turn.vaultedEl.querySelectorAll("a").length, 1);
   await view.close();
 });

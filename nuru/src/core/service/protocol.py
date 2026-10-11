@@ -31,6 +31,10 @@ MAX_REQUEST_BYTES = 256 * 1024
 MAX_EVENT_BYTES = 256 * 1024
 MAX_TEXT_CHARS = 16000  # one text event (schema)
 MAX_REPLY_CHARS = 60000  # completed.reply and cancelled.partial_reply (schema)
+# A tool's arguments are shown, not replayed: each value is cut to this many characters (as JSON, when
+# it isn't a string), and only the first MAX_ARGUMENTS are kept, so a tool_start always fits its frame.
+MAX_ARGUMENT_CHARS = 2000
+MAX_ARGUMENTS = 32  # tool_start.arguments maxProperties (schema)
 TERMINAL = frozenset({"completed", "failed", "cancelled"})
 # What may come before `started`: a turn can be cancelled or fail while it waits in the queue.
 BEFORE_START = frozenset({"accepted", "queued", "failed", "cancelled"})
@@ -146,6 +150,20 @@ def vault_id(vault: Path) -> str:
     """The vault's identity in status: a hash of its resolved path, never the path. A client computes
     the same for its own vault and refuses to chat if the two differ."""
     return hashlib.sha256(str(Path(vault).resolve()).encode()).hexdigest()[:32]
+
+
+def shown_arguments(arguments: dict) -> dict:
+    """A tool's arguments as a client is shown them: long values cut, with a note saying how long they
+    were, and at most MAX_ARGUMENTS of them. A write_note's whole content would otherwise make a frame
+    over MAX_EVENT_BYTES, and the turn would fail for want of a display."""
+    shown = {}
+    for key in list(arguments)[:MAX_ARGUMENTS]:
+        value = arguments[key]
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        if len(text) > MAX_ARGUMENT_CHARS:
+            value = f"{text[:MAX_ARGUMENT_CHARS]}…(cut: {len(text)} characters)"
+        shown[str(key)[:200]] = value
+    return shown
 
 
 def question_data(question: Question) -> dict:
@@ -393,11 +411,8 @@ class TurnStream:
                                       "operation": operation_hash(self.turn_id, question_id, data)})
 
     def session_event(self, event) -> list[dict]:
-        """A Session event as protocol events.
-
-        TODO(WP01 M3): Session yields no tool results or write receipts yet, so a stream has
-        tool_start but never tool_result or write_receipt. M3 adds Session events for both (the
-        approval cards and the uncertain-write receipt after a restart need them)."""
+        """A Session event as protocol events. A tool's result and write receipt don't come from here:
+        Session reports them through its on_tool_outcome hook (the service's Service._tool_outcome)."""
         from core import session  # heavy (MCP, Ollama, Laya); the protocol alone doesn't need it
 
         if isinstance(event, session.Text):
@@ -410,8 +425,9 @@ class TurnStream:
             return [self.emit("retry", {"reason": event.reason or "steered"})]
         if isinstance(event, session.RetryWithoutThinking):
             return [self.emit("retry", {"reason": "silent"})]
-        if isinstance(event, session.ToolCall):
-            return [self.emit("tool_start", {"call_id": new_id(), "name": event.name, "arguments": event.arguments})]
+        if isinstance(event, session.ToolCall):  # the call's own ID, so its outcome finds it (on_tool_outcome)
+            return [self.emit("tool_start", {"call_id": event.call_id or new_id(), "name": event.name,
+                                             "arguments": shown_arguments(event.arguments)})]
         if isinstance(event, session.Failure):
             return [self.emit("failed", {"code": "turn_failed", "message": event.message})]
         if isinstance(event, session.Ask):

@@ -194,7 +194,8 @@ def test_migration_preserves_legacy_rows_and_is_idempotent(tmp_path):
         for i, row in enumerate(rows, 1):
             assert row == dict(id=i, conversation_id=1, timestamp="same", role="user" if i % 2 else "nuru",
                               content="ü" * i, tokens_used=6000, content_tokens=estimate_tokens("ü" * i))
-        assert store._conn.execute("SELECT version FROM conversation_migrations").fetchall() == [(1,)]
+        assert store._conn.execute("SELECT version FROM conversation_migrations").fetchall() == [(1,), (2,)]
+        assert {"call_id", "target"} <= {row[1] for row in store._conn.execute("PRAGMA table_info(write_attempts)")}
         store.close()
 
 

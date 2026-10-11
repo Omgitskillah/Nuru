@@ -3,6 +3,7 @@ must wait are held by threading.Events the test releases, never by sleeps."""
 
 import json
 import os
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -19,6 +20,10 @@ from core.service.host import Service
 from core.service.protocol import Display, ProtocolError
 from core.service.store import ServiceBusy, ServiceStore
 from core.session import Ask, Failure, Text, ToolCall
+from core import tool_dispatch
+from core.providers.mcp_tools import ToolResult
+from core.service import host
+from core.tool_dispatch import MUTATIONS, ToolOutcome, failure
 
 ME, SOMEONE_ELSE = "operator", "intruder"
 WAIT = 10  # seconds before a test gives up on an event it expects
@@ -32,6 +37,7 @@ class ScriptedSession:
         self.scripts = scripts
         self.conversation_id = None
         self.answer_question = None
+        self.on_tool_outcome = None
         self.asked = []  # (conversation_id, text)
         self.answers = []  # what answer_question returned
         self.closed = self.shut_down = False
@@ -787,3 +793,313 @@ def test_once_unsafe_a_reader_already_waiting_is_let_go(harness, monkeypatch, th
     assert not reader.is_alive() and outcome == {"code": "internal"}
     gate.set()
     assert h.service.close(timeout=5) and thread_errors == []
+
+
+# --------------------------------------------------------------------------- tool results and write receipts
+def shown_call(name, arguments):
+    return ToolCall(name, arguments, secrets.token_urlsafe(12))
+
+
+def report(session, call, outcome):
+    """What Session does once a shown call has run: tell on_tool_outcome, by the call's ID."""
+    session.on_tool_outcome(call.call_id, call.name, call.arguments, outcome, call.name in MUTATIONS)
+
+
+def calls(*steps):
+    """Runs tools as Session does: each (name, arguments, outcome) is shown, then reported."""
+    def script(session, text, cancel):
+        for name, arguments, outcome in steps:
+            call = shown_call(name, arguments)
+            yield call
+            report(session, call, outcome)
+        yield Text("done")
+    return script
+
+
+def written(**result):
+    return ToolOutcome(json.dumps(result), True)
+
+
+def test_each_tool_gets_its_result_and_each_write_a_receipt_of_what_it_did(harness):
+    h = harness([calls(
+        ("read_note", {"name": "nuru/Trip.md"}, ToolOutcome("Rome", True)),
+        ("write_note", {"note": "Trip plan", "content": "x"}, written(path="nuru/trip-plan.md", created=True)),
+        ("rename_or_move_file", {"source_path": "nuru/trip-plan.md", "destination_path": "archive"},
+         written(**{"from": "nuru/trip-plan.md", "to": "archive/nuru/trip-plan.md"})),
+        ("write_note", {"note": "shared/Team.md"}, failure("policy", "NOT_RUN", "the user said No")),
+        ("write_note", {"note": "nuru/x.md"}, failure("rejection", "REJECTED_BEFORE_WRITE", "bad", certainty="not_completed")),
+        ("write_note", {"note": "nuru/y.md"}, failure("transport", "TimeoutError", "no answer", certainty="uncertain")),
+    )])
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    started = [e["data"]["call_id"] for e in events if e["type"] == "tool_start"]
+    assert [(e["data"]["call_id"], e["data"]["ok"]) for e in events if e["type"] == "tool_result"] == \
+        list(zip(started, [True, True, True, False, False, False]))
+    receipts = [e["data"] for e in events if e["type"] == "write_receipt"]
+    assert receipts == [  # the note each write actually changed, never the name it was asked by
+        {"call_id": started[1], "tool": "write_note", "state": "applied", "path": "nuru/trip-plan.md"},
+        {"call_id": started[2], "tool": "rename_or_move_file", "state": "applied", "path": "archive/nuru/trip-plan.md"},
+        {"call_id": started[3], "tool": "write_note", "state": "refused", "detail": "NOT_RUN"},
+        {"call_id": started[4], "tool": "write_note", "state": "failed", "detail": "REJECTED_BEFORE_WRITE"},
+        {"call_id": started[5], "tool": "write_note", "state": "uncertain", "detail": "TimeoutError"},
+    ]
+    assert shown(events).receipts == receipts
+
+
+REAL_BACKEND = """
+import json
+from obsidian_mcp import server
+created = server.write_note(content="Rome in May.", note="Trip plan")
+daily = server.write_note(content="Today.", type="daily")
+by_id = server.write_note(content="More.", note=daily["id"])
+other = server.write_note(content="x", note="Other")
+calls = [
+    ("write_note", created),
+    ("write_note", daily),
+    ("write_note", by_id),
+    ("rename_or_move_file", server.rename_or_move_file(source_path=created["path"], destination_path="archive")),
+    ("rename_or_move_file", server.rename_or_move_file(source_path=other["path"], destination_path="trash")),
+]
+print(json.dumps(calls))
+"""
+
+
+def test_receipts_name_the_files_the_real_notes_server_changed(tmp_path):
+    """The pinned Obsidian backend, in a scratch vault: a title, a daily, an ID, an archive and a trash
+    move. Each applied receipt names a file that exists, whatever the call asked for."""
+    vault = tmp_path / "vault"
+    for folder in ("nuru", "archive", "trash"):
+        (vault / folder).mkdir(parents=True)
+    ran = subprocess.run([sys.executable, "-c", REAL_BACKEND], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": ""})
+    assert ran.returncode == 0, ran.stderr
+    paths = []
+    for name, result in json.loads(ran.stdout):
+        receipt = host._receipt("call00000001", name, tool_dispatch.classify(name, ToolResult(json.dumps(result))))
+        assert receipt["state"] == "applied"
+        paths.append(receipt["path"])
+    assert paths[:3] == ["nuru/trip-plan.md", paths[1], paths[1]] and paths[1].startswith("nuru/daily-")
+    assert paths[3:] == ["archive/nuru/trip-plan.md", "trash/nuru/other.md"]
+    assert all((vault / path).is_file() for path in paths[1:])  # the first was then archived
+
+
+def test_an_outcome_is_reported_only_for_its_own_shown_call(harness):
+    def script(session, text, cancel):
+        read = shown_call("read_note", {"name": "x"})
+        yield read
+        report(session, read, ToolOutcome("x", True))
+        report(session, read, failure("dependency", "SKIPPED", "no"))  # reported already
+        write = shown_call("write_note", {"note": "nuru/x.md"})
+        yield write
+        report(session, shown_call("write_note", {"note": "nuru/y.md"}), ToolOutcome("{}", True))  # never shown
+        yield Text("done")
+
+    h = harness([script])
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    assert [e["type"] for e in events if e["type"].startswith(("tool", "write"))] == ["tool_start", "tool_result", "tool_start"]
+
+
+def test_a_huge_write_is_shown_cut_and_the_turn_still_completes(harness):
+    content = "x" * 400_000
+    h = harness([calls(("write_note", {"note": "nuru/Big.md", "content": content}, written(path="nuru/big.md")))])
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    (start,) = [e for e in events if e["type"] == "tool_start"]
+    assert start["data"]["arguments"]["content"] == "x" * protocol.MAX_ARGUMENT_CHARS + "…(cut: 400000 characters)"
+    assert start["data"]["arguments"]["note"] == "nuru/Big.md" and events[-1]["type"] == "completed"
+
+
+def test_shown_arguments_keep_short_values_and_cut_the_rest():
+    many = {f"k{i}": i for i in range(40)}
+    assert protocol.shown_arguments(many) == {f"k{i}": i for i in range(32)}
+    nested = {"rows": [[1, 2]] * 2000, "query": "trip"}
+    shown_args = protocol.shown_arguments(nested)
+    assert shown_args["query"] == "trip" and shown_args["rows"].endswith("characters)")
+
+
+def test_an_outcome_that_cant_be_stored_stops_the_turn_and_is_never_taken_by_another_call(harness, monkeypatch):
+    """The reviewer's case: the first write's receipt fails to store once; then, with tools closed, an
+    unshown refusal of a second write comes. Only the first write ran, and only it gets a receipt."""
+    dispatched = []
+
+    def script(session, text, cancel):
+        first = shown_call("write_note", {"note": "nuru/first.md"})
+        yield first
+        dispatched.append("nuru/first.md")
+        report(session, first, written(path="nuru/first.md"))
+        assert cancel.is_set()  # the turn was told to stop
+        # Session's refusal of a call it never showed (TOOLS_CLOSED) has no call ID: on_tool_outcome isn't called.
+        yield Text("stopping")
+
+    h = harness([script])
+    store, real_add = h.service.store, h.service.store.add_event
+    failed = []
+
+    def add_event(event):
+        if event["type"] == "write_receipt" and not failed:
+            failed.append(event)
+            raise sqlite3.OperationalError("disk I/O error")
+        real_add(event)
+
+    monkeypatch.setattr(store, "add_event", add_event)
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    receipts = [e["data"] for e in events if e["type"] == "write_receipt"]
+    assert [(r["state"], r["path"]) for r in receipts] == [("applied", "nuru/first.md")]  # recorded as the turn ended
+    assert events[-1]["data"] == {"code": "internal", "message": host.UNRECORDED}
+    assert dispatched == ["nuru/first.md"]  # the write ran once
+
+
+CRASHING_HOST_WRITES = """
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from core.conversation_store import ConversationStore
+from core.service.host import Service
+from core.service.store import ServiceStore
+from core import questions
+from core.tool_dispatch import failure
+from test_service_host import ScriptedSession, report, shown_call
+
+root, case = Path(sys.argv[1]), sys.argv[3]
+vault = str((root / "vault").resolve())
+conversations = ConversationStore(root / "conversation.db")
+calls = []
+
+def write(state, target=None, exit_after=True):
+    def script(session, text, cancel):
+        call = shown_call("write_note", {"note": "Trip plan"})
+        calls.append(call.call_id)
+        yield call
+        attempt = conversations.begin_write(session.conversation_id, "logger-turn", vault, "write_note", {}, call_id=call.call_id)
+        if state != "in_flight":
+            conversations.finish_write(attempt, state, target=target)  # committed; the process dies before the hook
+        if exit_after:
+            print(json.dumps(calls), flush=True)
+            os._exit(9)
+        report(session, call, failure("transport", "TimeoutError", "no answer", certainty="uncertain"))
+    return script
+
+def asks_then_dies(session, text, cancel):
+    yield shown_call("write_note", {"note": "shared/Team.md"})
+    session.answer_question(questions.shared_write("write_note", {}, "shared/Team.md"))
+
+scripts = {
+    "in_flight": [write("in_flight")],
+    "completed": [write("completed", "nuru/trip-plan.md")],
+    "not_completed": [write("not_completed")],
+    # A records an uncertain write and ends; B, queued behind it, is cut short at its approval, before any write.
+    "queued": [write("uncertain", exit_after=False), asks_then_dies],
+}[case]
+session = ScriptedSession(scripts)
+service = Service(ServiceStore(root / "service.db"), conversations, lambda conversation_id: session, root / "vault",
+                  answer_seconds=3600)
+conversation = service.create_conversation("operator", {"request_id": "req-conversation-0001"})[1]["conversation_id"]
+turns = [service.submit_turn("operator", conversation, {"request_id": f"req-turn-0000000{i}", "text": "go"})[1]["turn_id"]
+         for i in range(1, len(scripts) + 1)]
+if case == "queued":
+    seen = []
+    while not any(e["type"] == "question" for e in seen):
+        seen += service.wait_events(turns[1], len(seen), 5)[0]
+    print(json.dumps(calls), flush=True)
+    os._exit(9)
+import time
+time.sleep(60)
+"""
+
+
+def crash(tmp_path, case):
+    (tmp_path / "vault").mkdir(exist_ok=True)
+    crashed = subprocess.run([sys.executable, "-c", CRASHING_HOST_WRITES, str(tmp_path), str(Path(__file__).parent), case],
+                             capture_output=True, text=True, timeout=60)
+    assert crashed.returncode == 9, crashed.stderr
+    restarted = Service(ServiceStore(tmp_path / "service.db"), ConversationStore(tmp_path / "conversation.db"),
+                        lambda conversation_id: ScriptedSession([]), tmp_path / "vault")
+    return restarted, json.loads(crashed.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("case,state,path", [("in_flight", "uncertain", None), ("completed", "applied", "nuru/trip-plan.md"),
+                                             ("not_completed", "failed", None)])
+def test_after_a_crash_each_write_gets_the_receipt_its_own_ledger_entry_shows(tmp_path, case, state, path):
+    restarted, (call_id,) = crash(tmp_path, case)
+    try:
+        turn = restarted.request_state(ME, "req-turn-00000001", "submit_turn")["turn_id"]
+        events = restarted.store.events(turn)
+        protocol.check_stream(events)
+        (receipt,) = [e["data"] for e in events if e["type"] == "write_receipt"]
+        assert (receipt["call_id"], receipt["state"], receipt.get("path")) == (call_id, state, path)
+        assert next(e["data"]["ok"] for e in events if e["type"] == "tool_result") is (state == "applied")
+        assert events[-1]["data"]["code"] == "service_restarted"
+        still_blocking = restarted.conversations.pending_writes(str((tmp_path / "vault").resolve()))
+        assert len(still_blocking) == (state == "uncertain")
+    finally:
+        restarted.close()
+        restarted.store.close()
+
+
+def test_after_a_crash_a_queued_turn_never_gets_an_earlier_turn_s_write(tmp_path):
+    restarted, _ = crash(tmp_path, "queued")
+    try:
+        first, second = (restarted.request_state(ME, f"req-turn-0000000{i}", "submit_turn")["turn_id"] for i in (1, 2))
+        assert [e["data"]["state"] for e in restarted.store.events(first) if e["type"] == "write_receipt"] == ["uncertain"]
+        events = restarted.store.events(second)
+        protocol.check_stream(events)
+        assert not any(e["type"] in ("write_receipt", "tool_result") for e in events)  # it never wrote
+        closed = next(e["data"] for e in events if e["type"] == "question_closed")
+        assert (closed["outcome"], closed["decision"]) == ("expired", "No")
+    finally:
+        restarted.close()
+        restarted.store.close()
+
+
+def uncertain_write_then_failure(h):
+    """As Session handles an uncertain write: report it, then end the turn with a Failure. The attempt is
+    in the write ledger under the call's ID, as Session records it."""
+    def script(session, text, cancel):
+        call = shown_call("write_note", {"note": "nuru/log.md"})
+        yield call
+        h.service.conversations.begin_write(session.conversation_id, "logger-turn", str(h.vault.resolve()),
+                                            "write_note", {}, call_id=call.call_id)
+        report(session, call, failure("transport", "TimeoutError", "no answer", certainty="uncertain"))
+        yield Failure("The outcome of write_note is uncertain. Do not retry the write.")
+    return script
+
+
+def failing_receipts(monkeypatch, store, times):
+    real_add, failed = store.add_event, []
+
+    def add_event(event):
+        if event["type"] == "write_receipt" and len(failed) < times:
+            failed.append(event)
+            raise sqlite3.OperationalError("disk I/O error")
+        real_add(event)
+
+    monkeypatch.setattr(store, "add_event", add_event)
+
+
+def test_a_turn_never_ends_before_a_receipt_that_failed_to_store(harness, monkeypatch):
+    """The receipt of an uncertain write fails to store once; Session's Failure that follows must not end
+    the turn first."""
+    h = harness([])
+    h.session.scripts.append(uncertain_write_then_failure(h))
+    failing_receipts(monkeypatch, h.service.store, times=1)
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    kinds = [e["type"] for e in events]
+    assert kinds.index("write_receipt") < kinds.index("failed") == len(kinds) - 1
+    assert next(e["data"]["state"] for e in events if e["type"] == "write_receipt") == "uncertain"
+
+
+def test_while_a_receipt_still_cant_be_stored_the_turn_stays_open_and_a_restart_recovers_it(harness, monkeypatch):
+    h = harness([])
+    h.session.scripts.append(uncertain_write_then_failure(h))
+    failing_receipts(monkeypatch, h.service.store, times=10**6)
+    turn = h.submit(h.conversation())[1]["turn_id"]
+    h.first(turn, "tool_start")
+    assert h.service.close(timeout=5)  # the worker is done with the turn, which never got an end
+    events = h.service.store.events(turn)
+    assert not any(e["type"] in protocol.TERMINAL for e in events) and not any(e["type"] == "write_receipt" for e in events)
+    monkeypatch.undo()
+    h.service.store.close()
+    h.service.conversations.close()
+    restarted = h.service = h.open()
+    events = restarted.store.events(turn)
+    protocol.check_stream(events)
+    assert [e["data"]["state"] for e in events if e["type"] == "write_receipt"] == ["uncertain"]
+    assert events[-1]["data"]["code"] == "service_restarted"

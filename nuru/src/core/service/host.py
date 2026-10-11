@@ -30,12 +30,16 @@ from core.questions import Question
 from core.service import protocol
 from core.service.protocol import Display, ProtocolError, TurnStream
 from core.service.store import ServiceStore
+from core.tool_dispatch import MUTATIONS, ToolOutcome, written_path
 
 QUEUE_LIMIT = 4  # turns waiting behind the running one
 RETENTION_DAYS = 30
 MAX_PAGE = 50
 RESTARTED = "Nuru restarted before this turn finished. Nothing was retried; check any write it made."
 UNSAFE = "Nuru's database is in an uncertain state; restart nuru-serve"
+UNKNOWN_WRITE = "Nuru stopped before this write's outcome was known. It was not retried; check the note."
+UNRECORDED = "Nuru couldn't record what a tool did, so it stopped. Check the notes this turn may have changed."
+REFUSED_KINDS = frozenset({"policy", "repair", "dependency", "replay"})  # ToolOutcome.kind of a call not run on purpose
 
 
 def _stamp(moment: datetime) -> str:
@@ -67,6 +71,10 @@ class _Live:
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
     cancel_reason: str = "user"
     waiter: _Waiter | None = None
+    # Outcomes that couldn't be stored when they came, oldest first. While any is left, nothing more of
+    # the turn is stored, its end above all (_caught_up); the turn has been told to stop.
+    unrecorded: list[Callable[[TurnStream], None]] = dataclasses.field(default_factory=list)
+    lost_outcome: bool = False  # an outcome couldn't be stored when it came: the turn ends failed
 
 
 class Service:
@@ -110,9 +118,36 @@ class Service:
             self.store.compact(retention_days)
             for turn in self.store.unfinished_turns():
                 live = _Live(TurnStream.resume(turn["conversation_id"], turn["id"], self.store.events(turn["id"])), 0, "")
+                self._receipt_for_unknown_write(live, turn)
                 for question_id in live.stream.open_questions:
                     self._close_question(live, question_id, "expired")
                 self._emit(live, lambda s: s.emit("failed", {"code": "service_restarted", "message": RESTARTED}))
+
+    def _receipt_for_unknown_write(self, live: _Live, turn: dict) -> None:
+        """A turn cut short around a write: each write call shown without a result gets one from its
+        own entry in the write ledger (looked up by the call's ID): completed is applied, with the note
+        it changed; not_completed failed; in_flight or uncertain uncertain, never run again, and
+        blocking further writes until the operator resolves it. A call with no entry never ran."""
+        reported = {e["data"]["call_id"] for e in live.stream.events if e["type"] == "tool_result"}
+        for event in list(live.stream.events):
+            data = event["data"]
+            if event["type"] != "tool_start" or data["name"] not in MUTATIONS or data["call_id"] in reported:
+                continue
+            write = self.conversations.write_for_call(data["call_id"])
+            if write is None:
+                continue
+            state = {"completed": "applied", "not_completed": "failed"}.get(write["state"], "uncertain")
+            receipt = {"call_id": data["call_id"], "tool": data["name"], "state": state}
+            if state == "applied" and _vault_path(write["target"]):
+                receipt["path"] = write["target"]
+            if state == "uncertain":
+                receipt["detail"] = UNKNOWN_WRITE
+
+            def report(stream: TurnStream, receipt=receipt) -> None:
+                stream.emit("tool_result", {"call_id": receipt["call_id"], "ok": receipt["state"] == "applied"})
+                stream.emit("write_receipt", receipt)
+
+            self._emit(live, report)
 
     def close(self, timeout: float = 30) -> bool:
         """Stop taking work, cancel the queued turns and the running one, and wait for the worker. The
@@ -199,10 +234,9 @@ class Service:
         return self._request(principal, "submit_turn", payload, conversation_id, act)
 
     def _prompt(self, payload: dict) -> str:
-        """The message as Session gets it: the text, then what the user attached, if anything.
-
-        TODO(WP01 M3): settle how attachments reach the model with the plugin; for now each is named,
-        with its selection quoted."""
+        """The message as Session gets it: the text, then what the user attached, if anything. A note is
+        named, never pasted in: the model reads it with its own tools, under the same rules as any
+        other read. A selection the user made is quoted."""
         parts = [payload["text"]]
         for attachment in payload.get("attachments", []):
             path = self._vault_relative(attachment["path"])
@@ -477,17 +511,19 @@ class Service:
             return
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
+        session.on_tool_outcome = lambda call_id, name, arguments, outcome, write: self._tool_outcome(live, call_id, name, outcome, write)
         try:
             for event in session.ask(live.prompt, live.cancel):
                 with self._lock:
                     # After a Failure or an Ask, Session has nothing more to add. Unsafe, it was told to
-                    # stop, and what it says until then can't be stored.
-                    if not live.stream.ended and not self._unsafe:
+                    # stop, and what it says until then can't be stored. A Failure that ends the turn
+                    # comes only after the outcomes that couldn't be stored are (_caught_up).
+                    if not live.stream.ended and not self._unsafe and self._caught_up(live):
                         self._emit(live, lambda s: s.session_event(event))
         except Exception as error:
             unavailable = isinstance(error, requests.exceptions.ConnectionError)
             with self._lock:
-                if not live.stream.ended and not self._unsafe:
+                if not live.stream.ended and not self._unsafe and self._caught_up(live):
                     for question_id in live.stream.open_questions:
                         self._close_question(live, question_id, "expired")
                     self._emit(live, lambda s: s.emit("failed", {
@@ -496,9 +532,51 @@ class Service:
             return
         finally:
             session.answer_question = None
+            session.on_tool_outcome = None
         with self._lock:
-            if not live.stream.ended and not self._unsafe:
+            if live.stream.ended or self._unsafe or not self._caught_up(live):
+                return  # not caught up: left unfinished, and the next start recovers its writes from the ledger
+            if live.lost_outcome:
+                self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": UNRECORDED}))
+            else:
                 self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+
+    def _caught_up(self, live: _Live) -> bool:
+        """Store the outcomes that couldn't be stored when they came, oldest first. False if one still
+        can't be: then nothing more of the turn may be stored, least of all its end. A turn left so stays
+        unfinished until the next start, which gives its write calls their receipts from the write
+        ledger, by call ID."""
+        while live.unrecorded:
+            try:
+                self._emit(live, live.unrecorded[0])
+            except Exception:
+                return False
+            live.unrecorded.pop(0)
+        return True
+
+    def _tool_outcome(self, live: _Live, call_id: str, name: str, outcome: ToolOutcome, write: bool) -> None:
+        """Session.on_tool_outcome, on the worker thread: the result of the call `call_id`, and for a
+        write, its receipt. Only for a call this turn's stream started and hasn't reported. If it can't
+        be stored, the turn is stopped (no tool is run again) and the outcome is kept to store before
+        anything else of the turn (_caught_up)."""
+        def report(stream: TurnStream) -> None:
+            stream.emit("tool_result", {"call_id": call_id, "ok": outcome.success,
+                                        **({"summary": outcome.code[:2000]} if not outcome.success and outcome.code else {})})
+            if write:
+                stream.emit("write_receipt", _receipt(call_id, name, outcome))
+
+        with self._lock:
+            if self._unsafe or live.stream.ended or not _awaiting_result(live.stream, call_id):
+                return
+            try:
+                if not self._caught_up(live):
+                    raise RuntimeError("an earlier outcome is still unrecorded")
+                self._emit(live, report)
+            except Exception:
+                print(f"nuru-serve: couldn't record the outcome of {name}; stopping the turn", file=sys.stderr)
+                live.unrecorded.append(report)
+                live.lost_outcome = True
+                live.cancel.set()  # Session stops at its next step
 
     def _ensure_session(self, conversation_id: int):
         """The shared Session, built on the first turn (in this, the worker thread)."""
@@ -518,7 +596,7 @@ class Service:
         is stopped."""
         seconds = self.answer_seconds if self.answer_seconds is not None else (question.timeout or questions.ANSWER_SECONDS)
         with self._lock:
-            if live.cancel.is_set() or self._unsafe:
+            if live.cancel.is_set() or self._unsafe or not self._caught_up(live):
                 return None
             expires = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             with self._atomic():
@@ -535,3 +613,39 @@ class Service:
                 self._close_question(live, waiter.id, "expired")
                 return None
             return waiter.answer
+
+
+def _awaiting_result(stream: TurnStream, call_id: str) -> bool:
+    """Whether the stream started the call `call_id` and has no result for it yet."""
+    started = any(e["type"] == "tool_start" and e["data"]["call_id"] == call_id for e in stream.events)
+    return started and not any(e["type"] == "tool_result" and e["data"]["call_id"] == call_id for e in stream.events)
+
+
+def _vault_path(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        protocol.validate("vault_path", value)
+        return True
+    except ProtocolError:
+        return False
+
+
+def _receipt(call_id: str, tool: str, outcome: ToolOutcome) -> dict:
+    """What a write actually did, for a write_receipt: applied, refused (not run on purpose: a policy,
+    a No, a blocked write), failed, or uncertain (it may have run; never retried). An applied receipt
+    names the note the notes server reports it changed, never the name the call asked for."""
+    if outcome.success:
+        state = "applied"
+    elif outcome.certainty == "uncertain":
+        state = "uncertain"
+    elif outcome.kind in REFUSED_KINDS:
+        state = "refused"
+    else:
+        state = "failed"
+    receipt = {"call_id": call_id, "tool": tool, "state": state}
+    if state == "applied" and _vault_path(target := written_path(tool, outcome)):
+        receipt["path"] = target
+    if state != "applied" and outcome.code:
+        receipt["detail"] = outcome.code[:500]
+    return receipt

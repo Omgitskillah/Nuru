@@ -95,10 +95,10 @@ Every event has these fields:
 | `text` | A piece of the reply, at most 16,000 characters. A reply that Session buffers is split to fit. Chunks may split words, Markdown or Unicode clusters, but never a code point. |
 | `reasoning` | Optional display data. Chunks have `final: false`. `final: true` carries the whole call's reasoning and replaces the chunks before it. No turn needs these to finish. |
 | `retry` | The model call is being run again (`silent`: it only reasoned; otherwise why it was steered). |
-| `tool_start` / `tool_result` | A tool call (`call_id`, name, arguments), then whether it worked. |
+| `tool_start` / `tool_result` | A tool call (`call_id`, name, arguments), then whether it worked (`summary`: the error code when it didn't). A call can be left without a result: an enforced write that is started again with corrected arguments leaves the first start open. |
 | `question` | A question Nuru needs answered before it can go on. Details under Questions. |
 | `question_closed` | `answered`, `expired` or `cancelled`. Only `answered` has `chosen` (possibly empty) and, where `allow_other` is set, `other`. `decision` is what Nuru acts on. Details under Questions. |
-| `write_receipt` | What a write actually did: `applied`, `refused`, `failed` or `uncertain`. Clients show this, not the request. |
+| `write_receipt` | What a write actually did, after its `tool_result`: `applied`; `refused` (not run on purpose: a policy, a No, a blocked write); `failed`; or `uncertain` (it may have run; never retried). An `applied` receipt's `path` is the file the write actually changed, as the notes server reports it (a title or a daily resolves to its file; an archive or trash move names where the note went); it is left out when that can't be told, and on other states. Clients show this, not the request. |
 | `completed` | The reply, plus `ask` if the model asked the user something (the next message answers it). A reply over 60,000 characters keeps its start and adds `truncated: true`; the conversation history keeps the whole reply. |
 | `failed` | `turn_failed`, `model_unavailable`, `service_restarted` or `internal`, with a message fit to show the user. |
 | `cancelled` | `user` (Stop) or `shutdown`, with the reply so far (truncated the same way). |
@@ -114,7 +114,8 @@ A stream has these rules (`StreamCheck` enforces them):
   opened.
 - One event is at most 256 KiB. The limit counts the whole SSE frame as sent: compact JSON
   plus the `id`/`event`/`data` lines. Text fields are bounded so they always fit, and
-  longer tool arguments are cut for display.
+  longer tool arguments are cut for display: each value to 2,000 characters (as JSON when it
+  isn't a string), ending `…(cut: N characters)`, and at most 32 of them.
 
 ### Reconnecting
 
@@ -169,6 +170,19 @@ A stream has these rules (`StreamCheck` enforces them):
 A crash between a write and its receipt leaves the write `uncertain`. It is recorded
 (`write_attempts`, as today), reported with `write_receipt` `state: uncertain`, and never
 replayed on its own. The operator resolves it.
+
+When the service starts again, each write call of an unfinished turn that has no result yet gets
+one from its own entry in the write ledger, found by the call's `call_id`: `completed` is
+`applied` (with the file it changed), `not_completed` is `failed`, and `in_flight` or `uncertain`
+is `uncertain`. A call with no entry never ran and gets nothing. These come before the turn's
+`failed` (`service_restarted`).
+
+## Attachments
+
+A turn's `attachments` are only what the user attached. The model is told each note's path
+and reads the note itself, with its own tools and under the same rules as any other read; a
+`selection` is quoted in the message. The service never pastes a note's contents in. A path
+that resolves outside the vault, through a symlink too, is refused with `invalid_request`.
 
 ## Errors
 

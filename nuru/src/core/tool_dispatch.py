@@ -76,6 +76,20 @@ def validate(name: str, arguments, schemas: dict) -> tuple[dict | None, ToolOutc
     return args, None
 
 
+def written_path(name: str, outcome: ToolOutcome) -> str | None:
+    """The note a successful write actually changed, as the notes server reports it: write_note's
+    `path`, rename_or_move_file's `to`. Not what the call asked for: a title, a daily or a folder
+    resolves to a file only there. None when it can't be told."""
+    if not outcome.success or name not in MUTATIONS:
+        return None
+    try:
+        data = json.loads(outcome.text)
+    except (ValueError, TypeError):
+        return None
+    value = data.get("to" if name == "rename_or_move_file" else "path") if isinstance(data, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
 def classify(name: str, result: ToolResult) -> ToolOutcome:
     data = None
     if name in DOMAIN_TOOLS or name in MUTATIONS:

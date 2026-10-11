@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core import session
+from core import session, tool_dispatch
 from core.conversation_store import ConversationStore
 from core.model_profile import ModelProfile
 from core.providers.mcp_tools import ToolResult
@@ -579,6 +579,28 @@ def test_ask_runs_a_tool_call_and_sends_the_result_back_to_the_model(monkeypatch
     assert events == [ToolCall("get_temperature", {"city": "Berlin"}), Text("It's 17C")]
     assert fake_tools.calls == [("get_temperature", {"city": "Berlin"})]
     assert sent[1][-1] == {"role": "tool", "content": "17C"}
+
+
+def test_each_shown_tool_call_reports_its_outcome_by_its_own_id(monkeypatch):
+    fake_tools = FakeMCPTools(tool_results={"get_temperature": "17C", "read_note": "a note",
+                                            "write_note": '{"done": true, "path": "nuru/trip-plan.md"}'})
+    responses = iter([[{"tool_calls": [tool_call("get_temperature", {"city": "Berlin"}),
+                                       tool_call("write_note", {"note": "Trip plan", "content": "x"})]}], ["It's 17C"]])
+    s = start_session(monkeypatch, chat=lambda *a, **k: iter(next(responses)), tools=fake_tools)
+    reported = []
+    s.on_tool_outcome = lambda call_id, name, arguments, outcome, write: reported.append((call_id, name, outcome.success, write))
+
+    events = list(s.ask("weather, and save the plan"))
+    s._call_tool("turn", "read_note", {"name": "x"}, None, None, harness=True)  # as run_python reads its notes
+    s._call_tool("turn", "write_note", {"note": "y"}, None, None,  # a refusal never shown (tools closed)
+                 refusal=tool_dispatch.failure("policy", "TOOLS_CLOSED", "no"))
+
+    shown_ids = [e.call_id for e in events if isinstance(e, ToolCall)]
+    assert reported == [(shown_ids[0], "get_temperature", True, False), (shown_ids[1], "write_note", True, True)]
+    assert len(set(shown_ids)) == 2 and all(shown_ids)
+    ledger = s.store._conn.execute("SELECT call_id, state, target FROM write_attempts").fetchall()
+    assert ledger == [(shown_ids[1], "completed", "nuru/trip-plan.md")]  # the note it changed, by the call's ID
+    s.close()
 
 
 def test_ask_yields_the_tool_call_before_running_it(monkeypatch):

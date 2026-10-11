@@ -47,13 +47,40 @@ Needs Node 24 and npm, `uv`, and desktop Obsidian.
    chat. **Nuru** in the plugin's settings shows the port (27125 unless you change it), where the token is
    read from, this vault's ID, and **Check and reconnect**.
 
-**Upgrade**: pull, then run step 1 again, and turn Nuru off and on (or restart Obsidian) to load the new
-version. Settings, the token and the conversations stay; the conversations live in the service, not the
-vault.
+## Upgrade
 
-**Uninstall**: turn Nuru off under Community plugins, then delete `<vault>/.obsidian/plugins/nuru/` (its
-`data.json` holds only the port and the last conversation's ID). To revoke its access too,
-`uv run nuru-serve token remove obsidian`. The conversations stay in the service's database.
+Leave Obsidian open and `nuru-serve` running.
+
+1. Get the new code: `git pull` in the Nuru folder.
+2. Install over the old copy, from the Nuru folder:
+
+   ```sh
+   npm ci --prefix plugins/obsidian
+   node plugins/obsidian/install.js <vault>
+   ```
+
+   It prints `Installed: <vault>/.obsidian/plugins/nuru`. Obsidian keeps running the old version until
+   you reload the plugin.
+3. Reload it: in Obsidian, Settings → Community plugins, turn **Nuru** off, then on again. Restarting
+   Obsidian does the same.
+4. Check: Settings → Community plugins shows the new version under **Nuru**. Open the chat from the
+   lantern. The last conversation is still there, and the port in Nuru's settings is unchanged.
+
+Nothing else changes: the port and last conversation (`data.json`), the token (outside the vault) and the
+conversations (in the service's database) all stay. To try an upgrade with no new code, skip step 1. The
+version stays the same, but steps 2–4 still replace the files and reload them.
+
+## Uninstall
+
+1. In Obsidian, Settings → Community plugins, turn **Nuru** off. The lantern leaves the ribbon.
+2. Delete the folder `<vault>/.obsidian/plugins/nuru/`. **Nuru** disappears from Community plugins
+   (reopen Settings if it's still listed). The folder holds only the plugin's files and `data.json` (the
+   port and the last conversation's ID). Your notes are elsewhere and aren't touched.
+3. Optional: stop the plugin from connecting again with `uv run nuru-serve token remove obsidian`, in the
+   Nuru folder.
+
+The conversations stay in the service's database. After installing again (Install, steps 1 and 4), you can
+pick them in the panel. After step 3 you also need to pair again (Install, step 2).
 
 **Same build everywhere**: dependencies are pinned exactly (`package-lock.json`, installed with `npm ci`),
 and the build checks that `manifest.json` and `package.json` carry the same version. Two builds from the

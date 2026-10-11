@@ -16,9 +16,8 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 - [x] **WP01-M1** Protocol v1 and streaming spike (#12)
 - [x] **WP01-M2** `nuru-serve` lifecycle and persistence (#13)
 - [x] **WP01-M3** Chat and approvals: service side (#14) and Obsidian plugin (#15)
-- [~] **WP01-M4** Package and install: a reproducible plugin bundle, manifest and styles, a safe installer, and instructions for local pairing and uninstalling.
-  - Done in code (branch `wp01-m4-package`): installer `plugins/obsidian/install.js`, install/pairing/upgrade/uninstall docs, version check, byte-identical builds, the lantern icon replacing the chat bubble.
-  - Left: the manual run in real Obsidian (install, upgrade, unload; the icon in light and dark).
+- [x] **WP01-M4** Package and install: a reproducible plugin bundle, manifest and styles, a safe installer, and instructions for local pairing and uninstalling. (done 2026-10-11, #16)
+  - Installer `plugins/obsidian/install.js`, install/pairing/upgrade/uninstall docs, version check, byte-identical builds, the lantern icon replacing the chat bubble. Manual run in real Obsidian passed 2026-10-11 (install, upgrade, uninstall; the icon in light and dark).
   - **Done when:** install, upgrade and unload work in a disposable Obsidian vault, with settings and notes intact.
   - **Extra work to list in the M4 PR description** (done alongside, outside M4's scope):
     - The plugin's waiting line: "Nuru is getting ready…" while `/v1/status` says the model is loading, then "Thinking…", with seconds (`lib/view.js`).

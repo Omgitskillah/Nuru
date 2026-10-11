@@ -225,14 +225,18 @@ def test_a_notes_server_that_dies_mid_turn_leaves_its_write_uncertain_and_the_se
     assert status["ready"]["chat"] == "ready"
 
 
-def test_the_real_writer_server_writes_on_yes_and_leaves_the_vault_on_no(tmp_path):
-    """real_writer_serve.py, as the manual byte check runs it: a real process. No changes nothing and gets a
+@pytest.mark.parametrize("relative", [False, True])
+def test_the_real_writer_server_writes_on_yes_and_leaves_the_vault_on_no(tmp_path, relative):
+    """real_writer_serve.py, as the manual byte check runs it: a real process, with an absolute --dir or a
+    relative one (the notes server runs in its own working directory). No changes nothing and gets a
     refused receipt; Yes changes exactly shared/Plan.md and gets an applied receipt naming it."""
     script = Path(__file__).with_name("real_writer_serve.py")
-    process = subprocess.Popen([sys.executable, str(script), "--dir", str(tmp_path)], stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen([sys.executable, str(script), "--dir", "scratch" if relative else str(tmp_path / "scratch")],
+                               stdout=subprocess.PIPE, text=True, cwd=tmp_path)
     try:
         started = json.loads(process.stdout.readline())
         vault = Path(started["vault"])
+        assert vault == (tmp_path / "scratch" / plugin_test_vault.NAME).resolve()
         headers = {"Host": f"127.0.0.1:{started['port']}", "Authorization": f"Bearer {started['token']}"}
         conversation = post(started["port"], headers, "/v1/conversations", {"request_id": "req-conversation-0001"})["conversation_id"]
         receipts = []

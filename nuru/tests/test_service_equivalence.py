@@ -11,21 +11,22 @@ import signal
 import subprocess
 import threading
 
+import sys
+from pathlib import Path
+
 import pytest
 from obsidian_mcp import mutations
 
 import plugin_test_vault
 from core import session
-from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
-from core.providers.mcp_tools import MCPTools
 from core.service import protocol
 from core.service.credentials import Credentials
 from core.service.host import Service
 from core.service.server import NuruServer
 from core.service.store import ServiceStore
-from core.session import Session, Text, ToolCall
-from core.tool_contract import MODEL_TOOLS
+from core.session import Text, ToolCall
+from real_writer_serve import TASK, real_session
 
 MESSAGE = "Read my café notes, update Stale.md, write a Rome summary and add tickets to the shared plan."
 STALE = "nuru/Stale.md"
@@ -67,20 +68,6 @@ class ScriptedModel:
         yield from [*response, {"prompt_tokens": 1, "completion_tokens": 1}]
 
 
-def real_session(vault, directory):
-    """A Session on the real notes server in `vault`; no decision layer, no other servers."""
-    params = session.OBSIDIAN_SERVER_PARAMS
-    tools = MCPTools([params.model_copy(update={"env": {**params.env, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": ""}})],
-                     model_tools=MODEL_TOOLS)
-    tools.connect()
-    server_tools = tools.list_tools()
-    store = ConversationStore(directory / "conversation.db")
-    s = Session(tools, session._hide_injected_args(server_tools), CLILogger(directory / "logs", "scripted", False, "obsidian-mcp"),
-                store, store.create_conversation(), server_tools=server_tools)
-    s._vault_scope = str(vault)
-    return s
-
-
 @pytest.fixture
 def route(tmp_path, monkeypatch):
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
@@ -113,6 +100,37 @@ def direct(directory, vault, s):
     return reply, calls, outcomes
 
 
+def post(port, headers, path, body):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    connection.request("POST", path, json.dumps(body), headers)
+    answer = json.loads(connection.getresponse().read())
+    connection.close()
+    return answer
+
+
+def turn(port, headers, conversation, text, answer, n=1):
+    """Submit `text` and follow its live stream to the end, answering each question `answer` as the plugin
+    would. Its events."""
+    accepted = post(port, headers, f"/v1/conversations/{conversation}/turns", {"request_id": f"req-turn-{n:08d}", "text": text})
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    connection.request("GET", accepted["events"] + "?after=0", headers=headers)
+    response, events, block = connection.getresponse(), [], b""
+    for line in response:
+        block += line
+        if line != b"\n":
+            continue
+        for event in protocol.parse_sse(block):
+            events.append(event)
+            if event["type"] == "question":
+                post(port, headers, f"/v1/questions/{event['data']['question_id']}/answers",
+                     {"request_id": f"req-answer-{n:07d}", "operation": event["data"]["operation"], "chosen": [answer]})
+        block = b""
+        if events and events[-1]["type"] in protocol.TERMINAL:
+            break
+    connection.close()
+    return events
+
+
 def over_http(directory, vault, s, on_events=None, on_end=None):
     """The turn through nuru-serve over HTTP, answering its question Yes. With on_events, its events go
     there and come back raw; on_end(service) runs before the service closes."""
@@ -124,32 +142,9 @@ def over_http(directory, vault, s, on_events=None, on_end=None):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     headers = {"Host": f"127.0.0.1:{server.server_port}", "Authorization": f"Bearer {token}"}
 
-    def post(path, body):
-        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
-        connection.request("POST", path, json.dumps(body), headers)
-        answer = json.loads(connection.getresponse().read())
-        connection.close()
-        return answer
-
     try:
-        conversation = post("/v1/conversations", {"request_id": "req-conversation-0001"})["conversation_id"]
-        accepted = post(f"/v1/conversations/{conversation}/turns", {"request_id": "req-turn-00000001", "text": MESSAGE})
-        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=30)
-        connection.request("GET", accepted["events"] + "?after=0", headers=headers)
-        response, events, block = connection.getresponse(), [], b""
-        for line in response:  # follow the live stream, answering its question as the plugin would
-            block += line
-            if line != b"\n":
-                continue
-            for event in protocol.parse_sse(block):
-                events.append(event)
-                if event["type"] == "question":
-                    post(f"/v1/questions/{event['data']['question_id']}/answers",
-                         {"request_id": "req-answer-0000001", "operation": event["data"]["operation"], "chosen": ["Yes"]})
-            block = b""
-            if events and events[-1]["type"] in protocol.TERMINAL:
-                break
-        connection.close()
+        conversation = post(server.server_port, headers, "/v1/conversations", {"request_id": "req-conversation-0001"})["conversation_id"]
+        events = turn(server.server_port, headers, conversation, MESSAGE, "Yes")
         if on_end:
             on_end(service)
     finally:
@@ -228,3 +223,29 @@ def test_a_notes_server_that_dies_mid_turn_leaves_its_write_uncertain_and_the_se
     assert events[-1]["type"] == "failed"  # Session: "the outcome of write_note is uncertain"
     assert plugin_test_vault.snapshot(vault) == before
     assert status["ready"]["chat"] == "ready"
+
+
+def test_the_real_writer_server_writes_on_yes_and_leaves_the_vault_on_no(tmp_path):
+    """real_writer_serve.py, as the manual byte check runs it: a real process. No changes nothing and gets a
+    refused receipt; Yes changes exactly shared/Plan.md and gets an applied receipt naming it."""
+    script = Path(__file__).with_name("real_writer_serve.py")
+    process = subprocess.Popen([sys.executable, str(script), "--dir", str(tmp_path)], stdout=subprocess.PIPE, text=True)
+    try:
+        started = json.loads(process.stdout.readline())
+        vault = Path(started["vault"])
+        headers = {"Host": f"127.0.0.1:{started['port']}", "Authorization": f"Bearer {started['token']}"}
+        conversation = post(started["port"], headers, "/v1/conversations", {"request_id": "req-conversation-0001"})["conversation_id"]
+        receipts = []
+        for n, answer in enumerate(("No", "Yes"), start=1):
+            before = plugin_test_vault.snapshot(vault)
+            events = turn(started["port"], headers, conversation, "Add the task.", answer, n)
+            protocol.check_stream(events)
+            receipts.append([(e["data"]["state"], e["data"].get("path")) for e in events if e["type"] == "write_receipt"])
+            changed = plugin_test_vault.changes(before, plugin_test_vault.snapshot(vault))
+            assert changed == ({"added": [], "changed": [], "removed": []} if answer == "No"
+                               else {"added": [], "changed": ["shared/Plan.md"], "removed": []})
+        assert receipts == [[("refused", None)], [("applied", "shared/Plan.md")]]
+        assert (vault / "shared/Plan.md").read_text().endswith(TASK)
+    finally:
+        process.terminate()
+        process.wait(10)

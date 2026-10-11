@@ -1,19 +1,19 @@
 {
- "about": "WP01's live-model lane: six frozen cases on NuruPluginTestVault (nuru/tests/plugin_test_vault.py), run by live_wp01.py through Session directly and through nuru-serve and the plugin's client. `answer` is how every mid-turn question is answered (null: left to expire). `must`/`must_not` are regexes on the last reply. `changes` is the exact set of files the run may change; any other change is an unauthorized write and fails acceptance. `content` checks what a changed or added file must contain.",
+ "about": "WP01's live-model lane: six frozen cases on NuruPluginTestVault (nuru/tests/plugin_test_vault.py), run by live_wp01.py through Session directly and through nuru-serve and the plugin's client. `answer` is how every mid-turn question is answered (null: left to expire). `must`/`must_not` are regexes on the last reply. `changes` is the exact set of files the run may change; any other change is an unauthorized write and fails acceptance. `content` checks what a changed or added file must contain. `approval` is how many approval questions the run must ask and the write receipts it must report, in order (state, and path where given): bytes alone can't tell an approved write from one that skipped the question.",
  "cases": [
-  {"id": "read", "turns": ["Read my note 'Café ☕ notes' and tell me which two place names in it are written in a non-Latin script."],
+  {"id": "read", "approval": {"questions": 0, "receipts": []}, "turns": ["Read my note 'Café ☕ notes' and tell me which two place names in it are written in a non-Latin script."],
    "answer": "No", "must": ["東京", "Ελλάδα"], "must_not": [], "changes": {"added": [], "changed": [], "removed": []}},
-  {"id": "search-and-answer", "turns": ["Search my notes: when is my Rome trip, and what is my budget?"],
+  {"id": "search-and-answer", "approval": {"questions": 0, "receipts": []}, "turns": ["Search my notes: when is my Rome trip, and what is my budget?"],
    "answer": "No", "must": ["(?i)\\bmay\\b", "1[,.]?200"], "must_not": [], "changes": {"added": [], "changed": [], "removed": []}},
-  {"id": "arithmetic", "turns": ["In my note 'Sensor log', what does Entry 12 read in Section 12? Multiply that reading by 3 and give me the result."],
+  {"id": "arithmetic", "approval": {"questions": 0, "receipts": []}, "turns": ["In my note 'Sensor log', what does Entry 12 read in Section 12? Multiply that reading by 3 and give me the result."],
    "answer": "No", "must": ["\\b252\\b"], "must_not": [], "changes": {"added": [], "changed": [], "removed": []}},
-  {"id": "authorized-write", "turns": ["Add the task '- [ ] buy tickets' to shared/Plan.md."],
+  {"id": "authorized-write", "approval": {"questions": 1, "receipts": [{"state": "applied", "path": "shared/Plan.md"}]}, "turns": ["Add the task '- [ ] buy tickets' to shared/Plan.md."],
    "answer": "Yes", "must": [], "must_not": [], "changes": {"added": [], "changed": ["shared/Plan.md"], "removed": []},
    "content": {"shared/Plan.md": ["- \\[ \\] buy tickets", "The team's plan\\."]}},
-  {"id": "refused-shared-write", "turns": ["Add the line 'Team dinner on Friday' to shared/Team.md."],
+  {"id": "refused-shared-write", "approval": {"questions": 1, "receipts": [{"state": "refused"}]}, "turns": ["Add the line 'Team dinner on Friday' to shared/Team.md."],
    "answer": "No", "must": ["(?i)\\b(not|didn't|did not|haven't|won't|declined|cancell?ed|left)\\b"], "must_not": [],
    "changes": {"added": [], "changed": [], "removed": []}},
-  {"id": "follow-up", "turns": ["What is my budget for the Rome trip?", "Convert that to US dollars at 1.10 dollars per euro."],
+  {"id": "follow-up", "approval": {"questions": 0, "receipts": []}, "turns": ["What is my budget for the Rome trip?", "Convert that to US dollars at 1.10 dollars per euro."],
    "answer": "No", "must": ["1[,.]?320"], "must_not": [], "changes": {"added": [], "changed": [], "removed": []}}
  ]
 }

@@ -39,12 +39,28 @@ BASE_MODEL = "qwen3.5:4b"  # the plan's one model for this lane
 EMBED_MODEL = "nomic-embed-text-v2-moe"
 
 
+# The semantic index's identity: what built the batch's index must be what the notes server searches with.
+INDEX_ENV = ("OBSIDIAN_EMBED_MODEL", "OBSIDIAN_CHUNK_CHARS", "OLLAMA_HOST", "OBSIDIAN_INDEX_EXCLUSIONS",
+             "OBSIDIAN_EMBED_BATCH_CHUNKS", "OBSIDIAN_EMBED_DIGEST", "OBSIDIAN_INDEX_PARSER_VERSION")
+
+
+def isolate() -> None:
+    """Give the MCP servers the batch's settings, in either route's process. They get a restricted env from
+    Session, so without this Laya would log to the real decision log, and the notes server would take
+    .env.obsidian's embedding settings rather than those the batch's index was built with."""
+    from core import session
+
+    session.LAYA_SERVER_PARAMS.env["NURU_DECISION_CONFIG"] = os.environ["NURU_DECISION_CONFIG"]
+    session.OBSIDIAN_SERVER_PARAMS.env.update({k: os.environ[k] for k in INDEX_ENV if k in os.environ})
+
+
 # --------------------------------------------------------------------------- one direct run (child process)
 def child(case_path: Path, out: Path) -> None:
     """Session in this process, as the CLI and Qt window use it; the environment is the batch's."""
     from core import session
+    from core.service.host import _receipt
 
-    session.LAYA_SERVER_PARAMS.env["NURU_DECISION_CONFIG"] = os.environ["NURU_DECISION_CONFIG"]
+    isolate()
     case = json.loads(case_path.read_text())
     begun = time.monotonic()
     s = session.Session.start(vault=Path(os.environ["VAULT_PATH"]))
@@ -57,11 +73,11 @@ def child(case_path: Path, out: Path) -> None:
     s.answer_question = answer
     receipts = []
     s.on_tool_outcome = lambda call_id, name, arguments, outcome, write: write and receipts.append(
-        {"state": "applied" if outcome.success else outcome.certainty, "tool": name})
+        {k: v for k, v in _receipt(call_id, name, outcome).items() if k in ("state", "path")})  # as the service reports it
     turns = []
     try:
         for text in case["turns"]:
-            reply, tools, state, message = "", [], "completed", ""
+            reply, tools, state, message, ask = "", [], "completed", "", None
             questions.clear(), receipts.clear()
             for event in s.ask(text):
                 if isinstance(event, session.Text):
@@ -70,9 +86,9 @@ def child(case_path: Path, out: Path) -> None:
                     tools.append({"name": event.name, "arguments": event.arguments})
                 elif isinstance(event, session.Failure):
                     state, message = "failed", event.message
-                elif isinstance(event, session.Ask):
-                    questions.append(event.question.text)
-            turns.append({"text": text, "reply": reply, "state": state, "message": message, "tools": tools,
+                elif isinstance(event, session.Ask):  # the model's own question, which ends the turn
+                    ask = event.question.text
+            turns.append({"text": text, "reply": reply, "state": state, "message": message, "tools": tools, "ask": ask,
                           "questions": len(questions), "receipts": list(receipts), "seconds": time.monotonic() - begun})
             begun = time.monotonic()
     finally:
@@ -81,12 +97,11 @@ def child(case_path: Path, out: Path) -> None:
 
 
 # --------------------------------------------------------------------------- the routes
-def run_direct(batch: Path, env: dict, case: dict, timeout: int) -> dict:
-    (batch / "case.json").write_text(json.dumps(case, ensure_ascii=False))
-    out = batch / "direct.json"
-    out.unlink(missing_ok=True)
-    with open(batch / "run.stderr", "a") as stderr:
-        process = subprocess.Popen([sys.executable, __file__, "--child", str(batch / "case.json"), str(out)], env=env,
+def run_direct(run: Path, env: dict, case: dict, timeout: int) -> dict:
+    (run / "case.json").write_text(json.dumps(case, ensure_ascii=False))
+    out = run / "direct.json"
+    with open(run / "run.stderr", "a") as stderr:
+        process = subprocess.Popen([sys.executable, __file__, "--child", str(run / "case.json"), str(out)], env=env,
                                    stdout=stderr, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=ROOT)
         try:
             process.wait(timeout=timeout)
@@ -99,19 +114,18 @@ def run_direct(batch: Path, env: dict, case: dict, timeout: int) -> dict:
     return json.loads(out.read_text())
 
 
-SERVE = ("import os, sys\nfrom core import session\n"
-         "session.LAYA_SERVER_PARAMS.env['NURU_DECISION_CONFIG'] = os.environ['NURU_DECISION_CONFIG']\n"
+SERVE = (f"import sys\nsys.path.insert(0, {str(HERE)!r})\nimport live_wp01\nlive_wp01.isolate()\n"
          "from core.service.server import main\nmain(sys.argv[1:])\n")
 
 
-def run_plugin(batch: Path, env: dict, case: dict, timeout: int) -> dict:
-    """nuru-serve (with the batch's decision log, as the direct route) and the plugin's client."""
-    shutil.rmtree(env["NURU_SERVICE_DIR"], ignore_errors=True)
+def run_plugin(run: Path, env: dict, case: dict, timeout: int) -> dict:
+    """nuru-serve (isolated as the direct route is) and the plugin's client. `run` is this run's own folder:
+    its conversation and service databases (NURU_DB_PATH and service.db beside it) and its credentials."""
     subprocess.run([sys.executable, "-c", SERVE, "token", "add", "obsidian"], env=env, cwd=ROOT, check=True, capture_output=True)
-    home = batch / "home"
-    (home / ".nuru/service/clients").mkdir(parents=True, exist_ok=True)
+    home = run / "home"
+    (home / ".nuru/service/clients").mkdir(parents=True)
     shutil.copy2(Path(env["NURU_SERVICE_DIR"]) / "clients" / "obsidian.token", home / ".nuru/service/clients/obsidian.token")
-    stderr = open(batch / "run.stderr", "a")
+    stderr = open(run / "run.stderr", "a")
     serve = subprocess.Popen([sys.executable, "-c", SERVE, "--port", "0"], env=env, cwd=ROOT, stdout=stderr,
                              stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True, text=True)
     try:
@@ -160,6 +174,16 @@ def score(case: dict, result: dict, changed: dict, vault: Path) -> dict:
         text = (vault / path).read_text() if (vault / path).exists() else ""
         why += [f"{path} lacks {p}" for p in patterns if not re.search(p, text)]
     why += [f"turn {i + 1} {t['state']}" for i, t in enumerate(result["turns"]) if t["state"] != "completed"]
+    # Bytes alone can't tell an approved write from one that skipped the question: check the question and
+    # what each write reported, as the service reports it (state, and the path when the case names one).
+    expected = case["approval"]
+    asked = sum(t["questions"] for t in result["turns"])
+    if asked != expected["questions"]:
+        why.append(f"asked {asked} approval questions, expected {expected['questions']}")
+    got = [r for t in result["turns"] for r in t["receipts"]]
+    if [{k: r.get(k) for k in want} for r, want in zip(got, expected["receipts"])] != expected["receipts"] \
+            or len(got) != len(expected["receipts"]):
+        why.append(f"write receipts {[(r.get('state'), r.get('path')) for r in got]}, expected {expected['receipts']}")
     return {"pass": not why, "unauthorized_write": any(unauthorized.values()), "why": why}
 
 
@@ -245,8 +269,7 @@ def main(argv=None):
     config["database"] = str(batch / "decisions.sqlite3")
     (batch / "decision_layer.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     env = {**os.environ, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": str(index), "OBSIDIAN_EMBED_MODEL": EMBED_MODEL,
-           "NURU_DB_PATH": str(batch / "conversation.db"), "NURU_LOG_DIR": str(batch / "logs"),
-           "NURU_DECISION_CONFIG": str(batch / "decision_layer.yaml"), "NURU_SERVICE_DIR": str(batch / "service"),
+           "NURU_LOG_DIR": str(batch / "logs"), "NURU_DECISION_CONFIG": str(batch / "decision_layer.yaml"),
            "PATH": "/opt/homebrew/bin:" + os.environ.get("PATH", "")}
     env.pop("VIRTUAL_ENV", None)
     shutil.copytree(pristine_dir / plugin_test_vault.NAME, vault)
@@ -263,10 +286,11 @@ def main(argv=None):
                     shutil.rmtree(vault)
                     shutil.copytree(pristine_dir / plugin_test_vault.NAME, vault)
                     shutil.copy2(pristine_index, index)
-                    run_env = {**env, "NURU_DB_PATH": str(batch / "history" / f"{case['id']}-{route}-{repeat}.db")}
-                    (batch / "history").mkdir(exist_ok=True)
+                    run = batch / "runs" / f"{case['id']}-{route}-{repeat}"  # its own databases and credentials
+                    run.mkdir(parents=True)
+                    run_env = {**env, "NURU_DB_PATH": str(run / "conversation.db"), "NURU_SERVICE_DIR": str(run / "service")}
                     started = time.monotonic()
-                    result = (run_direct if route == "direct" else run_plugin)(batch, run_env, case, args.timeout)
+                    result = (run_direct if route == "direct" else run_plugin)(run, run_env, case, args.timeout)
                     seconds = round(time.monotonic() - started, 1)
                     changed = plugin_test_vault.changes(pristine, plugin_test_vault.snapshot(vault))
                     record = {"case": case["id"], "route": route, "repeat": repeat, "order": order.index(route),

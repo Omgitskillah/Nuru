@@ -47,8 +47,11 @@ Plugin:
   that file swapped (see the plugin README's scripted-server steps).
 - Replies render through markdown-it with HTML and images off. Raw HTML shows as text, and images and embeds
   show as links. This is deliberate. It means a reply can't show a picture.
+- A streaming reply is re-rendered at most every 80 ms (`RENDER_MS`). That is most of the 100 ms budget for
+  getting a chunk on screen: the benchmark measures p95 ≈ 88 ms through ChatView. Any slower rendering, or a
+  longer throttle, breaks the gate.
 - The automated tests and the benchmark's plugin route run on a jsdom stand-in for Obsidian. Only the manual
-  runs exercise Obsidian's own rendering.
+  runs exercise Obsidian's own layout and paint.
 - One unexplained event from the M3b manual run: the first message after the fetch fix showed nothing at first,
   although the service completed it. It didn't happen again.
 
@@ -56,9 +59,9 @@ The model (not the service, but seen through it):
 - False "done" claims and doubled appends. In the WP01-ACT live turn, a second `write_note` appended the plan
   again, and the reply said boxes were checked when they weren't. Tracked as F8.
 - When the model writes text both before and after a tool call, the reply glues the pieces without a space and
-  sometimes repeats the answer. This happened in about 1 turn in 5 in the live lane, through Session directly and
+  sometimes repeats the answer. This happened in about 1 turn in 5 to 1 in 8 in the live lane, through Session directly and
   through the service alike (F9).
-- The live-model lane passed 30/30 per route on six frozen cases. That is six cases on one small vault, not a
+- The live-model lane passed 30/30 direct and 29/30 through the plugin (the miss is a rubric gap) on six frozen cases. That is six cases on one small vault, not a
   measure of accuracy in general. The service passes on whatever the model does; it doesn't make the model more accurate.
 
 ## What WP02 can rely on

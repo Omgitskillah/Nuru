@@ -26,7 +26,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
     - Benchmark case 37 ("tasks as checkboxes") and the `writes` field for sequence cases that are meant to write (`nuru/evals/decision_layer/`).
     - Root README links TODO.md.
 - [~] **WP01-M5** Acceptance and handoff: benchmark results, screenshots, known limits, a protocol compatibility matrix and the WP02 handoff.
-  - Done on branch `wp01-m5-acceptance`: test vault, Session/HTTP equivalence and notes-server-dies tests, the semantic-index fix, the benchmark (all gates pass), the live-model lane (30/30 per route, no unauthorized writes), [wp01-handoff.md](nuru/docs/obsidian-remote/wp01-handoff.md).
+  - Done on branch `wp01-m5-acceptance`: test vault, Session/HTTP equivalence and notes-server-dies tests, the semantic-index fix, the benchmark (all gates pass), the live-model lane (30/30 direct, 29/30 plugin with the miss a rubric gap, no unauthorized writes), and the six review findings on #18, [wp01-handoff.md](nuru/docs/obsidian-remote/wp01-handoff.md).
   - Left: the manual steps in the evidence file's "M5 manual acceptance" (quit Obsidian then status, byte check, screenshots).
   - **Done when:** the plan's completion gates hold, real macOS acceptance is recorded, and the live-model lane has been run or explicitly deferred.
 
@@ -55,7 +55,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 - [ ] **F6** Run correction prompts 901–907 (`nuru/evals/tool_checks/prompts_corrections.json`).
 - [ ] **F7** Calibrate `note_type`.
 - [ ] **F8** Fix model habits: false "done" claims, mixing up created and appended, moving notes out of the archive.
-- [ ] **F9** A reply with text before and after a tool call glues the pieces without a space, sometimes repeating the answer (~1 turn in 5 in the WP01 live lane, direct and plugin alike). Seen in `nuru/evals/obsidian_remote/results-2026-10-11-m5/live-runs.jsonl.gz`.
+- [ ] **F9** A reply with text before and after a tool call glues the pieces without a space, sometimes repeating the answer (1 turn in 5 to 1 in 8 in the WP01 live lane runs, direct and plugin alike). Seen in `nuru/evals/obsidian_remote/results-2026-10-11-m5/live-runs.jsonl.gz`.
 
 ## Standing reminders (R)
 

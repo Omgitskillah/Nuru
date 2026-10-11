@@ -71,9 +71,10 @@ class _Live:
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
     cancel_reason: str = "user"
     waiter: _Waiter | None = None
-    # Outcomes that couldn't be stored when they came: the turn is stopped, and they're tried once more
-    # as it ends (_turn), which then ends it failed.
+    # Outcomes that couldn't be stored when they came, oldest first. While any is left, nothing more of
+    # the turn is stored, its end above all (_caught_up); the turn has been told to stop.
     unrecorded: list[Callable[[TurnStream], None]] = dataclasses.field(default_factory=list)
+    lost_outcome: bool = False  # an outcome couldn't be stored when it came: the turn ends failed
 
 
 class Service:
@@ -515,13 +516,14 @@ class Service:
             for event in session.ask(live.prompt, live.cancel):
                 with self._lock:
                     # After a Failure or an Ask, Session has nothing more to add. Unsafe, it was told to
-                    # stop, and what it says until then can't be stored.
-                    if not live.stream.ended and not self._unsafe:
+                    # stop, and what it says until then can't be stored. A Failure that ends the turn
+                    # comes only after the outcomes that couldn't be stored are (_caught_up).
+                    if not live.stream.ended and not self._unsafe and self._caught_up(live):
                         self._emit(live, lambda s: s.session_event(event))
         except Exception as error:
             unavailable = isinstance(error, requests.exceptions.ConnectionError)
             with self._lock:
-                if not live.stream.ended and not self._unsafe:
+                if not live.stream.ended and not self._unsafe and self._caught_up(live):
                     for question_id in live.stream.open_questions:
                         self._close_question(live, question_id, "expired")
                     self._emit(live, lambda s: s.emit("failed", {
@@ -532,17 +534,31 @@ class Service:
             session.answer_question = None
             session.on_tool_outcome = None
         with self._lock:
-            if live.unrecorded and not live.stream.ended and not self._unsafe:
-                for report in live.unrecorded:  # once more: the store may have recovered
-                    self._emit(live, report)
+            if live.stream.ended or self._unsafe or not self._caught_up(live):
+                return  # not caught up: left unfinished, and the next start recovers its writes from the ledger
+            if live.lost_outcome:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": UNRECORDED}))
-            if not live.stream.ended and not self._unsafe:
+            else:
                 self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+
+    def _caught_up(self, live: _Live) -> bool:
+        """Store the outcomes that couldn't be stored when they came, oldest first. False if one still
+        can't be: then nothing more of the turn may be stored, least of all its end. A turn left so stays
+        unfinished until the next start, which gives its write calls their receipts from the write
+        ledger, by call ID."""
+        while live.unrecorded:
+            try:
+                self._emit(live, live.unrecorded[0])
+            except Exception:
+                return False
+            live.unrecorded.pop(0)
+        return True
 
     def _tool_outcome(self, live: _Live, call_id: str, name: str, outcome: ToolOutcome, write: bool) -> None:
         """Session.on_tool_outcome, on the worker thread: the result of the call `call_id`, and for a
         write, its receipt. Only for a call this turn's stream started and hasn't reported. If it can't
-        be stored, the turn is stopped (nothing is retried) and the outcome is tried again as it ends."""
+        be stored, the turn is stopped (no tool is run again) and the outcome is kept to store before
+        anything else of the turn (_caught_up)."""
         def report(stream: TurnStream) -> None:
             stream.emit("tool_result", {"call_id": call_id, "ok": outcome.success,
                                         **({"summary": outcome.code[:2000]} if not outcome.success and outcome.code else {})})
@@ -553,11 +569,14 @@ class Service:
             if self._unsafe or live.stream.ended or not _awaiting_result(live.stream, call_id):
                 return
             try:
+                if not self._caught_up(live):
+                    raise RuntimeError("an earlier outcome is still unrecorded")
                 self._emit(live, report)
             except Exception:
                 print(f"nuru-serve: couldn't record the outcome of {name}; stopping the turn", file=sys.stderr)
                 live.unrecorded.append(report)
-                live.cancel.set()  # Session stops at its next step; _turn ends the turn failed
+                live.lost_outcome = True
+                live.cancel.set()  # Session stops at its next step
 
     def _ensure_session(self, conversation_id: int):
         """The shared Session, built on the first turn (in this, the worker thread)."""
@@ -577,7 +596,7 @@ class Service:
         is stopped."""
         seconds = self.answer_seconds if self.answer_seconds is not None else (question.timeout or questions.ANSWER_SECONDS)
         with self._lock:
-            if live.cancel.is_set() or self._unsafe:
+            if live.cancel.is_set() or self._unsafe or not self._caught_up(live):
                 return None
             expires = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             with self._atomic():

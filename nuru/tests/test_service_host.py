@@ -1047,3 +1047,59 @@ def test_after_a_crash_a_queued_turn_never_gets_an_earlier_turn_s_write(tmp_path
     finally:
         restarted.close()
         restarted.store.close()
+
+
+def uncertain_write_then_failure(h):
+    """As Session handles an uncertain write: report it, then end the turn with a Failure. The attempt is
+    in the write ledger under the call's ID, as Session records it."""
+    def script(session, text, cancel):
+        call = shown_call("write_note", {"note": "nuru/log.md"})
+        yield call
+        h.service.conversations.begin_write(session.conversation_id, "logger-turn", str(h.vault.resolve()),
+                                            "write_note", {}, call_id=call.call_id)
+        report(session, call, failure("transport", "TimeoutError", "no answer", certainty="uncertain"))
+        yield Failure("The outcome of write_note is uncertain. Do not retry the write.")
+    return script
+
+
+def failing_receipts(monkeypatch, store, times):
+    real_add, failed = store.add_event, []
+
+    def add_event(event):
+        if event["type"] == "write_receipt" and len(failed) < times:
+            failed.append(event)
+            raise sqlite3.OperationalError("disk I/O error")
+        real_add(event)
+
+    monkeypatch.setattr(store, "add_event", add_event)
+
+
+def test_a_turn_never_ends_before_a_receipt_that_failed_to_store(harness, monkeypatch):
+    """The receipt of an uncertain write fails to store once; Session's Failure that follows must not end
+    the turn first."""
+    h = harness([])
+    h.session.scripts.append(uncertain_write_then_failure(h))
+    failing_receipts(monkeypatch, h.service.store, times=1)
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    kinds = [e["type"] for e in events]
+    assert kinds.index("write_receipt") < kinds.index("failed") == len(kinds) - 1
+    assert next(e["data"]["state"] for e in events if e["type"] == "write_receipt") == "uncertain"
+
+
+def test_while_a_receipt_still_cant_be_stored_the_turn_stays_open_and_a_restart_recovers_it(harness, monkeypatch):
+    h = harness([])
+    h.session.scripts.append(uncertain_write_then_failure(h))
+    failing_receipts(monkeypatch, h.service.store, times=10**6)
+    turn = h.submit(h.conversation())[1]["turn_id"]
+    h.first(turn, "tool_start")
+    assert h.service.close(timeout=5)  # the worker is done with the turn, which never got an end
+    events = h.service.store.events(turn)
+    assert not any(e["type"] in protocol.TERMINAL for e in events) and not any(e["type"] == "write_receipt" for e in events)
+    monkeypatch.undo()
+    h.service.store.close()
+    h.service.conversations.close()
+    restarted = h.service = h.open()
+    events = restarted.store.events(turn)
+    protocol.check_stream(events)
+    assert [e["data"]["state"] for e in events if e["type"] == "write_receipt"] == ["uncertain"]
+    assert events[-1]["data"]["code"] == "service_restarted"

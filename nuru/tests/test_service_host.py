@@ -3,6 +3,7 @@ must wait are held by threading.Events the test releases, never by sleeps."""
 
 import json
 import os
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -19,7 +20,10 @@ from core.service.host import Service
 from core.service.protocol import Display, ProtocolError
 from core.service.store import ServiceBusy, ServiceStore
 from core.session import Ask, Failure, Text, ToolCall
-from core.tool_dispatch import ToolOutcome, failure
+from core import tool_dispatch
+from core.providers.mcp_tools import ToolResult
+from core.service import host
+from core.tool_dispatch import MUTATIONS, ToolOutcome, failure
 
 ME, SOMEONE_ELSE = "operator", "intruder"
 WAIT = 10  # seconds before a test gives up on an event it expects
@@ -792,47 +796,101 @@ def test_once_unsafe_a_reader_already_waiting_is_let_go(harness, monkeypatch, th
 
 
 # --------------------------------------------------------------------------- tool results and write receipts
+def shown_call(name, arguments):
+    return ToolCall(name, arguments, secrets.token_urlsafe(12))
+
+
+def report(session, call, outcome):
+    """What Session does once a shown call has run: tell on_tool_outcome, by the call's ID."""
+    session.on_tool_outcome(call.call_id, call.name, call.arguments, outcome, call.name in MUTATIONS)
+
+
 def calls(*steps):
     """Runs tools as Session does: each (name, arguments, outcome) is shown, then reported."""
     def script(session, text, cancel):
         for name, arguments, outcome in steps:
-            yield ToolCall(name, arguments)
-            session.on_tool_outcome(name, arguments, outcome, name in ("write_note", "rename_or_move_file"))
+            call = shown_call(name, arguments)
+            yield call
+            report(session, call, outcome)
         yield Text("done")
     return script
+
+
+def written(**result):
+    return ToolOutcome(json.dumps(result), True)
 
 
 def test_each_tool_gets_its_result_and_each_write_a_receipt_of_what_it_did(harness):
     h = harness([calls(
         ("read_note", {"name": "nuru/Trip.md"}, ToolOutcome("Rome", True)),
-        ("write_note", {"note": "nuru/Summary.md", "content": "x"}, ToolOutcome("ok", True)),
+        ("write_note", {"note": "Trip plan", "content": "x"}, written(path="nuru/trip-plan.md", created=True)),
+        ("rename_or_move_file", {"source_path": "nuru/trip-plan.md", "destination_path": "archive"},
+         written(**{"from": "nuru/trip-plan.md", "to": "archive/nuru/trip-plan.md"})),
         ("write_note", {"note": "shared/Team.md"}, failure("policy", "NOT_RUN", "the user said No")),
-        ("write_note", {"note": "Trip plan"}, failure("arguments", "INVALID", "bad", certainty="not_completed")),
-        ("rename_or_move_file", {"source_path": "a.md", "destination_path": "nuru/b.md"},
-         failure("transport", "TimeoutError", "no answer", certainty="uncertain")),
+        ("write_note", {"note": "nuru/x.md"}, failure("rejection", "REJECTED_BEFORE_WRITE", "bad", certainty="not_completed")),
+        ("write_note", {"note": "nuru/y.md"}, failure("transport", "TimeoutError", "no answer", certainty="uncertain")),
     )])
     events = h.finished(h.submit(h.conversation())[1]["turn_id"])
     started = [e["data"]["call_id"] for e in events if e["type"] == "tool_start"]
     assert [(e["data"]["call_id"], e["data"]["ok"]) for e in events if e["type"] == "tool_result"] == \
-        list(zip(started, [True, True, False, False, False]))
+        list(zip(started, [True, True, True, False, False, False]))
     receipts = [e["data"] for e in events if e["type"] == "write_receipt"]
-    assert receipts == [
-        {"call_id": started[1], "tool": "write_note", "state": "applied", "path": "nuru/Summary.md"},
-        {"call_id": started[2], "tool": "write_note", "state": "refused", "path": "shared/Team.md", "detail": "NOT_RUN"},
-        {"call_id": started[3], "tool": "write_note", "state": "failed", "path": "Trip plan", "detail": "INVALID"},
-        {"call_id": started[4], "tool": "rename_or_move_file", "state": "uncertain", "path": "nuru/b.md", "detail": "TimeoutError"},
+    assert receipts == [  # the note each write actually changed, never the name it was asked by
+        {"call_id": started[1], "tool": "write_note", "state": "applied", "path": "nuru/trip-plan.md"},
+        {"call_id": started[2], "tool": "rename_or_move_file", "state": "applied", "path": "archive/nuru/trip-plan.md"},
+        {"call_id": started[3], "tool": "write_note", "state": "refused", "detail": "NOT_RUN"},
+        {"call_id": started[4], "tool": "write_note", "state": "failed", "detail": "REJECTED_BEFORE_WRITE"},
+        {"call_id": started[5], "tool": "write_note", "state": "uncertain", "detail": "TimeoutError"},
     ]
-    assert shown(events).receipts == receipts and all(t["ok"] is not None for t in shown(events).tools)
+    assert shown(events).receipts == receipts
 
 
-def test_an_outcome_for_a_call_that_was_never_shown_isnt_reported(harness):
+REAL_BACKEND = """
+import json
+from obsidian_mcp import server
+created = server.write_note(content="Rome in May.", note="Trip plan")
+daily = server.write_note(content="Today.", type="daily")
+by_id = server.write_note(content="More.", note=daily["id"])
+other = server.write_note(content="x", note="Other")
+calls = [
+    ("write_note", created),
+    ("write_note", daily),
+    ("write_note", by_id),
+    ("rename_or_move_file", server.rename_or_move_file(source_path=created["path"], destination_path="archive")),
+    ("rename_or_move_file", server.rename_or_move_file(source_path=other["path"], destination_path="trash")),
+]
+print(json.dumps(calls))
+"""
+
+
+def test_receipts_name_the_files_the_real_notes_server_changed(tmp_path):
+    """The pinned Obsidian backend, in a scratch vault: a title, a daily, an ID, an archive and a trash
+    move. Each applied receipt names a file that exists, whatever the call asked for."""
+    vault = tmp_path / "vault"
+    for folder in ("nuru", "archive", "trash"):
+        (vault / folder).mkdir(parents=True)
+    ran = subprocess.run([sys.executable, "-c", REAL_BACKEND], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "VAULT_PATH": str(vault), "OBSIDIAN_SEMANTIC_DB": ""})
+    assert ran.returncode == 0, ran.stderr
+    paths = []
+    for name, result in json.loads(ran.stdout):
+        receipt = host._receipt("call00000001", name, tool_dispatch.classify(name, ToolResult(json.dumps(result))))
+        assert receipt["state"] == "applied"
+        paths.append(receipt["path"])
+    assert paths[:3] == ["nuru/trip-plan.md", paths[1], paths[1]] and paths[1].startswith("nuru/daily-")
+    assert paths[3:] == ["archive/nuru/trip-plan.md", "trash/nuru/other.md"]
+    assert all((vault / path).is_file() for path in paths[1:])  # the first was then archived
+
+
+def test_an_outcome_is_reported_only_for_its_own_shown_call(harness):
     def script(session, text, cancel):
-        session.on_tool_outcome("write_note", {}, failure("policy", "TOOLS_CLOSED", "no"), True)  # nothing started
-        yield ToolCall("read_note", {"name": "x"})
-        session.on_tool_outcome("read_note", {}, ToolOutcome("x", True), False)
-        session.on_tool_outcome("read_note", {}, failure("dependency", "SKIPPED", "no"), False)  # already reported
-        yield ToolCall("write_note", {"note": "nuru/x.md"})
-        session.on_tool_outcome("search_notes", {}, ToolOutcome("x", True), False)  # not the call shown
+        read = shown_call("read_note", {"name": "x"})
+        yield read
+        report(session, read, ToolOutcome("x", True))
+        report(session, read, failure("dependency", "SKIPPED", "no"))  # reported already
+        write = shown_call("write_note", {"note": "nuru/x.md"})
+        yield write
+        report(session, shown_call("write_note", {"note": "nuru/y.md"}), ToolOutcome("{}", True))  # never shown
         yield Text("done")
 
     h = harness([script])
@@ -842,7 +900,7 @@ def test_an_outcome_for_a_call_that_was_never_shown_isnt_reported(harness):
 
 def test_a_huge_write_is_shown_cut_and_the_turn_still_completes(harness):
     content = "x" * 400_000
-    h = harness([calls(("write_note", {"note": "nuru/Big.md", "content": content}, ToolOutcome("ok", True)))])
+    h = harness([calls(("write_note", {"note": "nuru/Big.md", "content": content}, written(path="nuru/big.md")))])
     events = h.finished(h.submit(h.conversation())[1]["turn_id"])
     (start,) = [e for e in events if e["type"] == "tool_start"]
     assert start["data"]["arguments"]["content"] == "x" * protocol.MAX_ARGUMENT_CHARS + "…(cut: 400000 characters)"
@@ -857,53 +915,135 @@ def test_shown_arguments_keep_short_values_and_cut_the_rest():
     assert shown_args["query"] == "trip" and shown_args["rows"].endswith("characters)")
 
 
-CRASHING_WRITE = """
-import os, sys
+def test_an_outcome_that_cant_be_stored_stops_the_turn_and_is_never_taken_by_another_call(harness, monkeypatch):
+    """The reviewer's case: the first write's receipt fails to store once; then, with tools closed, an
+    unshown refusal of a second write comes. Only the first write ran, and only it gets a receipt."""
+    dispatched = []
+
+    def script(session, text, cancel):
+        first = shown_call("write_note", {"note": "nuru/first.md"})
+        yield first
+        dispatched.append("nuru/first.md")
+        report(session, first, written(path="nuru/first.md"))
+        assert cancel.is_set()  # the turn was told to stop
+        # Session's refusal of a call it never showed (TOOLS_CLOSED) has no call ID: on_tool_outcome isn't called.
+        yield Text("stopping")
+
+    h = harness([script])
+    store, real_add = h.service.store, h.service.store.add_event
+    failed = []
+
+    def add_event(event):
+        if event["type"] == "write_receipt" and not failed:
+            failed.append(event)
+            raise sqlite3.OperationalError("disk I/O error")
+        real_add(event)
+
+    monkeypatch.setattr(store, "add_event", add_event)
+    events = h.finished(h.submit(h.conversation())[1]["turn_id"])
+    receipts = [e["data"] for e in events if e["type"] == "write_receipt"]
+    assert [(r["state"], r["path"]) for r in receipts] == [("applied", "nuru/first.md")]  # recorded as the turn ended
+    assert events[-1]["data"] == {"code": "internal", "message": host.UNRECORDED}
+    assert dispatched == ["nuru/first.md"]  # the write ran once
+
+
+CRASHING_HOST_WRITES = """
+import json, os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
 from core.conversation_store import ConversationStore
 from core.service.host import Service
 from core.service.store import ServiceStore
-from core.session import ToolCall
-from test_service_host import ScriptedSession
+from core import questions
+from core.tool_dispatch import failure
+from test_service_host import ScriptedSession, report, shown_call
 
-root = Path(sys.argv[1])
+root, case = Path(sys.argv[1]), sys.argv[3]
+vault = str((root / "vault").resolve())
 conversations = ConversationStore(root / "conversation.db")
+calls = []
 
-def writes(session, text, cancel):
-    yield ToolCall("write_note", {"note": "nuru/Summary.md", "content": "x"})
-    # Session records the attempt, then the process dies before the tool answers.
-    conversations.begin_write(session.conversation_id, "logger-turn", str((root / "vault").resolve()), "write_note", {})
-    print("writing", flush=True)
-    os._exit(9)
+def write(state, target=None, exit_after=True):
+    def script(session, text, cancel):
+        call = shown_call("write_note", {"note": "Trip plan"})
+        calls.append(call.call_id)
+        yield call
+        attempt = conversations.begin_write(session.conversation_id, "logger-turn", vault, "write_note", {}, call_id=call.call_id)
+        if state != "in_flight":
+            conversations.finish_write(attempt, state, target=target)  # committed; the process dies before the hook
+        if exit_after:
+            print(json.dumps(calls), flush=True)
+            os._exit(9)
+        report(session, call, failure("transport", "TimeoutError", "no answer", certainty="uncertain"))
+    return script
 
-session = ScriptedSession([writes])
-service = Service(ServiceStore(root / "service.db"), conversations, lambda conversation_id: session, root / "vault")
+def asks_then_dies(session, text, cancel):
+    yield shown_call("write_note", {"note": "shared/Team.md"})
+    session.answer_question(questions.shared_write("write_note", {}, "shared/Team.md"))
+
+scripts = {
+    "in_flight": [write("in_flight")],
+    "completed": [write("completed", "nuru/trip-plan.md")],
+    "not_completed": [write("not_completed")],
+    # A records an uncertain write and ends; B, queued behind it, is cut short at its approval, before any write.
+    "queued": [write("uncertain", exit_after=False), asks_then_dies],
+}[case]
+session = ScriptedSession(scripts)
+service = Service(ServiceStore(root / "service.db"), conversations, lambda conversation_id: session, root / "vault",
+                  answer_seconds=3600)
 conversation = service.create_conversation("operator", {"request_id": "req-conversation-0001"})[1]["conversation_id"]
-service.submit_turn("operator", conversation, {"request_id": "req-turn-00000001", "text": "hello"})
+turns = [service.submit_turn("operator", conversation, {"request_id": f"req-turn-0000000{i}", "text": "go"})[1]["turn_id"]
+         for i in range(1, len(scripts) + 1)]
+if case == "queued":
+    seen = []
+    while not any(e["type"] == "question" for e in seen):
+        seen += service.wait_events(turns[1], len(seen), 5)[0]
+    print(json.dumps(calls), flush=True)
+    os._exit(9)
 import time
 time.sleep(60)
 """
 
 
-def test_a_write_cut_short_by_a_crash_gets_an_uncertain_receipt_and_is_not_retried(tmp_path):
-    (tmp_path / "vault").mkdir()
-    crashed = subprocess.run([sys.executable, "-c", CRASHING_WRITE, str(tmp_path), str(Path(__file__).parent)],
+def crash(tmp_path, case):
+    (tmp_path / "vault").mkdir(exist_ok=True)
+    crashed = subprocess.run([sys.executable, "-c", CRASHING_HOST_WRITES, str(tmp_path), str(Path(__file__).parent), case],
                              capture_output=True, text=True, timeout=60)
-    assert crashed.returncode == 9 and "writing" in crashed.stdout, crashed.stderr
-    session = ScriptedSession([])
+    assert crashed.returncode == 9, crashed.stderr
     restarted = Service(ServiceStore(tmp_path / "service.db"), ConversationStore(tmp_path / "conversation.db"),
-                        lambda conversation_id: session, tmp_path / "vault")
+                        lambda conversation_id: ScriptedSession([]), tmp_path / "vault")
+    return restarted, json.loads(crashed.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("case,state,path", [("in_flight", "uncertain", None), ("completed", "applied", "nuru/trip-plan.md"),
+                                             ("not_completed", "failed", None)])
+def test_after_a_crash_each_write_gets_the_receipt_its_own_ledger_entry_shows(tmp_path, case, state, path):
+    restarted, (call_id,) = crash(tmp_path, case)
     try:
         turn = restarted.request_state(ME, "req-turn-00000001", "submit_turn")["turn_id"]
         events = restarted.store.events(turn)
         protocol.check_stream(events)
-        receipt = next(e["data"] for e in events if e["type"] == "write_receipt")
-        assert receipt["state"] == "uncertain" and receipt["tool"] == "write_note"
-        assert receipt["call_id"] == next(e["data"]["call_id"] for e in events if e["type"] == "tool_start")
-        assert events[-1]["data"]["code"] == "service_restarted" and session.asked == []
-        assert len(restarted.conversations.pending_writes(str((tmp_path / "vault").resolve()))) == 1  # still blocking
+        (receipt,) = [e["data"] for e in events if e["type"] == "write_receipt"]
+        assert (receipt["call_id"], receipt["state"], receipt.get("path")) == (call_id, state, path)
+        assert next(e["data"]["ok"] for e in events if e["type"] == "tool_result") is (state == "applied")
+        assert events[-1]["data"]["code"] == "service_restarted"
+        still_blocking = restarted.conversations.pending_writes(str((tmp_path / "vault").resolve()))
+        assert len(still_blocking) == (state == "uncertain")
     finally:
         restarted.close()
         restarted.store.close()
 
+
+def test_after_a_crash_a_queued_turn_never_gets_an_earlier_turn_s_write(tmp_path):
+    restarted, _ = crash(tmp_path, "queued")
+    try:
+        first, second = (restarted.request_state(ME, f"req-turn-0000000{i}", "submit_turn")["turn_id"] for i in (1, 2))
+        assert [e["data"]["state"] for e in restarted.store.events(first) if e["type"] == "write_receipt"] == ["uncertain"]
+        events = restarted.store.events(second)
+        protocol.check_stream(events)
+        assert not any(e["type"] in ("write_receipt", "tool_result") for e in events)  # it never wrote
+        closed = next(e["data"] for e in events if e["type"] == "question_closed")
+        assert (closed["outcome"], closed["decision"]) == ("expired", "No")
+    finally:
+        restarted.close()
+        restarted.store.close()

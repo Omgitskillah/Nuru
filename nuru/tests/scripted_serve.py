@@ -10,6 +10,7 @@ any other text is echoed back. Stop it with SIGTERM or Ctrl-C.
 
 import argparse
 import json
+import secrets
 import signal
 import sys
 import threading
@@ -58,9 +59,13 @@ class ScenarioSession:
         yield from scenario(self, cancel)
 
     def tool(self, name, arguments, outcome):
-        yield ToolCall(name, arguments)
+        call = ToolCall(name, arguments, secrets.token_urlsafe(12))
+        yield call
+        self.outcome(call, outcome)
+
+    def outcome(self, call, outcome):
         if self.on_tool_outcome:
-            self.on_tool_outcome(name, arguments, outcome, name in MUTATIONS)
+            self.on_tool_outcome(call.call_id, call.name, call.arguments, outcome, call.name in MUTATIONS)
 
 
 def completed(session, cancel):
@@ -71,8 +76,9 @@ def completed(session, cancel):
 def tools(session, cancel):
     yield from session.tool("search_notes", {"query": "trip"}, ToolOutcome("nuru/Trip.md", True))
     yield from session.tool("read_note", {"name": "nuru/Trip.md"}, ToolOutcome(NOTES["nuru/Trip.md"], True))
-    yield from session.tool("write_note", {"note": "nuru/Summary.md", "content": "Rome in May."}, ToolOutcome("written", True))
-    yield Text("I read [[nuru/Trip.md]] and wrote [[nuru/Summary.md]].")
+    yield from session.tool("write_note", {"note": "Summary", "content": "Rome in May."},
+                            ToolOutcome(json.dumps({"done": True, "path": "nuru/summary.md", "id": None, "created": True}), True))
+    yield Text("I read [[nuru/Trip.md]] and wrote [[nuru/summary.md]].")
 
 
 def refused_write(session, cancel):
@@ -89,11 +95,12 @@ def uncertain_write(session, cancel):
 
 def approval(session, cancel):
     """Asks before a write, as Session does for shared/, and writes only on Yes."""
-    yield ToolCall("write_note", {"note": "shared/Team.md", "content": "Update"})
-    answer = session.answer_question(questions.shared_write("write_note", {"note": "shared/Team.md"}, "shared/Team.md"))
-    outcome = (ToolOutcome("written", True) if questions.is_yes(answer)
-               else failure("policy", "NOT_RUN", "write_note was not run: the user didn't allow it."))
-    session.on_tool_outcome("write_note", {"note": "shared/Team.md"}, outcome, True)
+    call = ToolCall("write_note", {"note": "shared/Team.md", "content": "Update"}, secrets.token_urlsafe(12))
+    yield call
+    answer = session.answer_question(questions.shared_write("write_note", call.arguments, "shared/Team.md"))
+    outcome = (ToolOutcome(json.dumps({"done": True, "path": "shared/Team.md", "id": None, "created": False}), True)
+               if questions.is_yes(answer) else failure("policy", "NOT_RUN", "write_note was not run: the user didn't allow it."))
+    session.outcome(call, outcome)
     yield Text("Done: updated [[shared/Team.md]]." if outcome.success else "I left shared/Team.md as it was.")
 
 

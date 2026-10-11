@@ -72,24 +72,34 @@ class ConversationStore:
             raise
 
     def _migrate(self) -> None:
-        """Atomic, versioned backfill, bounded to 256 rows in memory at a time."""
+        """Atomic, versioned migrations; the backfill is bounded to 256 rows in memory at a time."""
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute("CREATE TABLE IF NOT EXISTS conversation_migrations (version INTEGER PRIMARY KEY)")
-            if self._conn.execute("SELECT 1 FROM conversation_migrations WHERE version = 1").fetchone():
-                return
-            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)")}
-            if "content_tokens" not in columns:
-                self._conn.execute("ALTER TABLE messages ADD COLUMN content_tokens INTEGER")
-            last_id = 0
-            while rows := self._conn.execute(
-                "SELECT id, content FROM messages WHERE id > ? ORDER BY id LIMIT 256", (last_id,)
-            ).fetchall():
-                self._conn.executemany("UPDATE messages SET content_tokens = ? WHERE id = ?",
-                                       [(estimate_tokens(content), mid) for mid, content in rows])
-                last_id = rows[-1][0]
-            self._conn.execute("INSERT INTO conversation_migrations VALUES (1)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, id)")
+            done = {row[0] for row in self._conn.execute("SELECT version FROM conversation_migrations")}
+            if 1 not in done:
+                self._migrate_1()
+            if 2 not in done:
+                # Which shown tool call a write was (Session's call_id, nuru-serve's tool_start), and the
+                # note it actually changed, so a restart can tell a client what the write did.
+                self._conn.execute("ALTER TABLE write_attempts ADD COLUMN call_id TEXT")
+                self._conn.execute("ALTER TABLE write_attempts ADD COLUMN target TEXT")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS write_attempts_call ON write_attempts(call_id)")
+                self._conn.execute("INSERT INTO conversation_migrations VALUES (2)")
+
+    def _migrate_1(self) -> None:
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)")}
+        if "content_tokens" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN content_tokens INTEGER")
+        last_id = 0
+        while rows := self._conn.execute(
+            "SELECT id, content FROM messages WHERE id > ? ORDER BY id LIMIT 256", (last_id,)
+        ).fetchall():
+            self._conn.executemany("UPDATE messages SET content_tokens = ? WHERE id = ?",
+                                   [(estimate_tokens(content), mid) for mid, content in rows])
+            last_id = rows[-1][0]
+        self._conn.execute("INSERT INTO conversation_migrations VALUES (1)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, id)")
 
     def pending_writes(self, vault: str) -> list[dict]:
         rows = self._conn.execute(
@@ -99,16 +109,15 @@ class ConversationStore:
         return [{"id": rid, "tool": tool, "arguments": json.loads(args), "state": state, "diagnostic": diagnostic}
                 for rid, tool, args, state, diagnostic in rows]
 
-    def unresolved_writes(self, vault: str, conversation_id: int, since: str) -> list[dict]:
-        """The writes in `conversation_id` begun at or after `since` (an ISO timestamp, as stored) that
-        never got an outcome: in_flight or uncertain."""
-        rows = self._conn.execute(
-            "SELECT id, tool, state FROM write_attempts WHERE vault = ? AND conversation_id = ? AND created_at >= ? "
-            "AND state IN ('in_flight', 'uncertain') ORDER BY id", (vault, conversation_id, since)
-        ).fetchall()
-        return [{"id": rid, "tool": tool, "state": state} for rid, tool, state in rows]
+    def write_for_call(self, call_id: str) -> dict | None:
+        """The write attempt made for the tool call `call_id` (state, tool, target), or None if that
+        call never reached the ledger: it was refused, or never run."""
+        row = self._conn.execute("SELECT tool, state, target FROM write_attempts WHERE call_id = ? ORDER BY id DESC LIMIT 1",
+                                 (call_id,)).fetchone()
+        return dict(zip(("tool", "state", "target"), row)) if row else None
 
-    def begin_write(self, conversation_id: int, turn_id: str, vault: str, tool: str, args: dict) -> int | None:
+    def begin_write(self, conversation_id: int, turn_id: str, vault: str, tool: str, args: dict, *,
+                    call_id: str | None = None) -> int | None:
         # Serialize the pending check and intent record across concurrent sessions on this database.
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -117,18 +126,19 @@ class ConversationStore:
             serialized = json.dumps(args, sort_keys=True, ensure_ascii=False)
             fingerprint = hashlib.sha256((tool + "\0" + serialized).encode()).hexdigest()
             cursor = self._conn.execute(
-                "INSERT INTO write_attempts (conversation_id, turn_id, vault, tool, arguments, fingerprint, state, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'in_flight', ?)",
-                (conversation_id, turn_id, vault, tool, serialized, fingerprint, _now_iso()),
+                "INSERT INTO write_attempts (conversation_id, turn_id, vault, tool, arguments, fingerprint, state, created_at, call_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'in_flight', ?, ?)",
+                (conversation_id, turn_id, vault, tool, serialized, fingerprint, _now_iso(), call_id),
             )
         return cursor.lastrowid
 
-    def finish_write(self, attempt_id: int, state: str, diagnostic: str | None = None) -> None:
+    def finish_write(self, attempt_id: int, state: str, diagnostic: str | None = None, *, target: str | None = None) -> None:
+        """Record what a write did; `target` is the note it actually changed, when it's known."""
         if state not in {'completed', 'not_completed', 'uncertain'}:
             raise ValueError("invalid dispatched-write state")
         with self._conn:
-            self._conn.execute("UPDATE write_attempts SET state = ?, diagnostic = ? WHERE id = ?",
-                               (state, diagnostic, attempt_id))
+            self._conn.execute("UPDATE write_attempts SET state = ?, diagnostic = ?, target = ? WHERE id = ?",
+                               (state, diagnostic, target, attempt_id))
 
     def resolve_write(self, attempt_id: int, vault: str, state: str) -> None:
         """Operator reconciliation only; never called by the model or inferred from note prose."""

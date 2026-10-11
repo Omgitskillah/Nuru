@@ -250,7 +250,8 @@ def test_the_scripted_server_runs_scenarios_end_to_end(tmp_path):
         events = protocol.parse_sse(client.call("GET", accepted["events"])[1])
         protocol.check_stream(events)
         assert [r["state"] for r in (e["data"] for e in events if e["type"] == "write_receipt")] == ["applied"]
-        assert events[-1]["data"]["reply"] == "I read [[nuru/Trip.md]] and wrote [[nuru/Summary.md]]."
+        assert events[-1]["data"]["reply"] == "I read [[nuru/Trip.md]] and wrote [[nuru/summary.md]]."
+        assert [r["path"] for r in (e["data"] for e in events if e["type"] == "write_receipt")] == ["nuru/summary.md"]
     finally:
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10) == 0

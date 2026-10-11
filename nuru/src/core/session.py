@@ -7,6 +7,7 @@ down again. A turn is a generator of events, so cli.py prints them and ui.py ren
 
 import json
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -14,7 +15,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,7 @@ from core import executor, model_profile, planner, questions
 from core.providers.mcp_tools import MCPTools, ToolResult
 from core.questions import Question
 from core import tool_dispatch
-from core.tool_dispatch import ToolOutcome, MUTATIONS
+from core.tool_dispatch import ToolOutcome, MUTATIONS, written_path
 from core.providers.ollama import (
     chat,
     create_model,
@@ -363,10 +364,12 @@ class Text:
 
 @dataclass(frozen=True)
 class ToolCall:
-    """The model asked for a tool. It runs right after this is yielded."""
+    """The model asked for a tool. It runs right after this is yielded. `call_id` names this call in
+    its outcome (Session.on_tool_outcome) and in the write ledger; it isn't part of what a call is."""
 
     name: str
     arguments: dict
+    call_id: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -450,10 +453,12 @@ class Session:
         # Asked a question code raises mid-turn (a write to OK, a save the message ruled out); returns
         # the chosen labels, or None if nobody answered. Used when confirm_write isn't set.
         self.answer_question: Callable[[Question], list[str] | None] | None = None
-        # Told how each tool call the model made turned out - (name, arguments, outcome, whether it's a
-        # write) - once it has run or been refused; nuru-serve reports it to its clients. Calls Nuru
-        # makes for itself (the notes run_python reads) aren't reported.
-        self.on_tool_outcome: Callable[[str, dict, ToolOutcome, bool], None] | None = None
+        # Told how each tool call shown as a ToolCall turned out - (its call_id, name, arguments,
+        # outcome, whether it's a write) - once it has run or been refused; nuru-serve reports it to its
+        # clients. Calls never shown (refusals once tools are closed, siblings skipped after a failure)
+        # and the calls Nuru makes for itself (the notes run_python reads) aren't reported.
+        self.on_tool_outcome: Callable[[str, str, dict, ToolOutcome, bool], None] | None = None
+        self._shown_call: str | None = None  # the call_id of the ToolCall last shown, until it runs
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self.link_auditor: VaultLinkAuditor | None = None
@@ -658,6 +663,7 @@ class Session:
         self._turn_writes = []
         self._repair_rounds = 0
         self._turn_text = text
+        self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         decisions = self.shadow.begin(text, turn_id) if self.shadow else None
@@ -938,7 +944,7 @@ class Session:
                     return
                 args, invalid = tool_dispatch.validate(name, raw_args, self._tool_validators)
                 shown_args = args if args is not None else {"invalid_arguments": str(raw_args)[:300]}
-                yield ToolCall(name, shown_args)
+                yield self._show(name, shown_args)
                 write_allowed = self._recovery_write_allowed(name, repair_pending)
                 exhausted = correcting and recovery_calls >= 2
                 if correcting:
@@ -1121,6 +1127,9 @@ class Session:
     def _call_tool(self, turn_id: str, name: str, args, gate_id: int | None,
                    enforcing: Enforcement | None, *, harness: bool = False, gate_checked: bool = False, refusal: ToolOutcome | None = None) -> ToolOutcome:
         """One validated, logged dispatch for ordinary, forced, planned and injected calls."""
+        call_id = None
+        if not harness:
+            call_id, self._shown_call = self._shown_call, None  # this is the call last shown, if any
         started = time.monotonic()
         original_args = args
         args, outcome = tool_dispatch.validate(name, args, self._tool_validators)
@@ -1160,7 +1169,7 @@ class Session:
                     + ("the user didn't allow it when asked." if answer is not None else "nobody was there to allow it.")
                     + " Give the result in the reply instead.")
         if outcome is None and name in MUTATIONS:
-            attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args)
+            attempt_id = self.store.begin_write(self.conversation_id, turn_id, self._vault_scope, name, args, call_id=call_id)
             if attempt_id is None:
                 pending = self.store.pending_writes(self._vault_scope)
                 outcome = tool_dispatch.failure("replay", "UNRESOLVED_WRITE", f"Write attempt {pending[0]['id'] if pending else 'from another session'} was unresolved at admission. "
@@ -1197,7 +1206,8 @@ class Session:
         if attempt_id is not None:
             outcome = replace(outcome, attempt_id=attempt_id)
             self.store.finish_write(attempt_id, "completed" if outcome.success else
-                                    "not_completed" if outcome.certainty == "not_completed" else "uncertain", outcome.hint)
+                                    "not_completed" if outcome.certainty == "not_completed" else "uncertain", outcome.hint,
+                                    target=written_path(name, outcome))
             self._turn_writes.append((name, args, outcome))
         if name == _PYTHON_TOOL:
             outcome = replace(outcome, text=_python_result(outcome.text))
@@ -1210,9 +1220,14 @@ class Session:
                                              duration_ms, gate_id, error=outcome.hint)
             if outcome.success and reranked and enforcing and enforcing.on("rerank"):
                 outcome = replace(outcome, text=reranked)
-        if self.on_tool_outcome and not harness:
-            self.on_tool_outcome(name, shown_args, outcome, name in MUTATIONS)
+        if self.on_tool_outcome and call_id:
+            self.on_tool_outcome(call_id, name, shown_args, outcome, name in MUTATIONS)
         return outcome
+
+    def _show(self, name: str, arguments: dict) -> ToolCall:
+        """The ToolCall to yield for a call about to run: the next non-harness _call_tool is this call."""
+        self._shown_call = secrets.token_urlsafe(12)
+        return ToolCall(name, arguments, self._shown_call)
 
     def _partial_actions(self) -> str:
         if not self._turn_writes:
@@ -1238,7 +1253,7 @@ class Session:
     def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
         """tool_gate enforced: the harness runs the first search itself, as if the model had."""
         args = {"query": query}
-        yield ToolCall(tool, args)
+        yield self._show(tool, args)
         outcome = self._call_tool(turn_id, tool, args, None, enforcing)
         messages += [
             {"role": "assistant", "tool_calls": [{"function": {"name": tool, "arguments": args}}]},
@@ -1299,7 +1314,7 @@ class Session:
                 return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
             if not confirmed:
                 return not_run("you declined it", False, gate, "declined")
-        yield ToolCall(name, args)
+        yield self._show(name, args)
         return self._call_tool(turn_id, name, args, gate["decision_id"] if gate else None, self.enforcement, gate_checked=True)
 
     def _checked_reply(self, draft: str, messages: list[dict], num_ctx: int, think, policy, enforcing: Enforcement):
@@ -1375,6 +1390,7 @@ class Session:
         self._turn_writes = []
         self._repair_rounds = 0
         self._turn_text = text
+        self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
@@ -1438,6 +1454,7 @@ class Session:
         self._turn_writes = []
         self._repair_rounds = 0
         self._turn_text = text
+        self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
         if self.shadow:
@@ -1523,9 +1540,10 @@ class Session:
                         except KeyError as missing:
                             stopped = f"{name} needs the output of {missing.args[0]}, which has none"
                             break
-                        yield ToolCall(tool, args)
+                        yield self._show(tool, args)
                         if enforcing and enforcing.on("step_cap") and tool_attempts >= enforcing.step_cap:
                             stopped = f"the {enforcing.step_cap}-step limit was reached"
+                            self._shown_call = None  # shown, but it won't run
                             break
                         tool_attempts += 1
                         outcome = self._call_tool(turn_id, tool, args, None, enforcing)

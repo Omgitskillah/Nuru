@@ -179,10 +179,6 @@ class ServiceStore:
                                  (conversation_id, principal)).fetchone()
         return dict(zip(("id", "store_id", "title", "created_at"), row)) if row else None
 
-    def store_id(self, conversation_id: str) -> int:
-        """The conversation's row in the conversation store."""
-        return self._conn.execute("SELECT store_id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()[0]
-
     def conversations(self, principal: str, before: str | None, limit: int) -> list[dict]:
         """Newest first; `before` is the last ID of the previous page."""
         rows = self._conn.execute(
@@ -199,7 +195,7 @@ class ServiceStore:
     def turn(self, turn_id: str, principal: str) -> dict | None:
         """The turn, or None if it doesn't exist or another principal owns its conversation."""
         row = self._conn.execute(
-            "SELECT t.id, t.conversation_id, t.text, t.state, t.final, t.last_seq, t.compacted, t.created_at FROM turns t "
+            "SELECT t.id, t.conversation_id, t.text, t.state, t.final, t.last_seq, t.compacted FROM turns t "
             "JOIN conversations c ON c.id = t.conversation_id WHERE t.id = ? AND c.principal = ?",
             (turn_id, principal)).fetchone()
         return self._turn(row) if row else None
@@ -207,20 +203,20 @@ class ServiceStore:
     def turns(self, conversation_id: str, before: str | None, limit: int) -> list[dict]:
         """A conversation's turns, newest first; `before` is the last ID of the previous page."""
         rows = self._conn.execute(
-            "SELECT id, conversation_id, text, state, final, last_seq, compacted, created_at FROM turns WHERE conversation_id = ? "
+            "SELECT id, conversation_id, text, state, final, last_seq, compacted FROM turns WHERE conversation_id = ? "
             "AND (? IS NULL OR rowid < (SELECT rowid FROM turns WHERE id = ?)) ORDER BY rowid DESC LIMIT ?",
             (conversation_id, before, before, limit)).fetchall()
         return [self._turn(row) for row in rows]
 
     def unfinished_turns(self) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, conversation_id, text, state, final, last_seq, compacted, created_at FROM turns "
+            "SELECT id, conversation_id, text, state, final, last_seq, compacted FROM turns "
             f"WHERE state NOT IN {TERMINAL_STATES} ORDER BY rowid").fetchall()
         return [self._turn(row) for row in rows]
 
     @staticmethod
     def _turn(row) -> dict:
-        turn = dict(zip(("id", "conversation_id", "text", "state", "final", "last_seq", "compacted", "created_at"), row))
+        turn = dict(zip(("id", "conversation_id", "text", "state", "final", "last_seq", "compacted"), row))
         turn["final"] = json.loads(turn["final"]) if turn["final"] else None
         return turn
 

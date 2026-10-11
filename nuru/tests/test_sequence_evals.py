@@ -247,3 +247,44 @@ def test_suite_uses_distinct_journals_for_fresh_case_vaults(modules, tmp_path, m
     monkeypatch.setattr('sys.argv', ['run_suite', '--tests', '28,29', '--repeats', '2'])
     runner.main()
     assert len(histories) == len(set(histories)) == 4
+
+
+@pytest.mark.parametrize("path,body,passed", [
+    ("nuru/daily-2026-10-11.md", "# Daily\n\n- [ ] Confirm the appointment with Giulia\n- [ ] Prepare the forms", True),
+    ("nuru/daily-2026-10-11.md", "# Daily\n\n* [ ] confirm with Giulia\n1. [ ] fill in the forms", True),
+    ("nuru/daily-2026-10-11.md", "# Daily\n\n[ ] Confirm the appointment with Giulia\n[ ] Prepare the forms", False),
+    ("nuru/daily-2026-10-11.md", "# Daily\n\n- Confirm the appointment with Giulia\n- Prepare the forms", False),
+    ("nuru/appointments.md", "- [ ] Confirm the appointment with Giulia\n- [ ] Prepare the forms", False),
+])
+def test_task_case_wants_checkbox_list_items_in_todays_daily(modules, path, body, passed):
+    cases, _, scorer, _ = modules
+    fixture = cases.load_cases(EVALS / "cases.json")[37]
+    changes = [{"path": path, "before": None, "after": body}]
+    turn = {**fixture["turns"][0], "reply": "Added both tasks to today's daily note.", "vault_changes": changes}
+    checks = dict(scorer.score_sequence_turn(turn)[1])
+    assert "no vault changes" not in checks
+    assert checks["confirm task is a checkbox in today's daily"] is passed
+    assert checks["forms task is a checkbox in today's daily"] is passed
+    points, case_checks = scorer.score({"turns": [turn], "vault_changes": changes})
+    assert "case changed no vault files" not in dict(case_checks)
+    assert (points == 5) is passed
+
+
+def test_a_case_that_writes_passes_acceptance_with_its_changes(modules, tmp_path):
+    cases, _, scorer, _ = modules
+    fixture = cases.load_cases(EVALS / "cases.json")[37]
+    changes = [{"path": "nuru/daily-2026-10-11.md", "before": None, "after": "- [ ] confirm\n- [ ] forms"}]
+    turn = {**fixture["turns"][0], "reply": "Done.", "vault_changes": changes}
+    (tmp_path / "results.jsonl").write_text(json.dumps({"test": 37, "turns": [turn], "vault_changes": changes}))
+    assert scorer.load_results(tmp_path, cases_path=EVALS / "cases.json")[0]["acceptance_passed"]
+
+
+def test_writes_checks_must_be_regexes(modules, tmp_path):
+    cases, _, _, _ = modules
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps({"90": {"name": "x", "turns": [{"prompt": "p", "checks": {}, "writes": {"bad": "("}}]}}))
+    with pytest.raises(Exception):
+        cases.load_cases(path)
+    path.write_text(json.dumps({"90": {"name": "x", "turns": [{"prompt": "p", "checks": {}, "writes": {}}]}}))
+    with pytest.raises(ValueError, match="writes"):
+        cases.load_cases(path)

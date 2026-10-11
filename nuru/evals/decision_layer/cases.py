@@ -20,6 +20,13 @@ def load_cases(path: Path) -> dict[int, dict]:
                 raise ValueError(f"case {key}: expected per-turn regex checks")
             for pattern in turn["checks"].values():
                 re.compile(pattern)
+            # Optional: a turn that is meant to write. Each pattern must match one changed file, read as
+            # its path, a newline, then its new text; these replace the turn's "no vault changes" check.
+            if "writes" in turn:
+                if not isinstance(turn["writes"], dict) or not turn["writes"]:
+                    raise ValueError(f"case {key}: writes must map labels to regexes")
+                for pattern in turn["writes"].values():
+                    re.compile(pattern)
     return {int(key): case for key, case in cases.items()}
 
 

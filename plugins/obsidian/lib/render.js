@@ -1,15 +1,20 @@
-// Showing what Nuru says without running any of it. Replies quote notes, and notes can hold HTML, so:
-// 1. before Obsidian renders the Markdown, raw HTML outside code is escaped and shows as text;
-// 2. after, the rendered tree is cleaned: no scripts or embedded content, no event attributes, and
-//    links only to notes in the vault, http(s) or mailto. Remote images become links (loading one
-//    would tell a server the note was read).
+// Showing what Nuru says without running or loading any of it. Replies quote notes, and notes can hold
+// HTML and images, so:
+// 1. before Obsidian renders the Markdown, raw HTML outside code is escaped and shows as text, and
+//    images and embeds (![alt](url), ![[note]]) become plain links: the renderer starts loading an
+//    image the moment it makes one, before anything after it could stop that, and an embedded note
+//    would bring in its own unescaped content;
+// 2. after, the rendered tree is cleaned, in case anything got through: no scripts or embedded
+//    content, no event attributes, links only to notes in the vault, http(s) or mailto, and any
+//    remote image left as a link.
 "use strict";
 
 const FENCE = /^(\s*)(`{3,}|~{3,})/;
 
-// `markdown` with every "<" outside code written as "&lt;", so raw HTML is text. Fenced blocks and
-// inline code are left alone: Markdown shows them literally anyway.
-function escapeHtml(markdown) {
+// `markdown` ready for the renderer: outside code, every "<" written as "&lt;" (raw HTML is text) and
+// every "![" as "[" (an image or embed is a link). Fenced blocks and inline code are left alone:
+// Markdown shows them literally anyway.
+function prepare(markdown) {
   const out = [];
   let fence = null;
   for (const line of markdown.split("\n")) {
@@ -21,7 +26,8 @@ function escapeHtml(markdown) {
       fence = opening[2];
       out.push(line);
     } else {
-      out.push(line.split(/(`+[^`]*`+)/).map((part, i) => (i % 2 ? part : part.replace(/</g, "&lt;"))).join(""));
+      out.push(line.split(/(`+[^`]*`+)/).map((part, i) => (i % 2 ? part : part.replace(/</g, "&lt;").replace(/!\[/g, "[")))
+        .join(""));
     }
   }
   return out.join("\n");
@@ -62,4 +68,4 @@ function sanitize(el) {
   }
 }
 
-module.exports = { escapeHtml, sanitize };
+module.exports = { prepare, sanitize };

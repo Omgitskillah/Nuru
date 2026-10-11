@@ -106,6 +106,11 @@ No model was loaded and no real vault was written.
 | Raw HTML in a reply shows as text; scripts, event attributes, `javascript:`/`obsidian:`/`file:` links and remote images don't survive | automated-tested (stand-in renderer) | `test/render.test.js`, `test/view.test.js`. The stand-in passes raw HTML through as Obsidian's renderer would; the real renderer is checked by hand below |
 | Questions get a card with the host's countdown; answers send the question's operation; closing the panel stops following but neither answers nor cancels | automated-tested | `test/view.test.js` |
 | A message carries only what was attached | automated-tested | `test/view.test.js` |
+| Images and embeds in a reply become links before rendering, so no element that could load a resource is ever made | automated-tested (stand-in renderer) | `test/render.test.js`: a MutationObserver sees every element the renderer makes; none is an image. A tracker pixel against real Obsidian is part of the manual run |
+| A message is sent once: a second Enter (or a question's answer) while it's on its way does nothing | automated-tested | `test/view.test.js`, with the submit answer held back |
+| A message whose answer was lost keeps its request IDs: sending again replays it, never a second turn; a changed message first asks `/v1/requests/{id}` whether the old one arrived; an answer cut off after its status is retried under the same ID | automated-tested | `test/view.test.js`, `test/client.test.js` |
+| A history answer for a conversation left behind, or for a closed panel, is dropped and starts no stream | automated-tested | `test/view.test.js`, answers released out of order |
+| Replies render one at a time, so an older render never replaces a newer reply | automated-tested | `test/view.test.js`, with the first render held back |
 | The plugin says why it can't chat: no token, no service, refused token, another vault | automated-tested | `test/client.test.js` |
 | A lost POST is retried with the same request ID | automated-tested | `test/client.test.js` |
 | In real Obsidian: stream a long answer, open a citation, approve and refuse a write, let a question expire, Stop, reload the plugin and resume | **pending (manual)** | Needs a person: Obsidian can't open a vault from the command line. Run `scripted_serve.py`, open its vault, and record the result here |

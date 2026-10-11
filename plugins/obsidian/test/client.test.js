@@ -77,3 +77,14 @@ test("the vault ID follows symlinks to the real folder", () => {
   assert.equal(vaultId(link), vaultId(vault));
   assert.match(vaultId(vault), /^[0-9a-f]{32}$/);
 });
+
+test("an answer cut off after its status is retried with the same request ID", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "t", fetch: async (url, init) => {
+    sent.push(JSON.parse(init.body).request_id);
+    if (sent.length === 1) return { ok: true, status: 202, text: async () => { throw new TypeError("body cut"); } };
+    return json(202, { turn_id: "turn00000001", replayed: true });
+  } });
+  assert.equal((await client.submit("conv0000demo", "hi", [], "req-chosen-by-caller")).turn_id, "turn00000001");
+  assert.deepEqual(sent, ["req-chosen-by-caller", "req-chosen-by-caller"]);
+});

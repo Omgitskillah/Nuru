@@ -3,13 +3,13 @@
 const { FIXTURES } = require("./helpers/setup");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { MarkdownRenderer } = require("obsidian");
+const { MarkdownRenderer, window } = require("obsidian");
 
-const { escapeHtml, sanitize } = require("../lib/render");
+const { prepare, sanitize } = require("../lib/render");
 
 async function rendered(markdown) {
   const el = createDiv();
-  await MarkdownRenderer.render(null, escapeHtml(markdown), el, "", null);
+  await MarkdownRenderer.render(null, prepare(markdown), el, "", null);
   sanitize(el);
   return el;
 }
@@ -38,5 +38,24 @@ test("whatever the renderer lets through is cleaned after", () => {
 
 test("code keeps its angle brackets", () => {
   const markdown = "a <b>\n```html\n<div>x</div>\n```\nuse `<br>` here";
-  assert.equal(escapeHtml(markdown), "a &lt;b>\n```html\n<div>x</div>\n```\nuse `<br>` here");
+  assert.equal(prepare(markdown), "a &lt;b>\n```html\n<div>x</div>\n```\nuse `<br>` here");
+});
+
+test("an image or embed in a reply never becomes an element that could load", async () => {
+  const el = createDiv();
+  const made = [];
+  const watcher = new window.MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.nodeType === 1) made.push(node.tagName, ...[...node.querySelectorAll("*")].map((n) => n.tagName));
+    }
+  });
+  watcher.observe(el, { childList: true, subtree: true });
+  const markdown = "Look: ![pixel](https://tracker.example/p.png?from=note) and ![[nuru/Trip.md]] and ![ref][r]\n\n[r]: https://t.example/x.png";
+  await MarkdownRenderer.render(null, prepare(markdown), el, "", null);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  watcher.disconnect();
+  assert.ok(made.length > 0, "the renderer did make elements");
+  assert.ok(!made.includes("IMG"), `made ${made}`);
+  assert.equal(prepare(markdown).includes("!["), false);
+  assert.equal(prepare("`![kept](x)`\n```\n![kept](x)\n```"), "`![kept](x)`\n```\n![kept](x)\n```", "code is left alone");
 });

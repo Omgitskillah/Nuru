@@ -1,6 +1,8 @@
 // A client of nuru-serve's protocol v1 over fetch. Every POST carries a request ID; when its response
-// is lost (the connection drops), it is sent again with the same ID, which the service answers with
-// the result it already gave instead of acting twice.
+// is lost (the connection drops, before or after the status line), it is sent again with the same ID,
+// which the service answers with the result it already gave instead of acting twice. A caller that
+// must not lose track of a request (a message to Nuru) chooses the ID itself and keeps it until it
+// knows what became of the request.
 "use strict";
 
 const { newRequestId, readEvents } = require("./protocol");
@@ -38,7 +40,14 @@ class NuruClient {
       throw new NuruError(0, "unreachable", "Nuru isn't answering. Is nuru-serve running?");
     }
     if (response.ok && method === "GET" && path.includes("/events")) return response;
-    const text = await response.text();
+    let text;
+    try {
+      text = await response.text();
+    } catch (error) {
+      if (error.name === "AbortError") throw error;
+      // The status came, the answer didn't: what the service did is unknown, as if nothing had come.
+      throw new NuruError(0, "unreachable", "Nuru's answer was cut off.");
+    }
     const parsed = text ? JSON.parse(text) : {};
     if (!response.ok) {
       const error = parsed.error || {};
@@ -48,9 +57,10 @@ class NuruClient {
     return parsed;
   }
 
-  // A POST with a fresh request ID, sent again with that same ID if no answer came back.
-  async post(path, body) {
-    const payload = { request_id: newRequestId(), ...body };
+  // A POST with request ID `requestId`, sent again with that same ID if no answer came back. A
+  // NuruError with status 0 means it's unknown whether the service acted on it.
+  async post(path, body, requestId = newRequestId()) {
+    const payload = { request_id: requestId, ...body };
     for (let attempt = 0; ; attempt += 1) {
       try {
         return await this.request("POST", path, payload);
@@ -66,11 +76,17 @@ class NuruClient {
 
   conversation(id, limit = 50) { return this.request("GET", `/v1/conversations/${encodeURIComponent(id)}?limit=${limit}`); }
 
-  createConversation(title) { return this.post("/v1/conversations", title ? { title } : {}); }
+  createConversation(title, requestId) { return this.post("/v1/conversations", title ? { title } : {}, requestId); }
 
-  submit(conversationId, text, attachments = []) {
+  submit(conversationId, text, attachments = [], requestId) {
     return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/turns`,
-      { text, ...(attachments.length ? { attachments } : {}) });
+      { text, ...(attachments.length ? { attachments } : {}) }, requestId);
+  }
+
+  // What became of a request (GET /v1/requests/{id}); a NuruError with status 404 if the service never
+  // accepted it.
+  requestState(requestId, operation) {
+    return this.request("GET", `/v1/requests/${encodeURIComponent(requestId)}?operation=${operation}`);
   }
 
   cancel(turnId) { return this.post(`/v1/turns/${encodeURIComponent(turnId)}/cancel`, {}); }

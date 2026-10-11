@@ -17,5 +17,8 @@
   },
   "allowScripts": {
     "esbuild": false
+  },
+  "dependencies": {
+    "markdown-it": "15.0.2"
   }
 }

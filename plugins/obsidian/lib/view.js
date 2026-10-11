@@ -4,11 +4,11 @@
 // turns themselves, and never answers a question.
 "use strict";
 
-const { Component, ItemView, Keymap, MarkdownRenderer, MarkdownView, Notice } = require("obsidian");
+const { ItemView, Keymap, MarkdownView, Notice } = require("obsidian");
 
 const { answerText, newRequestId } = require("./protocol");
 const { ConnectionProblem } = require("./connection");
-const { prepare, sanitize } = require("./render");
+const { renderReply } = require("./render");
 const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
@@ -23,14 +23,15 @@ class ChatView extends ItemView {
     this.plugin = plugin;
     this.client = null;
     this.conversationId = null;
-    this.turns = new Map(); // turn ID -> {runner, display, text, el, parts..., component, renderTimer}
+    this.turns = new Map(); // turn ID -> {runner, text, el and its parts, renderTimer...}
     this.attachments = [];
     // Bumped by every navigation and by closing: an answer that arrives for an older one is dropped,
     // so a slow reply can't mix conversations or start a stream after the panel has closed.
     this.generation = 0;
     this.sending = false; // a message is on its way: another can't start
-    // A message whose fate is unknown (its answer was lost): {text, attachments, createId, submitId}.
-    // Sending again reuses its IDs, so the service replays it instead of starting a second turn.
+    // A message whose fate is unknown (its answer was lost): {text, attachments, origin, conversationId,
+    // createId, submitId}. `origin` is the conversation it was written in (null: a new one). Sending the
+    // same text there again reuses its IDs, so the service replays it instead of starting a second turn.
     this.pending = null;
   }
 
@@ -145,8 +146,9 @@ class ChatView extends ItemView {
 
   // ------------------------------------------------------------------ sending
   // Send what's in the composer, once. While it's on its way nothing else is sent (Enter, the button and
-  // answering a question all come here). If its answer is lost, it stays pending: sending again reuses
-  // its request IDs, so the service replays it rather than starting a second turn.
+  // answering a question all come here). If its answer is lost, it stays pending: sending the same text
+  // in the same conversation again reuses its request IDs, so the service replays it rather than starting
+  // a second turn. Anything else first finds out what became of it, without leaving this conversation.
   async send() {
     if (this.sending || !this.client) return;
     const text = this.input.value.trim();
@@ -156,13 +158,13 @@ class ChatView extends ItemView {
     const generation = this.generation;
     try {
       let message = this.pending;
-      if (message && message.text !== text) {
-        if (await this.settled(message, generation)) return; // it went: the new text waits for the next Send
-        message = null; // it never arrived, and the text has changed: drop it
+      if (message && (message.text !== text || message.origin !== this.conversationId)) {
+        await this.settle(message, generation);
+        message = null;
       }
       if (!message) {
-        message = { text, attachments: [...this.attachments], createId: newRequestId(), submitId: newRequestId(),
-          conversationId: this.conversationId };
+        message = { text, attachments: [...this.attachments], origin: this.conversationId,
+          conversationId: this.conversationId, createId: newRequestId(), submitId: newRequestId() };
       }
       this.pending = message;
       if (!message.conversationId) {
@@ -171,10 +173,13 @@ class ChatView extends ItemView {
       }
       const accepted = await this.client.submit(message.conversationId, message.text, message.attachments, message.submitId);
       this.pending = null;
-      this.input.value = "";
-      this.attachments = [];
-      this.renderChips();
-      await this.show(message.conversationId, accepted.turn_id, message.text, generation);
+      // The composer is cleared only if it still holds this message, in the view it was sent from.
+      if (generation === this.generation && this.input.value.trim() === message.text) {
+        this.input.value = "";
+        this.attachments = [];
+        this.renderChips();
+      }
+      await this.show(message, accepted.turn_id, generation);
     } catch (error) {
       if (error.status === 0 && this.pending) {
         new Notice("Nuru may have received this message: its answer was lost. Press Send again to find out; it won't be sent twice.");
@@ -189,32 +194,37 @@ class ChatView extends ItemView {
     }
   }
 
-  // Whether a pending message (one whose answer was lost) reached Nuru; if it did, it's shown.
-  async settled(message, generation) {
+  // Find out what became of a pending message, and forget it. If it reached Nuru, it's shown when its
+  // conversation is the one open; otherwise a notice says so. It never changes the open conversation.
+  async settle(message, generation) {
+    let state;
     try {
-      const state = await this.client.requestState(message.submitId, "submit_turn");
-      this.pending = null;
-      await this.show(state.conversation_id, state.turn_id, message.text, generation);
-      return true;
+      state = await this.client.requestState(message.submitId, "submit_turn");
     } catch (error) {
-      if (error.status === 404) return false;
-      throw error;
+      if (error.status !== 404) throw error; // still unknown: it stays pending
+      this.pending = null;
+      return;
+    }
+    this.pending = null;
+    if (generation === this.generation && state.conversation_id === this.conversationId) {
+      if (!this.turns.has(state.turn_id)) this.addTurn(state.turn_id, message.text);
+    } else {
+      new Notice(`Nuru: your earlier message "${message.text.slice(0, 40)}" did reach Nuru; it's in the conversation it was sent to.`);
     }
   }
 
-  // A turn just accepted: shown if its conversation is still the one open and the panel hasn't moved
-  // on; otherwise it appears with that conversation's history.
-  async show(conversationId, turnId, text, generation) {
+  // A turn just accepted: shown if the panel is still where the message was sent from. A message that
+  // started a new conversation opens it, but only if the panel is still on "New conversation".
+  async show(message, turnId, generation) {
     if (generation !== this.generation) return;
-    if (this.conversationId !== conversationId) {
-      this.conversationId = conversationId;
-      await this.loadConversations(generation);
-      if (generation !== this.generation) return;
-      this.picker.value = conversationId;
-      await this.plugin.remember({ conversationId });
+    if (this.conversationId === null && message.origin === null) {
+      this.conversationId = message.conversationId;
+      if (!(await this.loadConversations(generation))) return;
+      this.picker.value = message.conversationId;
+      await this.plugin.remember({ conversationId: message.conversationId });
       if (generation !== this.generation) return;
     }
-    if (!this.turns.has(turnId)) this.addTurn(turnId, text);
+    if (this.conversationId === message.conversationId && !this.turns.has(turnId)) this.addTurn(turnId, message.text);
   }
 
   // Only what the user asks for: the open note, or the text selected in it.
@@ -270,8 +280,7 @@ class ChatView extends ItemView {
       replyEl: el.createDiv({ cls: "nuru-reply markdown-rendered" }),
       receiptsEl: el.createDiv({ cls: "nuru-receipts" }),
       questionEl: el.createDiv({ cls: "nuru-question" }),
-      component: this.addChild(new Component()),
-      renderTimer: null, renderedReply: null, rendering: false, renderComponent: null, forgotten: false, shownQuestion: null,
+      renderTimer: null, renderedReply: null, forgotten: false, shownQuestion: null,
     };
     turn.runner = new TurnRunner({ client: this.client, turnId, onChange: () => this.update(turn) });
     if (saved) Object.assign(turn.runner.display, saved);
@@ -286,7 +295,6 @@ class ChatView extends ItemView {
     turn.forgotten = true;
     turn.runner.stop();
     window.clearTimeout(turn.renderTimer);
-    this.removeChild(turn.component);
   }
 
   update(turn) {
@@ -318,36 +326,21 @@ class ChatView extends ItemView {
     this.updateButtons();
   }
 
-  // The reply is rendered again at most every RENDER_MS while it streams, one render at a time: Obsidian's
-  // renderer can finish out of order, so a render that's running is let finish, then the newest reply
-  // is rendered. Each render has its own component, released once its result is replaced.
+  // The reply is rendered again at most every RENDER_MS while it streams. Rendering is synchronous
+  // (lib/render.js), so the newest reply is always the one shown.
   scheduleRender(turn) {
-    if (turn.renderTimer || turn.rendering) return;
+    if (turn.renderTimer) return;
     turn.renderTimer = window.setTimeout(() => this.render(turn), RENDER_MS);
   }
 
-  async render(turn) {
+  render(turn) {
     turn.renderTimer = null;
     const reply = turn.runner.display.reply;
     if (reply === turn.renderedReply || turn.forgotten) return;
-    turn.rendering = true;
-    const component = turn.component.addChild(new Component());
-    const fresh = createDiv();
-    try {
-      await MarkdownRenderer.render(this.app, prepare(reply), fresh, "", component);
-    } finally {
-      turn.rendering = false;
-    }
-    if (turn.forgotten) return;
-    sanitize(fresh);
     const stick = this.nearBottom();
-    turn.replyEl.empty();
-    turn.replyEl.append(...fresh.childNodes);
-    if (turn.renderComponent) turn.component.removeChild(turn.renderComponent);
-    turn.renderComponent = component;
+    renderReply(reply, turn.replyEl);
     turn.renderedReply = reply;
     if (stick) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-    if (turn.runner.display.reply !== reply) this.scheduleRender(turn); // it grew meanwhile
   }
 
   nearBottom() {

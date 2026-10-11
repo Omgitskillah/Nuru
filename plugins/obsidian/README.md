@@ -13,8 +13,9 @@ What it does:
 - Answer Nuru's questions before they expire. The service's clock decides, and no answer counts as No.
   Closing the panel never answers.
 - **Stop** a turn. Closing the panel only stops following it, and reopening picks it up again.
-- Note links open in Obsidian, web links in the browser. Raw HTML in a reply shows as text, and nothing
-  in it runs.
+- Note links open in Obsidian, web links in the browser. Replies are rendered with markdown-it, not
+  Obsidian's renderer: raw HTML shows as text, and images and embeds show as links, so nothing in a reply
+  runs or loads. Callouts, math and embeds therefore show as their text.
 
 ## Setting up (until M4's installer)
 

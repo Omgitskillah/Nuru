@@ -141,21 +141,5 @@ class MarkdownView {}
 
 const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event.ctrlKey)) };
 
-// Renders a little Markdown the way Obsidian's renderer treats it where it matters here: [[note]] as an
-// internal link, [text](url) and ![alt](src) as a link and an image, **bold**, and any raw HTML left in
-// as HTML (Obsidian would pass much of it through). Entities, such as the plugin's &lt;, stay text.
-const MarkdownRenderer = {
-  async render(app, markdown, el) {
-    const html = markdown
-      .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, '<img alt="$1" src="$2">')
-      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
-        `<a class="internal-link" data-href="${target}" href="${target}">${label || target}</a>`)
-      .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '<a href="$2">$1</a>')
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .split(/\n{2,}/).map((block) => `<p>${block}</p>`).join("");
-    el.innerHTML = html;
-  },
-};
-
-module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, MarkdownRenderer, Keymap,
+module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Keymap,
   window };

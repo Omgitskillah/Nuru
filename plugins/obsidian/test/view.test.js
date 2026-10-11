@@ -3,12 +3,12 @@
 const { FIXTURES, until } = require("./helpers/setup");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Component, MarkdownRenderer, Notice, window } = require("obsidian");
+const { Component, Notice, window } = require("obsidian");
 
 const { Display } = require("../lib/protocol");
 const { ConnectionProblem } = require("../lib/connection");
 const { ChatView } = require("../lib/view");
-const { prepare } = require("../lib/render");
+const { renderReply } = require("../lib/render");
 
 function displayOf(events) {
   const display = new Display();
@@ -237,36 +237,70 @@ test("history that arrives after the panel closed starts nothing", async () => {
   assert.equal(view.turns.size, 0);
 });
 
-test("renders run one at a time, so an older one can never replace the newest reply", async () => {
-  const real = MarkdownRenderer.render;
-  const held = [];
-  MarkdownRenderer.render = (app, markdown, el, path, component) => {
-    const gate = deferred();
-    held.push({ markdown, gate });
-    return gate.promise.then(() => real(app, markdown, el, path, component));
-  };
+test("the reply shown is always the newest", async () => {
+  const live = { turn00000001: FIXTURES.streams.completed_with_tools.slice(0, 9) };
+  const history = [{ turn_id: "turn00000001", text: "x", state: "running", display: displayOf(live.turn00000001.slice(0, 1)) }];
+  const { view } = await open({ client: fakeClient({ history, live }) });
   try {
-    const live = { turn00000001: FIXTURES.streams.completed_with_tools.slice(0, 9) };
-    const history = [{ turn_id: "turn00000001", text: "x", state: "running", display: displayOf(live.turn00000001.slice(0, 1)) }];
-    const client = fakeClient({ history, live });
-    var { view } = await open({ client });
     const [turn] = view.turns.values();
-    await until(() => held.length === 1);
-    const partial = held[0].markdown;
-    turn.runner.display.apply({ ...FIXTURES.streams.completed_with_tools[9] });  // more of the reply arrives
+    await until(() => turn.renderedReply);
+    for (const event of FIXTURES.streams.completed_with_tools.slice(9)) turn.runner.display.apply(event);
     view.update(turn);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(held.length, 1, "no second render while the first runs");
-    held[0].gate.resolve();
-    await until(() => held.length === 2);
-    assert.notEqual(held[1].markdown, partial);
-    held[1].gate.resolve();
     await until(() => turn.renderedReply === turn.runner.display.reply);
     const final = createDiv();
-    await real(null, prepare(turn.runner.display.reply), final);
-    assert.equal(turn.replyEl.textContent, final.textContent, "the newest reply is what's shown");
+    renderReply(turn.runner.display.reply, final);
+    assert.equal(turn.replyEl.innerHTML, final.innerHTML);
   } finally {
-    MarkdownRenderer.render = real;
-    if (view) await view.close();
+    await view.close();
   }
+});
+
+test("a late answer for a message sent from A leaves B's draft and attachments alone", async () => {
+  const client = fakeClient({ history: [] });
+  const answer = deferred();
+  client.submit = async (...args) => { client.calls.push(["submit", ...args]); return answer.promise; };
+  const { view } = await open({ client, conversationId: "conv0000aaaa", file: { path: "nuru/B.md" } });
+  view.input.value = "for A";
+  const sending = view.send();
+  await view.openConversation("conv0000bbbb");
+  view.input.value = "a draft for B";
+  view.attach(false);
+  answer.resolve({ turn_id: "turn0000aaa1" });
+  await sending;
+  assert.equal(view.input.value, "a draft for B");
+  assert.deepEqual(view.attachments, [{ path: "nuru/B.md" }]);
+  assert.equal(view.conversationId, "conv0000bbbb");
+  assert.ok(!view.turns.has("turn0000aaa1"), "A's turn shows with A's history, not here");
+  await view.close();
+});
+
+test("settling a lost message from A while in B never leaves B or mixes their turns", async () => {
+  const histories = {
+    conv0000aaaa: [],
+    conv0000bbbb: [{ turn_id: "turn0000bbb1", text: "b", state: "completed", display: displayOf(FIXTURES.streams.failed) }],
+  };
+  const client = fakeClient();
+  client.conversation = async (id) => ({ conversation_id: id, turns: histories[id] });
+  let lose = true;
+  client.submit = async (conversation, text, attachments, id) => {
+    client.calls.push(["submit", conversation, text, id]);
+    if (lose) throw Object.assign(new Error("lost"), { status: 0 });
+    return { turn_id: "turn0000bbb2" };
+  };
+  client.requestState = async (id) => ({ conversation_id: "conv0000aaaa", turn_id: "turn0000aaa1", state: "running" });
+  const { view } = await open({ client, conversationId: "conv0000aaaa" });
+  view.input.value = "for A";
+  await view.send();
+  const lostId = view.pending.submitId;
+  await view.openConversation("conv0000bbbb");
+  view.input.value = "for A";  // the same words, but now in B: a new message, never A's retried
+  lose = false;
+  await view.send();
+  assert.equal(view.conversationId, "conv0000bbbb");
+  assert.deepEqual([...view.turns.keys()], ["turn0000bbb1", "turn0000bbb2"]);
+  const [, last] = client.calls.filter((c) => c[0] === "submit");
+  assert.equal(last[1], "conv0000bbbb");
+  assert.notEqual(last[3], lostId);
+  assert.match(Notice.shown.at(-1) || "", /did reach Nuru/);
+  await view.close();
 });

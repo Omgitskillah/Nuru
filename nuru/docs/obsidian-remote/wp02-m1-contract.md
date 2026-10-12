@@ -23,7 +23,7 @@ record both envelopes and the old field shapes. They are source-derived fixtures
 not claims of a captured response from a running RemoteNotes instance.
 
 Nuru's WP01 service stays on `127.0.0.1:27125` for direct Obsidian use. M3 must
-add a separate remote-only listener on `127.0.0.1:27126` and target **only that
+add a separate remote-only listener on `127.0.0.1:27127` and target **only that
 listener** with the private Tailscale Serve HTTPS route. Serve forwards to
 loopback, so the peer address cannot distinguish a proxied call from a direct
 one. The listener that accepted the connection is the authority boundary: the
@@ -35,7 +35,7 @@ M3 must inspect and verify Serve's target before cutover and during its private
 HTTPS check; a route aimed at port 27125 fails the migration gate.
 
 Migration is an operator action: inspect the current Serve route and receiver,
-let accepted writes finish, stop the old receiver, switch the route to 27126,
+let accepted writes finish, stop the old receiver, switch the route to 27127,
 verify one legacy capture and the Android setup route, then update shortcuts.
 Never enable Funnel, overwrite an existing Serve route, stop port 27124's listener or rewrite
 installed shortcuts automatically. Rollback restores the prior route/receiver;
@@ -115,7 +115,7 @@ The phone page and API share one HTTPS origin. Browser mutations also require
 Origin/Host checks and a session-bound CSRF value; neither a client-supplied
 `X-Forwarded-*` header nor a raw bearer from the old local plugin confers proxy
 identity. The remote listener rejects the local token even if a caller reaches
-port 27126 directly. A capture-only bearer has no access to the phone page's
+port 27127 directly. A capture-only bearer has no access to the phone page's
 history or notes. Never put long-lived secrets in URLs, localStorage, logs or vault
 files.
 

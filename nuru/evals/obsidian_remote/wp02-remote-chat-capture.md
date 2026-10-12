@@ -21,6 +21,8 @@
   bounded body parsing; edge-case JSON/Unicode differences are explicit; Android
   setup keeps the legacy route and import fields. M2/M3 still have to implement
   these rules and test them over HTTP/private HTTPS.
+- A follow-up review found 27126 is already used by the manual test servers. The
+  planned remote-only listener now uses 27127, and the WP02 plan matches.
 - `git diff --check`: passed.
 - `.venv/bin/python -m pytest -q nuru/tests/test_remote_contract.py nuru/tests/test_service_protocol.py nuru/tests/test_service_host.py nuru/tests/test_service_server.py`:
   **171 passed in 9.36 s**, without a local model and with loopback HTTP tests

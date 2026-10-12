@@ -40,7 +40,10 @@ and UID frontmatter; retain that observable contract while defining how Nuru's
 internal note identity, ownership, history and receipts map to it. Treat revisions
 as opaque to clients. Add compatibility fixtures before migrating real shortcuts.
 
-Use the WP01 host on loopback (default 27125) behind private Tailscale HTTPS Serve.
+Keep the WP01 host on loopback (default 27125) for direct local use. Add a
+separate remote-only listener on 127.0.0.1:27127 behind private Tailscale HTTPS
+Serve; its accepting socket determines the remote credential boundary. Port
+27126 remains available to the documented manual test servers.
 Do not automatically overwrite an existing Serve route, enable Funnel, kill a
 listener on 27124 or change installed shortcuts. Provide an explicit operator
 migration procedure: inspect the route, stop the old receiver after accepted
@@ -54,8 +57,8 @@ Retain a tested rollback procedure that preserves notes and request history.
 Serve the phone UI and versioned API from the same HTTPS origin. Reuse WP01 JSON
 commands and resumable event streams; avoid a second chat implementation. All
 conversation, event, request and note access checks run on the host for each
-request. Trust proxy identity/forwarding headers only from the configured local
-proxy; client-supplied headers cannot grant access.
+request. The accepting listener determines which credential class is allowed;
+forwarding headers cannot grant access or turn a local request into a remote one.
 
 Introduce revocable device credentials with explicit capabilities, at minimum:
 `capture:create`, `chat:use`, and `notes:read`. A chat operation that writes also

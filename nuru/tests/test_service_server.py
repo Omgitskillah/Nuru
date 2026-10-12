@@ -4,9 +4,11 @@ and a stream that is replayed and followed. No model."""
 import http.client
 import json
 import os
+import socket
 import sqlite3
 import stat
 import threading
+import time
 
 import pytest
 
@@ -63,6 +65,86 @@ class Client:
         connection.close()
         kind = response.getheader("Content-Type")
         return response.status, (json.loads(payload) if kind == "application/json" else payload), response
+
+
+def test_capture_http_is_model_free_and_preserves_legacy_receipt(served):
+    client, service, credentials, built = served
+    headers = {"Content-Type": "application/json"}
+    payload = {"request_id": "phone-capture-0001", "content": "Line 1\r\n☃\n"}
+    status, receipt, _ = client.call("POST", "/v1/captures", payload, headers=headers)
+    assert status == 201 and set(receipt) == {"ok", "uid", "path", "revision"}
+    assert client.call("POST", "/v1/captures", payload, headers=headers)[:2] == (201, receipt)
+    assert client.call("GET", "/v1/captures/requests/phone-capture-0001")[1]["receipt"] == receipt
+    assert (service.vault / receipt["path"]).read_bytes() == f'---\nuid: "{receipt["uid"]}"\n---\nLine 1\r\n☃\n'.encode()
+    assert built == []
+    status, other, _ = client.call("POST", "/v1/captures", {"content": "old shortcut"}, headers=headers)
+    assert status == 201 and other["uid"] != receipt["uid"]
+
+
+def test_capture_http_rejects_bad_requests_without_vault_effect(served):
+    client, service, *_ = served
+    headers = {"Content-Type": "application/json"}
+    cases = [
+        (dict(token=None, headers=headers), 401, "unauthorized"),
+        (dict(headers={"Content-Type": "text/plain"}), 415, "expected_application_json"),
+        (dict(headers=headers, raw=b'{"content":"first","content":"last"}'), 400, "invalid_capture"),
+        (dict(headers=headers, raw=b'{"content":"\\ud800"}'), 400, "invalid_capture"),
+        (dict(headers=headers, raw=b"x" * (256 * 1024 + 1)), 413, "body_rejected"),
+    ]
+    for options, expected, code in cases:
+        status, body, _ = client.call("POST", "/v1/captures", **options)
+        assert (status, body) == (expected, {"ok": False, "error": code})
+    assert client.call("GET", "/v1/captures")[1] == {"ok": False, "error": "method_not_allowed"}
+    assert client.call("GET", "/v1/captures/requests/phone-capture-0001")[1] == {"ok": False, "error": "not_found"}
+    assert not (service.vault / "Inbox").exists()
+
+
+def test_disconnected_capture_client_recovers_original_receipt(served, monkeypatch):
+    client, service, _, built = served
+    entered, release = threading.Event(), threading.Event()
+    original = service.captures._publish
+
+    def held(record, content):
+        entered.set()
+        assert release.wait(5)
+        original(record, content)
+
+    monkeypatch.setattr(service.captures, "_publish", held)
+    payload = {"request_id": "phone-capture-0001", "content": "saved"}
+    connection = http.client.HTTPConnection("127.0.0.1", client.port, timeout=5)
+    connection.request("POST", "/v1/captures", body=json.dumps(payload), headers={
+        "Host": f"127.0.0.1:{client.port}", "Authorization": f"Bearer {client.token}",
+        "Content-Type": "application/json"})
+    assert entered.wait(5)
+    connection.close()  # the receipt is deliberately lost after acceptance
+    release.set()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status, body, _ = client.call("GET", "/v1/captures/requests/phone-capture-0001")
+        if body["state"] == "completed":
+            break
+        time.sleep(0.01)
+    assert status == 200 and body["state"] == "completed"
+    receipt = body["receipt"]
+    assert client.call("POST", "/v1/captures", payload, headers={"Content-Type": "application/json"})[:2] == (201, receipt)
+    assert len(list((service.vault / "Inbox").glob("*.md"))) == 1
+    assert built == []
+
+
+def test_stalled_capture_body_times_out_without_a_note(served):
+    client, service, *_ = served
+    with socket.create_connection(("127.0.0.1", client.port), timeout=7) as connection:
+        connection.settimeout(7)
+        connection.sendall((
+            f"POST /v1/captures HTTP/1.1\r\nHost: 127.0.0.1:{client.port}\r\n"
+            f"Authorization: Bearer {client.token}\r\nContent-Type: application/json\r\n"
+            "Content-Length: 20\r\n\r\n{"  # only one of the declared 20 bytes arrives
+        ).encode())
+        response = bytearray()
+        while chunk := connection.recv(4096):
+            response.extend(chunk)
+    assert b"HTTP/1.0 408" in response and b'"body_timeout"' in response
+    assert not (service.vault / "Inbox").exists()
 
 
 def test_refused_callers_reach_nothing(served):

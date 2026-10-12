@@ -28,6 +28,7 @@ from core import questions
 from core.conversation_store import ConversationStore
 from core.questions import Question
 from core.service import protocol
+from core.service.capture import CaptureWriter
 from core.service.protocol import Display, ProtocolError, TurnStream
 from core.service.store import ServiceStore
 from core.tool_dispatch import MUTATIONS, ToolOutcome, written_path
@@ -100,12 +101,14 @@ class Service:
         self._touched: dict[str, tuple[_Live, bool]] | None = None
         self._active_before: str | None = None
         self._unsafe = False  # a change could be neither committed nor rolled back (_atomic)
+        self.captures = CaptureWriter(store, self.vault, self.vault_id, self._lock)
         try:
             self.version = metadata.version("core")
         except metadata.PackageNotFoundError:
             self.version = "dev"
         with self._lock:
             self._recover(retention_days)
+            self.captures.recover()
         self._worker = threading.Thread(target=self._run, name="nuru-serve-worker", daemon=True)
         self._worker.start()
 
@@ -169,7 +172,8 @@ class Service:
             with self._lock:
                 self._changed.notify_all()
             self._worker.join(timeout)
-        return not self._worker.is_alive()
+        capture_idle = self.captures.stop(timeout)
+        return not self._worker.is_alive() and capture_idle
 
     # ------------------------------------------------------------------ requests
     def _request(self, principal: str, operation: str, payload: dict, target: str, act) -> tuple[int, dict]:

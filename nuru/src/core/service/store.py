@@ -67,6 +67,23 @@ _MIGRATIONS = {
         created_at TEXT NOT NULL
     );
     """,
+    2: """
+    CREATE TABLE captures (
+        key TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        vault_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        uid TEXT NOT NULL UNIQUE,
+        path TEXT NOT NULL UNIQUE,
+        note_hash TEXT NOT NULL,
+        state TEXT NOT NULL,
+        receipt TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+    );
+    CREATE INDEX captures_device_created ON captures(device_id, created_at);
+    """,
 }
 TERMINAL_STATES = ("completed", "failed", "cancelled")
 
@@ -148,6 +165,48 @@ class ServiceStore:
                 self._owner.seek(0)
                 msvcrt.locking(self._owner.fileno(), msvcrt.LK_UNLCK, 1)
             self._owner.close()
+
+    # Capture identities and intents are committed before touching the vault. Rows
+    # remain as tombstones after the receipt expires; a reused ID cannot write again.
+    def capture(self, key: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT device_id, vault_id, request_id, payload_hash, uid, path, note_hash, state, receipt "
+            "FROM captures WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        value = dict(zip(("device_id", "vault_id", "request_id", "payload_hash", "uid", "path",
+                          "note_hash", "state", "receipt"), row))
+        value["receipt"] = json.loads(value["receipt"]) if value["receipt"] else None
+        return value
+
+    def add_capture(self, key: str, device_id: str, vault_id: str, request_id: str,
+                    payload_hash: str, uid: str, path: str, note_hash: str) -> None:
+        self._conn.execute(
+            "INSERT INTO captures (key, device_id, vault_id, request_id, payload_hash, uid, path, "
+            "note_hash, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)",
+            (key, device_id, vault_id, request_id, payload_hash, uid, path, note_hash, _now()))
+
+    def set_capture(self, key: str, state: str, receipt: dict | None = None) -> None:
+        self._conn.execute(
+            "UPDATE captures SET state = ?, receipt = ?, completed_at = CASE WHEN ? = 'completed' "
+            "THEN ? ELSE completed_at END WHERE key = ?",
+            (state, json.dumps(receipt) if receipt else None, state, _now(), key))
+
+    def pending_captures(self) -> list[str]:
+        return [row[0] for row in self._conn.execute(
+            "SELECT key FROM captures WHERE state IN ('accepted', 'running', 'uncertain')")]
+
+    def capture_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+
+    def recent_device_captures(self, device_id: str, since: str) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM captures WHERE device_id = ? AND created_at >= ?",
+                                  (device_id, since)).fetchone()[0]
+
+    def expire_capture_receipts(self, before: str) -> int:
+        cursor = self._conn.execute("UPDATE captures SET state = 'gone', receipt = NULL WHERE state = 'completed' "
+                                    "AND completed_at < ?", (before,))
+        return cursor.rowcount
 
     # ------------------------------------------------------------------ requests
     def request(self, key: str) -> dict | None:

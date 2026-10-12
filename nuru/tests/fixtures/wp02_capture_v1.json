@@ -26,8 +26,29 @@
     {"http_status": 408, "body": {"ok": false, "error": "body_timeout"}},
     {"http_status": 413, "body": {"ok": false, "error": "body_rejected"}},
     {"http_status": 415, "body": {"ok": false, "error": "expected_application_json"}},
-    {"http_status": 500, "body": {"ok": false, "error": "capture_failed"}}
+    {"http_status": 500, "body": {"ok": false, "error": "capture_failed"}},
+    {"http_status": 404, "body": {"ok": false, "error": "not_found"}},
+    {"http_status": 405, "body": {"ok": false, "error": "method_not_allowed"}},
+    {"http_status": 503, "body": {"ok": false, "error": "stopping"}}
   ],
+  "android_setup": {
+    "method": "GET",
+    "path_pattern": "/v1/android-setup/{64-hex-token}.json",
+    "success_status": 200,
+    "headers": {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Type": "application/json", "Content-Disposition": "attachment; filename=\"remote-notes.json\""},
+    "import_shape": {
+      "version": 90,
+      "category_name": "Remote Notes",
+      "shortcut_name": "Capture Obsidian Note",
+      "method": "POST",
+      "url_path": "/v1/captures",
+      "authentication": "bearer",
+      "requestBodyType": "custom_text",
+      "contentType": "application/json",
+      "bodyContent": "{{payload}}",
+      "script_fields": ["codeOnPrepare", "codeOnSuccess"]
+    }
+  },
   "rust_receiver": {
     "http_status": 201,
     "note": "---\nuid: 01JZ0000000000000000000000\n---\n# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n",
@@ -47,6 +68,10 @@
     }},
     {"v": 1, "request_id": "phone-20261012-0001", "state": "uncertain"},
     {"v": 1, "request_id": "phone-20261012-0001", "state": "gone"}
+  ],
+  "status_lookup_cases": [
+    {"name": "unknown request", "device_id": "phone-a", "request_id": "phone-20261012-missing", "http_status": 404, "body": {"ok": false, "error": "not_found"}},
+    {"name": "other device's request", "device_id": "phone-b", "request_id": "phone-20261012-0001", "http_status": 404, "body": {"ok": false, "error": "not_found"}}
   ],
   "permission_cases": [
     {"name": "capture bearer creates only captures", "scopes": ["capture:create"], "operation": "capture_create", "allow": true},

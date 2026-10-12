@@ -11,15 +11,20 @@
 - Contract: [`wp02-m1-contract.md`](../../docs/obsidian-remote/wp02-m1-contract.md).
   Fixtures: [`wp02_capture_v1.json`](../../tests/fixtures/wp02_capture_v1.json).
 - Old content-only request and four-field 201 receipt, both legacy note envelopes,
-  plugin SHA-256 revision, legacy error codes, new request/status shapes, and an
-  explicit 23-case allow/deny permission matrix are checked by
+  plugin SHA-256 revision, legacy error codes, Android setup import shape,
+  new request/status shapes, indistinguishable unknown/foreign status failures,
+  and an explicit 23-case allow/deny permission matrix are checked by
   `nuru/tests/test_remote_contract.py`. The old receiver examples are derived
   from the pinned source and tests; this run did not operate a RemoteNotes host.
+- PR #19 review refined the contract: Serve must target a separate remote-only
+  listener rather than the WP01 local-token listener; capture ownership follows
+  bounded body parsing; edge-case JSON/Unicode differences are explicit; Android
+  setup keeps the legacy route and import fields. M2/M3 still have to implement
+  these rules and test them over HTTP/private HTTPS.
 - `git diff --check`: passed.
 - `.venv/bin/python -m pytest -q nuru/tests/test_remote_contract.py nuru/tests/test_service_protocol.py nuru/tests/test_service_host.py nuru/tests/test_service_server.py`:
-  **166 passed in 8.25 s**, without a local model. The first sandboxed run
-  passed 158 tests but could not bind `127.0.0.1` for eight server cases; an
-  allowed loopback rerun passed all 166 with no code change.
+  **171 passed in 9.36 s**, without a local model and with loopback HTTP tests
+  enabled.
 
 M1 establishes the contract only. It does not claim duplicate-safe writes,
 crash recovery, per-device HTTP enforcement, pairing, Tailscale access, phone

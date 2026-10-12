@@ -54,9 +54,44 @@ def test_new_request_and_status_shapes_are_frozen_without_changing_wp01():
 
 
 def test_legacy_error_envelopes_are_frozen():
-    assert {case["http_status"] for case in FIXTURE["legacy_errors"]} == {400, 401, 408, 413, 415, 500}
+    assert {(case["http_status"], case["body"]["error"]) for case in FIXTURE["legacy_errors"]} == {
+        (400, "invalid_capture"), (401, "unauthorized"), (404, "not_found"),
+        (405, "method_not_allowed"), (408, "body_timeout"), (413, "body_rejected"),
+        (415, "expected_application_json"), (500, "capture_failed"), (503, "stopping"),
+    }
     for case in FIXTURE["legacy_errors"]:
         contract.validate("capture_error", case["body"])
+
+
+def test_android_setup_contract_preserves_the_plugin_import_route_and_shape():
+    setup = FIXTURE["android_setup"]
+    assert setup["method"] == "GET"
+    assert setup["path_pattern"] == "/v1/android-setup/{64-hex-token}.json"
+    assert setup["success_status"] == 200
+    assert setup["headers"] == {
+        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        "Content-Type": "application/json",
+        "Content-Disposition": 'attachment; filename="remote-notes.json"',
+    }
+    assert setup["import_shape"] == {
+        "version": 90, "category_name": "Remote Notes",
+        "shortcut_name": "Capture Obsidian Note", "method": "POST",
+        "url_path": "/v1/captures", "authentication": "bearer",
+        "requestBodyType": "custom_text", "contentType": "application/json",
+        "bodyContent": "{{payload}}", "script_fields": ["codeOnPrepare", "codeOnSuccess"],
+    }
+
+
+def test_unknown_and_foreign_capture_status_are_indistinguishable():
+    unknown, foreign = FIXTURE["status_lookup_cases"]
+    assert unknown["name"] == "unknown request"
+    assert foreign["name"] == "other device's request"
+    assert unknown["http_status"] == foreign["http_status"] == 404
+    assert unknown["body"] == foreign["body"] == {"ok": False, "error": "not_found"}
+    for case in (unknown, foreign):
+        contract.validate("capture_error", case["body"])
+    assert contract.capture_key("phone-a", "vault-a", foreign["request_id"]) != contract.capture_key(
+        foreign["device_id"], "vault-a", foreign["request_id"])
 
 
 @pytest.mark.parametrize("case", FIXTURE["permission_cases"], ids=lambda case: case["name"])
@@ -70,11 +105,17 @@ def test_explicit_permission_matrix(case):
     b'{"content":"x","path":"../outside.md"}', b'{"content":"x","request_id":"short"}',
     b'{"content":"x","request_id":"phone-20261012-0001","vault":"other"}',
     b'{"content":"first","content":"second"}', b'{"content":"\\ud800"}',
+    b'\xef\xbb\xbf{"content":"ok"}', b'{"content":"\\u001e"}',
 ])
 def test_invalid_capture_payloads_are_rejected_without_echoing_note_text(body):
     with pytest.raises(ValueError) as error:
         contract.parse_request(body)
     assert "../outside.md" not in str(error.value)
+
+
+def test_unicode_trim_difference_is_explicit_and_preserves_accepted_content():
+    kind, body = contract.parse_request(b'{"content":"\\ufeff"}')
+    assert kind == "legacy_request" and body == {"content": "\ufeff"}
 
 
 def test_oversized_json_is_rejected_before_parse_and_escapes_canonicalize():

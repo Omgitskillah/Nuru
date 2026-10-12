@@ -22,11 +22,22 @@ revision algorithms and frontmatter bytes differ, so clients must treat
 record both envelopes and the old field shapes. They are source-derived fixtures,
 not claims of a captured response from a running RemoteNotes instance.
 
-Nuru's WP01 service stays on `127.0.0.1:27125`. M3 may put it behind a private
-Tailscale Serve HTTPS route. Migration is an operator action: inspect the current
-Serve route and receiver, let accepted writes finish, stop the old receiver,
-switch the route, verify one legacy capture, then update shortcuts. Never enable
-Funnel, overwrite an existing Serve route, stop port 27124's listener or rewrite
+Nuru's WP01 service stays on `127.0.0.1:27125` for direct Obsidian use. M3 must
+add a separate remote-only listener on `127.0.0.1:27126` and target **only that
+listener** with the private Tailscale Serve HTTPS route. Serve forwards to
+loopback, so the peer address cannot distinguish a proxied call from a direct
+one. The listener that accepted the connection is the authority boundary: the
+remote listener accepts only scoped device credentials or browser sessions and
+never accepts the WP01 local token. It must not infer that boundary from
+`Host`, `Origin` or `X-Forwarded-*` headers. Both listeners can share the service
+and capture ledger, but the WP01 listener keeps its existing local-only policy.
+M3 must inspect and verify Serve's target before cutover and during its private
+HTTPS check; a route aimed at port 27125 fails the migration gate.
+
+Migration is an operator action: inspect the current Serve route and receiver,
+let accepted writes finish, stop the old receiver, switch the route to 27126,
+verify one legacy capture and the Android setup route, then update shortcuts.
+Never enable Funnel, overwrite an existing Serve route, stop port 27124's listener or rewrite
 installed shortcuts automatically. Rollback restores the prior route/receiver;
 the capture ledger, received notes and device records remain intact for a later
 forward migration. M3 must test this procedure on a disposable vault.
@@ -55,8 +66,11 @@ integration target:
 
 The service must check scopes both at each route **and at tool dispatch**. A model
 must not gain a note read/write merely because a user can submit a chat prompt.
-Check authentication, scope and resource ownership before consuming a request
-body, reading vault data or loading a model. Unknown operations and inactive
+Authenticate and check route scope before consuming a request body. For a capture,
+read and parse the bounded body to obtain `request_id`, then check the
+device-scoped request key, ownership, conflicts and tombstones before reading
+vault data or loading a model. Resource IDs already in the URL can be checked
+for ownership before a body is read. Unknown operations and inactive
 credentials fail closed. The capture bearer grants only `capture:create`; the
 Obsidian local token's existing chat access may be kept for direct loopback use,
 but never promoted to a phone credential or accepted via the proxy by default.
@@ -68,6 +82,25 @@ must offer an explicit operator import of its old 64-hex token as a capture-only
 device credential. The operator supplies the token; Nuru keeps only a hash and
 does not silently read Obsidian plugin settings. If the token is not imported,
 the operator must update that shortcut before switching the route.
+
+The pinned Obsidian plugin also exposes an Android HTTP Shortcuts import via
+`GET /v1/android-setup/{64-hex-token}.json`. Its unauthenticated setup token is
+random, expires after five minutes, and the successful JSON download contains
+the HTTPS `/v1/captures` URL and capture bearer. The plugin currently allows
+repeated GETs while that link is live; its path disappears on stop or new pairing.
+M3 must keep this route and HTTP Shortcuts schema-90 import shape for newly
+generated Android setups, including one category/shortcut, `POST`, bearer auth,
+`application/json`, `{{payload}}`, and the prepare/success scripts. Nuru may
+issue its own capture-only device bearer in the download. Its setup token must
+expire in five minutes or on restart, be consumed after one successful download,
+and return 404 when unknown, expired or consumed. Keep the JSON download's
+`Content-Disposition: attachment; filename="remote-notes.json"`,
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`; a wrong method on a
+live token returns 405.
+An old setup link cannot survive migration because the old receiver owns its
+temporary token. The operator must generate a fresh link after cutover; an
+already installed Android shortcut keeps working through the imported bearer.
+The fixture freezes the route, response headers and import fields for M3 tests.
 
 The proposed credential lifecycle for M3 is: single-use pairing codes expire in
 five minutes and on service restart; browser sessions use Secure, HttpOnly,
@@ -81,8 +114,10 @@ test these bounds before any remote access is enabled.
 The phone page and API share one HTTPS origin. Browser mutations also require
 Origin/Host checks and a session-bound CSRF value; neither a client-supplied
 `X-Forwarded-*` header nor a raw bearer from the old local plugin confers proxy
-identity. A capture-only bearer has no access to the phone page's history or
-notes. Never put long-lived secrets in URLs, localStorage, logs or vault files.
+identity. The remote listener rejects the local token even if a caller reaches
+port 27126 directly. A capture-only bearer has no access to the phone page's
+history or notes. Never put long-lived secrets in URLs, localStorage, logs or vault
+files.
 
 ## Capture request and response
 
@@ -106,9 +141,17 @@ checks size, shape and blank text without logging the submitted body.
 The decoded `content` string is preserved exactly after a documented frontmatter
 prefix, including Unicode, quotes, whitespace and mixed newlines. Whitespace-only
 content, duplicate JSON fields and unpaired Unicode surrogates are invalid.
-Unknown fields such as `path`, `vault` or `properties` are
-invalid; the client never chooses a filename or note metadata. The encoded JSON
-body limit is 256 KiB. M2 adds bounded upload time, queue and per-device quota.
+These are deliberate strictness differences from the pinned Obsidian receiver:
+its `JSON.parse` accepts duplicate `content` keys using the last value and lone
+surrogates; Nuru rejects both. Its `TextDecoder` strips an initial UTF-8 BOM and
+JavaScript `trim()` treats `U+FEFF` content as blank; Nuru rejects a leading JSON
+BOM but accepts a `U+FEFF`-only content string because Python `strip()` does not
+remove it. Conversely, Nuru rejects `U+001E`-only content as blank while the
+plugin's `trim()` accepts it. M2 must preserve these choices in its HTTP parser;
+an old shortcut sending any newly rejected edge case must be corrected.
+Unknown fields such as `path`, `vault` or `properties` are invalid; the client
+never chooses a filename or note metadata. The encoded JSON body limit is
+256 KiB. M2 adds bounded upload time, queue and per-device quota.
 
 On success Nuru creates `Inbox/<ULID>.md` with
 `---\nuid: "<ULID>"\n---\n` plus exact content, matching the plugin's current
@@ -133,16 +176,20 @@ requests remain single-shot and each accepted call makes a distinct note.
 
 Capture errors retain the old `{"ok":false,"error":"code"}` envelope. The
 legacy codes for malformed input, missing bearer, upload timeout, size, media
-type and writer failure remain `invalid_capture`, `unauthorized`,
-`body_timeout`, `body_rejected`, `expected_application_json` and
-`capture_failed` at their old HTTP statuses. New cases add `forbidden` (403),
+type and writer failure remain `invalid_capture` (400), `unauthorized` (401),
+`body_timeout` (408), `body_rejected` (413), `expected_application_json` (415)
+and `capture_failed` (500). The Obsidian receiver also uses `not_found` (404),
+`method_not_allowed` (405) and `stopping` (503); M2/M3 must retain these route
+and shutdown responses. New cases add `forbidden` (403),
 `conflict` (409), `gone` (410), and a bounded-capacity error (M2 chooses its
 status and retry advice). No error body contains note content or a host path.
 
 `GET /v1/captures/requests/{request_id}` returns an authenticated, device-owned
 status: `accepted`, `running`, `completed` with the original receipt, `uncertain`,
-or `gone` for an expired full receipt whose ID remains reserved. Unknown IDs are
-404. No one may use this endpoint to enumerate another device's captures. An
+or `gone` for an expired full receipt whose ID remains reserved. Unknown IDs and
+IDs owned by another device both return the same **404**
+`{"ok":false,"error":"not_found"}` response. No one may use this endpoint to
+enumerate another device's captures. An
 uncertain state requires reconciliation; it is never silently retried. An ID with
 a retained tombstone returns **410** to a replay, so expiry cannot create another
 note. M2 must define and test the full-receipt retention and storage cap; when

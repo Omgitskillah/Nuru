@@ -61,7 +61,10 @@ class Credentials:
         os.chmod(self.directory, 0o700)
         token = secrets.token_urlsafe(32)
         clients = self._clients()
-        clients[client] = {"principal": PRINCIPAL, "hash": _hash(token),
+        # Rotation keeps the identity; removing and recreating the name does not
+        # expose the former device's capture history.
+        device_id = clients[client].get("device_id", client) if client in clients else f"local-{secrets.token_hex(16)}"
+        clients[client] = {"principal": PRINCIPAL, "hash": _hash(token), "device_id": device_id,
                            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         _write_private(self.directory / "clients" / f"{client}.token", token)
         _write_private(self._file, json.dumps({"clients": clients}, indent=1))
@@ -79,8 +82,13 @@ class Credentials:
     def check(self, token: str) -> tuple[str, str] | None:
         """(principal, client) for a valid token, else None. Every stored hash is compared, in
         constant time, so the time taken doesn't depend on which one matches."""
+        found = self.check_device(token)
+        return found[:2] if found else None
+
+    def check_device(self, token: str) -> tuple[str, str, str] | None:
+        """Return principal, display name and stable device ID for a valid token."""
         found, given = None, _hash(token)
         for client, entry in self._clients().items():
             if hmac.compare_digest(entry["hash"], given):
-                found = (entry["principal"], client)
+                found = (entry["principal"], client, entry.get("device_id", client))
         return found

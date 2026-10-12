@@ -59,6 +59,10 @@
     "v": 1, "request_id": "phone-20261012-0001", "state": "running",
     "status": "/v1/captures/requests/phone-20261012-0001"
   },
+  "uncertain_capture": {
+    "v": 1, "request_id": "phone-20261012-0001", "state": "uncertain",
+    "status": "/v1/captures/requests/phone-20261012-0001"
+  },
   "request_statuses": [
     {"v": 1, "request_id": "phone-20261012-0001", "state": "accepted"},
     {"v": 1, "request_id": "phone-20261012-0001", "state": "running"},

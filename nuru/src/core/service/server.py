@@ -15,7 +15,9 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +26,8 @@ from urllib.parse import parse_qs, urlsplit
 from dotenv import dotenv_values
 
 from core.service import protocol
+from core.service import remote_contract
+from core.service.capture import CaptureError
 from core.service.credentials import Credentials
 from core.service.host import Service
 from core.service.protocol import ProtocolError
@@ -74,26 +78,35 @@ class Handler(BaseHTTPRequestHandler):
         self.answer(protocol.ERRORS[code], protocol.error_body(code, message, **extra))
 
     # ------------------------------------------------------------------ who may call
-    def allowed(self) -> bool:
+    def allowed(self, *, capture: bool = False) -> bool:
         """The Host and Origin checks; a refusal is sent if they fail."""
         port = self.server.server_port
         if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
-            self.refuse("forbidden", "unexpected Host")
+            if capture:
+                self.capture_answer(403, {"ok": False, "error": "forbidden"})
+            else:
+                self.refuse("forbidden", "unexpected Host")
             return False
         origin = self.headers.get("Origin")
         if origin is not None and origin not in ORIGINS:
-            self.refuse("forbidden_origin", "origin not allowed")
+            if capture:
+                self.capture_answer(403, {"ok": False, "error": "forbidden"})
+            else:
+                self.refuse("forbidden_origin", "origin not allowed")
             return False
         return True
 
-    def principal(self) -> str | None:
+    def principal(self, *, capture: bool = False) -> tuple[str, str, str] | None:
         """Whose token this is; None (with 401 sent) if it's missing, wrong or revoked."""
         given = self.headers.get("Authorization", "")
-        found = self.server.credentials.check(given[len("Bearer "):]) if given.startswith("Bearer ") else None
+        found = self.server.credentials.check_device(given[len("Bearer "):]) if given.startswith("Bearer ") else None
         if found is None:
-            self.refuse("unauthorized", "missing or wrong token")
+            if capture:
+                self.capture_answer(401, {"ok": False, "error": "unauthorized"})
+            else:
+                self.refuse("unauthorized", "missing or wrong token")
             return None
-        return found[0]
+        return found
 
     def do_OPTIONS(self):  # CORS preflight: the Authorization header makes every plugin request need one
         if not self.allowed():
@@ -115,14 +128,18 @@ class Handler(BaseHTTPRequestHandler):
     def route(self, method: str) -> None:
         """All four checks (Host, Origin, token, then ownership in the service) come before anything
         is read from the store or handed to a model."""
-        if not self.allowed():
-            return
-        principal = self.principal()
-        if principal is None:
-            return
         url = urlsplit(self.path)
+        is_capture = url.path == "/v1/captures" or url.path.startswith("/v1/captures/")
+        if not self.allowed(capture=is_capture):
+            return
+        identity = self.principal(capture=is_capture)
+        if identity is None:
+            return
+        principal, _, device_id = identity
         query = parse_qs(url.query)
         try:
+            if url.path == "/v1/captures" or url.path.startswith("/v1/captures/"):
+                return self.capture_route(method, url.path, device_id)
             if re.match(r"^/v(?!1/)\d+/", url.path):
                 raise ProtocolError("unsupported_version", "this service speaks protocol version 1")
             for route_method, pattern, name in _ROUTES:
@@ -142,6 +159,62 @@ class Handler(BaseHTTPRequestHandler):
             print(f"nuru-serve: {type(error).__name__} answering {method} {url.path}", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)
             self.refuse("internal", "Something went wrong in Nuru.")
+
+    def capture_answer(self, status: int, body: dict) -> None:
+        self.answer(status, body)
+
+    def capture_route(self, method: str, path: str, device_id: str) -> None:
+        try:
+            if path == "/v1/captures":
+                if method != "POST":
+                    raise CaptureError(405, "method_not_allowed")
+                if self.server.closing:
+                    raise CaptureError(503, "stopping")
+                media = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                if media != "application/json":
+                    raise CaptureError(415, "expected_application_json")
+                if self.headers.get("Transfer-Encoding"):
+                    raise CaptureError(400, "invalid_capture")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    raise CaptureError(400, "invalid_capture") from None
+                if length < 0:
+                    raise CaptureError(400, "invalid_capture")
+                if length > remote_contract.MAX_CAPTURE_BYTES:
+                    raise CaptureError(413, "body_rejected")
+                deadline = time.monotonic() + 5
+                chunks, remaining = [], length
+                try:
+                    while remaining:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            raise CaptureError(408, "body_timeout")
+                        self.connection.settimeout(left)
+                        # read1 makes at most one socket read; buffered read(n)
+                        # can keep accepting trickled bytes past the deadline.
+                        part = self.rfile.read1(min(remaining, 64 * 1024))
+                        if not part:
+                            raise CaptureError(408, "body_timeout")
+                        chunks.append(part)
+                        remaining -= len(part)
+                except (TimeoutError, socket.timeout):
+                    raise CaptureError(408, "body_timeout") from None
+                self.connection.settimeout(5)
+                try:
+                    _, payload = remote_contract.parse_request(b"".join(chunks))
+                except ValueError:
+                    raise CaptureError(400, "invalid_capture") from None
+                return self.capture_answer(*self.server.service.captures.create(device_id, payload))
+            match = re.fullmatch(r"/v1/captures/requests/([A-Za-z0-9_-]{16,128})", path)
+            if match:
+                if method != "GET":
+                    raise CaptureError(405, "method_not_allowed")
+                return self.capture_answer(*self.server.service.captures.status(device_id, match[1]))
+            raise CaptureError(404, "not_found")
+        except CaptureError as error:
+            self.close_connection = error.code in {"body_timeout", "body_rejected", "invalid_capture"}
+            self.capture_answer(error.status, {"ok": False, "error": error.code})
 
     def body(self, operation: str) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -267,6 +340,9 @@ def serve(port: int, queue_limit: int) -> None:
         sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
     service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit)
+    if not service.captures._link_available:
+        print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
+              file=sys.stderr)
     try:
         server = NuruServer(service, credentials, port)
     except OSError as error:

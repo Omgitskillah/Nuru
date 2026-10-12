@@ -11,6 +11,7 @@ import pytest
 
 from core.service.capture import CaptureError, CaptureWriter
 from core.service import capture
+from core.service import remote_contract
 from core.service.store import ServiceStore
 
 
@@ -61,7 +62,7 @@ def test_inflight_duplicate_returns_status_without_waiting_for_write(writer, mon
         assert entered.wait(5)
         status, running = writer.create("phone", payload)
         assert (status, running["state"]) == (202, "running")
-        assert writer.status("phone", payload["request_id"])[1]["state"] == "running"
+        assert writer.status("phone", payload["request_id"])[1]["state"] == "accepted"
         release.set()
         receipt = future.result(timeout=5)[1]
     assert writer.status("phone", payload["request_id"])[1]["receipt"] == receipt
@@ -97,6 +98,7 @@ def test_same_text_different_ids_and_legacy_requests_are_distinct(writer):
     second = writer.create("phone", {"content": "same"})[1]
     assert first["uid"] != second["uid"]
     assert len(list((writer.vault / "Inbox").glob("*.md"))) == 22
+    assert writer.store.capture_count() == 20  # legacy requests have no reusable client ID
 
 
 @pytest.mark.parametrize("phase,exit_code", [("before", 77), ("after", 78)])
@@ -126,11 +128,11 @@ writer.create('phone', {'request_id': 'phone-capture-0001', 'content': 'saved'})
     reserved = store.capture(key)
     writer.recover()
     status = writer.status("phone", "phone-capture-0001")[1]
-    assert status["state"] == ("uncertain" if phase == "before" else "completed")
+    assert status["state"] == ("accepted" if phase == "before" else "completed")
     retry = writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})
     if phase == "before":
-        assert retry[1]["state"] == "uncertain"
-        assert not (vault / "Inbox").exists()
+        assert retry[0] == 201 and retry[1]["uid"] == reserved["uid"]
+        assert len(list((vault / "Inbox").glob("*.md"))) == 1
     else:
         assert retry[1]["uid"] == reserved["uid"]
         assert len(list((vault / "Inbox").glob("*.md"))) == 1
@@ -150,7 +152,7 @@ store = ServiceStore(root / 'service.db')
 writer = CaptureWriter(store, root / 'vault', 'vault-test', threading.RLock())
 original = store.set_capture
 def cut(key, state, receipt=None):
-    if state == 'running': os._exit(79)
+    if state == 'staging': os._exit(79)
     original(key, state, receipt)
 store.set_capture = cut
 writer.create('phone', {'request_id': 'phone-capture-0001', 'content': 'saved'})
@@ -167,6 +169,37 @@ writer.create('phone', {'request_id': 'phone-capture-0001', 'content': 'saved'})
     store.close()
 
 
+def test_process_death_with_torn_stage_retries_original_identity(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    script = """
+import os, sys, threading
+from pathlib import Path
+from core.service.capture import CaptureWriter
+from core.service.store import ServiceStore
+root = Path(sys.argv[1])
+writer = CaptureWriter(ServiceStore(root / 'service.db'), root / 'vault', 'vault-test', threading.RLock())
+def cut(record, content):
+    inbox = root / 'vault' / 'Inbox'
+    inbox.mkdir(exist_ok=True)
+    (inbox / writer._stage_name(record)).write_bytes(b'torn')
+    os._exit(80)
+writer._publish = cut
+writer.create('phone', {'request_id': 'phone-capture-0001', 'content': 'saved'})
+"""
+    assert subprocess.run([sys.executable, "-c", script, str(tmp_path)], check=False).returncode == 80
+    store = ServiceStore(tmp_path / "service.db")
+    writer = CaptureWriter(store, vault, "vault-test", threading.RLock())
+    record = store.capture(store.pending_captures()[0])
+    writer.recover()
+    assert writer.status("phone", "phone-capture-0001")[1]["state"] == "accepted"
+    assert not (vault / "Inbox" / writer._stage_name(record)).exists()
+    receipt = writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})[1]
+    assert receipt["uid"] == record["uid"]
+    assert len(list((vault / "Inbox").glob("*.md"))) == 1
+    store.close()
+
+
 def test_changed_target_is_uncertain_and_never_overwritten(writer):
     receipt = writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})[1]
     key = next(iter(writer.store._conn.execute("SELECT key FROM captures")))[0]
@@ -176,7 +209,9 @@ def test_changed_target_is_uncertain_and_never_overwritten(writer):
     path.write_text("external edit")
     writer.recover()
     assert writer.status("phone", "phone-capture-0001")[1]["state"] == "uncertain"
-    assert writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})[1]["state"] == "uncertain"
+    status, pending = writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})
+    assert status == 202 and pending["state"] == "uncertain"
+    remote_contract.validate("accepted_capture", pending)
     assert path.read_text() == "external edit"
 
 
@@ -202,20 +237,70 @@ def test_symlinked_inbox_cannot_escape_vault(writer, tmp_path):
     assert list(outside.iterdir()) == []
 
 
+def test_unsupported_hard_links_refuse_before_reservation(writer, monkeypatch):
+    import errno
+
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EOPNOTSUPP, "links not supported")
+
+    monkeypatch.setattr(capture.os, "link", unsupported)
+    with pytest.raises(CaptureError) as error:
+        writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})
+    assert (error.value.status, error.value.code) == (503, "capture_unavailable")
+    assert writer.store.capture_count() == 0
+
+
+def test_completed_retry_survives_link_support_loss(writer):
+    payload = {"request_id": "phone-capture-0001", "content": "saved"}
+    receipt = writer.create("phone", payload)[1]
+    writer._link_available = False
+    assert writer.create("phone", payload) == (201, receipt)
+    assert writer.status("phone", payload["request_id"])[1]["receipt"] == receipt
+
+
+def test_link_support_lost_after_probe_keeps_reserved_request_safe(writer, monkeypatch):
+    import errno
+
+    writer._probe_links()
+
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EOPNOTSUPP, "links not supported")
+
+    monkeypatch.setattr(capture.os, "link", unsupported)
+    with pytest.raises(CaptureError) as error:
+        writer.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})
+    assert (error.value.status, error.value.code) == (503, "capture_unavailable")
+    assert writer.status("phone", "phone-capture-0001")[1]["state"] == "accepted"
+    assert not list((writer.vault / "Inbox").glob("*.md"))
+
+
 def test_capacity_and_quota_reject_new_work_but_allow_status_and_retries(writer, monkeypatch):
     payload = {"request_id": "phone-capture-0001", "content": "saved"}
     receipt = writer.create("phone", payload)[1]
-    monkeypatch.setattr(capture, "MAX_RECORDS", 1)
+    writer.max_records = 1
     with pytest.raises(CaptureError) as full:
         writer.create("phone", {"request_id": "phone-capture-0002", "content": "new"})
     assert (full.value.status, full.value.code) == (503, "capture_capacity")
     assert writer.create("phone", payload)[1] == receipt
     assert writer.status("phone", payload["request_id"])[1]["receipt"] == receipt
-    monkeypatch.setattr(capture, "MAX_RECORDS", 100_000)
+    writer.max_records = 100_000
+    writer.max_device_records = 1
+    with pytest.raises(CaptureError) as device_full:
+        writer.create("phone", {"request_id": "phone-capture-0002", "content": "new"})
+    assert (device_full.value.status, device_full.value.code) == (503, "capture_capacity")
+    writer.max_device_records = 20_000
     monkeypatch.setattr(capture, "PER_DEVICE_PER_MINUTE", 1)
     with pytest.raises(CaptureError) as quota:
         writer.create("phone", {"request_id": "phone-capture-0002", "content": "new"})
     assert (quota.value.status, quota.value.code) == (429, "capture_quota")
+
+
+def test_operator_can_raise_record_limits_without_deleting_tombstones(writer, monkeypatch):
+    monkeypatch.setenv("NURU_CAPTURE_MAX_RECORDS", "200000")
+    monkeypatch.setenv("NURU_CAPTURE_MAX_DEVICE_RECORDS", "40000")
+    configured = CaptureWriter(writer.store, writer.vault, writer.vault_id, threading.RLock())
+    assert (configured.max_records, configured.max_device_records) == (200000, 40000)
+    assert configured.create("phone", {"request_id": "phone-capture-0001", "content": "saved"})[0] == 201
 
 
 def test_existing_target_even_with_matching_bytes_is_not_claimed(writer, monkeypatch):

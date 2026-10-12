@@ -149,6 +149,10 @@ BOM but accepts a `U+FEFF`-only content string because Python `strip()` does not
 remove it. Conversely, Nuru rejects `U+001E`-only content as blank while the
 plugin's `trim()` accepts it. M2 must preserve these choices in its HTTP parser;
 an old shortcut sending any newly rejected edge case must be corrected.
+The pinned plugin also accepts chunked HTTP request bodies. M2 requires a
+`Content-Length` and rejects `Transfer-Encoding: chunked`; M3's migration check
+must detect an installed shortcut that uses chunked upload, and M4's physical
+client acceptance must verify the shipped shortcuts use supported framing.
 Unknown fields such as `path`, `vault` or `properties` are invalid; the client
 never chooses a filename or note metadata. The encoded JSON body limit is
 256 KiB. M2 adds bounded upload time, queue and per-device quota.
@@ -173,6 +177,10 @@ request status URL, such as
 `{"v":1,"request_id":"phone-20261012-0001","state":"running","status":"/v1/captures/requests/phone-20261012-0001"}`;
 it never starts a second writer or a model call. No-ID legacy
 requests remain single-shot and each accepted call makes a distinct note.
+If reconciliation cannot prove an outcome, an identical retry returns the same
+202 shape with `state: "uncertain"` and the status URL. This M2 addition gives
+clients one pending-response shape to handle; they must not submit a new ID to
+resolve an uncertain mutation automatically.
 
 Capture errors retain the old `{"ok":false,"error":"code"}` envelope. The
 legacy codes for malformed input, missing bearer, upload timeout, size, media
@@ -194,6 +202,10 @@ uncertain state requires reconciliation; it is never silently retried. An ID wit
 a retained tombstone returns **410** to a replay, so expiry cannot create another
 note. M2 must define and test the full-receipt retention and storage cap; when
 the durable ledger is full it must reject new work rather than evict safety data.
+M2 uses a permanent tombstone for each request-aware capture, while completed
+legacy single-shot captures need no tombstone. The default cap is 100,000 rows
+overall and 20,000 per device; operators can raise the corresponding service
+limits after backing up the ledger, never by deleting tombstones.
 
 The current WP01 `GET /v1/requests/{id}?operation=…` remains the chat-request
 surface. Capture IDs use `device ID + vault ID + capture_create + request ID`,
@@ -201,6 +213,11 @@ not the shared operator principal, and decoded-content hashes omit JSON key orde
 and escape spelling. The new capture status route avoids exposing other kinds of
 request records to a capture-only credential. M2 must persist the canonical hash,
 reserved UID/path, intent, state and receipt in one recoverable ledger.
+For existing WP01 tokens, the client name is the stable capture device ID until
+M3 explicitly migrates it. Newly added local clients get a server-assigned ID;
+rotation retains it, while removing and recreating a client name gets a new ID
+and no access to the old device's capture history. M3 must preserve these IDs
+or atomically migrate their request keys and ownership before cutover.
 
 ## Crash and authorization checks for M2/M3
 

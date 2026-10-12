@@ -78,22 +78,28 @@ class Handler(BaseHTTPRequestHandler):
         self.answer(protocol.ERRORS[code], protocol.error_body(code, message, **extra))
 
     # ------------------------------------------------------------------ who may call
-    def allowed(self) -> bool:
+    def allowed(self, *, capture: bool = False) -> bool:
         """The Host and Origin checks; a refusal is sent if they fail."""
         port = self.server.server_port
         if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
-            self.refuse("forbidden", "unexpected Host")
+            if capture:
+                self.capture_answer(403, {"ok": False, "error": "forbidden"})
+            else:
+                self.refuse("forbidden", "unexpected Host")
             return False
         origin = self.headers.get("Origin")
         if origin is not None and origin not in ORIGINS:
-            self.refuse("forbidden_origin", "origin not allowed")
+            if capture:
+                self.capture_answer(403, {"ok": False, "error": "forbidden"})
+            else:
+                self.refuse("forbidden_origin", "origin not allowed")
             return False
         return True
 
-    def principal(self, *, capture: bool = False) -> tuple[str, str] | None:
+    def principal(self, *, capture: bool = False) -> tuple[str, str, str] | None:
         """Whose token this is; None (with 401 sent) if it's missing, wrong or revoked."""
         given = self.headers.get("Authorization", "")
-        found = self.server.credentials.check(given[len("Bearer "):]) if given.startswith("Bearer ") else None
+        found = self.server.credentials.check_device(given[len("Bearer "):]) if given.startswith("Bearer ") else None
         if found is None:
             if capture:
                 self.capture_answer(401, {"ok": False, "error": "unauthorized"})
@@ -122,18 +128,18 @@ class Handler(BaseHTTPRequestHandler):
     def route(self, method: str) -> None:
         """All four checks (Host, Origin, token, then ownership in the service) come before anything
         is read from the store or handed to a model."""
-        if not self.allowed():
-            return
         url = urlsplit(self.path)
         is_capture = url.path == "/v1/captures" or url.path.startswith("/v1/captures/")
+        if not self.allowed(capture=is_capture):
+            return
         identity = self.principal(capture=is_capture)
         if identity is None:
             return
-        principal, client = identity
+        principal, _, device_id = identity
         query = parse_qs(url.query)
         try:
             if url.path == "/v1/captures" or url.path.startswith("/v1/captures/"):
-                return self.capture_route(method, url.path, client)
+                return self.capture_route(method, url.path, device_id)
             if re.match(r"^/v(?!1/)\d+/", url.path):
                 raise ProtocolError("unsupported_version", "this service speaks protocol version 1")
             for route_method, pattern, name in _ROUTES:
@@ -185,7 +191,9 @@ class Handler(BaseHTTPRequestHandler):
                         if left <= 0:
                             raise CaptureError(408, "body_timeout")
                         self.connection.settimeout(left)
-                        part = self.rfile.read(min(remaining, 64 * 1024))
+                        # read1 makes at most one socket read; buffered read(n)
+                        # can keep accepting trickled bytes past the deadline.
+                        part = self.rfile.read1(min(remaining, 64 * 1024))
                         if not part:
                             raise CaptureError(408, "body_timeout")
                         chunks.append(part)
@@ -332,6 +340,9 @@ def serve(port: int, queue_limit: int) -> None:
         sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
     service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit)
+    if not service.captures._link_available:
+        print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
+              file=sys.stderr)
     try:
         server = NuruServer(service, credentials, port)
     except OSError as error:

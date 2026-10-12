@@ -84,6 +84,10 @@ _MIGRATIONS = {
     );
     CREATE INDEX captures_device_created ON captures(device_id, created_at);
     """,
+    3: """
+    ALTER TABLE captures ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX captures_device_all ON captures(device_id);
+    """,
 }
 TERMINAL_STATES = ("completed", "failed", "cancelled")
 
@@ -170,21 +174,21 @@ class ServiceStore:
     # remain as tombstones after the receipt expires; a reused ID cannot write again.
     def capture(self, key: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT device_id, vault_id, request_id, payload_hash, uid, path, note_hash, state, receipt "
+            "SELECT device_id, vault_id, request_id, payload_hash, uid, path, note_hash, state, receipt, legacy "
             "FROM captures WHERE key = ?", (key,)).fetchone()
         if row is None:
             return None
         value = dict(zip(("device_id", "vault_id", "request_id", "payload_hash", "uid", "path",
-                          "note_hash", "state", "receipt"), row))
+                          "note_hash", "state", "receipt", "legacy"), row))
         value["receipt"] = json.loads(value["receipt"]) if value["receipt"] else None
         return value
 
     def add_capture(self, key: str, device_id: str, vault_id: str, request_id: str,
-                    payload_hash: str, uid: str, path: str, note_hash: str) -> None:
+                    payload_hash: str, uid: str, path: str, note_hash: str, *, legacy: bool = False) -> None:
         self._conn.execute(
             "INSERT INTO captures (key, device_id, vault_id, request_id, payload_hash, uid, path, "
-            "note_hash, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)",
-            (key, device_id, vault_id, request_id, payload_hash, uid, path, note_hash, _now()))
+            "note_hash, state, created_at, legacy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?)",
+            (key, device_id, vault_id, request_id, payload_hash, uid, path, note_hash, _now(), int(legacy)))
 
     def set_capture(self, key: str, state: str, receipt: dict | None = None) -> None:
         self._conn.execute(
@@ -194,10 +198,18 @@ class ServiceStore:
 
     def pending_captures(self) -> list[str]:
         return [row[0] for row in self._conn.execute(
-            "SELECT key FROM captures WHERE state IN ('accepted', 'running', 'uncertain')")]
+            "SELECT key FROM captures WHERE state IN ('accepted', 'staging', 'running', 'uncertain')")]
 
-    def capture_count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+    def capture_count(self, device_id: str | None = None) -> int:
+        if device_id is None:
+            return self._conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+        return self._conn.execute("SELECT COUNT(*) FROM captures WHERE device_id = ?", (device_id,)).fetchone()[0]
+
+    def delete_completed_legacy(self, key: str | None = None) -> int:
+        if key is None:
+            return self._conn.execute("DELETE FROM captures WHERE legacy = 1 AND state = 'completed'").rowcount
+        return self._conn.execute("DELETE FROM captures WHERE key = ? AND legacy = 1 AND state = 'completed'",
+                                  (key,)).rowcount
 
     def recent_device_captures(self, device_id: str, since: str) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM captures WHERE device_id = ? AND created_at >= ?",

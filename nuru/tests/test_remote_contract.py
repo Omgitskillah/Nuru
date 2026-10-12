@@ -41,6 +41,7 @@ def test_new_request_and_status_shapes_are_frozen_without_changing_wp01():
     kind, body = contract.parse_request(json.dumps(FIXTURE["new_request"]).encode())
     assert kind == "idempotent_request" and body["content"] == FIXTURE["content"]
     contract.validate("accepted_capture", FIXTURE["accepted_capture"])
+    contract.validate("accepted_capture", FIXTURE["uncertain_capture"])
     for status in FIXTURE["request_statuses"]:
         contract.validate("capture_status", status)
     assert {status["state"] for status in FIXTURE["request_statuses"]} == {

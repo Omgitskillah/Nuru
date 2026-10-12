@@ -86,6 +86,8 @@ def test_capture_http_rejects_bad_requests_without_vault_effect(served):
     headers = {"Content-Type": "application/json"}
     cases = [
         (dict(token=None, headers=headers), 401, "unauthorized"),
+        (dict(headers={"Host": "evil.example", **headers}), 403, "forbidden"),
+        (dict(headers={"Origin": "https://evil.example", **headers}), 403, "forbidden"),
         (dict(headers={"Content-Type": "text/plain"}), 415, "expected_application_json"),
         (dict(headers=headers, raw=b'{"content":"first","content":"last"}'), 400, "invalid_capture"),
         (dict(headers=headers, raw=b'{"content":"\\ud800"}'), 400, "invalid_capture"),
@@ -96,7 +98,22 @@ def test_capture_http_rejects_bad_requests_without_vault_effect(served):
         assert (status, body) == (expected, {"ok": False, "error": code})
     assert client.call("GET", "/v1/captures")[1] == {"ok": False, "error": "method_not_allowed"}
     assert client.call("GET", "/v1/captures/requests/phone-capture-0001")[1] == {"ok": False, "error": "not_found"}
-    assert not (service.vault / "Inbox").exists()
+    assert not list((service.vault / "Inbox").glob("*.md"))
+
+
+def test_recreated_client_name_cannot_read_prior_device_capture(served):
+    client, service, credentials, _ = served
+    payload = {"request_id": "phone-capture-0001", "content": "saved"}
+    assert client.call("POST", "/v1/captures", payload, headers={"Content-Type": "application/json"})[0] == 201
+    old_id = credentials.check_device(client.token)[2]
+    rotated = credentials.add("obsidian")
+    assert credentials.check_device(rotated)[2] == old_id
+    assert client.call("GET", "/v1/captures/requests/phone-capture-0001", token=rotated)[0] == 200
+    credentials.remove("obsidian")
+    fresh = credentials.add("obsidian")
+    assert credentials.check_device(fresh)[2] != old_id
+    assert client.call("GET", "/v1/captures/requests/phone-capture-0001", token=fresh)[1] == {
+        "ok": False, "error": "not_found"}
 
 
 def test_disconnected_capture_client_recovers_original_receipt(served, monkeypatch):
@@ -144,7 +161,38 @@ def test_stalled_capture_body_times_out_without_a_note(served):
         while chunk := connection.recv(4096):
             response.extend(chunk)
     assert b"HTTP/1.0 408" in response and b'"body_timeout"' in response
-    assert not (service.vault / "Inbox").exists()
+    assert not list((service.vault / "Inbox").glob("*.md"))
+
+
+def test_trickled_capture_body_cannot_extend_total_deadline(served):
+    client, service, *_ = served
+    with socket.create_connection(("127.0.0.1", client.port), timeout=7) as connection:
+        connection.settimeout(7)
+        connection.sendall((
+            f"POST /v1/captures HTTP/1.1\r\nHost: 127.0.0.1:{client.port}\r\n"
+            f"Authorization: Bearer {client.token}\r\nContent-Type: application/json\r\n"
+            "Content-Length: 100\r\n\r\n{"
+        ).encode())
+        stopped = threading.Event()
+
+        def trickle():
+            while not stopped.wait(0.8):
+                try:
+                    connection.sendall(b" ")
+                except OSError:
+                    return
+
+        thread = threading.Thread(target=trickle, daemon=True)
+        thread.start()
+        started = time.monotonic()
+        response = bytearray()
+        while chunk := connection.recv(4096):
+            response.extend(chunk)
+        elapsed = time.monotonic() - started
+        stopped.set()
+        thread.join(1)
+    assert elapsed < 6.5 and b"HTTP/1.0 408" in response
+    assert not list((service.vault / "Inbox").glob("*.md"))
 
 
 def test_refused_callers_reach_nothing(served):

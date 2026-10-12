@@ -108,7 +108,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def refuse(self, code: str, message: str, **extra) -> None:
         """An error, with the CORS headers of an allowed origin, so the plugin can tell a wrong token
@@ -151,6 +152,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):  # CORS preflight: the Authorization header makes every plugin request need one
         if not self.allowed():
             return
+        if self.server.remote_origin and urlsplit(self.path).path.startswith("/v1/android-setup/"):
+            if not remote_access.public_route(self, "OPTIONS", urlsplit(self.path).path):
+                self.capture_answer(404, {"ok": False, "error": "not_found"})
+            return
         self.send_response(204)
         self.cors()
         self.send_header("Access-Control-Allow-Methods", "GET, POST")
@@ -164,6 +169,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.route("POST")
+
+    def do_HEAD(self):
+        self.route("HEAD")
+
+    def do_PUT(self):
+        self.route("PUT")
+
+    def do_PATCH(self):
+        self.route("PATCH")
+
+    def do_DELETE(self):
+        self.route("DELETE")
 
     def route(self, method: str) -> None:
         """All four checks (Host, Origin, token, then ownership in the service) come before anything

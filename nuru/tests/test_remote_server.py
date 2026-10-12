@@ -324,3 +324,19 @@ def test_write_approval_requires_write_scope_before_body(remote, monkeypatch):
     connection.endheaders()
     assert connection.getresponse().status == 403
     connection.close()
+
+
+@pytest.mark.parametrize("method", ["HEAD", "OPTIONS", "PUT", "PATCH", "DELETE"])
+def test_setup_wrong_methods_do_not_consume_download(remote, method):
+    client, credentials, *_ = remote
+    path = credentials.setup("android", ORIGIN)
+    connection = http.client.HTTPConnection("127.0.0.1", client.port, timeout=2)
+    connection.request(method, path, headers={"Host": HOST})
+    response = connection.getresponse()
+    assert response.status == 405
+    if method == "HEAD":
+        assert response.read() == b""
+    else:
+        assert json.loads(response.read())["error"] == "method_not_allowed"
+    connection.close()
+    assert call(client, "GET", path)[0] == 200

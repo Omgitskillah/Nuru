@@ -177,3 +177,7 @@ Final regression command:
 remote CLI ports and prevents the two credential boundaries sharing a listener.
 The targeted credential/CLI rerun passed **20 tests in 0.18 s**, including all
 four reserved/invalid port cases added after the combined suite.
+
+Final HTTP compatibility review added HEAD/OPTIONS/PUT/PATCH/DELETE handling for
+Android setup links: each returns 405 without consuming a live download; HEAD
+sends no response body. The remote HTTP suite then passed **26 tests in 27.89 s**.

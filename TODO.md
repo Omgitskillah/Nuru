@@ -9,7 +9,7 @@ Work still to do on Nuru. This is the one list for people and agents.
 - Remove items once they are older than a month. Git history keeps them.
 - Reminders (`R`) are for later. Don't start one unless someone asks.
 
-## Now: WP01, local Obsidian chat
+## WP01: local Obsidian chat (completed milestones)
 
 Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-remote/01-local-obsidian-chat.md). Evidence goes in `nuru/evals/obsidian_remote/wp01-local-chat.md`.
 
@@ -38,18 +38,21 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - **Done when:** a live turn and a history turn show their steps in real Obsidian, and the line and status line read right.
 - [ ] **WP01-ACT2** Later, if wanted: ui-state's data that v1 doesn't carry (thinking against the watch's budget, step against the step cap, turns Nuru ended itself, Laya's view, model/thinking level/expert budget in the status). Needs a protocol change.
 
-## Next: WP02 and WP03
+## Now: WP02; next WP03
 
 - [ ] **WP02** Remote chat and note capture, milestones M1–M5. Plan: [02-remote-chat-and-capture.md](nuru/docs/obsidian-remote/02-remote-chat-and-capture.md)
+  - [x] **WP02-M1** Remote contract and migration: pin legacy capture sources, define device scopes, retries and schema mapping, and freeze compatibility and denial fixtures. [Contract](nuru/docs/obsidian-remote/wp02-m1-contract.md). (done 2026-10-12, PR #19) **Done when:** old request/response fixtures and the capability matrix pass model-free tests.
+  - [ ] **WP02-M2** Reliable direct capture and receipt reconciliation. **Done when:** duplicate, race and process-crash tests prove one note per request ID with all model providers disabled.
+  - [ ] **WP02-M3** Pairing, scoped credentials and private exposure. **Done when:** HTTP and real private HTTPS checks reject invalid/revoked credentials before any vault access, with migration and rollback tested.
+  - [ ] **WP02-M4** Phone chat and request-aware shortcuts. **Done when:** browser fault tests and real iPhone/Android acceptance cover resume, approvals and captures.
+  - [ ] **WP02-M5** Opt-in macOS operation and release. **Done when:** model-free restart/recovery checks, release evidence and authorized login/reboot acceptance (or an explicit incomplete gate) are recorded.
 - [ ] **WP03** Vault maintenance reports and review in Nuru. Plan: [03-vault-maintenance-ui.md](nuru/docs/obsidian-remote/03-vault-maintenance-ui.md)
 
 ## Follow-ups (F)
 
-- [ ] **F1** Test 32 (periodic attach doesn't need PSM).
-  - Give Sonnet the three notes and the question directly. If it also says "No", the test or rubric is unclear. Otherwise fix it with claim checking (R7) or expert review.
-  - Fix the scorer so it judges the overall verdict, then rescore the saved batches.
-- [ ] **F2** Full-suite rerun of Qwen3.5 4B alone on current code (34 tests × 5). Every baseline predates run_python, line fit, the scorer changes and the step-cap answer.
-- [ ] **F3** Engineer handoff task 3: error normalisation plus write intent (the path to fixing test 31).
+- [ ] **F1** Test 32's remaining model reasoning failure: it treats periodic attach as dependent on PSM. The Sonnet reference check, verdict-aware scorer and saved-batch rescoring were completed 2026-10-06 (#4); [the evidence](nuru/evals/test32-verdict-2026-10-06.md) shows the test is answerable. Evaluate claim checking (R7) or expert verification. **Done when:** the model gives the correct verdict without a scorer false positive on fresh runs.
+- [ ] **F2** Repeat the original 34-test Qwen3.5 4B suite × 5 on current code for a better variance estimate, recording model, fixture and scorer hashes. The 2026-10-06 [34 × 3 baseline](nuru/evals/results-2026-10-06-full-baseline.md) already includes run_python, line fit, the new scorer and the step-cap answer; run cases 35–37 separately so the original /170 comparison stays intact.
+- [ ] **F3** Finish write intent and verified target provenance for test 31. Error normalization shipped in [PR #5](nuru/evals/validated-dispatch-pr3-2026-10-06.md); independent mutation scope and target provenance did not. **Done when:** ambiguous create-versus-append requests and wrong-target writes are refused or clarified with Laya disabled as well as enabled.
 - [ ] **F4** Recheck the expert planner's `BadRequestError` (`core/expert.py`) before turning `at_step_cap` escalation back on.
 - [ ] **F5** Re-index the real vault with nomic v2. Check chunk truncation: 512-token limit vs 1,500-character chunks.
 - [ ] **F6** Run correction prompts 901–907 (`nuru/evals/tool_checks/prompts_corrections.json`).
@@ -83,7 +86,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   7. fine-tune only if 1–6 fall short
 - [ ] **R17** A separate date-time tool, only if `run_python`'s `datetime` isn't enough. (Python tool done 2026-10-05.)
 - [ ] **R18** A log of the vault notes sent to the expert: what, when, conversation and turn, model. Viewable in the UI.
-- [ ] **R19** UI improvements. Start with source chips under replies, a "Changed N notes" card and a "Sent to expert" badge. Later: a status line, a `[[` note picker, regenerate/edit, and thumbs up/down saved as Laya labels.
+- [ ] **R19** UI improvements. Start with source chips under replies, a "Changed N notes" card and a "Sent to expert" badge. Later: a `[[` note picker, regenerate/edit, and thumbs up/down saved as Laya labels. The Obsidian status line was completed in WP01-ACT.
 - [ ] **R20** Run on macOS, Windows and Linux.
   - Known gaps:
     - the Obsidian mutations server uses `fcntl`, `dir_fd` and `O_NOFOLLOW`

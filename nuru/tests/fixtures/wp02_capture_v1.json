@@ -1,0 +1,101 @@
+{
+  "source_revisions": {
+    "obsidian_receiver": "04a2774ba9c72cd2599d7147822d51bb26b2fae6",
+    "rust_receiver": "046fe9a8b6a0c59693f055f7bb35c9eb66ea85b7"
+  },
+  "uid": "01JZ0000000000000000000000",
+  "content": "# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n",
+  "legacy_request": {"content": "# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n"},
+  "new_request": {
+    "request_id": "phone-20261012-0001",
+    "content": "# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n"
+  },
+  "obsidian_receiver": {
+    "http_status": 201,
+    "note": "---\nuid: \"01JZ0000000000000000000000\"\n---\n# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n",
+    "receipt": {
+      "ok": true,
+      "uid": "01JZ0000000000000000000000",
+      "path": "Inbox/01JZ0000000000000000000000.md",
+      "revision": "57b71aa42e64001dc4f98e55d9a02d982b6c53c0beb7cdc0a5aa2d76489ff4b4"
+    }
+  },
+  "legacy_errors": [
+    {"http_status": 400, "body": {"ok": false, "error": "invalid_capture"}},
+    {"http_status": 401, "body": {"ok": false, "error": "unauthorized"}},
+    {"http_status": 408, "body": {"ok": false, "error": "body_timeout"}},
+    {"http_status": 413, "body": {"ok": false, "error": "body_rejected"}},
+    {"http_status": 415, "body": {"ok": false, "error": "expected_application_json"}},
+    {"http_status": 500, "body": {"ok": false, "error": "capture_failed"}},
+    {"http_status": 404, "body": {"ok": false, "error": "not_found"}},
+    {"http_status": 405, "body": {"ok": false, "error": "method_not_allowed"}},
+    {"http_status": 503, "body": {"ok": false, "error": "stopping"}}
+  ],
+  "android_setup": {
+    "method": "GET",
+    "path_pattern": "/v1/android-setup/{64-hex-token}.json",
+    "success_status": 200,
+    "headers": {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Type": "application/json", "Content-Disposition": "attachment; filename=\"remote-notes.json\""},
+    "import_shape": {
+      "version": 90,
+      "category_name": "Remote Notes",
+      "shortcut_name": "Capture Obsidian Note",
+      "method": "POST",
+      "url_path": "/v1/captures",
+      "authentication": "bearer",
+      "requestBodyType": "custom_text",
+      "contentType": "application/json",
+      "bodyContent": "{{payload}}",
+      "script_fields": ["codeOnPrepare", "codeOnSuccess"]
+    }
+  },
+  "rust_receiver": {
+    "http_status": 201,
+    "note": "---\nuid: 01JZ0000000000000000000000\n---\n# Idea 🌙\n\n  Keep spacing.\r\n---\nuid: user text\n---\n[[Telescope]]\n",
+    "response_fields": ["ok", "uid", "path", "revision"],
+    "revision_kind": "blake3 of the created note bytes"
+  },
+  "accepted_capture": {
+    "v": 1, "request_id": "phone-20261012-0001", "state": "running",
+    "status": "/v1/captures/requests/phone-20261012-0001"
+  },
+  "request_statuses": [
+    {"v": 1, "request_id": "phone-20261012-0001", "state": "accepted"},
+    {"v": 1, "request_id": "phone-20261012-0001", "state": "running"},
+    {"v": 1, "request_id": "phone-20261012-0001", "state": "completed", "receipt": {
+      "ok": true, "uid": "01JZ0000000000000000000000", "path": "Inbox/01JZ0000000000000000000000.md",
+      "revision": "57b71aa42e64001dc4f98e55d9a02d982b6c53c0beb7cdc0a5aa2d76489ff4b4"
+    }},
+    {"v": 1, "request_id": "phone-20261012-0001", "state": "uncertain"},
+    {"v": 1, "request_id": "phone-20261012-0001", "state": "gone"}
+  ],
+  "status_lookup_cases": [
+    {"name": "unknown request", "device_id": "phone-a", "request_id": "phone-20261012-missing", "http_status": 404, "body": {"ok": false, "error": "not_found"}},
+    {"name": "other device's request", "device_id": "phone-b", "request_id": "phone-20261012-0001", "http_status": 404, "body": {"ok": false, "error": "not_found"}}
+  ],
+  "permission_cases": [
+    {"name": "capture bearer creates only captures", "scopes": ["capture:create"], "operation": "capture_create", "allow": true},
+    {"name": "capture bearer checks its request", "scopes": ["capture:create"], "operation": "capture_status", "allow": true},
+    {"name": "capture bearer cannot inspect another device's request", "scopes": ["capture:create"], "operation": "capture_status", "same_owner": false, "allow": false},
+    {"name": "capture bearer cannot create chat", "scopes": ["capture:create"], "operation": "chat_create", "allow": false},
+    {"name": "capture bearer cannot see service vault status", "scopes": ["capture:create"], "operation": "service_status", "allow": false},
+    {"name": "capture bearer cannot see chat history", "scopes": ["capture:create"], "operation": "chat_history", "allow": false},
+    {"name": "capture bearer cannot see events", "scopes": ["capture:create"], "operation": "chat_events", "allow": false},
+    {"name": "capture bearer cannot answer approvals", "scopes": ["capture:create"], "operation": "chat_answer", "allow": false},
+    {"name": "capture bearer cannot preview notes", "scopes": ["capture:create"], "operation": "note_preview", "allow": false},
+    {"name": "capture bearer cannot write arbitrary notes", "scopes": ["capture:create"], "operation": "chat_note_write", "allow": false},
+    {"name": "chat only cannot read notes via tools", "scopes": ["chat:use"], "operation": "chat_note_read", "allow": false},
+    {"name": "chat read can search notes", "scopes": ["chat:use", "notes:read"], "operation": "chat_note_read", "allow": true},
+    {"name": "chat may see its service status", "scopes": ["chat:use"], "operation": "service_status", "allow": true},
+    {"name": "chat read cannot write", "scopes": ["chat:use", "notes:read"], "operation": "chat_note_write", "allow": false},
+    {"name": "write scope alone cannot invoke chat", "scopes": ["notes:write"], "operation": "chat_note_write", "allow": false},
+    {"name": "chat writer may reach the existing approval gate", "scopes": ["chat:use", "notes:read", "notes:write"], "operation": "chat_note_write", "allow": true},
+    {"name": "note reader cannot see conversations", "scopes": ["notes:read"], "operation": "chat_history", "allow": false},
+    {"name": "chat device cannot inspect foreign conversation", "scopes": ["chat:use"], "operation": "chat_history", "same_owner": false, "allow": false},
+    {"name": "note reader cannot preview foreign vault", "scopes": ["notes:read"], "operation": "note_preview", "same_owner": false, "allow": false},
+    {"name": "expired capture bearer is refused", "scopes": ["capture:create"], "operation": "capture_create", "active": false, "allow": false},
+    {"name": "revoked chat bearer is refused", "scopes": ["chat:use"], "operation": "chat_history", "active": false, "allow": false},
+    {"name": "unknown route has no implicit access", "scopes": ["capture:create", "chat:use", "notes:read", "notes:write"], "operation": "unknown", "allow": false},
+    {"name": "no credential has no access", "scopes": [], "operation": "capture_create", "allow": false}
+  ]
+}

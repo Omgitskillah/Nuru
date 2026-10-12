@@ -1118,6 +1118,9 @@ class Session:
         original_args = args
         args, outcome = tool_dispatch.validate(name, args, self._tool_validators)
         outcome = refusal or outcome
+        authorize = getattr(self, "authorize_tool", None)
+        if authorize is not None and not authorize(name):
+            outcome = tool_dispatch.failure("policy", "DEVICE_SCOPE", "Device permission does not allow this tool.")
         attempt_id = None
         if outcome is None and not gate_checked:
             args, write_gate, gate_id = self._before_tool(name, args, enforcing)
@@ -1249,6 +1252,9 @@ class Session:
         """gate_write enforced: the write's arguments come from a forced schema (IDs only from the
         last search), are validated, and go through gate_write. Returns the shared tool outcome."""
         name = fn["name"]
+        authorize = getattr(self, "authorize_tool", None)
+        if authorize is not None and not authorize(name):
+            return self._call_tool(turn_id, name, args, None, self.enforcement)
         schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
 
         def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:

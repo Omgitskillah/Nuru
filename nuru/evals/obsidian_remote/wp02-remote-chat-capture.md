@@ -103,3 +103,77 @@ M3 still must enforce scoped credentials, validate the private listener and
 HTTPS route, bound accepted connections before private exposure, and test
 migration and rollback. M4 must ship request-aware
 shortcuts, so installed legacy shortcuts remain single-shot until updated.
+
+## M3: scoped devices and private listener (2026-10-13)
+
+**Status:** implemented for review on `wp02-m3-pairing-private-access`, based on
+merged M2 (`b4c79b2`). The real private HTTPS/cutover gate remains **incomplete**.
+[Operator and rollback guide](../../docs/obsidian-remote/wp02-m3-private-access.md).
+
+Implemented and covered by model-free tests:
+
+- An opt-in remote-only listener on 127.0.0.1:27127, sharing the host and capture
+  ledger with WP01. Local tokens and remote credentials fail on the other listener,
+  even with forged forwarding headers. Remote status omits vault identity/name.
+- Host-local device approval, capture-only bearer issuance/import, rotation,
+  revocation, and hashed persistent storage. Rotation retains capture ownership;
+  revoking and recreating a name does not expose prior receipts. Imports cannot
+  duplicate another device's token or gain chat authority.
+- Single-use, five-minute pairing, Secure/HttpOnly/SameSite cookies, idle/absolute
+  expiry, session-bound CSRF, explicit Origin/Host checks, logout, and a minimal
+  same-origin pairing page. Session secrets never enter localStorage or URLs.
+- Legacy Android schema-90 setup: pinned RemoteNotes source attribution, one-time
+  five-minute download, headers, wrong-method handling and invalidation on restart,
+  cancellation, rotation or revocation. M4 still owns request-aware templates.
+- Authentication and scope checks before body reads, ownership preflight for URL
+  resources, bounded headers/uploads/connections, per-device API quotas, and
+  revocation rechecks after upload and during streams. Code-issued write approvals
+  require write scope. Both ordinary and harness tool dispatch enforce live scopes;
+  denied queued turns do not initialize the model.
+- A disposable HTTP proxy rehearsal switches from a frozen legacy responder to
+  Nuru, rolls back, then switches forward. The legacy payload still works, authored
+  bytes stay unchanged, and the original request-ID receipt replays without a new
+  note. This is not evidence of a live old receiver or Tailscale migration.
+
+Validation notes:
+
+- Initial tests without loopback permissions failed at socket bind; rerunning with
+  loopback enabled passed. A socket-capacity test was corrected to accept both EOF
+  and TCP reset as bounded refusal, as macOS returns reset on excess connections.
+- The initial combined model-free suite passed **206 tests in 45.15 s**. Final
+  protocol/authorization regression results are recorded below.
+- Tailscale CLI **1.102.4-t3caf7d9e7-g084ee3b64** reports a running node. Read-only
+  inspection found private HTTPS port 443 targeting `http://127.0.0.1:27124`, with
+  no enabled Funnel. No route, receiver, installed shortcut, or personal vault
+  was changed. Full status output and hostname are omitted from committed evidence.
+- Running the new `remote-check` against that actual origin exited **2**, correctly
+  reporting that Serve must target the remote listener. The command performs only
+  `status --json` and `serve status --json`; it never mutates Tailscale configuration.
+
+Still required before ticking M3: operator-approved actual HTTPS cutover against a
+scratch vault, invalid/revoked rejection over that route, actual legacy receiver
+write drain and rollback, and installed-client Content-Length compatibility.
+Physical phone/chat acceptance remains M4. All live-model tests remain deferred
+as requested; none were run for this milestone.
+
+TODO justification: M3 changes from open to **in progress**, because the code and
+model-free checks are reviewable but the original real private HTTPS exit gate
+has not passed. The gate is retained, not weakened or marked complete. The main
+WP02 plan links the operator guide and states this remaining gate explicitly.
+
+Final regression command:
+
+```sh
+.venv/bin/python -m pytest \
+  nuru/tests/test_remote_credentials.py nuru/tests/test_remote_server.py \
+  nuru/tests/test_service_server.py nuru/tests/test_service_host.py \
+  nuru/tests/test_service_protocol.py nuru/tests/test_remote_contract.py \
+  nuru/tests/test_capture_writer.py nuru/tests/test_tool_dispatch.py \
+  nuru/tests/test_mcp_tools.py -q
+```
+
+**288 passed in 48.32 s**. `node --check nuru/src/core/service/pair.js` and
+`git diff --check` passed. A subsequent targeted check covers reserved/invalid
+remote CLI ports and prevents the two credential boundaries sharing a listener.
+The targeted credential/CLI rerun passed **20 tests in 0.18 s**, including all
+four reserved/invalid port cases added after the combined suite.

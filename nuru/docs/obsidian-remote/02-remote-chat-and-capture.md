@@ -1,6 +1,7 @@
 # WP02 — Remote Nuru chat and reliable note capture
 
-Status: in progress, 2026-10-12 (M1 and M2 implemented). All thresholds below are acceptance targets, not
+Status: in progress, 2026-10-13 (M1 and M2 implemented; M3 implementation under review,
+real private HTTPS gate pending). See the [M3 operator guide](wp02-m3-private-access.md). All thresholds below are acceptance targets, not
 measurements. Depends on [WP01 local service and plugin](01-local-obsidian-chat.md).
 The same service later exposes [WP03 maintenance reports](03-vault-maintenance-ui.md).
 

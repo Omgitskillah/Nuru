@@ -19,6 +19,7 @@ import socket
 import sys
 import time
 import traceback
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -26,7 +27,8 @@ from urllib.parse import parse_qs, urlsplit
 from dotenv import dotenv_values
 
 from core.service import protocol
-from core.service import remote_contract
+from core.service import remote_contract, remote_access
+from core.service.remote_credentials import RemoteCredentials, COOKIE, csrf
 from core.service.capture import CaptureError
 from core.service.credentials import Credentials
 from core.service.host import Service
@@ -53,21 +55,57 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "nuru-serve"
     server: "NuruServer"
 
+    def handle_one_request(self):
+        # Socket inactivity timeouts alone do not stop trickled request headers.
+        self._header_timer = threading.Timer(5, self._header_timeout)
+        self._header_timer.daemon = True
+        self._header_timer.start()
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            self._header_timer.cancel()
+
+    def _header_timeout(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def parse_request(self):
+        try:
+            return super().parse_request()
+        finally:
+            self._header_timer.cancel()
+
+    def ensure_active(self):
+        if self.server.remote_origin and not self.server.remote_credentials.check_digest(self.device.digest, self.device.kind):
+            raise ProtocolError("unauthorized", "credential expired or revoked")
+
     def log_message(self, format, *args):  # paths hold IDs only, but there's nothing a user needs here
         pass
 
     # ------------------------------------------------------------------ answering
     def cors(self) -> None:
         origin = self.headers.get("Origin")
-        if origin in ORIGINS:
+        if not self.server.remote_origin and origin in ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
 
     def answer(self, status: int, body: dict) -> None:
-        data = json.dumps(body, ensure_ascii=False).encode()
+        self.raw_answer(status, json.dumps(body, ensure_ascii=False).encode(), "application/json")
+
+    def raw_answer(self, status: int, data: bytes, media: str) -> None:
         self.send_response(status)
         self.cors()
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", media)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        for key, value in getattr(self, "extra_headers", {}).items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -81,14 +119,16 @@ class Handler(BaseHTTPRequestHandler):
     def allowed(self, *, capture: bool = False) -> bool:
         """The Host and Origin checks; a refusal is sent if they fail."""
         port = self.server.server_port
-        if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+        hosts = {urlsplit(self.server.remote_origin).netloc} if self.server.remote_origin else {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if len(self.headers.get_all("Host", [])) != 1 or self.headers.get("Host") not in hosts:
             if capture:
                 self.capture_answer(403, {"ok": False, "error": "forbidden"})
             else:
                 self.refuse("forbidden", "unexpected Host")
             return False
         origin = self.headers.get("Origin")
-        if origin is not None and origin not in ORIGINS:
+        origins = {self.server.remote_origin} if self.server.remote_origin else ORIGINS
+        if len(self.headers.get_all("Origin", [])) > 1 or (origin is not None and origin not in origins):
             if capture:
                 self.capture_answer(403, {"ok": False, "error": "forbidden"})
             else:
@@ -132,12 +172,30 @@ class Handler(BaseHTTPRequestHandler):
         is_capture = url.path == "/v1/captures" or url.path.startswith("/v1/captures/")
         if not self.allowed(capture=is_capture):
             return
-        identity = self.principal(capture=is_capture)
+        if len(self.headers.get_all("Authorization", [])) > 1:
+            return self.capture_answer(401, {"ok": False, "error": "unauthorized"})
+        if self.server.remote_origin and remote_access.public_route(self, method, url.path):
+            return
+        identity = (remote_access.authenticate(self, method, is_capture) if self.server.remote_origin
+                    else self.principal(capture=is_capture))
         if identity is None:
             return
         principal, _, device_id = identity
         query = parse_qs(url.query)
         try:
+            if url.path == "/v1/devices" and method == "POST" and not self.server.remote_origin:
+                return remote_access.manage(self)
+            if self.server.remote_origin and url.path in {"/v1/session", "/v1/logout"}:
+                if self.device.kind != "browser":
+                    return self.capture_answer(403, {"ok": False, "error": "forbidden"})
+                if url.path == "/v1/session" and method == "GET":
+                    return self.answer(200, {"name": self.device.name, "scopes": sorted(self.device.scopes),
+                                             "csrf": csrf(self.session_token)})
+                if url.path == "/v1/logout" and method == "POST":
+                    self.server.remote_credentials.logout(self.device)
+                    self.extra_headers = {"Set-Cookie": f"{COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}
+                    return self.answer(200, {"ok": True})
+                return self.capture_answer(405, {"ok": False, "error": "method_not_allowed"})
             if url.path == "/v1/captures" or url.path.startswith("/v1/captures/"):
                 return self.capture_route(method, url.path, device_id)
             if re.match(r"^/v(?!1/)\d+/", url.path):
@@ -173,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                 media = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
                 if media != "application/json":
                     raise CaptureError(415, "expected_application_json")
-                if self.headers.get("Transfer-Encoding"):
+                if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
                     raise CaptureError(400, "invalid_capture")
                 try:
                     length = int(self.headers.get("Content-Length", ""))
@@ -205,6 +263,8 @@ class Handler(BaseHTTPRequestHandler):
                     _, payload = remote_contract.parse_request(b"".join(chunks))
                 except ValueError:
                     raise CaptureError(400, "invalid_capture") from None
+                if self.server.remote_origin and not self.server.remote_credentials.check_digest(self.device.digest, self.device.kind):
+                    raise CaptureError(401, "unauthorized")
                 return self.capture_answer(*self.server.service.captures.create(device_id, payload))
             match = re.fullmatch(r"/v1/captures/requests/([A-Za-z0-9_-]{16,128})", path)
             if match:
@@ -216,12 +276,45 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = error.code in {"body_timeout", "body_rejected", "invalid_capture"}
             self.capture_answer(error.status, {"ok": False, "error": error.code})
 
+    def read_body(self, limit: int) -> bytes:
+        if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
+            raise ProtocolError("invalid_request", "one Content-Length is required")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            raise ProtocolError("invalid_request", "invalid Content-Length") from None
+        if length < 0:
+            raise ProtocolError("invalid_request", "invalid Content-Length")
+        if length > limit:
+            self.close_connection = True
+            raise ProtocolError("payload_too_large", "request is too large")
+        deadline, parts = time.monotonic() + 5, []
+        while length:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise ProtocolError("invalid_request", "upload deadline exceeded")
+            self.connection.settimeout(left)
+            try:
+                part = self.rfile.read1(min(length, 65536))
+            except TimeoutError:
+                raise ProtocolError("invalid_request", "upload deadline exceeded") from None
+            if not part:
+                raise ProtocolError("invalid_request", "incomplete body")
+            parts.append(part)
+            length -= len(part)
+        self.connection.settimeout(5)
+        return b"".join(parts)
+
+    def json_body(self, limit: int) -> dict:
+        try:
+            return json.loads(self.read_body(limit))
+        except (ValueError, UnicodeError):
+            raise ProtocolError("invalid_request", "invalid JSON") from None
+
     def body(self, operation: str) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > protocol.MAX_REQUEST_BYTES:
-            self.close_connection = True  # the body is left unread
-            raise ProtocolError("payload_too_large", f"requests are at most {protocol.MAX_REQUEST_BYTES} bytes")
-        return protocol.parse_request(operation, self.rfile.read(length))
+        body = protocol.parse_request(operation, self.read_body(protocol.MAX_REQUEST_BYTES))
+        self.ensure_active()
+        return body
 
     @staticmethod
     def number(query: dict, name: str, default: int, low: int, high: int) -> int:
@@ -242,7 +335,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ operations
     def on_status(self, principal, query):
-        self.answer(200, self.server.service.status())
+        body = self.server.service.status()
+        if self.server.remote_origin:
+            body.pop("vault", None)
+        self.answer(200, body)
 
     def on_create_conversation(self, principal, query):
         self.answer(*self.server.service.create_conversation(principal, self.body("create_conversation")))
@@ -256,12 +352,24 @@ class Handler(BaseHTTPRequestHandler):
         self.answer(200, self.server.service.conversation(principal, conversation_id, self.before(query), limit))
 
     def on_submit_turn(self, principal, query, conversation_id):
-        self.answer(*self.server.service.submit_turn(principal, conversation_id, self.body("submit_turn")))
+        self.server.service.check_target(principal, "conversation", conversation_id)
+        options = {}
+        if self.server.remote_origin:
+            device = self.device
+            credentials = self.server.remote_credentials
+            options["authorize"] = lambda name: remote_tool_allowed(credentials, device, name)
+        self.answer(*self.server.service.submit_turn(principal, conversation_id, self.body("submit_turn"), **options))
 
     def on_cancel_turn(self, principal, query, turn_id):
+        self.server.service.check_target(principal, "turn", turn_id)
         self.answer(*self.server.service.cancel_turn(principal, turn_id, self.body("cancel_turn")))
 
     def on_answer_question(self, principal, query, question_id):
+        self.server.service.check_target(principal, "question", question_id)
+        # Protocol questions are live code-issued write approvals. Ordinary model
+        # questions end the turn and are answered with the next chat message.
+        if self.server.remote_origin and "notes:write" not in self.device.scopes:
+            raise ProtocolError("forbidden", "write approval requires notes:write")
         self.answer(*self.server.service.answer_question(principal, question_id, self.body("answer_question")))
 
     def on_request_state(self, principal, query, request_id):
@@ -281,12 +389,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         while True:
+            if self.server.remote_origin and not self.server.remote_credentials.check_digest(self.device.digest, self.device.kind):
+                return
             try:
                 events, ended = service.wait_events(turn_id, cursor, self.server.keepalive_seconds)
             except ProtocolError:
                 # The 200 and the stream are under way, so no error body can follow: end the stream,
                 # and the client reconnects to find out why.
                 self.close_connection = True
+                return
+            if self.server.remote_origin and not self.server.remote_credentials.check_digest(self.device.digest, self.device.kind):
                 return
             for event in events:
                 self.wfile.write(protocol.sse(event))
@@ -300,14 +412,59 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
 
+def remote_tool_allowed(credentials, device, name):
+    current = credentials.check_digest(device.digest, device.kind)
+    if current is None or "chat:use" not in current.scopes:
+        return False
+    if name is None:  # check again before starting a queued model turn
+        return True
+    if name in {"write_note", "rename_or_move_file"}:
+        return {"notes:read", "notes:write"} <= current.scopes
+    if name in {"browse", "find_in_notes", "note_info", "read_note", "search", "tags"}:
+        return "notes:read" in current.scopes
+    # Unknown tools fail closed, including future tools and expert file reads.
+    return name in {"calculate", "statistics", "run_python", "tool_gate", "assess_effort",
+                    "watch_thinking", "gate_write", "note_type", "rerank", "check_claim"}
+
+
 class NuruServer(ThreadingHTTPServer):
     daemon_threads = True
+    allow_reuse_port = False  # two credential boundaries must never share a port
+    request_queue_size = 32
 
     def __init__(self, service: Service, credentials: Credentials, port: int = protocol.DEFAULT_PORT,
-                 keepalive_seconds: float = KEEPALIVE_SECONDS) -> None:
+                 keepalive_seconds: float = KEEPALIVE_SECONDS, *, remote_origin=None,
+                 remote_credentials=None, connections=32) -> None:
         self.service, self.credentials, self.keepalive_seconds = service, credentials, keepalive_seconds
+        self.remote_origin = remote_access.https_origin(remote_origin) if remote_origin else None
+        if self.remote_origin and remote_credentials is None:
+            raise ValueError("remote credentials required")
+        self.remote_credentials = remote_credentials
+        self.remote_credentials_origin = self.remote_origin
         self.closing = False
+        self._slots = threading.BoundedSemaphore(connections)
         super().__init__(("127.0.0.1", port), Handler)
+
+    def get_request(self):
+        request, address = super().get_request()
+        request.settimeout(5)  # headers and idle connections are bounded too
+        return request, address
+
+    def process_request(self, request, address):
+        if self.closing or not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self._slots.release()
 
 
 # --------------------------------------------------------------------------- the command
@@ -326,7 +483,7 @@ def _session_factory(vault: Path):
     return lambda conversation_id: Session.start(conversation_id, load_model=False, vault=vault)
 
 
-def serve(port: int, queue_limit: int) -> None:
+def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_port: int = 27127) -> None:
     from core import session
     from core.conversation_store import ConversationStore
     from core.service.store import ServiceBusy, ServiceStore
@@ -343,9 +500,20 @@ def serve(port: int, queue_limit: int) -> None:
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)
+    remote = None
+    remote_credentials = None
     try:
-        server = NuruServer(service, credentials, port)
+        if remote_origin:
+            remote_credentials = RemoteCredentials(credentials.directory)
+            remote = NuruServer(service, credentials, remote_port, remote_origin=remote_origin,
+                                remote_credentials=remote_credentials)
+        server = NuruServer(service, credentials, port, remote_credentials=remote_credentials)
+        server.remote_credentials_origin = remote_origin
     except OSError as error:
+        if remote:
+            remote.server_close()
+        if remote_credentials:
+            remote_credentials.close()
         service.close()
         store.close()
         service.conversations.close()
@@ -356,14 +524,22 @@ def serve(port: int, queue_limit: int) -> None:
 
     signal.signal(signal.SIGTERM, stop)
     print(f"nuru-serve: http://127.0.0.1:{server.server_port}, vault {service.vault.name} ({service.vault_id})", file=sys.stderr)
+    if remote:
+        threading.Thread(target=remote.serve_forever, name="nuru-remote", daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("nuru-serve: stopping", file=sys.stderr)
     finally:
         server.closing = True
+        if remote:
+            remote.closing = True
+            remote.shutdown()
         stopped = service.close()
         server.server_close()
+        if remote:
+            remote.server_close()
+        # Daemon HTTP threads can still be unwinding; process exit closes credentials.
         if stopped:
             store.close()
             service.conversations.close()
@@ -376,13 +552,45 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="nuru-serve", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=protocol.DEFAULT_PORT)
     parser.add_argument("--queue", type=int, default=4, help="turns that may wait behind the running one")
+    parser.add_argument("--remote-origin", help="opt in: private HTTPS Tailscale origin")
+    parser.add_argument("--remote-port", type=int, default=27127)
     commands = parser.add_subparsers(dest="command")
+    commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
     token = commands.add_parser("token", help="add, remove or list the clients that may sign in")
     token.add_argument("action", choices=["add", "remove", "list"])
     token.add_argument("client", nargs="?")
+    device = commands.add_parser("device", help="host-only device approval/rotation; service must be running")
+    device.add_argument("action", choices=["pair", "shortcut", "android", "revoke", "cancel", "list"])
+    device.add_argument("name", nargs="?")
+    device.add_argument("--scopes", nargs="+", default=[])
+    device.add_argument("--local-client", default="obsidian")
+    device.add_argument("--import-legacy", action="store_true", help="prompt privately for an existing capture token")
     args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535 or not 1 <= args.remote_port <= 65535:
+        parser.error("listener ports must be between 1 and 65535")
+    if args.remote_origin and (args.remote_port in {27125, 27126} or args.remote_port == args.port):
+        parser.error("remote listener needs a separate port; 27125 and 27126 are reserved")
+    if args.remote_origin:
+        try:
+            args.remote_origin = remote_access.https_origin(args.remote_origin)
+        except ValueError as error:
+            parser.error(str(error))
+    if args.command == "remote-check":
+        from core.service.private_transport import inspect
+        if not args.remote_origin:
+            parser.error("remote-check requires --remote-origin")
+        try:
+            problems = inspect(args.remote_origin, args.remote_port)
+        except ValueError as error:
+            parser.error(str(error))
+        if problems:
+            parser.error("; ".join(problems))
+        print("Private HTTPS route targets the remote listener; Funnel is disabled.")
+        return
+    if args.command == "device":
+        return device_command(args, parser)
     if args.command != "token":
-        return serve(args.port, args.queue)
+        return serve(args.port, args.queue, args.remote_origin, args.remote_port)
     credentials = Credentials()
     if args.action == "list":
         print("\n".join(credentials.clients()) or "no clients")
@@ -398,6 +606,32 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"no client named {args.client}")
     else:
         print(f"{args.client}: token revoked")
+
+
+def device_command(args, parser):
+    import getpass
+    import http.client
+    from core.service.credentials import _CLIENT_NAME
+    if not _CLIENT_NAME.fullmatch(args.local_client):
+        parser.error("invalid local client name")
+    payload = {"action": args.action, "name": args.name, "scopes": args.scopes}
+    if args.import_legacy:
+        if args.action != "shortcut":
+            parser.error("--import-legacy requires shortcut")
+        payload["legacy_token"] = getpass.getpass("Existing capture token (hidden): ")
+    try:
+        token = (Credentials().directory / "clients" / (args.local_client + ".token")).read_text().strip()
+        connection = http.client.HTTPConnection("127.0.0.1", args.port, timeout=10)
+        connection.request("POST", "/v1/devices", json.dumps(payload),
+                           {"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        connection.close()
+    except (OSError, ValueError) as error:
+        parser.error(f"cannot contact the local service: {type(error).__name__}")
+    if response.status != 200:
+        parser.error("device operation failed: " + json.dumps(data))
+    print(json.dumps(data, indent=2))  # explicit operator output only; never service logs
 
 
 if __name__ == "__main__":

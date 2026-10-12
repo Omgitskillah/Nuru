@@ -75,6 +75,7 @@ class _Live:
     # Outcomes that couldn't be stored when they came, oldest first. While any is left, nothing more of
     # the turn is stored, its end above all (_caught_up); the turn has been told to stop.
     unrecorded: list[Callable[[TurnStream], None]] = dataclasses.field(default_factory=list)
+    authorize: Callable[[str | None], bool] | None = None
     lost_outcome: bool = False  # an outcome couldn't be stored when it came: the turn ends failed
 
 
@@ -211,7 +212,7 @@ class Service:
 
         return self._request(principal, "create_conversation", payload, "", act)
 
-    def submit_turn(self, principal: str, conversation_id: str, payload: dict) -> tuple[int, dict]:
+    def submit_turn(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         def act():
             conversation = self.store.conversation(conversation_id, principal)
             if conversation is None:
@@ -223,6 +224,7 @@ class Service:
             turn_id = protocol.new_id()
             self.store.add_turn(turn_id, conversation_id, payload["request_id"], payload["text"])
             live = _Live(TurnStream(conversation_id, turn_id), conversation["store_id"], prompt)
+            live.authorize = authorize
             self._emit(live, lambda s: s.emit("accepted", {"request_id": payload["request_id"]}))
             if waiting:
                 self._emit(live, lambda s: s.emit("queued", {"position": waiting}))
@@ -330,6 +332,18 @@ class Service:
         return data
 
     # ------------------------------------------------------------------ reading
+    def check_target(self, principal: str, kind: str, resource_id: str) -> None:
+        """URL ownership preflight, before HTTP consumes a mutation's body.
+
+        The operation itself repeats this check under its transaction.
+        """
+        with self._lock:
+            self._check_safe()
+            lookup = {"conversation": self.store.conversation, "turn": self.store.turn,
+                      "question": self.store.question}[kind]
+            if lookup(resource_id, principal) is None:
+                raise ProtocolError("not_found", "no such resource")
+
     def status(self) -> dict:
         with self._lock:
             queue = {"active": int(self._active is not None), "waiting": len(self._queue), "limit": self.queue_limit}
@@ -503,6 +517,10 @@ class Service:
                 self._session.close()
 
     def _turn(self, live: _Live) -> None:
+        if live.authorize and not live.authorize(None):
+            with self._lock:
+                self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": "Device authorization expired or was revoked."}))
+            return
         try:
             session = self._ensure_session(live.store_id)
         except Exception:
@@ -513,11 +531,16 @@ class Service:
             return
         if self._unsafe:  # it became unsafe while the Session was starting
             return
+        session.authorize_tool = live.authorize
+        if getattr(session, "tools", None) is not None:
+            session.tools.authorize_tool = live.authorize
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
         session.on_tool_outcome = lambda call_id, name, arguments, outcome, write: self._tool_outcome(live, call_id, name, outcome, write)
         try:
             for event in session.ask(live.prompt, live.cancel):
+                if live.authorize and not live.authorize(None):
+                    live.cancel.set()
                 with self._lock:
                     # After a Failure or an Ask, Session has nothing more to add. Unsafe, it was told to
                     # stop, and what it says until then can't be stored. A Failure that ends the turn
@@ -537,6 +560,9 @@ class Service:
         finally:
             session.answer_question = None
             session.on_tool_outcome = None
+            session.authorize_tool = None
+            if getattr(session, "tools", None) is not None:
+                session.tools.authorize_tool = None
         with self._lock:
             if live.stream.ended or self._unsafe or not self._caught_up(live):
                 return  # not caught up: left unfinished, and the next start recovers its writes from the ledger

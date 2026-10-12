@@ -50,6 +50,20 @@ def _paths_line(result: semantic.RefreshResult) -> str:
     return shown + (f" and {len(paths) - _PATHS_SHOWN} more" if len(paths) > _PATHS_SHOWN else "")
 
 
+def semantic_db(vault: Path) -> str:
+    """The semantic index for `vault`: OBSIDIAN_SEMANTIC_DB from this process's environment if set;
+    .env.obsidian's only when `vault` is .env.obsidian's own vault; otherwise the notes server's default,
+    inside `vault`. Never another vault's index: a refresh would drop that vault's notes from it, and
+    search would answer from them."""
+    if os.environ.get("OBSIDIAN_SEMANTIC_DB"):
+        return os.environ["OBSIDIAN_SEMANTIC_DB"]
+    configured = dotenv_values(OBSIDIAN_ENV)
+    if configured.get("OBSIDIAN_SEMANTIC_DB") and configured.get("VAULT_PATH") \
+            and Path(configured["VAULT_PATH"]).expanduser().resolve() == Path(vault).resolve():
+        return configured["OBSIDIAN_SEMANTIC_DB"]
+    return str(Path(vault).resolve() / semantic.DB_NAME)
+
+
 class VaultIndexer:
     def __init__(self, config: semantic.Config, embed: semantic.Embed, interval: float = INTERVAL_SECONDS) -> None:
         self.config = config
@@ -72,7 +86,8 @@ class VaultIndexer:
         env = {**{k: v for k, v in dotenv_values(OBSIDIAN_ENV).items() if v is not None}, **os.environ}
         if not env.get("VAULT_PATH"):
             return None
-        config = semantic.load_config(Path(env["VAULT_PATH"]).expanduser().resolve(), env)
+        vault = Path(env["VAULT_PATH"]).expanduser().resolve()
+        config = semantic.load_config(vault, {**env, "OBSIDIAN_SEMANTIC_DB": semantic_db(vault)})
         return cls(config, semantic.ollama_embedder(config))
 
     def start(self) -> None:

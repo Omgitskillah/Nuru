@@ -1,0 +1,31 @@
+{
+ "started": "2026-10-11T19:23:45+00:00",
+ "command": "nuru/evals/obsidian_remote/live_wp01.py --repeats 5 --out .runs/obsidian-remote/live-20261011-212328",
+ "commit": "1f15299329aaccab59018cb76375608aa4b93297",
+ "dirty": true,
+ "diff_sha256": "97e5bd28ff7fa54444f6338e5aea42f04a33b54aa94510b5f08a90d9839cbf82",
+ "base_model": "qwen3.5:4b",
+ "model": "nuru",
+ "max_num_ctx": 16384,
+ "think": false,
+ "modelfile_sha256": "faa0df5fc9f27e54300a31c15b43c20468a3bf1f8acd5af9af5a62d2c5ebcc7f",
+ "embed_model": "nomic-embed-text-v2-moe",
+ "ollama_digests_before": {
+  "nuru:latest": "6ad32a65700447c41052bb1730fee4f050d4605fd96925edc35564925c358506",
+  "nomic-embed-text-v2-moe:latest": "ff9c2f10ef5e3722623a1b396e1e04efc27a93112c83e9b7b7b9ca1d05620965",
+  "qwen3.5:4b": "2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd",
+  "qwen3.5:2b": "324d162be6ca5629ae4517c8710434d0bd2d665bc94dbad46e9af8fbf8a2f0df",
+  "qwen3.5:0.8b": "f3817196d142eaf72ce79dfebe53dcb20bd21da87ce13e138a8f8e10a866b3a4",
+  "qwen3.5:9b": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
+ },
+ "cases_sha256": "91b509c3682fec12da9f4926c606fcf3e9369568faed9e51853aa6cd33a6f22f",
+ "vault_sha256": "b31a1543bd3e046e283964f0b4c935e975bb55a313ef4c20fbaf57bf0d57c35f",
+ "node": "v24.21.0",
+ "settings": {
+  "repeats": "5",
+  "cases": "None",
+  "timeout": "900",
+  "out": ".runs/obsidian-remote/live-20261011-212328",
+  "child": "None"
+ }
+}

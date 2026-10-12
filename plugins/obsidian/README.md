@@ -106,7 +106,7 @@ To try it without a model, serve a scratch vault over scripted scenarios:
 2. Give the plugin its token, which is new each time the server starts:
    `cp <scratch>/service/clients/obsidian.token ~/.nuru/service/clients/obsidian.token`.
    This replaces the token for the real `nuru-serve`.
-3. Open `<scratch>/vault` in Obsidian, set the plugin's **Port** to 27126 and click **Check and reconnect**.
+3. Open `<scratch>/NuruPluginTestVault` in Obsidian, set the plugin's **Port** to 27126 and click **Check and reconnect**.
 4. In the Nuru panel, send a scenario's name as the message, such as `scenario:approval` (see `SCENARIOS`);
    any other text is echoed back. `scenario:activity` shows every kind of step: streamed thinking, a failed
    and a working call, a steer and a silent retry.

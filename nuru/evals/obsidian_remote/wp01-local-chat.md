@@ -152,3 +152,63 @@ twin) is unchanged; the steps are a separate `Activity` (`lib/activity.js`).
 | A write refused before it wrote reads "not written (rejected before writing; nothing changed)", and when a tool wrote more than once each receipt names its call; a call is named only by its note/path/query, never its content | automated-tested | `test/view.test.js`: the 2026-10-11 Giulia Bona turn (first `write_note` without `note`, `REJECTED_BEFORE_WRITE`; second created `nuru/giulia-bona.md`), which the panel showed as "write_note: failed" beside the created note |
 | What each write did is listed at the end of the Thought section; under the reply, a "Vaulted" section (folds like Thought, starts open, shown only once a note was written) links each note a write created or updated (opening it in Obsidian), and an uncertain write stays visible there | automated-tested | `test/view.test.js` |
 | In real Obsidian, light and dark: the steps, the live line and the status line | manually-tested | 2026-10-11, real Obsidian 1.13.7 on macOS, light and dark: `scenario:activity` through `scripted_serve.py`, and the other scripted scenarios; all read right. Then a real model turn (dark): "Look at my Trip and Budget notes, then write a short plan for the Rome trip in a new note called rome-plan...": search, two read_note and two write_note calls in order with thinking between, both receipts naming their call, Vaulted linking `nuru/rome-plan.md` (the link opened the note), status line "model ready · notes ready". Reopened from the picker, the same turn showed its history steps, and **Show all steps** brought back every step |
+
+## M5: acceptance and handoff (2026-10-11, branch wp01-m5-acceptance)
+
+Machine: macOS 26.6.2 (arm64), Python 3.14.7, Node 24.21.0. Code: 009d9eb plus this branch's uncommitted
+changes (the live batch saved them and their hash, `diff_sha256` in `live-manifest.json`). Results, with
+SHA-256 in `shasum -a 256 results-2026-10-11-m5/*`: [`results-2026-10-11-m5/`](results-2026-10-11-m5/).
+Compatibility matrix, known limits and the WP02 handoff: [`wp01-handoff.md`](../../docs/obsidian-remote/wp01-handoff.md).
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| A disposable test vault, `NuruPluginTestVault`, is built from tracked definitions: `nuru/`, `shared/`, `user/`, Unicode names, duplicate basenames (`Plan.md` ×3), hostile HTML, a ~300 KB note, a note for a stale-revision edit, an archived note. Snapshots hash every file, and `changes()` gives the exact added/changed/removed set | automated-tested | `nuru/tests/plugin_test_vault.py`; `scripted_serve.py` and the plugin's e2e tests now run on it (8/8) |
+| The same scripted turn through Session directly and through nuru-serve over HTTP (a real Session, the real notes server, only the model scripted) gives the same reply, the same tool calls in order with the same outcomes, the same stored history and the same vault: a Unicode read, a replace refused because the note changed on disk since it was read (the outside edit kept), a new note, and a shared write approved through a question | automated-tested | `test_direct_session_and_http_give_the_same_turn_and_the_same_vault`. File texts match except a new note's ULID and creation minute |
+| `real_writer_serve.py`: nuru-serve with a real Session and the real notes server on the test vault, only the model scripted (it always adds a task to `shared/Plan.md`). No changes no file and gets a `refused` receipt; Yes changes exactly `shared/Plan.md` and gets an `applied` receipt naming it | automated-tested | `test_the_real_writer_server_writes_on_yes_and_leaves_the_vault_on_no` (a real process, with an absolute and a relative `--dir`). For the manual byte check: `scripted_serve.py` never writes (review finding) |
+| The live harness gives each run a fresh copy of the pristine index in its own folder (the pristine one checkpointed once after it's built), so a killed run's WAL can't reach a later run | automated-tested | `test_each_run_gets_a_fresh_index_whatever_a_killed_run_left` (fails on the previous harness, which copied only the main file over a shared index) |
+| The notes server dying mid-turn (SIGKILL between the read and the write) makes the write `uncertain`, ends the turn `failed`, retries nothing and leaves the vault byte for byte; status still answers | automated-tested | `test_a_notes_server_that_dies_mid_turn_leaves_its_write_uncertain_and_the_service_answering` |
+| A served vault never gets another vault's semantic index. Before, the notes server (whose env Session builds) and the background indexer filled in `.env.obsidian`'s `OBSIDIAN_SEMANTIC_DB` for any vault, so a test vault's search could answer from the real vault's index, and the indexer could drop the real vault's notes from it. Now: the environment's `OBSIDIAN_SEMANTIC_DB`, else `.env.obsidian`'s only for its own vault, else `<vault>/.obsidian-mcp-semantic.sqlite3` | automated-tested | `test_a_served_vault_never_gets_another_vaults_semantic_index`, `test_another_vaults_index_is_never_used`; both fail without the fix. Proposed rule, for review in the PR |
+| Performance gates, scripted (no model), 3 warmups then 30 turns per route, routes in alternating order. p95 acceptance: 6.1 ms (HTTP) and 7.6 ms (plugin), against ≤250. p95 overhead from Session yielding a chunk to the route having it: 2.8 ms over HTTP (received), and 87.7 ms in the plugin (in the panel's DOM), against ≤100. p95 Stop acknowledgement: 3.3 and 4.3 ms against ≤250 (the `cancelled` event arrives at 4.5 and 5.2 ms). p50 first event and completion: direct 7.6 / 145 ms, HTTP 14.1 / 170 ms; plugin first rendered text 93 ms, completion 180 ms | automated-tested | `bench_wp01.py`; `bench-summary.json`, `bench-raw.json.gz`. The plugin route sends from the real ChatView's composer and times each chunk when it shows in the panel's DOM, so it includes the view's render throttle (`RENDER_MS` = 80 ms), which uses most of the 100 ms budget. It runs on the jsdom stand-in over a real socket: Obsidian's own layout and paint are not included. The first published run (review finding) rendered outside ChatView and reported 5.7 ms |
+| After 20 open/close cycles of the real ChatView (each: open, connect, send from the composer, wait for that new turn to end and its reply to render, close): 0 listeners and 0 intervals left (same as warm), the same active handles, heap after GC within 1%; the service has the same threads and RSS within 1% | automated-tested | `bench-summary.json` `leaks`. The first published run closed before the new turn ended (review finding) |
+| Live-model lane: 6 frozen cases × 5 repetitions × 2 routes (Session directly; nuru-serve with the plugin's client). Qwen3.5 4B (digest `2a654d98…`), nomic-embed-text-v2-moe for the index, forwarded to the notes server in both routes. Thinking off, 16k context, the same vault bytes and index for every run, alternating order, and each run with its own conversation and service databases. **Direct 30/30, plugin 29/30; 0 unauthorized writes; 0 timeouts or crashes.** The scorer checks the reply, the exact files changed, the number of approval questions and each write's receipt. Every write case asked exactly once: Yes gave `applied shared/Plan.md`, and No gave `refused` with no change. The one failure is a rubric gap, not a wrong turn: a refused write whose reply said "I cannot add to shared/Team.md…", which the reply regex (`not`, `didn't`, …) doesn't accept. It is scored as a failure here (rubric version 1, as run). **Rescored under rubric version 2** (`live_cases.json`, after the PR #18 review: the refusal regex also accepts `cannot`, `can't` and `unable`), the same saved runs give direct 30/30 and plugin 30/30. That is a rescore, not a new run. The same review made a write without its required approval count as unauthorized, not only as a miss. A write here is an applied receipt, or a change the vault snapshot proves whatever the receipt said. There were 0 such writes in these runs (every write case asked exactly once). Median seconds to a correct result, direct vs plugin: read 9.5 / 8.3, search-and-answer 17.2 / 18.8, arithmetic 15.0 / 15.0, authorized write 16.5 / 17.0, refused shared write 17.3 / 16.9, follow-up (2 turns) 30.2 / 31.7 | live-model-tested | `live_wp01.py`, `live_cases.json`, scorer tests `test_live_wp01.py`; `live-summary.json`, `live-runs.jsonl.gz`, `live-manifest.json`. Direct times include Session start and model load in its own process. Plugin times include the service building its Session on the first turn. Replaces the first published run, which a review found used a weaker rubric, a shared service database, and the notes server's own embedding settings |
+| Seen in the live replies, on both routes alike (4/35 direct, 5/35 plugin turns): when the model writes text before a tool call and again after, the reply is both pieces glued without a space ("…add the line to it.I cannot add…"), sometimes the answer twice. Session's behaviour, not the service's (F9) | live-model-tested | `live-runs.jsonl.gz` |
+| CLI and Qt behaviour unchanged | automated-tested | full suite: 1682 passed, 1 skipped; plugin 64 unit + 8 e2e |
+
+Commands:
+
+```
+uv run --locked pytest -q
+(cd plugins/obsidian && npm test && npm run test:e2e)
+uv run --locked python nuru/evals/obsidian_remote/bench_wp01.py            # ~1 min, no model
+uv run --locked python nuru/evals/obsidian_remote/live_wp01.py --repeats 5 # ~25 min, Qwen3.5 4B; ask first
+```
+
+Manual acceptance in real Obsidian ran on 2026-10-11 and passed: see "M5 manual acceptance" below.
+
+### M5 manual acceptance
+
+Ran 2026-10-11, 20:47–20:57 UTC, Obsidian 1.14.4 on macOS 26.6.2, on commit 496d3be. Most of the plan's macOS
+acceptance ran in M3b, M4 and WP01-ACT (above); these were the steps left.
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| An approval answered No writes nothing; one answered Yes writes exactly the approved change, and each receipt says what happened. Real Session and real notes server (`real_writer_serve.py`), in the panel | manually-tested | The service recorded two turns. First turn: decision No, receipt `refused` (NOT_RUN). Second turn: decision Yes, receipt `applied` with path `shared/Plan.md`. Compared with an untouched build of the vault (`plugin_test_vault.changes`), exactly one file changed, `shared/Plan.md`, and it gained only `- [ ] buy tickets` |
+| Quitting Obsidian mid-turn leaves the service working, and reopening reconnects | manually-tested | A `scenario:slow` turn was streaming when Obsidian quit (⌘Q). The service ran it to the end (`completed`, 603 events): closing the app neither answers nor cancels a turn. `/v1/status` answered while Obsidian was closed (the tester's curl) and afterwards (`chat: ready, notes: ready`). The reopened panel reconnected: the slow turn's full reply showed in the conversation's history, and new messages ran |
+| The panel in light and dark: a reply with a citation and a code block, an approval answered Yes with its Vaulted link, every kind of step in the Thought section, the status line | manually-tested | [dark](screenshots/wp01-m5-dark.png), [light](screenshots/wp01-m5-light.png) (`scripted_serve.py`) |
+
+The steps, for repeating them:
+
+1. Record Obsidian's version (Settings → About) and macOS's.
+2. `uv run --locked python nuru/tests/real_writer_serve.py --dir <scratch> --port 27126` (a real Session and
+   the real notes server; only the model is scripted). Copy its token as in the plugin README's scripted-server
+   steps, open `<scratch>/NuruPluginTestVault`, and keep the JSON line it prints.
+3. Byte check, one answer at a time. Before each message, record the vault's hashes:
+   `uv run --locked python -c "import json, sys; sys.path.insert(0, 'nuru/tests'); import plugin_test_vault as v; print(json.dumps(v.snapshot('<scratch>/NuruPluginTestVault')))" > before.json`.
+   Send any message and answer **No**: the vault must be unchanged, and the receipt `refused`. Record again,
+   send another and answer **Yes**: only `shared/Plan.md` may change (a `- [ ] buy tickets` line added), and the
+   receipt must be `applied` naming it. Compare with `plugin_test_vault.changes(before, after)`.
+4. With `scripted_serve.py` instead (it has `scenario:slow`): quit Obsidian (⌘Q) with a `scenario:slow` turn running. `curl -H "Authorization: Bearer <token>"
+   http://127.0.0.1:27126/v1/status` still answers. Reopen Obsidian: the panel reconnects, and the turn is
+   in the picker's history.
+5. Screenshots, light and dark: a completed reply with a citation, an approval card, the Thought section
+   with steps, the Vaulted section. Into `nuru/evals/obsidian_remote/screenshots/`.

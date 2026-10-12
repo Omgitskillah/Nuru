@@ -3,7 +3,7 @@ end-to-end tests of clients (the Obsidian plugin's, WP01 M3) and for trying a cl
 
     uv run --locked python nuru/tests/scripted_serve.py --dir <scratch> [--port 0] [--answer-seconds 10]
 
-It makes <scratch>/vault (with a few notes), its databases and a client token under <scratch>, then
+It makes <scratch>/NuruPluginTestVault (plugin_test_vault.py), its databases and a client token under <scratch>, then
 prints one JSON line: {"port", "token", "vault", "vault_id"}. A turn's text picks its scenario (SCENARIOS);
 any other text is echoed back. Stop it with SIGTERM or Ctrl-C.
 """
@@ -14,6 +14,7 @@ import secrets
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,12 +28,8 @@ from core.service.store import ServiceStore  # noqa: E402
 from core.session import (Ask, Failure, RetryWithoutThinking, Steered, Text, Thinking,  # noqa: E402
                           ThinkingChunk, ToolCall)
 from core.tool_dispatch import MUTATIONS, ToolOutcome, failure  # noqa: E402
+from plugin_test_vault import NOTES, build  # noqa: E402
 
-NOTES = {
-    "nuru/Trip.md": "# Trip\n\nRome in May.\n",
-    "user/Budget.md": "# Budget\n\n1200 EUR.\n",
-    "shared/Team.md": "# Team\n\nShared with the team.\n",
-}
 HOSTILE = ('Here is what the note says:\n\n<script>alert("x")</script>\n<img src=x onerror="alert(1)">\n'
            '[click](javascript:alert(1)) and [[nuru/Trip.md]].\n\n<b onclick="alert(2)">bold</b>')
 
@@ -168,20 +165,26 @@ def activity(session, cancel):
     yield Text("I couldn't find today's daily note, so I changed nothing.")
 
 
+def bench(session, cancel):
+    """For the WP01 benchmark: 20 chunks 5 ms apart, each stamped ⟦t=…⟧ with the wall-clock ms it was
+    yielded at, so a client can tell how long each took to reach it."""
+    for i in range(20):
+        if cancel is not None and cancel.wait(0.005):
+            return
+        yield Text(f"⟦t={time.time() * 1000:.3f}⟧ chunk {i}\n\n")
+
+
 SCENARIOS = {
     "scenario:completed": completed, "scenario:tools": tools, "scenario:refused-write": refused_write,
     "scenario:uncertain-write": uncertain_write, "scenario:approval": approval, "scenario:choice": choice,
     "scenario:failed": failed, "scenario:slow": slow, "scenario:ask": asks_user, "scenario:hostile": hostile,
-    "scenario:long": long_reply, "scenario:activity": activity,
+    "scenario:long": long_reply, "scenario:activity": activity, "scenario:bench": bench,
 }
 
 
 def start(directory: Path, port: int = 0, answer_seconds: float | None = None):
     """(server, service, token) for a scripted nuru-serve in `directory`; the caller runs serve_forever."""
-    vault = directory / "vault"
-    for name, text in NOTES.items():
-        (vault / name).parent.mkdir(parents=True, exist_ok=True)
-        (vault / name).write_text(text)
+    vault = build(directory)
     credentials = Credentials(directory / "service")
     token = credentials.add("obsidian")
     session = ScenarioSession()

@@ -41,7 +41,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 ## Now: WP02; next WP03
 
 - [ ] **WP02** Remote chat and note capture, milestones M1–M5. Plan: [02-remote-chat-and-capture.md](nuru/docs/obsidian-remote/02-remote-chat-and-capture.md)
-  - [~] **WP02-M1** Remote contract and migration: pin legacy capture sources, define device scopes, retries and schema mapping, and freeze compatibility and denial fixtures. [Contract](nuru/docs/obsidian-remote/wp02-m1-contract.md). **Done when:** old request/response fixtures and the capability matrix pass model-free tests.
+  - [x] **WP02-M1** Remote contract and migration: pin legacy capture sources, define device scopes, retries and schema mapping, and freeze compatibility and denial fixtures. [Contract](nuru/docs/obsidian-remote/wp02-m1-contract.md). (done 2026-10-12, d4cbac3) **Done when:** old request/response fixtures and the capability matrix pass model-free tests.
   - [ ] **WP02-M2** Reliable direct capture and receipt reconciliation. **Done when:** duplicate, race and process-crash tests prove one note per request ID with all model providers disabled.
   - [ ] **WP02-M3** Pairing, scoped credentials and private exposure. **Done when:** HTTP and real private HTTPS checks reject invalid/revoked credentials before any vault access, with migration and rollback tested.
   - [ ] **WP02-M4** Phone chat and request-aware shortcuts. **Done when:** browser fault tests and real iPhone/Android acceptance cover resume, approvals and captures.

@@ -1,6 +1,7 @@
 """WP02 M2 capture tests: real scratch vault and SQLite, no model provider."""
 
 import hashlib
+import errno
 import subprocess
 import sys
 import threading
@@ -62,7 +63,7 @@ def test_inflight_duplicate_returns_status_without_waiting_for_write(writer, mon
         assert entered.wait(5)
         status, running = writer.create("phone", payload)
         assert (status, running["state"]) == (202, "running")
-        assert writer.status("phone", payload["request_id"])[1]["state"] == "accepted"
+        assert writer.status("phone", payload["request_id"])[1]["state"] == "running"
         release.set()
         receipt = future.result(timeout=5)[1]
     assert writer.status("phone", payload["request_id"])[1]["receipt"] == receipt
@@ -98,7 +99,50 @@ def test_same_text_different_ids_and_legacy_requests_are_distinct(writer):
     second = writer.create("phone", {"content": "same"})[1]
     assert first["uid"] != second["uid"]
     assert len(list((writer.vault / "Inbox").glob("*.md"))) == 22
-    assert writer.store.capture_count() == 20  # legacy requests have no reusable client ID
+    assert writer.store.capture_count() == 22  # legacy rows count toward the rolling quota
+
+
+def test_legacy_requests_use_the_same_device_quota_and_age_out(writer):
+    for index in range(60):
+        assert writer.create("phone", {"content": f"legacy {index}"})[0] == 201
+    with pytest.raises(CaptureError) as quota:
+        writer.create("phone", {"content": "legacy 61"})
+    assert (quota.value.status, quota.value.code) == (429, "capture_quota")
+    assert writer.store.capture_count("phone") == 60
+    assert len(list((writer.vault / "Inbox").glob("*.md"))) == 60
+
+    old = (datetime.now(timezone.utc) - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    writer.store._conn.execute("UPDATE captures SET created_at = ? WHERE legacy = 1", (old,))
+    writer.recover()
+    assert writer.store.capture_count("phone") == 0
+    assert writer.create("phone", {"content": "new window"})[0] == 201
+
+
+def test_staging_fsync_failure_can_retry_reserved_identity(writer, monkeypatch):
+    writer._probe_links()
+    original = capture.os.fsync
+    failed = False
+
+    def fail_once(fd):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError(errno.ENOSPC, "disk full during staging")
+        return original(fd)
+
+    monkeypatch.setattr(capture.os, "fsync", fail_once)
+    payload = {"request_id": "phone-capture-0001", "content": "saved"}
+    with pytest.raises(CaptureError) as error:
+        writer.create("phone", payload)
+    assert (error.value.status, error.value.code) == (500, "capture_failed")
+    key = writer.store.pending_captures()[0]
+    reserved = writer.store.capture(key)
+    assert writer.status("phone", payload["request_id"])[1]["state"] == "accepted"
+    assert not (writer.vault / "Inbox" / writer._stage_name(reserved)).exists()
+    assert not list((writer.vault / "Inbox").glob("*.md"))
+    receipt = writer.create("phone", payload)[1]
+    assert receipt["uid"] == reserved["uid"]
+    assert len(list((writer.vault / "Inbox").glob("*.md"))) == 1
 
 
 @pytest.mark.parametrize("phase,exit_code", [("before", 77), ("after", 78)])

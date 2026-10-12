@@ -98,10 +98,12 @@ class CaptureWriter:
     def _sweep(self) -> None:
         if time.monotonic() < self._next_sweep:
             return
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=RECEIPT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(days=RECEIPT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        legacy_cutoff = (now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         with self.store.transaction():
             self.store.expire_capture_receipts(cutoff)
-            self.store.delete_completed_legacy()
+            self.store.delete_completed_legacy(legacy_cutoff)
         self._next_sweep = time.monotonic() + 3600
 
     def stop(self, timeout: float) -> bool:
@@ -219,9 +221,6 @@ class CaptureWriter:
                     record = self._reconcile(key, self.store.capture(key))
                 if record["state"] == "completed":
                     self._remove_stage(record)
-                    if record["legacy"]:
-                        with self.store.transaction():
-                            self.store.delete_completed_legacy(key)
             self._next_sweep = 0.0
             self._sweep()
 
@@ -232,7 +231,9 @@ class CaptureWriter:
             record = self.store.capture(key)
             if record is None:
                 raise CaptureError(404, "not_found")
-            state = "accepted" if record["state"] == "staging" else record["state"]
+            state = record["state"]
+            if state == "staging":
+                state = "running" if key in self._active else "accepted"
             body = {"v": 1, "request_id": request_id, "state": state}
             if state == "completed":
                 body["receipt"] = record["receipt"]
@@ -305,9 +306,9 @@ class CaptureWriter:
                 raise CaptureError(500, "capture_failed") from None
             except (OSError, ValueError):
                 # The write may have crossed the filesystem boundary. Reconcile
-                # before answering; never allocate a second identity.
+                # from its committed phase before answering; a staging failure
+                # could not have published and may safely retry its identity.
                 with self.lock, self.store.transaction():
-                    self.store.set_capture(key, "uncertain")
                     record = self._reconcile(key, self.store.capture(key))
                 if record["state"] == "completed":
                     self._remove_stage(record)
@@ -317,9 +318,6 @@ class CaptureWriter:
             with self.lock, self.store.transaction():
                 self.store.set_capture(key, "completed", receipt)
             self._remove_stage(record)
-            if record["legacy"]:
-                with self.lock, self.store.transaction():
-                    self.store.delete_completed_legacy(key)
             return 201, receipt
         finally:
             with self.lock:

@@ -205,11 +205,9 @@ class ServiceStore:
             return self._conn.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
         return self._conn.execute("SELECT COUNT(*) FROM captures WHERE device_id = ?", (device_id,)).fetchone()[0]
 
-    def delete_completed_legacy(self, key: str | None = None) -> int:
-        if key is None:
-            return self._conn.execute("DELETE FROM captures WHERE legacy = 1 AND state = 'completed'").rowcount
-        return self._conn.execute("DELETE FROM captures WHERE key = ? AND legacy = 1 AND state = 'completed'",
-                                  (key,)).rowcount
+    def delete_completed_legacy(self, before: str) -> int:
+        return self._conn.execute("DELETE FROM captures WHERE legacy = 1 AND state = 'completed' "
+                                  "AND created_at < ?", (before,)).rowcount
 
     def recent_device_captures(self, device_id: str, since: str) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM captures WHERE device_id = ? AND created_at >= ?",

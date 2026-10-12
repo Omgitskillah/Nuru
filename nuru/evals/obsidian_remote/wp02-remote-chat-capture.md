@@ -54,14 +54,16 @@ remain M3.
   revision remains in the immutable receipt even after external edits.
 - Recovery distinguishes a reserved or staging request from one whose publication began.
   A reserved request or a torn stage with no final file can retry its original
-  UID after the unpublished stage is removed. If publication
+  UID after the unpublished stage is removed. A staging write/fsync failure
+  follows the same rule, preserving its committed phase during reconciliation. If publication
   began and the final file is missing or differs, the status is `uncertain`:
   another editor could have moved or changed it. It is never replayed
   automatically. A matching final file and staged inode recover the original
   receipt. A pre-existing target, even with matching bytes, is not claimed.
 - Full receipts are retained for 30 days and compacted to permanent ID/hash
   tombstones on startup and on active traffic at most hourly. Completed legacy
-  single-shot rows are deleted because they carry no client-reusable ID. The
+  single-shot rows remain for the one-minute per-device quota window, then are
+  deleted by the next sweep because they carry no client-reusable ID. The
   ledger keeps at most 100,000 request-aware records overall and 20,000 per
   device; `NURU_CAPTURE_MAX_RECORDS` and `NURU_CAPTURE_MAX_DEVICE_RECORDS`
   can raise these limits after a ledger backup. If a cap is reached, stop the
@@ -87,12 +89,15 @@ remain M3.
   reservation, during staging, before publication and after publication; restart verifies one
   reserved identity, a safe retry or an explicit uncertain state, and no second
   note. A held writer proves duplicate/status calls remain responsive, while
-  graceful shutdown waits for accepted work. The HTTP test verifies no session
+  graceful shutdown waits for accepted work. In-flight GET status agrees with
+  duplicate POST that the writer is `running`. A 61st legacy capture in one
+  minute is rejected, and an injected staging fsync failure safely retries the
+  original UID. The HTTP test verifies no session
   factory is called. No local model or provider is started.
 - `.venv/bin/python -m pytest -q nuru/tests/test_capture_writer.py
   nuru/tests/test_service_server.py nuru/tests/test_remote_contract.py
   nuru/tests/test_service_host.py nuru/tests/test_service_protocol.py`:
-  **194 passed** without a local model after the PR #20 review fixes.
+  **196 passed** without a local model after the PR #20 review fixes.
 
 M3 still must enforce scoped credentials, validate the private listener and
 HTTPS route, bound accepted connections before private exposure, and test

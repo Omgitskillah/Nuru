@@ -30,5 +30,10 @@ if (note === null) {
 } else {
   alert('The catcher did not confirm that the note was saved.');
 }""",
+        "codeOnFailure": """if (response && response.statusCode === 401) {
+  alert('Capture access expired or was revoked. Ask the Mac operator to reissue this device and update the shortcut token. This request was not saved.');
+} else {
+  alert('The catcher did not confirm that the note was saved. Check your Inbox before retrying: this legacy shortcut cannot deduplicate a retry.');
+}""",
         "responseHandling": {"uiType": "dialog", "successOutput": "none", "failureOutput": "detailed"},
     }]}]}

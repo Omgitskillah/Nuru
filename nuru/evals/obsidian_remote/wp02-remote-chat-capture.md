@@ -181,3 +181,48 @@ four reserved/invalid port cases added after the combined suite.
 Final HTTP compatibility review added HEAD/OPTIONS/PUT/PATCH/DELETE handling for
 Android setup links: each returns 405 without consuming a live download; HEAD
 sends no response body. The remote HTTP suite then passed **26 tests in 27.89 s**.
+
+### PR #21 review corrections (2026-10-13)
+
+- **P1, shared-history read bypass:** all remote conversation operations now
+  require `chat:use` plus `notes:read`, including creation, listing, history,
+  events, request status, cancellation and turn submission. Status and the
+  authenticated device's own session/logout remain available without read scope.
+  The queued-inference/dispatch guard also requires read authority. A real HTTP
+  regression creates a local conversation containing a private note excerpt and
+  proves a chat-only browser can neither retrieve it nor continue it (403 before
+  consuming the submitted body); a read-authorized browser can still share it.
+  The M1 permission table and fixtures are deliberately corrected: a shared
+  conversation can carry note text, so the previous chat-only grant was unsafe.
+- **P2, phone pairing:** ten random base32 characters (50 bits), displayed in two
+  groups of five, replace the hand-entered 64-hex code. Case/space/separator
+  normalization preserves usability. Ten failed exchanges per minute are allowed
+  across all callers; further attempts get 429/Retry-After without consuming a
+  valid code. Missing/malformed credentials count too; successful exchanges or
+  new host grants do not reset the failure budget. Concurrency tests verify the
+  bound is atomic. Codes remain single-use with five-minute/restart expiry;
+  browser sessions and shortcut secrets remain 256 bits. Origin checks complement,
+  rather than replace, code entropy and the attempt limit.
+- **P3, expiry surprises:** keep the contract's 90-day shortcut and seven-day/
+  24-hour browser limits. Device listings and issuance now expose readable expiry,
+  near-expiry/expired state and renewal instructions; imported legacy credentials
+  explicitly explain their no-expiry migration exception. The browser page shows
+  its expiry and re-pairing requirement. Bearer 401s retain the legacy JSON shape
+  and add actionable WWW-Authenticate guidance. Newly generated Android imports
+  add `codeOnFailure` for 401 renewal, and warn about ambiguous retries on network/
+  other failures. The existing prepare/success scripts remain unchanged. The
+  failure-hook field was checked against upstream `ImportExportShortcut.kt`;
+  null network responses follow the official scripting documentation. Node tests
+  execute the generated script for 401, 500 and missing-response cases. No
+  installed shortcut was changed.
+- **Real Host gate:** the operator guide now explicitly requires an actual HTTPS
+  request through Serve to return the pairing page with the original `ts.net`
+  Host. A synthetic Host header does not satisfy this check. This remains pending
+  with the existing cutover/rollback gate; no Tailscale route was changed.
+
+TODO rationale in this review update: link M3 to PR #21 and record the three code
+corrections, while retaining **in progress** and the original real HTTPS gate.
+
+The same full model-free regression command above passed **323 tests in 54.73 s**
+after these fixes. `node --check nuru/src/core/service/pair.js` and
+`git diff --check` also passed. No local-model calls were made.

@@ -2,6 +2,7 @@
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pair with Nuru</title>
 <main><h1>Pair with Nuru</h1><p>Ask the operator to approve this device on the Mac, then enter the pairing code.</p>
-<form id="pair"><label>Pairing code <input id="code" type="password" autocomplete="off" required></label><button>Pair</button></form>
+<form id="pair"><label>Pairing code <input id="code" type="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="ABCDE-23456" maxlength="21" required></label><button>Pair</button></form>
+<p>Sessions last up to seven days, or 24 hours without use. After that, ask the operator to pair this device again.</p>
 <p id="state" role="status"></p><button id="logout" hidden>Sign out</button></main>
 <script src="/pair.js" defer></script></html>

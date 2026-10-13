@@ -100,6 +100,20 @@
     {"name": "expired capture bearer is refused", "scopes": ["capture:create"], "operation": "capture_create", "active": false, "allow": false},
     {"name": "revoked chat bearer is refused", "scopes": ["chat:use"], "operation": "chat_history", "active": false, "allow": false},
     {"name": "unknown route has no implicit access", "scopes": ["capture:create", "chat:use", "notes:read", "notes:write"], "operation": "unknown", "allow": false},
-    {"name": "no credential has no access", "scopes": [], "operation": "capture_create", "allow": false}
+    {"name": "no credential has no access", "scopes": [], "operation": "capture_create", "allow": false},
+    {"name": "chat-only denied shared-history operation chat_create", "scopes": ["chat:use"], "operation": "chat_create", "allow": false},
+    {"name": "chat reader permission for chat_create", "scopes": ["chat:use", "notes:read"], "operation": "chat_create", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_submit", "scopes": ["chat:use"], "operation": "chat_submit", "allow": false},
+    {"name": "chat reader permission for chat_submit", "scopes": ["chat:use", "notes:read"], "operation": "chat_submit", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_history", "scopes": ["chat:use"], "operation": "chat_history", "allow": false},
+    {"name": "chat reader permission for chat_history", "scopes": ["chat:use", "notes:read"], "operation": "chat_history", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_events", "scopes": ["chat:use"], "operation": "chat_events", "allow": false},
+    {"name": "chat reader permission for chat_events", "scopes": ["chat:use", "notes:read"], "operation": "chat_events", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_stop", "scopes": ["chat:use"], "operation": "chat_stop", "allow": false},
+    {"name": "chat reader permission for chat_stop", "scopes": ["chat:use", "notes:read"], "operation": "chat_stop", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_request_status", "scopes": ["chat:use"], "operation": "chat_request_status", "allow": false},
+    {"name": "chat reader permission for chat_request_status", "scopes": ["chat:use", "notes:read"], "operation": "chat_request_status", "allow": true},
+    {"name": "chat-only denied shared-history operation chat_answer", "scopes": ["chat:use"], "operation": "chat_answer", "allow": false},
+    {"name": "chat reader permission for chat_answer", "scopes": ["chat:use", "notes:read"], "operation": "chat_answer", "allow": false}
   ]
 }

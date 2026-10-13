@@ -4,7 +4,7 @@ import re
 from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 
-from core.service.remote_credentials import COOKIE, csrf
+from core.service.remote_credentials import COOKIE, PairingLimited, csrf
 from core.service.protocol import ProtocolError
 
 
@@ -41,11 +41,19 @@ def authenticate(handler, method, is_capture):
     else:
         device = None
     if not device:
+        if header.startswith("Bearer "):
+            handler.extra_headers = {"WWW-Authenticate": 'Bearer error="invalid_token", error_description="Capture credential is invalid, expired or revoked. Ask the host operator to reissue it."'}
         handler.capture_answer(401, {"ok": False, "error": "unauthorized"})
         return None
-    required = "capture:create" if is_capture else "chat:use"
-    session_route = urlsplit(handler.path).path in {"/v1/session", "/v1/logout"} and device.kind == "browser"
-    if not session_route and required not in device.scopes:
+    path = urlsplit(handler.path).path
+    required = {"capture:create"} if is_capture else {"chat:use", "notes:read"}
+    # Shared operator history and event/request receipts can contain note text.
+    # Require read authority before any of those resources can be accessed or
+    # used as model context. Status and session management disclose no history.
+    if path == "/v1/status":
+        required = {"chat:use"}
+    session_route = path in {"/v1/session", "/v1/logout"} and device.kind == "browser"
+    if not session_route and not required <= device.scopes:
         handler.capture_answer(403, {"ok": False, "error": "forbidden"})
         return None
     if not credentials.admit(device):
@@ -83,7 +91,12 @@ def public_route(handler, method, path):
         else:
             # The one-time code is the credential; no unauthenticated body read.
             header = handler.headers.get("Authorization", "")
-            token = credentials.redeem(header[8:]) if header.startswith("Pairing ") else None
+            try:
+                token = credentials.redeem(header[8:] if header.startswith("Pairing ") else "")
+            except PairingLimited as error:
+                handler.extra_headers = {"Retry-After": str(error.retry_after)}
+                handler.capture_answer(429, {"ok": False, "error": "pairing_rate_limited"})
+                return True
             if not token:
                 handler.capture_answer(401, {"ok": False, "error": "unauthorized"})
             else:
@@ -112,13 +125,15 @@ def manage(handler):
             if not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes):
                 raise ValueError("explicit scope list required")
             code = credentials.issue(name, "browser", scopes)
-            result = {"code": code, "expires_in": 300, "origin": handler.server.remote_credentials_origin}
+            result = {"code": code, "expires_in": 300, "origin": handler.server.remote_credentials_origin,
+                      "session_lifetime": "Re-pair after 24 hours idle or 7 days absolute."}
         elif action == "shortcut":
             secret = credentials.issue(name, "shortcut", {"capture:create"}, legacy=payload.get("legacy_token"))
-            result = {"token": secret}
+            result = {"token": secret, **credentials.describe(name)}
         elif action == "android":
             path = credentials.setup(name, handler.server.remote_credentials_origin)
-            result = {"url": handler.server.remote_credentials_origin + path, "expires_in": 300}
+            result = {"url": handler.server.remote_credentials_origin + path, "expires_in": 300,
+                      "credential": credentials.describe(name)}
         elif action == "revoke":
             result = {"revoked": credentials.revoke(name)}
         elif action == "cancel":

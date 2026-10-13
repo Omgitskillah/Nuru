@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from core.service.remote_credentials import DAY, RemoteCredentials
+from core.service.remote_credentials import DAY, PAIR_ALPHABET, PAIR_FAILURE_LIMIT, PairingLimited, RemoteCredentials
 from core.service.server import remote_tool_allowed
 from core.service.private_transport import check_state
 
@@ -21,8 +21,13 @@ def test_pairing_is_single_use_even_under_race(credentials):
     store, _ = credentials
     code = store.issue("phone", "browser", {"chat:use"})
     assert store.authenticate(code, "browser") is None
+    def redeem(code):
+        try:
+            return store.redeem(code)
+        except PairingLimited:
+            return None
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
-        results = list(pool.map(store.redeem, [code] * 32))
+        results = list(pool.map(redeem, [code] * 32))
     tokens = [t for t in results if t]
     assert len(tokens) == 1
     device = store.authenticate(tokens[0], "browser")
@@ -193,3 +198,105 @@ def test_cli_rejects_reserved_or_invalid_remote_ports(port):
     with pytest.raises(SystemExit) as error:
         main(["--remote-origin", "https://host.tail.ts.net", "--remote-port", port])
     assert error.value.code == 2
+
+
+def test_human_pairing_code_normalization_and_secret_sizes(credentials):
+    store, _ = credentials
+    code = store.issue("phone", "browser", {"chat:use", "notes:read"})
+    assert len(code) == 11 and code[5] == "-"
+    assert set(code.replace("-", "")) <= set(PAIR_ALPHABET)
+    token = store.redeem(code.lower().replace("-", " "))
+    assert token and len(token) == 64
+    assert store.redeem(code) is None
+    assert len(store.issue("shortcut", "shortcut", {"capture:create"})) == 64
+
+
+def test_pairing_failure_limit_is_global_atomic_and_does_not_consume_valid_code(credentials):
+    store, now = credentials
+    code = store.issue("phone", "browser", {"chat:use"})
+    def attempt(_):
+        try:
+            assert store.redeem("invalid") is None
+            return "failed"
+        except PairingLimited as error:
+            assert 1 <= error.retry_after <= 60
+            return "limited"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(attempt, range(50)))
+    assert results.count("failed") == PAIR_FAILURE_LIMIT
+    assert results.count("limited") == 50 - PAIR_FAILURE_LIMIT
+    with pytest.raises(PairingLimited):
+        store.redeem(code)
+    now[0] += 60
+    assert store.redeem(code)
+
+
+def test_new_grants_and_successes_do_not_reset_pairing_failures(credentials):
+    store, _ = credentials
+    for _ in range(PAIR_FAILURE_LIMIT - 1):
+        assert store.redeem("wrong") is None
+    assert store.redeem(store.issue("phone", "browser", {"chat:use"}))
+    assert store.redeem("wrong") is None
+    code = store.issue("other", "browser", {"chat:use"})
+    with pytest.raises(PairingLimited):
+        store.redeem(code)
+
+
+def test_device_list_explains_expiry_and_renewal(credentials):
+    store, now = credentials
+    store.issue("shortcut", "shortcut", {"capture:create"})
+    store.issue("legacy", "shortcut", {"capture:create"}, legacy="ef" * 32)
+    assert store.describe("shortcut")["status"] == "active"
+    assert store.describe("legacy")["expires_at"] is None
+    assert "no expiry" in store.describe("legacy")["renewal"]
+    now[0] += 84 * DAY
+    listing = {entry["name"]: entry for entry in store.list()}
+    assert listing["shortcut"]["status"] == "expires_soon"
+    assert listing["shortcut"]["expires_at"].endswith("+00:00")
+    assert "update the shortcut" in listing["shortcut"]["renewal"]
+    now[0] += 6 * DAY
+    assert store.describe("shortcut")["status"] == "expired"
+    assert store.describe("legacy")["status"] == "active"
+    code = store.issue("phone", "browser", {"chat:use", "notes:read"})
+    assert store.describe("phone")["status"] == "not_paired"
+    assert store.describe("phone")["expires_at"] is None
+    token = store.redeem(code)
+    browser = store.describe("phone")
+    assert browser["expires_at"] and browser["idle_expires_at"]
+    assert "7 days" in browser["renewal"]
+    store.issue("phone", "browser", {"chat:use"})
+    from core.service.credentials import _hash
+    assert store.describe("phone", digest=_hash(token)) == {}
+
+
+def test_chat_only_cannot_start_inference_from_shared_history(credentials):
+    store, _ = credentials
+    token = store.redeem(store.issue("phone", "browser", {"chat:use"}))
+    device = store.authenticate(token, "browser")
+    assert not remote_tool_allowed(store, device, None)
+    assert not remote_tool_allowed(store, device, "calculate")
+
+
+@pytest.mark.parametrize("status", [401, 500, None])
+def test_android_failure_script_explains_auth_and_ambiguous_results(status):
+    import json
+    import shutil
+    import subprocess
+    from core.service.android_setup import android_shortcut
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is needed to execute the Android failure script")
+    shortcut = android_shortcut("https://host.tail.ts.net", "ab" * 32)["categories"][0]["shortcuts"][0]
+    harness = """const fs = require('node:fs'); const vm = require('node:vm');
+const data = JSON.parse(fs.readFileSync(0, 'utf8')); const messages = [];
+vm.runInNewContext(data.script, {response: data.response, alert: text => messages.push(text)});
+process.stdout.write(JSON.stringify(messages));"""
+    result = subprocess.run([node, "-e", harness], input=json.dumps({"script": shortcut["codeOnFailure"],
+                            "response": {"statusCode": status} if status else None}), text=True,
+                            capture_output=True, check=True, timeout=5)
+    messages = json.loads(result.stdout)
+    assert len(messages) == 1
+    if status == 401:
+        assert "reissue" in messages[0] and "update the shortcut token" in messages[0]
+    else:
+        assert "before retrying" in messages[0] and "cannot deduplicate" in messages[0]

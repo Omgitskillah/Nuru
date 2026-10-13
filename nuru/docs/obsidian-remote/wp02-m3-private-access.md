@@ -51,7 +51,11 @@ uv run nuru-serve device revoke iphone
 ```
 
 Running `device pair` is explicit host confirmation of exactly the named scopes.
-The command returns a single-use code. Open the configured HTTPS origin on the
+The command returns a single-use ten-character base32 code in two groups of five.
+Enter it with or without the separator; case and spaces do not matter. Ten failed
+exchanges within a minute block further exchanges for the remaining window, with
+429 and Retry-After. The limit is shared across callers, ignores proxy/IP headers,
+and is not reset by new grants or successful exchanges. Tokens remain 256 bits. Open the configured HTTPS origin on the
 phone and enter it there. Codes expire in five minutes, on cancellation, on
 rotation/revocation, or on service restart. An unredeemed code grants no API access.
 The minimal pairing page displays permissions and provides sign-out; it is not
@@ -69,14 +73,22 @@ Shortcut bearers have only `capture:create` and expire after 90 days. Reissue th
 same device name to rotate; the old secret/session and any onboarding links stop
 working, while its device ID and capture receipts stay intact. Revoke removes the
 device grant; recreating that name gets a new ID, without the old capture history.
+Device listings show UTC expiry dates, `expires_soon` (seven days for shortcuts),
+`expired` and renewal instructions. New shortcut issuance also returns that
+information. Imported legacy tokens explicitly show no expiry; that exception
+preserves installed-client migration until the operator rotates them.
 Device records are bounded at 128. Only secret hashes persist in
 `~/.nuru/service/devices.db` (0600, directory 0700), outside the vault; the
 `NURU_SERVICE_DIR` override applies to both local and remote credentials.
 
-`chat:use` permits shared operator conversation history, so it can disclose prior
-chat text and prior note excerpts. `notes:read` additionally permits new vault
-reads/searches through the model. `notes:write` requires chat/read and reaches the
-existing write-policy and approval gates; it never bypasses them. Answering a
+`chat:use` alone permits sanitized service status, but **not** shared conversations.
+All remote conversation operations require both `chat:use` and `notes:read`,
+including create/list/resume, event streams, request status, Stop and turn submission.
+Local conversations can contain note excerpts, and a resumed turn receives their
+contents as model context. This read requirement closes both forms of indirect
+note access without splitting the operator's conversation store. `notes:read`
+also permits new vault reads/searches through the model. `notes:write` requires
+chat/read and reaches the existing write-policy and approval gates; it never bypasses them. Answering a
 live write approval also requires `notes:write`. All model and harness tool calls
 are checked, including policy lookups and Python's note-input reads. Unknown tools
 fail closed; the internal decision tools and pure computation tools are explicitly
@@ -88,8 +100,12 @@ once; unknown/expired/consumed tokens return 404, a wrong method on a live token
 returns 405. Cancel, rotation, revocation and restart invalidate pending downloads.
 Responses are no-store, no-referrer JSON attachments named `remote-notes.json`.
 The schema-90 import retains the pinned RemoteNotes prepare/success scripts and
-legacy single-shot behavior. Its URL contains a temporary setup secret, never the
-bearer itself. Do not publish or log that URL. Closing the operator onboarding
+legacy single-shot behavior, adding a failure script with 401 renewal instructions.
+Network/other failures explicitly warn to check the Inbox before retrying. This
+uses HTTP Shortcuts' [failure hook](https://http-shortcuts.rmy.ch/scripting#handling-the-response),
+where `response` can be null for a network failure. Existing installed shortcuts
+need an explicit updated import to get this guidance; none are rewritten. The
+download URL contains a temporary setup secret, never the bearer itself. Do not publish or log that URL. Closing the operator onboarding
 workflow means running `device cancel NAME`. Installed legacy shortcuts must not
 automatically retry an ambiguous result; request-aware templates arrive in M4.
 
@@ -121,7 +137,11 @@ Use the Tailscale CLI installed on the host (`tailscale`, or the macOS app binar
 5. Run the read-only check:
    `uv run nuru-serve --remote-origin https://YOUR-MAC.YOUR-TAILNET.ts.net remote-check`.
    It requires a running matching node, HTTPS on 443, the exact remote target,
-   no enabled Funnel, and no foreground route overrides. Also inspect the full
+   no enabled Funnel, and no foreground route overrides. Explicitly verify an
+   actual HTTPS request through Serve reaches Nuru with the original `ts.net` Host
+   (for example, GET `/` must return the pairing page, not 403). Do not simulate
+   this with a manually supplied Host header or relax Host checks to trust
+   forwarding headers. Record this result as part of the gate. Also inspect the full
    Serve configuration yourself. This check alone is not an HTTPS transaction.
 6. Over actual private HTTPS, verify missing, invalid, expired and revoked tokens
    reject before any note effects; pair a browser; test wrong Origin and CSRF;

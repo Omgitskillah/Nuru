@@ -62,9 +62,10 @@ request. The accepting listener determines which credential class is allowed;
 forwarding headers cannot grant access or turn a local request into a remote one.
 
 Introduce revocable device credentials with explicit capabilities, at minimum:
-`capture:create`, `chat:use`, and `notes:read`. A chat operation that writes also
-requires the relevant server-side write capability and existing Nuru policy/
-approval checks. A capture-only phone credential must never gain vault-read,
+`capture:create`, `chat:use`, and `notes:read`. Remote conversation history, events,
+request status and turn submission also require `notes:read`, because shared history can contain note excerpts. A chat
+operation that writes additionally requires the relevant server-side write
+capability and existing Nuru policy/approval checks. A capture-only phone credential must never gain vault-read,
 conversation or arbitrary-write access. Vault root is host configuration, not a
 client parameter. Maintain one operator and vault, but isolate unauthenticated or
 unauthorized devices from all resources; authenticate before reading request bodies.

@@ -60,9 +60,16 @@ integration target:
 | Scope | Allows | Does not imply |
 | --- | --- | --- |
 | `capture:create` | Direct Inbox capture and status for that device's request | Service vault status, chat, note preview/search or arbitrary writes |
-| `chat:use` | Conversation create/list/resume, event stream, answer and Stop, plus sanitized service status | Reading note content or calling a note mutation |
-| `notes:read` | Bounded note preview; with `chat:use`, model note reads/searches | Chat without `chat:use`, or writes |
-| `notes:write` | With `chat:use`, reach Nuru's existing write policy and user approval | A direct general-purpose write API or bypassing approval |
+| `chat:use` | Sanitized service status; with `notes:read`, conversation create/list/resume, event streams and Stop | Shared conversation history or model context without `notes:read`, or note mutations |
+| `notes:read` | Bounded note preview; with `chat:use`, shared history/context and model note reads/searches | Chat without `chat:use`, or writes |
+| `notes:write` | With `chat:use` and `notes:read`, reach Nuru's existing write policy and user approval | A direct general-purpose write API or bypassing approval |
+
+M3 review correction (PR #21): every shared conversation route, including turn
+submission, events and request status, requires both `chat:use` and `notes:read`.
+A prior reply can quote a note, and a resumed model turn receives that history.
+Restricting only new tool reads does not enforce the read boundary. Live write
+approvals additionally require `notes:write`. This supersedes the original M1
+chat-only history grant while retaining one shared operator conversation store.
 
 The service must check scopes both at each route **and at tool dispatch**. A model
 must not gain a note read/write merely because a user can submit a chat prompt.
@@ -102,14 +109,25 @@ temporary token. The operator must generate a fresh link after cutover; an
 already installed Android shortcut keeps working through the imported bearer.
 The fixture freezes the route, response headers and import fields for M3 tests.
 
-The proposed credential lifecycle for M3 is: single-use pairing codes expire in
+M3 uses ten random base32 pairing characters displayed as two groups of five.
+Case, spaces and the separator are normalized. The shared pairing endpoint permits
+ten failed exchanges per minute; further attempts return 429 with Retry-After,
+without consuming a valid pending code. Issuing a new code or completing a
+successful exchange does not reset failures. Browser sessions and shortcut secrets
+remain 256-bit tokens. Exact Origin checks complement this entropy and rate limit.
+
+The credential lifecycle for M3 is: single-use pairing codes expire in
 five minutes and on service restart; browser sessions use Secure, HttpOnly,
 SameSite=Strict cookies and expire after 24 hours idle or seven days absolute;
 new shortcut bearers expire after 90 days. Existing capture-only secrets can stay
 valid until the operator rotates or revokes them, and never acquire broader
 scopes. Logout revokes that session; rotating a device invalidates its old secret
 and sessions, while preserving its capture request history. M3 must implement and
-test these bounds before any remote access is enabled.
+test these bounds before any remote access is enabled. Device listings include
+readable expiry, status and renewal instructions; new shortcut issuance shows its
+expiry, while an imported legacy grant explicitly says it has no expiry. Newly
+generated Android setups include a failure script explaining 401 renewal. Browser
+onboarding discloses the seven-day/24-hour limits and the session expiry date.
 
 The phone page and API share one HTTPS origin. Browser mutations also require
 Origin/Host checks and a session-bound CSRF value; neither a client-supplied

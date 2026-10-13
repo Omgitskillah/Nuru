@@ -7,6 +7,7 @@ from WP01 tokens: neither listener can accept the other's credential class.
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -15,6 +16,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.service.credentials import PRINCIPAL, _CLIENT_NAME, _hash
@@ -22,6 +24,19 @@ from core.service.credentials import PRINCIPAL, _CLIENT_NAME, _hash
 SCOPES = frozenset({"capture:create", "chat:use", "notes:read", "notes:write"})
 COOKIE = "__Host-nuru"
 DAY = 86400
+PAIR_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # 32 symbols, no I/L/O/U
+PAIR_FAILURE_LIMIT = 10
+PAIR_FAILURE_WINDOW = 60
+
+
+class PairingLimited(Exception):
+    def __init__(self, retry_after: int):
+        self.retry_after = retry_after
+        super().__init__("pairing failure limit reached")
+
+
+def _date(stamp):
+    return datetime.fromtimestamp(stamp, timezone.utc).isoformat(timespec="seconds") if stamp else None
 
 
 @dataclass(frozen=True)
@@ -55,6 +70,7 @@ class RemoteCredentials:
         self.db.commit()
         self.lock = threading.RLock()
         self.clock = clock
+        self.pair_failures = deque()  # shared across callers; never trust proxy/IP headers
         self.rates = {}  # device ID -> recent authenticated request timestamps
         self.pending = {}  # hashed pairing/setup secret -> (expiry, name, generation, kind, data)
 
@@ -103,20 +119,28 @@ class RemoteCredentials:
             old = self.db.execute("SELECT * FROM devices WHERE name=?", (name,)).fetchone()
             if old is None and self.db.execute("SELECT count(*) FROM devices").fetchone()[0] >= 128:
                 raise ValueError("device limit reached; revoke an unused device")
-            secret = legacy or secrets.token_hex(32)
+            if kind == "browser":
+                # Ten base32 characters = 50 random bits, displayed in two groups.
+                # Avoid even an accidental collision with another pending grant.
+                while True:
+                    secret = "".join(secrets.choice(PAIR_ALPHABET) for _ in range(10))
+                    if _hash(secret) not in self.pending:
+                        break
+            else:
+                secret = legacy or secrets.token_hex(32)
             duplicate = self.db.execute("SELECT name FROM devices WHERE digest=? AND name!=?", (_hash(secret), name)).fetchone()
             if duplicate:
                 raise ValueError("this capture token already belongs to another device")
             generation = secrets.token_hex(16)
             device_id = old["device_id"] if old else "remote-" + secrets.token_hex(16)
-            expires = 0 if legacy else self.clock() + 90 * DAY
+            expires = 0 if legacy or kind == "browser" else self.clock() + 90 * DAY
             digest = _hash(secret) if kind == "shortcut" else ""
             self.db.execute("INSERT OR REPLACE INTO devices VALUES (?,?,?,?,?,?,?,?)",
                             (name, device_id, kind, json.dumps(sorted(scopes)), digest, expires, 0, generation))
             self.pending = {k: v for k, v in self.pending.items() if v[1] != name}
             if kind == "browser":
                 self.pending[_hash(secret)] = (self.clock() + 300, name, generation, "pair", None)
-            return secret
+            return secret[:5] + "-" + secret[5:] if kind == "browser" else secret
 
     def revoke(self, name: str) -> bool:
         with self.lock, self.db:
@@ -127,21 +151,50 @@ class RemoteCredentials:
         with self.lock:
             self.pending = {k: v for k, v in self.pending.items() if v[1] != name}
 
+    def _describe(self, row):
+        expiry = min(row["expires"], row["idle"]) if row["kind"] == "browser" and row["idle"] else row["expires"]
+        status = "active"
+        if row["kind"] == "browser" and not row["digest"]:
+            status = "not_paired"
+        elif expiry and expiry <= self.clock():
+            status = "expired"
+        elif expiry and expiry <= self.clock() + (7 * DAY if row["kind"] == "shortcut" else 3600):
+            status = "expires_soon"
+        renewal = ("Pair again on the Mac after 24 hours idle or 7 days absolute."
+                   if row["kind"] == "browser" else
+                   "Imported legacy credential has no expiry; rotate or revoke it on the Mac."
+                   if not expiry else "Reissue this device on the Mac and update the shortcut before expiry.")
+        return dict(name=row["name"], device_id=row["device_id"], kind=row["kind"],
+                    scopes=json.loads(row["scopes"]), expires=row["expires"],
+                    expires_at=_date(row["expires"]), idle_expires_at=_date(row["idle"]),
+                    status=status, renewal=renewal)
+
+    def describe(self, name, *, digest=None):
+        with self.lock:
+            row = self.db.execute("SELECT * FROM devices WHERE name=?", (name,)).fetchone()
+            return self._describe(row) if row and (digest is None or row["digest"] == digest) else {}
+
     def list(self):
         with self.lock:
-            return [dict(name=r["name"], device_id=r["device_id"], kind=r["kind"],
-                         scopes=json.loads(r["scopes"]), expires=r["expires"])
-                    for r in self.db.execute("SELECT * FROM devices ORDER BY name")]
+            return [self._describe(row) for row in self.db.execute("SELECT * FROM devices ORDER BY name")]
 
     def redeem(self, code: str) -> str | None:
         with self.lock, self.db:
             self._prune()
-            grant = self.pending.pop(_hash(code), None)
-            if not grant or grant[3] != "pair":
-                return None
-            row = self.db.execute("SELECT * FROM devices WHERE name=? AND generation=?", grant[1:3]).fetchone()
+            now = self.clock()
+            while self.pair_failures and self.pair_failures[0] <= now - PAIR_FAILURE_WINDOW:
+                self.pair_failures.popleft()
+            if len(self.pair_failures) >= PAIR_FAILURE_LIMIT:
+                raise PairingLimited(max(1, math.ceil(self.pair_failures[0] + PAIR_FAILURE_WINDOW - now)))
+            normalized = code.replace("-", "").replace(" ", "").upper()
+            digest = _hash(normalized)
+            grant = self.pending.get(digest) if re.fullmatch(f"[{PAIR_ALPHABET}]{{10}}", normalized) else None
+            row = (self.db.execute("SELECT * FROM devices WHERE name=? AND generation=?", grant[1:3]).fetchone()
+                   if grant and grant[3] == "pair" else None)
             if not row:
+                self.pair_failures.append(now)
                 return None
+            del self.pending[digest]
             token = secrets.token_hex(32)
             self.db.execute("UPDATE devices SET digest=?, expires=?, idle=? WHERE name=?",
                             (_hash(token), self.clock() + 7 * DAY, self.clock() + DAY, row["name"]))

@@ -206,8 +206,12 @@ class Handler(BaseHTTPRequestHandler):
                 if self.device.kind != "browser":
                     return self.capture_answer(403, {"ok": False, "error": "forbidden"})
                 if url.path == "/v1/session" and method == "GET":
+                    details = self.server.remote_credentials.describe(self.device.name, digest=self.device.digest)
+                    if not details:
+                        return self.capture_answer(401, {"ok": False, "error": "unauthorized"})
                     return self.answer(200, {"name": self.device.name, "scopes": sorted(self.device.scopes),
-                                             "csrf": csrf(self.session_token)})
+                                             "csrf": csrf(self.session_token),
+                                             **details})
                 if url.path == "/v1/logout" and method == "POST":
                     self.server.remote_credentials.logout(self.device)
                     self.extra_headers = {"Set-Cookie": f"{COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}
@@ -431,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def remote_tool_allowed(credentials, device, name):
     current = credentials.check_digest(device.digest, device.kind)
-    if current is None or "chat:use" not in current.scopes:
+    if current is None or not {"chat:use", "notes:read"} <= current.scopes:
         return False
     if name is None:  # check again before starting a queued model turn
         return True

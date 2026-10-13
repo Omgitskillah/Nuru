@@ -340,3 +340,68 @@ def test_setup_wrong_methods_do_not_consume_download(remote, method):
         assert json.loads(response.read())["error"] == "method_not_allowed"
     connection.close()
     assert call(client, "GET", path)[0] == 200
+
+
+def test_chat_only_cannot_disclose_or_continue_local_history(remote):
+    from test_service_host import ScriptedSession, reply
+    client, credentials, local, service, built = remote
+    note_excerpt = "Private note excerpt: violet telescope"
+    service._factory = lambda _: ScriptedSession([reply(note_excerpt)])
+    conversation = local.call("POST", "/v1/conversations", {"request_id": "local-conversation-01"})[1]["conversation_id"]
+    turn = local.call("POST", f"/v1/conversations/{conversation}/turns",
+                      {"request_id": "local-turn-secret-01", "text": "Read my private note"})[1]
+    assert note_excerpt.encode() in local.call("GET", turn["events"])[1]
+    cookie, _ = pair(client, credentials, scopes=["chat:use"])
+    headers = {"Origin": ORIGIN, "X-Nuru-CSRF": csrf(cookie)}
+    paths = ["/v1/conversations", f"/v1/conversations/{conversation}", turn["events"],
+             "/v1/requests/local-turn-secret-01?operation=submit_turn"]
+    for path in paths:
+        status, body, _ = call(client, "GET", path, cookie=cookie)
+        assert status == 403 and note_excerpt not in json.dumps(body)
+    # In particular, do not wait for a body or reach model dispatch on continuation.
+    connection = http.client.HTTPConnection("127.0.0.1", client.port, timeout=2)
+    connection.putrequest("POST", f"/v1/conversations/{conversation}/turns", skip_host=True)
+    for key, value in {"Host": HOST, "Cookie": f"{COOKIE}={cookie}", "Content-Length": "100", **headers}.items():
+        connection.putheader(key, value)
+    connection.endheaders()
+    assert connection.getresponse().status == 403
+    connection.close()
+    assert call(client, "POST", "/v1/conversations", {"request_id": "denied-create-0001"}, cookie=cookie, extra=headers)[0] == 403
+    assert call(client, "POST", f'/v1/turns/{turn["turn_id"]}/cancel', cookie=cookie, extra=headers)[0] == 403
+    assert call(client, "GET", "/v1/status", cookie=cookie)[0] == 200
+    assert call(client, "GET", "/v1/session", cookie=cookie)[0] == 200
+    # Read-authorized devices retain the intended operator conversation sharing.
+    reader, _ = pair(client, credentials, name="reader", scopes=["chat:use", "notes:read"])
+    assert note_excerpt in json.dumps(call(client, "GET", f"/v1/conversations/{conversation}", cookie=reader)[1])
+    assert call(client, "POST", "/v1/logout", cookie=cookie, extra=headers)[0] == 200
+
+
+def test_pairing_throttle_counts_missing_credentials_and_ignores_forged_peer_headers(remote):
+    from core.service.remote_credentials import PAIR_FAILURE_LIMIT
+    client, credentials, *_ = remote
+    code = credentials.issue("phone", "browser", ["chat:use", "notes:read"])
+    for i in range(PAIR_FAILURE_LIMIT):
+        headers = {"Origin": ORIGIN, "X-Forwarded-For": f"100.64.0.{i}"}
+        assert call(client, "POST", "/v1/pair", extra=headers)[0] == 401
+    status, body, response = call(client, "POST", "/v1/pair", extra={"Origin": ORIGIN, "Authorization": "Pairing " + code})
+    assert status == 429 and body["error"] == "pairing_rate_limited"
+    assert 1 <= int(response.getheader("Retry-After")) <= 60
+    assert response.getheader("Cache-Control") == "no-store"
+    assert response.getheader("Set-Cookie") is None
+
+
+def test_expired_shortcut_has_actionable_401_without_changing_legacy_body(remote):
+    client, credentials, *_ = remote
+    token = credentials.issue("shortcut", "shortcut", {"capture:create"})
+    credentials.clock = lambda: 10**12
+    status, body, response = call(client, "POST", "/v1/captures", {"content": "not saved"}, token=token)
+    assert status == 401 and body == {"ok": False, "error": "unauthorized"}
+    assert "reissue" in response.getheader("WWW-Authenticate")
+
+
+def test_session_response_explains_idle_and_absolute_expiry(remote):
+    client, credentials, *_ = remote
+    cookie, _ = pair(client, credentials)
+    info = call(client, "GET", "/v1/session", cookie=cookie)[1]
+    assert info["expires_at"] and info["idle_expires_at"]
+    assert "24 hours idle or 7 days absolute" in info["renewal"]

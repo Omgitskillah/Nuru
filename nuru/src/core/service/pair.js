@@ -7,8 +7,11 @@ async function session() {
   if (response.ok) {
     const body = await response.json();
     csrf = body.csrf;
-    state.textContent = `Paired as ${body.name}. Permissions: ${body.scopes.join(', ')}.`;
+    state.textContent = `Paired as ${body.name}. Permissions: ${body.scopes.join(', ')}. Session expires ${new Date(body.expires_at).toLocaleString()}, or after 24 hours without use. Re-pair on the Mac when it expires.`;
     logout.hidden = false;
+  } else if (response.status === 401) {
+    csrf = ''; logout.hidden = true;
+    state.textContent = 'No active session. If your session expired or was revoked, ask the operator for a new pairing code.';
   }
 }
 document.getElementById('pair').addEventListener('submit', async event => {
@@ -18,6 +21,7 @@ document.getElementById('pair').addEventListener('submit', async event => {
   input.value = '';
   try {
     const response = await fetch('/v1/pair', { method: 'POST', headers: { Authorization: `Pairing ${code}` } });
+    if (response.status === 429) throw new Error(`Too many pairing attempts. Try again in ${response.headers.get('Retry-After') || '60'} seconds.`);
     if (!response.ok) throw new Error('Pairing code is invalid or expired. Ask for a new code.');
     await session();
   } catch (error) { state.textContent = error.message; }

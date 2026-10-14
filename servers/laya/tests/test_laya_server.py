@@ -34,7 +34,7 @@ def test_health_reports_versions_and_modes(layer):
     health = server.health()
     assert health["laya"] == {"state": "ready"}
     assert health["question_sets"]["gate_write"] == 1
-    assert health["decision_points"]["gate_write"] == "shadow" and health["decision_points"]["assess_effort"] == "off"
+    assert health["decision_points"]["gate_write"] == "off" and health["decision_points"]["assess_effort"] == "off"
 
 
 def test_bad_input_is_a_tool_error_with_its_message(layer):

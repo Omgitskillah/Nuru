@@ -305,8 +305,9 @@ class DecisionLayer:
             if choice != "progressing" and self._clears(qset, "state", choice, p):
                 signal = choice
         # Logged under watch_thinking, in watch_laya's mode: the watch's code checks can be enforced
-        # while this question is still only watched.
+        # while this question is still only watched. Off, but asked anyway, it is logged as shadow.
+        watch_mode = self.config.mode("watch_laya")
         decision_id = self._record("watch_thinking", qset, state, questions, prediction, status, detail, signal, context,
-                                   mode=self.config.mode("watch_laya"))
+                                   mode="shadow" if watch_mode == "off" else watch_mode)
         return {"decision_id": decision_id, "signal": signal, "source": "laya" if prediction else "fallback",
                 "status": status, "probabilities": probabilities}

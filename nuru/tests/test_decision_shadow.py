@@ -9,7 +9,7 @@ import pytest
 from ulid import ULID
 
 from core import session
-from core.decision_shadow import DecisionShadow, summarize_result, think_tier
+from core.decision_shadow import LAYA_POINTS, DecisionShadow, summarize_result, think_tier
 from core.providers.mcp_tools import ToolResult
 from core.session import Session, Text, ToolCall
 from laya_mcp import server as laya_server
@@ -290,3 +290,63 @@ def test_the_laya_server_is_started_without_a_vault_but_with_an_env_evals_can_ex
     assert session.LAYA_SERVER_PARAMS.args[-1] == "laya-mcp"
     assert "VAULT_PATH" not in session.LAYA_SERVER_PARAMS.env  # it reads no notes since classify_notes went
     session.LAYA_SERVER_PARAMS.env.get("NURU_DECISION_CONFIG")  # drive_turn.py sets this key
+
+
+@pytest.fixture
+def laya_off_log(monkeypatch, tmp_path):
+    """The shipped config (every Laya point off), logging to a temp database."""
+    monkeypatch.setattr(session, "THINK", True)
+    path = tmp_path / "decisions.sqlite3"
+    config = load_config().model_copy(update={"database": path})
+    assert all(config.mode(point) == "off" for point in LAYA_POINTS)
+    monkeypatch.setattr(session, "load_decision_config", lambda: config)
+    return path
+
+
+def start_capturing_servers(monkeypatch, responses, tools):
+    """start(), also returning the MCP servers the session asked for."""
+    started = []
+    real_session_start = Session.start
+    monkeypatch.setattr(Session, "start", classmethod(lambda cls: None))
+    start(monkeypatch, responses, tools)
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: started.extend(server_params) or tools)
+    monkeypatch.setattr(Session, "start", real_session_start)
+    return Session.start(), started
+
+
+def test_with_every_laya_point_off_laya_is_neither_started_nor_asked(monkeypatch, laya_off_log):
+    tools = ShadowedTools(TOOLS, RESULTS)
+    s, started = start_capturing_servers(monkeypatch, A_WRITE_TURN, tools)
+    events = list(s.ask("Add a line to Priya's note saying she prefers async messages on Fridays."))
+    s.close()
+
+    assert session.LAYA_SERVER_PARAMS not in started
+    assert tools.harness_calls == []
+    assert [name for name, _ in tools.model_calls] == ["search", "write_note"]
+    assert events[-1] == Text(f"{NOTE_ID}.")
+    assert rows(laya_off_log) == []  # nothing to log: no decision was asked, and code had no objection
+
+
+def test_with_gate_write_off_write_checks_still_stop_a_bad_write(monkeypatch, laya_off_log):
+    turn = [
+        [{"tool_calls": [call("write_note", {"note": "user/plans", "content": "Draft"})]}],
+        ["I couldn't write that."],
+    ]
+    tools = ShadowedTools(TOOLS, RESULTS)
+    s, _ = start_capturing_servers(monkeypatch, turn, tools)
+    list(s.ask("Write my plans into my own notes."))
+    s.close()
+
+    assert tools.model_calls == [] and tools.harness_calls == []
+    [blocked] = rows(laya_off_log)
+    assert (blocked["decision_point"], blocked["status"], blocked["mode"], blocked["proposed_action"]) == (
+        "gate_write", "code_blocked", "enforce", "block")
+
+
+def test_a_point_set_to_off_is_never_asked():
+    asked = []
+    shadow = DecisionShadow(lambda name, args: asked.append(name) or ToolResult("{}"), None, "s")
+    shadow.off = set(LAYA_POINTS)
+    assert shadow.watch("thinking...") is None
+    shadow.begin("hi", None)
+    assert asked == []

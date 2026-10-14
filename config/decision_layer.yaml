@@ -15,23 +15,28 @@ laya:
   revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851   # pinned Hugging Face commit
   offline: true             # never reach the Hub at runtime; `uv run laya-mcp-fetch` downloads
 
-# shadow | enforce, per decision point. Everything starts in shadow; switching is a human decision.
+# off | shadow | enforce, per decision point. Switching is a human decision.
 # off: not asked at all; shadow: Laya is asked and logged, nothing changes; enforce: acted on.
 # A point that asks Laya can only be enforced once its thresholds are calibrated. step_cap,
 # write_checks and watch_thinking are decided by code alone, so they can be enforced now
 # (enforced 2026-09-30, at the user's request).
+#
+# Laya is off on main (2026-10-14, the user's call): every point that asks it is `off`, so Nuru
+# doesn't start or load Laya at all; write_checks still runs, in Nuru. The system with Laya in
+# shadow is kept on the `laya` branch; its code stays here, and setting a point back to shadow
+# starts it again.
 decision_points:
-  tool_gate: shadow        # Laya: read / write / answer, and what to do next
+  tool_gate: "off"         # Laya: read / write / answer, and what to do next
   step_cap: enforce        # code: a turn stops after tool_gate.step_cap rounds of tool calls
   assess_effort: "off"     # Laya's thinking tier - off since 2026-09-30: THINK=low for every call
                            # (the fixed default matched its savings; the code stays, for later)
-  gate_write: shadow       # Laya: does this write match the request (proceed / ask / block)
+  gate_write: "off"        # Laya: does this write match the request (proceed / ask / block)
   write_checks: enforce    # code: no invented note IDs, blocked tools or protected paths in a write
-  check_claim: shadow      # Laya: what the reply claims, checked against the log - after calibration
-  rerank: shadow           # Laya: reorder search's matches by meaning
+  check_claim: "off"       # Laya: what the reply claims, checked against the log - after calibration
+  rerank: "off"            # Laya: reorder search's matches by meaning
   watch_thinking: enforce  # code: thinking budget, repeated sentences, repeated tool calls
-  watch_laya: shadow       # Laya: the watch's own reading of the thinking
-  note_type: shadow        # Laya: a new note's type, from its title and text (enforced: fills it in
+  watch_laya: "off"        # Laya: the watch's own reading of the thinking
+  note_type: "off"         # Laya: a new note's type, from its title and text (enforced: fills it in
                            # when the model gives none)
 
 # Watching the model's reasoning as it streams (core.thinking_watch). Code checks every

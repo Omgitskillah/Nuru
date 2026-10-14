@@ -33,7 +33,7 @@ from mcp.client.stdio import get_default_environment
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
 from core.context_budget import ContextBudgetExceeded, available_tokens, estimate_tokens, input_budget, require_fit
-from core.decision_shadow import DecisionShadow, think_tier
+from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
 from core import executor, model_profile, planner, questions
@@ -498,8 +498,10 @@ class Session:
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault),
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(vault)}})
                 deep_think = deep_think.model_copy(update={"env": {**deep_think.env, "DEEP_THINK_BASE_DIR": str(vault)}})
+            laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
+            laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
             tools = MCPTools(
-                [obsidian, deep_think, MATH_SERVER_PARAMS, LAYA_SERVER_PARAMS,
+                [obsidian, deep_think, MATH_SERVER_PARAMS, *laya,
                  *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
@@ -512,16 +514,15 @@ class Session:
                 LOG_DIR,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp; uv run laya-mcp"
-                + ("; cargo run --bin python-mcp" if python_server else ""),
+                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp"
+                + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             store = ConversationStore(DB_PATH)
             opened.callback(store.close)
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
             shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id)
-            shadow.effort_off = decision_config.mode("assess_effort") == "off"
-            shadow.note_type_off = decision_config.mode("note_type") == "off"
+            shadow.off = laya_off
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 

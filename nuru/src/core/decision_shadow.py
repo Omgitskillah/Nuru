@@ -27,7 +27,7 @@ from typing import Any
 
 from dataclasses import dataclass
 
-from laya_mcp.checks import WRITE_TOOLS, find_note_ids
+from laya_mcp.checks import WRITE_TOOLS, check_write, find_note_ids
 from laya_mcp.decision_log import DecisionLog
 
 from core.expert import SEARCH_TOOLS, FoundNote, notes_found
@@ -40,6 +40,12 @@ _RECENT_STEPS = 6
 _SUMMARY_CHARS = 160
 _ARGUMENT_CHARS = 80
 _LISTED_MATCHES = 3
+
+# The decision points Laya answers. One set to `off` is never asked, and when all are off the
+# session doesn't start Laya at all. watch_laya is asked through Laya's watch_thinking tool.
+LAYA_POINTS = frozenset({"tool_gate", "assess_effort", "gate_write", "check_claim", "rerank",
+                         "watch_laya", "note_type"})
+_POINT_OF_TOOL = {"watch_thinking": "watch_laya"}
 
 
 def think_tier(think: bool | str) -> str:
@@ -114,8 +120,7 @@ class DecisionShadow:
         self.known_ids: set[str] = set()  # every note ID a tool result has shown, this session
         self.last_search_ids: list[str] = []  # the IDs the most recent search returned
         self.watch_enforced = False  # set by the session: whether a watch signal stops the call
-        self.effort_off = False  # set by the session: assess_effort is `off`, so it isn't asked
-        self.note_type_off = False  # set by the session: note_type is `off`, so it isn't asked
+        self.off: set[str] = set()  # set by the session: Laya's decision points that are `off`, never asked
         self._watch_ids: list[int] = []  # watch_thinking decisions of the call in progress
         self.failures = 0  # decision-layer calls that failed; the turns went on regardless
         self._reset("", None)
@@ -136,7 +141,9 @@ class DecisionShadow:
         return {"session_id": self._session_id, "task_id": self._task_id, "step": self._step}
 
     def _ask(self, tool: str, arguments: dict) -> dict | None:
-        """One decision-layer call; None if it failed in any way."""
+        """One decision-layer call; None if it failed in any way, or its decision point is off."""
+        if _POINT_OF_TOOL.get(tool, tool) in self.off:
+            return None
         try:
             result = self._call(tool, {**arguments, **self._context()})
             if result.is_error:
@@ -164,7 +171,7 @@ class DecisionShadow:
         elif gate:
             self._pending.append((phase, gate["decision_id"]))
         answering = gate is not None and (gate.get("mode") == "answer" or gate.get("next") == "answer")
-        effort = None if self.effort_off else self._ask(
+        effort = self._ask(
             "assess_effort",
             {
                 "request": self._request,
@@ -262,15 +269,36 @@ class DecisionShadow:
         """gate_write for a write about to run: its verdict, or None for a read (or a failed call)."""
         if name not in WRITE_TOOLS:
             return None
+        if "gate_write" in self.off:
+            return self._code_gate(name, arguments)
         return self._ask(
             "gate_write",
             {"request": self._request, "tool": name, "arguments": arguments, "known_ids": sorted(self.known_ids)},
         )
 
+    def _code_gate(self, name: str, arguments: dict) -> dict | None:
+        """gate_write's code checks (blocked tools, protected paths, invented note IDs) without Laya:
+        a block, logged like Laya's own, or None for a write code has no objection to."""
+        reasons = check_write(name, arguments, self.known_ids)
+        if not reasons:
+            return None
+        decision_id = None
+        try:
+            decision_id = self._log.record_decision(
+                decision_point="gate_write", question_set="gate_write", question_set_version=0,
+                state={"request": self._request, "tool": name, "arguments": arguments}, questions={},
+                status="code_blocked", mode="enforce", context=self._context(), detail="; ".join(reasons),
+                proposed_action="block",
+            )
+        except Exception:
+            self.failures += 1
+        return {"decision_id": decision_id, "verdict": "block", "reasons": reasons, "source": "code",
+                "status": "code_blocked", "probabilities": {}}
+
     def note_type(self, arguments: dict) -> dict | None:
         """Laya's type for a write_note that may create a note (anything but today's daily), with the
         model's own choice recorded against it as the action - "model:<type>", or "model:none"."""
-        if self.note_type_off or arguments.get("type") == "daily" or not arguments.get("note"):
+        if arguments.get("type") == "daily" or not arguments.get("note"):
             return None
         title = PurePosixPath(str(arguments["note"]).removesuffix(".md")).name
         typed = self._ask("note_type", {"title": title, "content": str(arguments.get("content") or "")[:8000]})

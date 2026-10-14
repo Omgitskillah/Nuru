@@ -58,8 +58,8 @@ def main():
     s = session.Session.start()
     # Laya loads its checkpoints in the background (~10 s). A person is still typing by then; a
     # driver isn't, and every turn's first decisions would be fallbacks - so wait, like a person.
-    laya_state = "unknown"
-    for _ in range(120):
+    laya_state = "off" if s.shadow.off == session.LAYA_POINTS else "unknown"  # all off: never started
+    for _ in range(120 if laya_state != "off" else 0):
         try:
             laya_state = json.loads(s.tools.call_harness_tool("health", {}).text)["laya"]["state"]
         except Exception:

@@ -72,7 +72,7 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     _, _, _, driver = modules
     prompts, starts = [], []
     class FakeSession:
-        shadow = SimpleNamespace(failures=0)
+        shadow = SimpleNamespace(failures=0, off=set())
         logger = SimpleNamespace(session_id="test")
         tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
         def continuation_context(self):
@@ -112,7 +112,7 @@ def test_driver_cancels_a_turn_at_its_deadline_and_does_not_send_later_turns(mod
     _, _, _, driver = modules
     prompts = []
     class FakeSession:
-        shadow = SimpleNamespace(failures=0)
+        shadow = SimpleNamespace(failures=0, off=set())
         logger = SimpleNamespace(session_id="test")
         tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
         def continuation_context(self):
@@ -293,7 +293,7 @@ def test_a_driven_case_that_writes_is_scored_by_its_writes_without_a_cases_overr
     (vault / "nuru").mkdir(parents=True)
     today = date.today().isoformat()
     class FakeSession:
-        shadow = SimpleNamespace(failures=0)
+        shadow = SimpleNamespace(failures=0, off=set())
         logger = SimpleNamespace(session_id="test")
         tools = SimpleNamespace(call_harness_tool=lambda *a: SimpleNamespace(text='{"laya":{"state":"ready"}}'))
         def continuation_context(self):

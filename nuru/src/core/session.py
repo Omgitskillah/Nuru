@@ -576,7 +576,7 @@ class Session:
     def load_model(self) -> None:
         """Make sure the Ollama server is up and the model is loaded, starting either if it isn't."""
         server_spawned = ensure_server_running()  # with Claude too: the notes search embeds through Ollama
-        self.model_info = claude_provider.model_info(MODEL) if CLAUDE else ensure_model_loaded(MODEL)
+        self.model_info = claude_provider.model_info(MODEL) if CLAUDE else ensure_model_loaded(MODEL, _context_window)
         self.logger.model_lifecycle(server_spawned, self.model_info)
 
     def loaded_model_info(self) -> dict | None:

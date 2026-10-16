@@ -70,7 +70,7 @@ class FakeMCPTools:
 def start_session(monkeypatch, chat=None, tools=None, model_info=None):
     """A started Session with everything that would touch Ollama or spawn a server faked out."""
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: model_info)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: model_info)
     monkeypatch.setattr(session, "chat", chat or fake_chat([]))
     fake_tools = tools or FakeMCPTools()
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: fake_tools)
@@ -100,7 +100,7 @@ def test_start_builds_the_custom_model_from_the_modelfile_before_loading(monkeyp
 def test_start_can_resume_a_conversation_and_leave_the_model_for_the_first_turn(monkeypatch):
     loaded = []
     monkeypatch.setattr(session, "ensure_server_running", lambda: loaded.append("server"))
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: loaded.append(model))
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: loaded.append(model))
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: FakeMCPTools())
 
     s = Session.start(7, load_model=False)
@@ -115,7 +115,7 @@ def test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger(mo
     served, elsewhere = tmp_path / "served", tmp_path / "elsewhere"
     monkeypatch.setenv("VAULT_PATH", str(elsewhere))
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     given = []
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: given.extend(server_params) or FakeMCPTools())
     default = dict(session.OBSIDIAN_SERVER_PARAMS.env)
@@ -141,7 +141,7 @@ def test_a_served_vault_never_gets_another_vaults_semantic_index(monkeypatch, tm
     monkeypatch.setattr(vault_indexer, "OBSIDIAN_ENV", env_file)
     monkeypatch.delenv("OBSIDIAN_SEMANTIC_DB", raising=False)
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     given = []
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: given.extend(server_params) or FakeMCPTools())
 
@@ -272,7 +272,7 @@ def test_start_offers_the_model_only_its_allowlist(monkeypatch):
         return FakeMCPTools()
 
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     monkeypatch.setattr(session, "MCPTools", recording_mcp_tools)
 
     Session.start()
@@ -287,7 +287,7 @@ def test_start_closes_what_it_opened_when_a_later_step_fails(monkeypatch):
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: fake_tools)
 
-    def failing_load(model):
+    def failing_load(model, *_):
         raise RuntimeError("model would not load")
 
     monkeypatch.setattr(session, "ensure_model_loaded", failing_load)
@@ -331,7 +331,7 @@ def test_load_model_starts_the_server_and_loads_the_model(monkeypatch):
     s = start_session(monkeypatch)
     calls = []
     monkeypatch.setattr(session, "ensure_server_running", lambda: calls.append("server") or True)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: calls.append(("model", model)) or {})
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: calls.append(("model", model)) or {})
 
     s.load_model()
 
@@ -341,7 +341,7 @@ def test_load_model_starts_the_server_and_loads_the_model(monkeypatch):
 def test_loaded_model_info_returns_the_info_when_the_model_is_loaded(monkeypatch):
     s = start_session(monkeypatch)
     monkeypatch.setattr(session, "is_model_loaded", lambda model: True)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: {"family": "qwen3"})
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: {"family": "qwen3"})
 
     assert s.loaded_model_info() == {"family": "qwen3"}
 
@@ -350,7 +350,7 @@ def test_loaded_model_info_is_none_and_loads_nothing_when_the_model_is_not_loade
     s = start_session(monkeypatch)
     monkeypatch.setattr(session, "is_model_loaded", lambda model: False)
 
-    def unexpected(model):
+    def unexpected(model, *_):
         raise AssertionError("asking for the info must not load the model")
 
     monkeypatch.setattr(session, "ensure_model_loaded", unexpected)
@@ -485,7 +485,7 @@ def test_ask_says_nothing_when_the_model_writes_neither_a_reply_nor_thinking(mon
 def test_ask_checks_the_server_and_the_model_before_each_send(monkeypatch):
     calls = []
     monkeypatch.setattr(session, "ensure_server_running", lambda: calls.append("server"))
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: calls.append(("model", model)))
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: calls.append(("model", model)))
     monkeypatch.setattr(session, "chat", fake_chat([]))
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: FakeMCPTools())
 
@@ -964,7 +964,7 @@ def test_start_connects_the_obsidian_deep_think_math_and_laya_servers(monkeypatc
         return FakeMCPTools()
 
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     monkeypatch.setattr(session, "MCPTools", recording_mcp_tools)
     monkeypatch.setattr(session, "python_server_params", lambda: None)  # no Docker: no run_python
 
@@ -981,7 +981,7 @@ def test_start_adds_the_python_server_when_it_can_run(monkeypatch):
         return FakeMCPTools()
 
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     monkeypatch.setattr(session, "MCPTools", recording_mcp_tools)
     monkeypatch.setattr(session, "python_server_params",
                         lambda: session.StdioServerParameters(command="cargo", args=["run", "--bin", "python-mcp"]))
@@ -1029,7 +1029,7 @@ def test_admission_counts_system_and_advertised_schemas(monkeypatch):
 
 def test_admission_uses_reloaded_effective_window(monkeypatch):
     s = start_session(monkeypatch, model_info={"context_window": 32768})
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda _: {"context_window": 1000})
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda *_: {"context_window": 1000})
     assert isinstance(list(s.ask("hi"))[0], Failure)
     assert s.context_window == 1000
 
@@ -1088,7 +1088,7 @@ def test_plan_request_receives_prior_conversation(monkeypatch):
 def test_plan_admission_uses_independent_planners_actual_window(monkeypatch):
     s = start_session(monkeypatch, model_info={"context_window": 32768})
     monkeypatch.setattr(session, "PLANNER_MODEL", "qwen3.5:4b")
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: {"context_window": 200 if model == "qwen3.5:4b" else 32768})
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: {"context_window": 200 if model == "qwen3.5:4b" else 32768})
     events = list(s.ask("PLAN: Say hello"))
     assert isinstance(events[-1], Failure)
     assert "context budget" in events[-1].message

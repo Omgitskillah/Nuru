@@ -126,11 +126,18 @@ def test_chat_yields_tool_calls_with_their_ids_then_the_whole_content(fake):
 def test_thinking_off_disables_it_and_a_schema_becomes_structured_output(fake):
     provider = fake(reply({"type": "text", "text": "{}"}))
     schema = {"type": "object", "properties": {}}
-    list(claude.chat("claude-sonnet-5-5", [{"role": "user", "content": "q"}], think=False, fmt=schema))
+    list(claude.chat("claude-haiku-5-5", [{"role": "user", "content": "q"}], think=False, fmt=schema))
     (request,) = provider.requests
     assert request["thinking"] == {"type": "disabled"}
     assert request["output_config"] == {"format": {"type": "json_schema", "schema": schema}}
     assert request["system"] is None and request["tools"] is None
+
+
+def test_thinking_off_is_sent_the_way_each_model_takes_it(fake):
+    provider = fake(reply({"type": "text", "text": "a"}), reply({"type": "text", "text": "b"}))
+    list(claude.chat("claude-haiku-5-5", [{"role": "user", "content": "q"}], think=False))
+    list(claude.chat("claude-sonnet-5-5", [{"role": "user", "content": "q"}], think=False))
+    assert [r["thinking"] for r in provider.requests] == [{"type": "disabled"}, {"type": "between_tools"}]
 
 
 def test_every_request_is_logged_locally_with_what_was_sent_and_the_usage(fake, tmp_path):

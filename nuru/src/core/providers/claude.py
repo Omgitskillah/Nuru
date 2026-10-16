@@ -132,11 +132,11 @@ def _tools(tools: list[dict] | None) -> list[dict] | None:
     return converted
 
 
-def _thinking(think) -> tuple[dict, str | None]:
-    """Nuru's think value as Anthropic's: off is thinking disabled; otherwise adaptive thinking at an
-    effort - "low"/"medium"/"high" as given, True (the model's own full thinking) as high."""
+def _thinking(model: str, think) -> tuple[dict, str | None]:
+    """Nuru's think value as Anthropic's: off is the model's own way of turning thinking off; otherwise
+    adaptive thinking at an effort - "low"/"medium"/"high" as given, True (full thinking) as high."""
     if think is False or think in ("off", "false"):
-        return {"type": "disabled"}, None
+        return dict(MAIN_MODELS.get(model, {}).get("thinking_off") or {"type": "disabled"}), None
     return {"type": "adaptive"}, think if think in ("low", "medium", "high") else "high"
 
 
@@ -162,7 +162,7 @@ def chat(
 ):
     """See the module docstring. `num_ctx` is Nuru's own budget (the API has no such setting) and
     `options` (sampling) is ignored: these models reject temperature, top_p and top_k."""
-    thinking, effort = _thinking(think)
+    thinking, effort = _thinking(model, think)
     output_config = {**({"effort": effort} if effort else {}),
                      **({"format": {"type": "json_schema", "schema": fmt}} if fmt is not None else {})}
     request = {

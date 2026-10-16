@@ -131,7 +131,7 @@ def is_model_loaded(model: str) -> bool:
 _SPIN_INTERVAL_SECONDS = 1
 
 
-def _load_model_with_spinner(model: str) -> None:
+def _load_model_with_spinner(model: str, num_ctx: int | None = None) -> None:
     """Issues the blocking load request while printing increasing dots once a second."""
     done = threading.Event()
 
@@ -144,7 +144,8 @@ def _load_model_with_spinner(model: str) -> None:
     spinner = threading.Thread(target=spin, daemon=True)
     spinner.start()
     try:
-        r = requests.post(f"{BASE}/api/generate", json={"model": model}, timeout=300)
+        body = {"model": model, **({"options": {"num_ctx": num_ctx}} if num_ctx else {})}
+        r = requests.post(f"{BASE}/api/generate", json=body, timeout=300)
         r.raise_for_status()
     finally:
         done.set()
@@ -152,15 +153,21 @@ def _load_model_with_spinner(model: str) -> None:
         print("\r" + " " * (len(model) + 20) + "\r", end="", flush=True)
 
 
-def ensure_model_loaded(model: str) -> dict:
+def ensure_model_loaded(model: str, window=None) -> dict:
     """Load `model` into memory first if it isn't resident yet.
 
     Returns its static info (parameter_size, quantization_level, family, supports_thinking).
+    `window(info)`, if given, is the num_ctx the chats will ask for: the model is loaded at that
+    size, since Ollama starts a model again when a request's num_ctx differs from the loaded one's.
     """
+    info = _static_info(model)
     if not is_model_loaded(model):
-        _load_model_with_spinner(model)
+        _load_model_with_spinner(model, window(info) if window else None)
+    return info
 
-    info = model_info(model)
+
+def _static_info(model: str) -> dict:
+    info = model_info(model)  # /api/show: works whether or not the model is loaded
     details = info.get("details", {})
     model_arch_info = info.get("model_info", {})
     architecture = details.get("family", "?")

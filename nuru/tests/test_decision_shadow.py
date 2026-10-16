@@ -104,7 +104,7 @@ def start(monkeypatch, responses, tools):
 
     monkeypatch.setattr(session, "create_model", lambda model, base_model, modelfile_path: render_modelfile(modelfile_path, base_model))
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     monkeypatch.setattr(session, "chat", chat)
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: tools)
     return Session.start()

@@ -341,6 +341,22 @@ def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch):
     assert info["supports_thinking"] is False
 
 
+def test_ensure_model_loaded_loads_at_the_window_the_chats_will_use(monkeypatch):
+    """Ollama starts a model again when num_ctx changes, so the load asks for the chats' window."""
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [])
+    monkeypatch.setattr(
+        ollama,
+        "model_info",
+        lambda model: {"details": {"family": "qwen3"}, "capabilities": [], "model_info": {"qwen3.context_length": 40960}},
+    )
+    calls = []
+    monkeypatch.setattr(requests, "post", lambda url, json, timeout: calls.append(json) or FakeResponse())
+
+    ollama.ensure_model_loaded("qwen3:8b", lambda info: min(info["context_window"], 16384))
+
+    assert calls == [{"model": "qwen3:8b", "options": {"num_ctx": 16384}}]
+
+
 def test_ensure_model_loaded_shows_spinner_while_loading(monkeypatch):
     monkeypatch.setattr(ollama, "loaded_models", lambda: [])
     monkeypatch.setattr(

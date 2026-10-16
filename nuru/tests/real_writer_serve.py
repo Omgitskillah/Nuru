@@ -59,7 +59,7 @@ def writer(model, messages, *args, **kwargs):
 def start(directory: Path, port: int = 0):
     """(server, service, token) for a real-writer nuru-serve in `directory`; the caller runs serve_forever."""
     session.ensure_server_running = lambda: None  # no Ollama: the model is scripted
-    session.ensure_model_loaded = lambda model: None
+    session.ensure_model_loaded = lambda model, *_: None
     session.chat = writer
     vault = build(directory.resolve())  # absolute: the notes server runs in its own working directory
     credentials = Credentials(directory / "service")

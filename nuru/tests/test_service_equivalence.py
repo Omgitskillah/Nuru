@@ -71,7 +71,7 @@ class ScriptedModel:
 @pytest.fixture
 def route(tmp_path, monkeypatch):
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
     opened = []
 
     def make(name):

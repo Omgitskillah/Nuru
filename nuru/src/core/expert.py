@@ -122,8 +122,8 @@ class ExpertPlanner:
         return text
 
     def _build_client(self):
-        import anthropic
+        from claude_access.claude import build_client
 
         if not self._api_key:
             raise ExpertUnavailable("no API key is configured for the expert")
-        return anthropic.Anthropic(api_key=self._api_key)
+        return build_client(self._api_key)

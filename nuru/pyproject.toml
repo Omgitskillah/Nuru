@@ -13,6 +13,7 @@ dependencies = [
     "PyQt6>=6.11.0",
     "obsidian-mcp",
     "laya-mcp",
+    "claude-access",
 ]
 
 [project.scripts]
@@ -26,6 +27,7 @@ nuru-serve = "core.service.server:main"
 [tool.uv.sources]
 obsidian-mcp = { workspace = true }
 laya-mcp = { workspace = true }
+claude-access = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]

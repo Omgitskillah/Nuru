@@ -4,6 +4,7 @@ requires-python = ">=3.14.7"
 
 [manifest]
 members = [
+    "claude-access",
     "core",
     "deep-think-mcp",
     "laya-mcp",
@@ -13,6 +14,7 @@ members = [
 [manifest.dependency-groups]
 dev = [
     { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
+    { name = "claude-access", editable = "packages/claude-access" },
     { name = "core", editable = "nuru" },
     { name = "deep-think-mcp", editable = "servers/deep-think" },
     { name = "laya-mcp", editable = "servers/laya" },
@@ -256,6 +258,29 @@ wheels = [
 ]
 
 [[package]]
+name = "claude-access"
+version = "0.1.0"
+source = { editable = "packages/claude-access" }
+dependencies = [
+    { name = "anthropic" },
+    { name = "python-dotenv" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+
+[[package]]
 name = "click"
 version = "8.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -279,6 +304,7 @@ version = "0.1.0"
 source = { editable = "nuru" }
 dependencies = [
     { name = "anyio" },
+    { name = "claude-access" },
     { name = "jsonschema" },
     { name = "laya-mcp" },
     { name = "mcp" },
@@ -296,6 +322,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4" },
+    { name = "claude-access", editable = "packages/claude-access" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "laya-mcp", editable = "servers/laya" },
     { name = "mcp", specifier = ">=2.2.0" },
@@ -504,7 +531,7 @@ version = "0.1.0"
 source = { editable = "servers/deep-think" }
 dependencies = [
     { name = "access-logging" },
-    { name = "anthropic" },
+    { name = "claude-access" },
     { name = "mcp" },
     { name = "python-dotenv" },
 ]
@@ -517,7 +544,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
-    { name = "anthropic", specifier = ">=1.0.0" },
+    { name = "claude-access", editable = "packages/claude-access" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
 ]

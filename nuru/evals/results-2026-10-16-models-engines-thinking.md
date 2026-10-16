@@ -146,7 +146,9 @@ Setup: `NURU_MAIN_MODEL=anthropic:claude-haiku-5-5`, thinking `low`, 24k cap, `-
 
 **Where Qwen was better:**
 - **Test 15** (5.0 against 4.3).
-- **Test 25** (3.7 against 2.7). Haiku never signs "Clarence", and twice skipped the 1:1 note.
+- **Test 25** (3.7 against 2.7). Haiku twice skipped the 1:1 note. It did sign "Clarence" every time, but the scorer missed it (see the note below), so its real score is 3.7, level with Qwen.
+
+> **Scorer note (found 10-16 evening):** the "signed Clarence" check in `score_25` uses `^` and `$` without multiline mode, so it only matches when "Clarence" ends the whole reply. Claude puts the draft between `---` lines and adds notes after them, so a signed draft is marked unsigned. Similarly, `score_16` looks for "11.7" and fails a correct "11.67 kg". The scores in this report are as scored; the scorer fix and a rescore of every arm are a follow-up.
 
 **Likely reasons for the difference:**
 1. **It follows `system.md` more closely:** the expert rule, not inventing content, saying what's missing.
@@ -174,7 +176,7 @@ Same setup as Haiku. Batch: `suite-claude-sonnet-24k-*`, plus a rerun of tests 1
 
 **Sonnet better:**
 - **Test 22,** 2.3 → 4.3: it always reads the FreeRTOS note and computes U = 0.36.
-- **Test 25,** 2.7 → 3.7: it reads the 1:1 note, though it still never signs "Clarence".
+- **Test 25,** 2.7 → 3.7: it reads the 1:1 note. Like Haiku, it signs "Clarence" every time, which the scorer misses, so its real score is 4.7.
 - **Test 15,** 4.3 → 5.0.
 
 **Sonnet lower:**

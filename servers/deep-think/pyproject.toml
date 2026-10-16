@@ -1,7 +1,7 @@
 [project]
 name = "deep-think-mcp"
 version = "0.1.0"
-description = "MCP server enforcing a single Messages/Token Counting/Models/Files API contract across interchangeable providers (Claude, ...)"
+description = "MCP server whose tools (write_plan) call Claude through the shared claude-access provider contract"
 readme = "README.md"
 authors = [
     { name = "Omgitskillah", email = "clarence.alucho@gmail.com" }
@@ -11,7 +11,7 @@ dependencies = [
     "mcp>=2.2.0",
     "access-logging",
     "python-dotenv>=1.2.3",
-    "anthropic>=1.0.0",
+    "claude-access",
 ]
 
 [project.scripts]
@@ -23,6 +23,7 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 access-logging = { path = "../obsidian/vendor/access-logging" }
+claude-access = { workspace = true }
 
 [dependency-groups]
 dev = [

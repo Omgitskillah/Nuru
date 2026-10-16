@@ -100,5 +100,6 @@ def test_missing_profile_file_never_uses_a_default(tmp_path):
 def test_every_checked_in_family_has_an_explicit_support_decision():
     raw = yaml.safe_load(model_profile.PROFILES.read_text())
     shipped = {p.stem for p in model_profile.PROFILES.parent.glob("*.Modelfile")}
-    assert shipped == set(raw)
-    assert {name for name, entry in raw.items() if entry["supported"]} == {"qwen3.5", "granite4.2"}
+    claude = {"claude-haiku-5-5", "claude-sonnet-5-5"}  # API models: no Modelfile
+    assert shipped | claude == set(raw) and not shipped & claude
+    assert {name for name, entry in raw.items() if entry["supported"]} == {"qwen3.5", "granite4.2"} | claude

@@ -141,8 +141,9 @@ def main():
             if entry["event"] == "turn_start":
                 groups.append([])
             elif entry["event"] == "model_call" and groups:
-                groups[-1].append({k: entry[k] for k in ("duration_ms", "prompt_tokens", "completion_tokens",
-                                                        "stop_reason", "tool_calls_requested")})
+                groups[-1].append({**{k: entry[k] for k in ("duration_ms", "prompt_tokens", "completion_tokens",
+                                                           "stop_reason", "tool_calls_requested")},
+                                   **{k: entry[k] for k in ("cache_read_tokens", "cache_write_tokens") if k in entry}})
     ran = [r for r in records if not r.get("not_run")]  # NOT RUN turns get no zero-latency figures
     for i, record in enumerate(ran):
         calls = groups[i] if i < len(groups) else []

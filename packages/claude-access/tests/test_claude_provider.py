@@ -2,9 +2,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deep_think_mcp.providers.claude import ClaudeProvider
-from pathlib import Path
-from deep_think_mcp.providers import claude
+from types import SimpleNamespace
+
+from claude_access import keys
+from claude_access.claude import ClaudeProvider
 
 
 def _fake_response(data: dict) -> MagicMock:
@@ -115,83 +116,6 @@ def test_list_models_flattens_the_paginated_response(provider, client):
     }
 
 
-# --- upload_file / list_files ---
-
-
-def test_upload_file_sends_the_file_and_returns_the_client_response(provider, client, tmp_path):
-    target = tmp_path / "notes.txt"
-    target.write_text("hello world")
-    client.files.upload.return_value = _fake_response({"id": "file_abc", "filename": "notes.txt"})
-
-    response = provider.upload_file(str(target))
-
-    assert response == {"id": "file_abc", "filename": "notes.txt"}
-    _, kwargs = client.files.upload.call_args
-    filename, _file_obj, mime_type = kwargs["file"]
-    assert filename == "notes.txt"
-    assert mime_type == "text/plain"
-
-
-def test_upload_file_defaults_to_a_one_hour_expiration(provider, client, tmp_path):
-    target = tmp_path / "notes.txt"
-    target.write_text("hello world")
-    client.files.upload.return_value = _fake_response({"id": "file_abc"})
-
-    provider.upload_file(str(target))
-
-    _, kwargs = client.files.upload.call_args
-    assert kwargs["expires_in_seconds"] == 3600
-
-
-def test_upload_file_forwards_a_custom_expiration(provider, client, tmp_path):
-    target = tmp_path / "notes.txt"
-    target.write_text("hello world")
-    client.files.upload.return_value = _fake_response({"id": "file_abc"})
-
-    provider.upload_file(str(target), expires_in_seconds=7200)
-
-    _, kwargs = client.files.upload.call_args
-    assert kwargs["expires_in_seconds"] == 7200
-
-
-def test_upload_file_raises_on_missing_file_without_calling_client(provider, client, tmp_path):
-    with pytest.raises(FileNotFoundError):
-        provider.upload_file(str(tmp_path / "does-not-exist.txt"))
-
-    client.files.upload.assert_not_called()
-
-
-def test_list_files_flattens_the_paginated_response(provider, client):
-    page = MagicMock()
-    page.data = [_fake_response({"id": "file_abc"})]
-    page.has_more = False
-    page.first_id = "file_abc"
-    page.last_id = "file_abc"
-    client.files.list.return_value = page
-
-    response = provider.list_files()
-
-    assert response["data"] == [{"id": "file_abc"}]
-
-
-# --- _upload_mime_type ---
-
-
-@pytest.mark.parametrize(
-    "name,expected",
-    [
-        ("battery-life-modeling.md", "text/plain"),   # a document block rejects text/markdown
-        ("notes.txt", "text/plain"),
-        ("server.py", "text/plain"),
-        ("datasheet.pdf", "application/pdf"),
-        ("diagram.png", "image/png"),
-        ("mystery.bin", "application/octet-stream"),
-    ],
-)
-def test_upload_mime_type_sends_text_formats_as_plain_text(name, expected):
-    assert claude._upload_mime_type(Path(name)) == expected
-
-
 def test_send_message_forwards_thinking_and_output_config(provider, client):
     client.messages.create.return_value = _fake_response({})
     thinking = {"type": "enabled", "budget_tokens": 1024}
@@ -224,3 +148,75 @@ def test_send_message_with_fallbacks_uses_the_beta_endpoint(provider, client):
         messages=[{"role": "user", "content": "hi"}],
     )
     client.messages.create.assert_not_called()
+
+
+# --- stream_message ---
+
+
+class _FakeStream:
+    """What client.messages.stream(...) returns: a context manager that iterates events."""
+
+    def __init__(self, events, final):
+        self._events, self._final = events, final
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+    def __iter__(self):
+        return iter(self._events)
+
+    def get_final_message(self):
+        return _fake_response(self._final)
+
+
+def test_stream_message_yields_text_and_thinking_then_the_whole_message(provider, client):
+    final = {"content": [{"type": "text", "text": "Hi"}], "stop_reason": "end_turn", "usage": {"output_tokens": 2}}
+    stream = _FakeStream([SimpleNamespace(type="thinking", thinking="hmm"), SimpleNamespace(type="text", text="Hi"),
+                          SimpleNamespace(type="content_block_stop")], final)
+    client.messages.stream.return_value = stream
+
+    events = list(provider.stream_message(model="claude-haiku-5-5", messages=[{"role": "user", "content": "hi"}],
+                                          system=[{"type": "text", "text": "be terse"}]))
+
+    assert events == [{"type": "thinking", "text": "hmm"}, {"type": "text", "text": "Hi"},
+                      {"type": "message", "message": final}]
+    client.messages.stream.assert_called_once_with(
+        model="claude-haiku-5-5", max_tokens=1024, messages=[{"role": "user", "content": "hi"}],
+        system=[{"type": "text", "text": "be terse"}])
+    assert stream.closed
+
+
+def test_stream_message_with_fallbacks_uses_the_beta_endpoint(provider, client):
+    client.beta.messages.stream.return_value = _FakeStream([], {"content": []})
+
+    list(provider.stream_message(model="claude-sonnet-5-5", messages=[{"role": "user", "content": "hi"}],
+                                 fallbacks="default"))
+
+    assert client.beta.messages.stream.call_args.kwargs["fallbacks"] == "default"
+    client.messages.stream.assert_not_called()
+
+
+def test_stream_message_raises_on_empty_messages_without_calling_client(provider, client):
+    with pytest.raises(ValueError):
+        list(provider.stream_message(model="claude-haiku-5-5", messages=[]))
+    client.messages.stream.assert_not_called()
+
+
+# --- keys ---
+
+
+def test_api_key_prefers_the_environment_then_the_deep_think_env_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(keys, "REPO_ROOT", tmp_path)
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    assert keys.api_key() is None
+    (tmp_path / ".env.deep-think").write_text("CLAUDE_API_KEY=from-file\n")
+    assert keys.api_key() == "from-file"
+    monkeypatch.setenv("CLAUDE_API_KEY", "from-claude-env")
+    assert keys.api_key() == "from-claude-env"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "from-anthropic-env")
+    assert keys.api_key() == "from-anthropic-env"

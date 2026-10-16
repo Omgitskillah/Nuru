@@ -113,7 +113,11 @@ class CLILogger:
         stop_reason: str | None,
         tool_calls_requested: list[str],
         output_text: str,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
+        """prompt_tokens counts every input token, cached ones included; cache_read_tokens and
+        cache_write_tokens (Claude's prompt cache; 0 for Ollama) say how many of them were cached."""
         self._tokens_processed += prompt_tokens + completion_tokens
         self._context_tokens = prompt_tokens + completion_tokens
         self._log(
@@ -128,6 +132,8 @@ class CLILogger:
                 "session_context_tokens": self._context_tokens,
                 "tool_calls_requested": tool_calls_requested,
                 "output_preview": _preview(output_text),
+                **({"cache_read_tokens": cache_read_tokens} if cache_read_tokens else {}),
+                **({"cache_write_tokens": cache_write_tokens} if cache_write_tokens else {}),
             }
         )
 

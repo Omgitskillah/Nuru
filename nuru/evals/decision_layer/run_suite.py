@@ -123,6 +123,30 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
     return json.loads(out.read_text())
 
 
+
+def token_summary(batch: Path) -> str:
+    """Tokens in and out for the whole round and per test, from results.jsonl; also written to
+    tokens.json. "in" counts every prompt token; "cached" is how many of those were Claude prompt-cache
+    reads (0 on Ollama)."""
+    per_test: dict[int, dict] = {}
+    for line in (batch / "results.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        totals = per_test.setdefault(record["test"], {"runs": 0, "calls": 0, "in": 0, "out": 0, "cached": 0, "cache_writes": 0})
+        totals["runs"] += 1
+        for call in record.get("model_calls") or []:
+            totals["calls"] += 1
+            totals["in"] += call.get("prompt_tokens") or 0
+            totals["out"] += call.get("completion_tokens") or 0
+            totals["cached"] += call.get("cache_read_tokens") or 0
+            totals["cache_writes"] += call.get("cache_write_tokens") or 0
+    whole = {k: sum(t[k] for t in per_test.values()) for k in ("runs", "calls", "in", "out", "cached", "cache_writes")}
+    (batch / "tokens.json").write_text(json.dumps({"total": whole, "per_test": per_test}, indent=2))
+    lines = [f"Tokens this round: {whole['in']:,} in ({whole['cached']:,} cached), {whole['out']:,} out, "
+             f"over {whole['calls']} model calls in {whole['runs']} runs"]
+    lines += [f"  test {test}: {t['in']:,} in ({t['cached']:,} cached), {t['out']:,} out, {t['calls']} calls"
+              for test, t in sorted(per_test.items())]
+    return "\n".join(lines)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", type=Path, default=HERE / "cases.json", help="additional numbered sequence cases")
@@ -137,11 +161,16 @@ def main():
     parser.add_argument("--planner", help="a planner Modelfile (modelfiles/planner/), swapped onto the model to write "
                         "each turn's plan live (live_plan.py); the harness carries it out, or the model takes the turn "
                         "if the plan is empty or invalid")
+    parser.add_argument("--allow-cloud", action="store_true", help="required when NURU_MAIN_MODEL is a Claude "
+                        "model (anthropic:...): the batch then calls the paid Claude API, and the notes it reads "
+                        "leave the machine")
     parser.add_argument("--enforce", default="", help="decision points to enforce IN THIS BATCH ONLY (comma-separated, "
                         "or 'all'); its config marks thresholds calibrated so it loads - a test of the enforce "
                         "paths, not of calibrated thresholds")
     args = parser.parse_args()
 
+    if os.environ.get("NURU_MAIN_MODEL", "").startswith("anthropic:") and not args.allow_cloud:
+        sys.exit("NURU_MAIN_MODEL is a Claude model: pass --allow-cloud to run this batch on the paid API")
     prompts = suite_prompts()
     cases = load_cases(args.cases)
     if set(prompts) & set(cases):
@@ -213,6 +242,7 @@ def main():
                               else f"{len(record.get('tool_calls', []))} tools, {record.get('turn_seconds')}s")
                     print(f"[{done}/{total}] test {test} {think} #{repeat}: {status}, "
                           f"{len(record['vault_changes'])} files changed", flush=True)
+    print(token_summary(batch))
     print(batch)
 
 

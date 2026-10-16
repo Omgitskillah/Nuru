@@ -41,8 +41,11 @@ from core.providers.mcp_tools import MCPTools, ToolResult
 from core.questions import Question
 from core import tool_dispatch
 from core.tool_dispatch import ToolOutcome, MUTATIONS, written_path
+from claude_access.keys import api_key as claude_api_key
+from core.modelfile import render_system
+from core.providers import claude as claude_provider
+from core.providers.ollama import chat as ollama_chat
 from core.providers.ollama import (
-    chat,
     create_model,
     ensure_model_loaded,
     ensure_server_running,
@@ -67,17 +70,45 @@ load_dotenv(ENV_DIR / ".env.nuru")
 # that actually gets loaded and chatted with, carrying the tool-use SYSTEM
 # prompt baked in.
 BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "granite4.2:3b")
-MODEL = os.environ.get("MODEL", "nuru")
+# NURU_MAIN_MODEL=anthropic:<id> (claude-haiku-5-5 or claude-sonnet-5-5) runs the turn on Claude through
+# the shared claude-access provider instead of Ollama; unset, or "ollama", keeps the local model. With
+# Claude, MODEL is the Claude model and no Modelfile is built - Ollama only serves the notes search's
+# embeddings.
+MAIN_MODEL = os.environ.get("NURU_MAIN_MODEL", "").strip()
+CLAUDE = MAIN_MODEL.startswith(claude_provider.PREFIX)
+if MAIN_MODEL and not CLAUDE and MAIN_MODEL != "ollama":
+    raise ValueError(f"NURU_MAIN_MODEL={MAIN_MODEL!r}: use 'ollama' or anthropic:<model>")
+MODEL = claude_provider.model_id(MAIN_MODEL) if CLAUDE else os.environ.get("MODEL", "nuru")
+chat = claude_provider.chat if CLAUDE else ollama_chat
 
 
 # What goes with BASE_MODEL's family besides its Modelfile (modelfiles/profiles.yaml): how thinking
 # levels translate to Ollama's `think`, the level to run at, and sampling that depends on thinking.
-PROFILE = model_profile.for_model(BASE_MODEL)
+# With Claude, the Claude model's own profile.
+PROFILE = model_profile.for_model(MODEL if CLAUDE else BASE_MODEL)
 # The Ollama `think` value every model call starts from: the family's default level, translated.
 THINK = PROFILE.think(PROFILE.default)
+# Off by default (tested 2026-10-15): NURU_KEEP_THINKING=1 keeps a call's thinking and text on its
+# tool-call message for the rest of the turn, as Qwen's template expects. Ollama drops it again once a
+# new user message follows. The Claude provider's content (its thinking blocks included) is always
+# kept: the API requires earlier thinking blocks back unchanged during tool use.
+KEEP_THINKING = os.environ.get("NURU_KEEP_THINKING") == "1"
+
+
+def _tool_call_message(tool_calls: list, thinking: str, text: str, provider_content: list | None = None) -> dict:
+    message = {"role": "assistant", "tool_calls": tool_calls}
+    if provider_content:
+        message["provider_content"] = provider_content
+    if KEEP_THINKING:
+        if thinking:
+            message["thinking"] = thinking
+        if text.strip():
+            message["content"] = text
+    return message
 # Plan mode (a test: core.planner) - the model that writes plans, and how much it thinks.
 PLANNER_MODEL = os.environ.get("NURU_PLANNER_MODEL", MODEL)
-PLANNER_PROFILE = model_profile.for_runtime_model(PLANNER_MODEL, derived_model=MODEL, base_model=BASE_MODEL)
+PLANNER_PROFILE = model_profile.for_runtime_model(PLANNER_MODEL, derived_model=MODEL,
+                                                   base_model=MODEL if CLAUDE else BASE_MODEL)
 PLANNER_THINK = PLANNER_PROFILE.think(os.environ.get("NURU_PLANNER_THINK", "off"))
 
 MODELFILES_DIR = Path(__file__).resolve().parents[2] / "modelfiles"
@@ -113,24 +144,14 @@ OBSIDIAN_SERVER_PARAMS = StdioServerParameters(
 )
 
 DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
-# ask_an_expert's file_paths are the vault-relative ones the obsidian tools returned, but
-# deep-think runs in its own directory, so without a base to resolve them against every
-# attachment fails with FileNotFoundError. Added to the MCP client's usual restricted env
-# rather than replacing it; .env.deep-think supplies the default when this is unset.
-_deep_think_env = get_default_environment()
-if _vault := (os.environ.get("DEEP_THINK_BASE_DIR") or os.environ.get("VAULT_PATH")):
-    _deep_think_env["DEEP_THINK_BASE_DIR"] = _vault
 DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
-    command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=_deep_think_env
+    command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=get_default_environment()
 )
 
 def expert_api_key() -> str | None:
-    """The expert's Anthropic API key: ANTHROPIC_API_KEY if this process has one, else the
-    CLAUDE_API_KEY that deep-think (the ask_an_expert tool) already reads from .env.deep-think - one key
-    for both, kept in one gitignored file and never copied into code, config or logs. A packaged Nuru
-    (a standalone app, an Obsidian plugin) replaces this with its own settings or the system keychain,
-    so the key can be added after installing."""
-    return os.environ.get("ANTHROPIC_API_KEY") or dotenv_values(ENV_DIR / ".env.deep-think").get("CLAUDE_API_KEY")
+    """The Anthropic API key, for the expert planner and Claude as the main model alike: one key, read
+    by claude_access.keys (ANTHROPIC_API_KEY, else CLAUDE_API_KEY, else .env.deep-think)."""
+    return claude_api_key()
 
 
 MATH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "math-4-llms")
@@ -208,32 +229,9 @@ _RECOVERY_ANSWER = (
     "and note paths, and say plainly which step failed and what is still unresolved."
 )
 
-# ask_an_expert's user_request is the user's message verbatim. The session has it, so it fills
-# the field in itself: a small model asked to copy it paraphrased it, errors included.
-_EXPERT_TOOL = "ask_an_expert"
-
 # ask_user (core.questions) is offered to the model only with NURU_ASK_USER=1, until a model run shows
 # when it asks: too often, and Nuru checks in instead of doing the work.
 ASK_USER = os.environ.get("NURU_ASK_USER") == "1"
-_INJECTED_EXPERT_ARG = "user_request"
-
-# Answered ask_an_expert calls allowed per turn (a failed call doesn't count). A small model
-# otherwise sends its summary of an answer back for review and asks again, reworded, until the turn
-# times out - two minutes and an Opus call each. The last answer carries _EXPERT_LAST_ANSWER, and the
-# tool is then taken out of the tools offered; a call made anyway ends the turn with _EXPERT_CLARIFY,
-# a question to the user (decided 2026-09-30).
-_EXPERT_ANSWERS_PER_TURN = 2
-_EXPERT_LAST_ANSWER = (
-    f"\n\n[Nuru] That was the expert's last answer this turn ({_EXPERT_ANSWERS_PER_TURN} of "
-    f"{_EXPERT_ANSWERS_PER_TURN}); ask_an_expert is no longer available. If the answers settle the "
-    "request, reply to the user now and say which parts came from the expert. If they don't, don't guess: "
-    "tell the user what is still unclear and ask them to clarify, so the expert can be asked again."
-)
-_EXPERT_CLARIFY = (
-    f"the expert has already answered {_EXPERT_ANSWERS_PER_TURN} times this turn, and more was still needed. "
-    "What's still unclear? Tell me, and I'll ask the expert again with that"
-)
-
 
 def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
     """The tool definitions without the arguments the session fills in itself, so the model
@@ -242,12 +240,6 @@ def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
     for tool in tool_definitions:
         fn = tool["function"]
         properties = fn.get("parameters", {}).get("properties", {})
-        if fn["name"] == _EXPERT_TOOL and _INJECTED_EXPERT_ARG in properties:
-            parameters = dict(fn["parameters"])
-            parameters["properties"] = {k: v for k, v in properties.items() if k != _INJECTED_EXPERT_ARG}
-            if "required" in parameters:
-                parameters["required"] = [r for r in parameters["required"] if r != _INJECTED_EXPERT_ARG]
-            tool = {**tool, "function": {**fn, "parameters": parameters}}
         if fn["name"] == _PYTHON_TOOL:
             tool = {**tool, "function": {**fn, "description": _PYTHON_DESCRIPTION, "parameters": _PYTHON_PARAMETERS}}
         hidden.append(tool)
@@ -311,15 +303,6 @@ def _python_result(text: str) -> str:
         if isinstance(value, str) and len(value) > PYTHON_OUTPUT_CHARS:
             data[key] = value[:PYTHON_OUTPUT_CHARS] + f"\n[... {len(value) - PYTHON_OUTPUT_CHARS} more characters]"
     return json.dumps(data, ensure_ascii=False)
-
-
-def _expert_answered(content: str) -> bool:
-    """Whether an ask_an_expert result carries an answer - not an error, and not an empty one."""
-    try:
-        result = json.loads(content)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(result, dict) and bool(result.get("answer"))
 
 
 def _context_overflow(error: requests.exceptions.RequestException) -> bool:
@@ -485,8 +468,11 @@ class Session:
         server and the write ledger alike; without it each finds its own (VAULT_PATH, else
         .env.obsidian), and the notes server, which doesn't get this process's VAULT_PATH, may find
         another."""
-        rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
-        system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
+        if CLAUDE:  # no Modelfile: the same system.md goes out with each request instead
+            system_text = render_system((MODELFILES_DIR / "system.md").read_text())
+        else:
+            rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
+            system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
 
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
@@ -589,12 +575,14 @@ class Session:
 
     def load_model(self) -> None:
         """Make sure the Ollama server is up and the model is loaded, starting either if it isn't."""
-        server_spawned = ensure_server_running()
-        self.model_info = ensure_model_loaded(MODEL)
+        server_spawned = ensure_server_running()  # with Claude too: the notes search embeds through Ollama
+        self.model_info = claude_provider.model_info(MODEL) if CLAUDE else ensure_model_loaded(MODEL)
         self.logger.model_lifecycle(server_spawned, self.model_info)
 
     def loaded_model_info(self) -> dict | None:
         """Static info about the model, or None if it isn't in memory right now."""
+        if CLAUDE:
+            return claude_provider.model_info(MODEL)
         return ensure_model_loaded(MODEL) if is_model_loaded(MODEL) else None
 
     def _system_text(self) -> str:
@@ -627,6 +615,8 @@ class Session:
             self.logger.context_reduction(num_ctx, original_history_count - history_count, omitted_tokens)
         require_fit(num_ctx, messages, system=self._system_text(),
                     tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
+        if CLAUDE:
+            kwargs["system"] = self._system_text()
         yield from chat(model, messages, num_ctx=num_ctx, **kwargs)
 
     def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
@@ -689,7 +679,6 @@ class Session:
         # already been cut for overflowing the context window - which happens at most once a turn.
         last_results: list[tuple[int, str]] = []
         cut_a_result = False
-        expert_answers = 0  # answered ask_an_expert calls this turn, up to _EXPERT_ANSWERS_PER_TURN
         # watch_thinking stopped a call: the next call runs with thinking off, then `resume_think` is
         # back. Off for the rest of the turn, Granite looped on tool calls instead (test 6, 2026-09-29).
         steered, resume_think = False, think
@@ -705,8 +694,6 @@ class Session:
                 messages.append(current)
 
             tools_offered = self.tool_definitions
-            if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                tools_offered = [t for t in tools_offered if t["function"]["name"] != _EXPERT_TOOL]
             if ASK_USER:
                 tools_offered = [*tools_offered, questions.TOOL]
             hold_reply = False  # check_claim enforced: nothing is shown until the reply is checked
@@ -775,6 +762,7 @@ class Session:
             if final_answer or answer_after_failure:
                 think = False
             tool_calls = None
+            provider_content = None
             usage: dict = {}
             thinking = ""
             output_text = ""
@@ -802,6 +790,8 @@ class Session:
                             continue
                         if "tool_calls" in out:
                             tool_calls = out["tool_calls"]
+                        elif "provider_content" in out:
+                            provider_content = out["provider_content"]
                         elif "thinking" in out:
                             thinking = out["thinking"].strip()
                             if thinking:
@@ -847,6 +837,7 @@ class Session:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 stop_reason=usage.get("stop_reason"),
+                cache_read_tokens=usage.get("cache_read_tokens", 0), cache_write_tokens=usage.get("cache_write_tokens", 0),
                 tool_calls_requested=[call["function"]["name"] for call in tool_calls] if tool_calls else [],
                 output_text=output_text,
             )
@@ -872,7 +863,7 @@ class Session:
             if (final_answer or answer_after_failure) and tool_calls and not tools_refused:
                 # Tools are closed but still listed: refuse the calls once and ask again.
                 tools_refused = True
-                messages.append({"role": "assistant", "tool_calls": tool_calls})
+                messages.append(_tool_call_message(tool_calls, thinking, output_text, provider_content))
                 for call in tool_calls:
                     fn = call.get("function") or {}
                     refused = self._call_tool(turn_id, fn.get("name", ""), fn.get("arguments", {}), None, enforcing,
@@ -925,7 +916,7 @@ class Session:
             if hold_reply and output_text:
                 yield Text(output_text)  # words ahead of a tool call aren't the reply being checked
             tool_rounds += 1
-            messages.append({"role": "assistant", "tool_calls": tool_calls})
+            messages.append(_tool_call_message(tool_calls, thinking, output_text, provider_content))
             last_results = []
             correcting = bool(repair_pending)
             for index, call in enumerate(tool_calls):
@@ -975,16 +966,7 @@ class Session:
                     if correcting:
                         recovery_calls += self._repair_rounds - before_repair
                 else:
-                    if name == _EXPERT_TOOL:
-                        args = {**self._resolve_attachments(args), _INJECTED_EXPERT_ARG: text}
-                    if name == _EXPERT_TOOL and expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                        yield from self._stop(turn_id, _EXPERT_CLARIFY)
-                        return
                     outcome = self._call_tool(turn_id, name, args, None, enforcing)
-                    if name == _EXPERT_TOOL and _expert_answered(outcome.text):
-                        expert_answers += 1
-                        if expert_answers >= _EXPERT_ANSWERS_PER_TURN:
-                            outcome = replace(outcome, text=outcome.text + _EXPERT_LAST_ANSWER)
                 messages.append({"role": "tool", "content": outcome.text})
                 last_results.append((len(messages) - 1, name))
                 if outcome.must_stop:
@@ -1281,7 +1263,8 @@ class Session:
             except ContextBudgetExceeded:
                 return ""
             self.logger.model_call(turn_id, (time.monotonic() - started) * 1000,
-                usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), usage.get("stop_reason"), [], output)
+                usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), usage.get("stop_reason"), [], output,
+                cache_read_tokens=usage.get("cache_read_tokens", 0), cache_write_tokens=usage.get("cache_write_tokens", 0))
             return output
 
         def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
@@ -1353,23 +1336,6 @@ class Session:
         yield Text(final)
         return final
 
-    def _resolve_attachments(self, arguments: dict) -> dict:
-        """ask_an_expert's file_paths as the vault's real paths. The model often names a note by its
-        title ("Area Monitor Device Redesign"), which deep-think can't open; the obsidian server
-        resolves it as read_note would. A name it can't resolve (an attachment, a typo) is passed on
-        as given, and fails there with deep-think's own message."""
-        paths = arguments.get("file_paths")
-        if not paths or not isinstance(paths, list):
-            return arguments
-        resolved = []
-        for path in paths:
-            try:
-                result = self.tools.call_harness_tool("note_info", {"name": path})
-                resolved.append(json.loads(result.text)["note"] if not result.is_error else path)
-            except Exception:
-                resolved.append(path)
-        return {**arguments, "file_paths": resolved}
-
     def _repeated_call(self, tool: str, arguments: dict, calls_seen: Counter) -> str | None:
         """Counts the call; the reason to stop the turn if it is a loop - the same tool, the same
         arguments, `repeat_calls` times - and watch_thinking is enforced. In shadow a loop is logged
@@ -1395,7 +1361,7 @@ class Session:
         self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
-        tools = [t for t in self.tool_definitions if t["function"]["name"] != _EXPERT_TOOL]
+        tools = self.tool_definitions
 
         planner_info = ensure_model_loaded(PLANNER_MODEL) if PLANNER_MODEL != MODEL else self.model_info
         planner_window = _context_window(planner_info)
@@ -1421,6 +1387,7 @@ class Session:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 stop_reason=usage.get("stop_reason"),
+                cache_read_tokens=usage.get("cache_read_tokens", 0), cache_write_tokens=usage.get("cache_write_tokens", 0),
                 tool_calls_requested=[],
                 output_text=out,
             )
@@ -1500,7 +1467,8 @@ class Session:
                 self.logger.model_call(
                     turn_id=turn_id, duration_ms=(time.monotonic() - start) * 1000,
                     prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
-                    stop_reason=usage.get("stop_reason"), tool_calls_requested=[], output_text=out,
+                    stop_reason=usage.get("stop_reason"),
+                cache_read_tokens=usage.get("cache_read_tokens", 0), cache_write_tokens=usage.get("cache_write_tokens", 0), tool_calls_requested=[], output_text=out,
                 )
                 if thinking:
                     yield Thinking(thinking)
@@ -1627,9 +1595,12 @@ class Session:
         self.logger.turn_end(turn_id)
 
     def shutdown(self, reason: str) -> None:
-        """Unload every model and stop the Ollama server if we started it, and log why the session ended."""
-        unload_all_models()
-        stop_server()
+        """Unload every model and stop the Ollama server if we started it, and log why the session ended.
+        With Claude as the main model Ollama is left as it is: it serves only the embeddings, and may be
+        running other models."""
+        if not CLAUDE:
+            unload_all_models()
+            stop_server()
         self.logger.session_end(reason=reason, models_unloaded=True, server_stopped=True)
 
     def close(self) -> None:

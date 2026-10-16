@@ -80,7 +80,7 @@ def build(args: dict, decision_config: Path) -> dict:
                  "diff_sha256": hashlib.sha256(_git("diff", "HEAD").encode()).hexdigest() if dirty.strip() else None,
                  "submodules": {line.split()[1]: line.split()[0].lstrip("+-U")
                                 for line in _git("submodule", "status").splitlines() if line.strip()}},
-        "model": {"base": session.BASE_MODEL, **_ollama_model(session.BASE_MODEL),
+        "model": {"main": session.MAIN_MODEL or "ollama", "base": session.BASE_MODEL, **_ollama_model(session.BASE_MODEL),
                   "modelfile": str(modelfile.relative_to(REPO)), "modelfile_sha256": _sha256(modelfile),
                   "rendered_modelfile_sha256": hashlib.sha256(
                       render_modelfile(modelfile, session.BASE_MODEL).encode()).hexdigest(),

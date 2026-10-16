@@ -132,12 +132,14 @@ def test_a_key_handed_in_makes_the_expert_available(log):
 
 
 def test_the_key_comes_from_the_environment_first_then_deep_thinks_env(monkeypatch, tmp_path):
+    from claude_access import keys
     from core import session
 
     monkeypatch.undo()  # the autouse fixture stubs expert_api_key; this test is about the real one
     (tmp_path / ".env.deep-think").write_text("CLAUDE_API_KEY=from-deep-think\n")
-    monkeypatch.setattr(session, "ENV_DIR", tmp_path)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(keys, "REPO_ROOT", tmp_path)  # never the real .env.deep-think
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     assert session.expert_api_key() == "from-deep-think"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-env")
     assert session.expert_api_key() == "from-env"

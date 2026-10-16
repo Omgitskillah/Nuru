@@ -9,9 +9,9 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 
 | File | Read by | Holds |
 |---|---|---|
-| `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`), context size |
+| `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`, or `NURU_MAIN_MODEL` for Claude), context size |
 | `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
-| `.env.deep-think` | deep-think (`ask_an_expert`), and Nuru's expert tier | `CLAUDE_API_KEY`, `DEEP_THINK_BASE_DIR` |
+| `.env.deep-think` | deep-think (`write_plan`), Nuru's expert tier, and Claude as the main model ([claude-access](packages/claude-access)) | `CLAUDE_API_KEY` |
 
 A variable already set in the environment always wins over the file. Nuru hands its servers only what they need, since MCP servers start with a stripped-down environment.
 
@@ -23,9 +23,8 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 |---|---|---|---|
 | `nuru/.db/conversation.db` | Nuru (CLI and UI) | Every conversation and message | `NURU_DB_PATH` |
 | `nuru/.db/decisions.sqlite3` (+ `-wal`, `-shm`) | laya-mcp and Nuru's harness | Laya's decisions with their state text, the tools the harness ran, labels, the classify cache | `database` in [`config/decision_layer.yaml`](config/decision_layer.yaml) |
-| `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes | `NURU_LOG_DIR` |
+| `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes. With Claude as the main model, also `claude-requests-<date>.jsonl`: every request whole, as sent (the notes it carried included), with its usage | `NURU_LOG_DIR` |
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |
-| `servers/deep-think/.file_cache.db` | deep-think | Which files were already uploaded to the expert, by content hash | `DEEP_THINK_MCP_DB_PATH` |
 | `nuru/evals/**/.runs/` | the eval scripts | Raw eval results and scratch vault copies (see [decision-layer evals](nuru/evals/decision_layer/README.md)) | - |
 | `<vault>/.obsidian-mcp-index.sqlite3` | obsidian-mcp | Note id -> path for notes `write_note` created | - |
 | `<vault>/.obsidian-mcp-semantic.sqlite3` | obsidian-mcp and Nuru's indexer | Semantic-search chunks and their vectors | `OBSIDIAN_SEMANTIC_DB` |

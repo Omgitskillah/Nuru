@@ -1,14 +1,15 @@
 [tool.uv.workspace]
-members = ["servers/obsidian", "servers/deep-think", "servers/laya", "nuru"]
+members = ["packages/claude-access", "servers/obsidian", "servers/deep-think", "servers/laya", "nuru"]
 
 [tool.pytest.ini_options]
-testpaths = ["nuru/tests", "servers/deep-think/tests", "servers/laya/tests", "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
+testpaths = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests", "servers/laya/tests", "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "obsidian-mcp",
     "deep-think-mcp",
+    "claude-access",
     "laya-mcp",
     "access-logging",
     "core",
@@ -18,6 +19,7 @@ dev = [
 [tool.uv.sources]
 obsidian-mcp = { workspace = true }
 deep-think-mcp = { workspace = true }
+claude-access = { workspace = true }
 laya-mcp = { workspace = true }
 access-logging = { path = "servers/obsidian/vendor/access-logging" }
 core = { workspace = true }

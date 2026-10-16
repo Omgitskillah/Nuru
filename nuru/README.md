@@ -69,6 +69,18 @@ uv run nuru-ui    # in a window
 
 (`nuru-cli` is what `nuru` used to be called.)
 
+## Claude as the main model
+
+`NURU_MAIN_MODEL=anthropic:claude-haiku-5-5` (or `anthropic:claude-sonnet-5-5`) in `.env.nuru` runs Nuru's turns on Claude instead of Ollama, through the shared [claude-access](../packages/claude-access) package - the same Claude code deep-think's tools use. Unset, or `ollama`, keeps the local model. Everything else is unchanged: the same tools, dispatch, write checks, step cap, conversation store, `nuru-serve` and plugin. Only the model call moves ([`providers/claude.py`](src/core/providers/claude.py)):
+
+- **No Modelfile.** The same [`system.md`](modelfiles/system.md) goes out as the request's system prompt; it and the tool list are marked for prompt caching, so after the first call they're read from the cache.
+- **Thinking** is adaptive, steered by `effort`: Nuru's `off` turns it off, `low`/`high` set the effort. The model's thinking blocks are kept on its tool-call messages for the rest of the turn, as the API requires (`NURU_KEEP_THINKING` doesn't apply). Sampling settings aren't sent: these models reject them.
+- **Context**: the models take 1M tokens; Nuru still caps what it uses at `NURU_MAX_NUM_CTX`.
+- **Ollama** still runs, for the notes search's embeddings only; Nuru builds no `nuru` model and leaves Ollama's loaded models alone when it exits.
+- **Key**: `ANTHROPIC_API_KEY`, else `CLAUDE_API_KEY` from `.env.deep-think` - the expert's key.
+- **What leaves the machine**: everything the model reads - the system prompt, your messages and every note text a tool returns. Each request is also logged whole, locally, to `nuru/.logs/claude-requests-<date>.jsonl` with its token usage. Rules to keep some notes local are a TODO (R25); for now Claude is treated as a local model.
+- **Evals**: `run_suite.py` needs `--allow-cloud` with a Claude main model, and every round ends with a token summary (in, cached, out; per test too, also in the batch's `tokens.json`).
+
 ## What happens on each message
 
 1. **Server check** - if Ollama's server isn't already running on `localhost:11434`, it's started in the background (`ollama serve`).
@@ -90,8 +102,6 @@ History is scoped to one conversation per run of `nuru` - each launch starts a n
    - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
    - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
    - **check_claim** - the reply is held until checked against what ran; a false claim is written again once, then shown with a warning.
-
-   Always on, in code: `ask_an_expert` answers at most twice a turn. The second answer tells the model it was the last, and to ask you what's unclear if the answers don't settle it; the tool is then no longer offered, and a call made anyway ends the turn with that question to you, and its `file_paths` are resolved to real vault paths first, so a note named by its title attaches.
 
 ## Plan mode (a test)
 

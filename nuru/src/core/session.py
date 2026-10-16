@@ -74,7 +74,7 @@ BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "granite4.2:3b")
 # the shared claude-access provider instead of Ollama; unset, or "ollama", keeps the local model. With
 # Claude, MODEL is the Claude model and no Modelfile is built - Ollama only serves the notes search's
 # embeddings.
-MAIN_MODEL = os.environ.get("NURU_MAIN_MODEL", "").strip()
+MAIN_MODEL = claude_provider.main_model_setting()  # the environment, else .env.nuru (loaded above)
 CLAUDE = MAIN_MODEL.startswith(claude_provider.PREFIX)
 if MAIN_MODEL and not CLAUDE and MAIN_MODEL != "ollama":
     raise ValueError(f"NURU_MAIN_MODEL={MAIN_MODEL!r}: use 'ollama' or anthropic:<model>")

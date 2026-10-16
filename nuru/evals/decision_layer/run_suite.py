@@ -25,6 +25,7 @@ import yaml
 
 from common import DUMMY_VAULT, HERE, REPO, RUNS
 import manifest
+from core.providers import claude as claude_provider
 from cases import load_cases
 
 # The quick suite: one test per behaviour worth watching, each ~1-2 minutes, and each one has failed
@@ -124,6 +125,18 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
 
 
 
+# Where Nuru reads NURU_MAIN_MODEL from when the environment doesn't set it (tests point it elsewhere).
+ENV_NURU = REPO / ".env.nuru"
+
+
+def require_cloud_opt_in(allow_cloud: bool) -> None:
+    """Stop unless --allow-cloud was given for a batch that Nuru would run on Claude - judged from the
+    model setting exactly as the session resolves it (environment, else .env.nuru), so a model chosen
+    only in .env.nuru can't reach the paid API unasked."""
+    if claude_provider.main_model_setting(os.environ, ENV_NURU).startswith(claude_provider.PREFIX) and not allow_cloud:
+        sys.exit("NURU_MAIN_MODEL is a Claude model: pass --allow-cloud to run this batch on the paid API")
+
+
 def token_summary(batch: Path) -> str:
     """Tokens in and out for the whole round and per test, from results.jsonl; also written to
     tokens.json. "in" counts every prompt token; "cached" is how many of those were Claude prompt-cache
@@ -169,8 +182,7 @@ def main():
                         "paths, not of calibrated thresholds")
     args = parser.parse_args()
 
-    if os.environ.get("NURU_MAIN_MODEL", "").startswith("anthropic:") and not args.allow_cloud:
-        sys.exit("NURU_MAIN_MODEL is a Claude model: pass --allow-cloud to run this batch on the paid API")
+    require_cloud_opt_in(args.allow_cloud)
     prompts = suite_prompts()
     cases = load_cases(args.cases)
     if set(prompts) & set(cases):

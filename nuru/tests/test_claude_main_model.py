@@ -217,3 +217,88 @@ def test_with_claude_the_tool_call_message_keeps_the_providers_content(claude_se
     list(s.ask("find x"))
     assistant = next(m for m in calls[1] if m["role"] == "assistant")
     assert assistant["provider_content"] == content
+
+
+# --- review of PR #23: the cloud guard and task-specific system prompts ---
+
+
+def test_the_main_model_setting_resolves_like_the_session(tmp_path):
+    env_file = tmp_path / ".env.nuru"
+    env_file.write_text("NURU_MAIN_MODEL= anthropic:claude-haiku-5-5 \n")
+    assert claude.main_model_setting({}, env_file) == "anthropic:claude-haiku-5-5"  # file only, stripped
+    assert claude.main_model_setting({"NURU_MAIN_MODEL": "ollama"}, env_file) == "ollama"  # environment wins
+    assert claude.main_model_setting({"NURU_MAIN_MODEL": ""}, env_file) == ""  # even when set empty
+    assert claude.main_model_setting({}, tmp_path / "missing") == ""
+
+
+@pytest.fixture
+def run_suite(monkeypatch):
+    import importlib
+    from pathlib import Path
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "evals" / "decision_layer"))
+    return importlib.import_module("run_suite")
+
+
+def test_a_claude_model_chosen_only_in_env_nuru_needs_allow_cloud(run_suite, monkeypatch, tmp_path):
+    env_file = tmp_path / ".env.nuru"
+    env_file.write_text("NURU_MAIN_MODEL=anthropic:claude-haiku-5-5\n")
+    monkeypatch.setattr(run_suite, "ENV_NURU", env_file)
+    monkeypatch.delenv("NURU_MAIN_MODEL", raising=False)
+    with pytest.raises(SystemExit, match="--allow-cloud"):
+        run_suite.require_cloud_opt_in(False)
+    run_suite.require_cloud_opt_in(True)
+    monkeypatch.setenv("NURU_MAIN_MODEL", "ollama")  # the environment overrides the file, as in Session
+    run_suite.require_cloud_opt_in(False)
+
+
+def test_main_refuses_a_claude_batch_from_env_nuru_before_any_setup(run_suite, monkeypatch, tmp_path):
+    env_file = tmp_path / ".env.nuru"
+    env_file.write_text("NURU_MAIN_MODEL=anthropic:claude-sonnet-5-5\n")
+    monkeypatch.setattr(run_suite, "ENV_NURU", env_file)
+    monkeypatch.delenv("NURU_MAIN_MODEL", raising=False)
+    monkeypatch.setattr(run_suite, "suite_prompts", lambda: pytest.fail("the batch must not be set up"))
+    monkeypatch.setattr("sys.argv", ["run_suite", "--tests", "3"])
+    with pytest.raises(SystemExit, match="--allow-cloud"):
+        run_suite.main()
+
+
+def _claude_session_with_real_conversion(monkeypatch, fake, *responses):
+    """A Claude session whose chat is the real provider: only the network is faked."""
+    provider = fake(*responses)
+    return start_session(monkeypatch, chat=claude.chat), provider
+
+
+def test_an_executor_call_runs_under_its_own_instructions(claude_session, monkeypatch, fake):
+    from core import executor
+
+    s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": "{}"}))
+    messages = executor.pick_messages("find the backoff cap", "the right note", {"Search results": "a, b"})
+    list(s._chat(session.MODEL, messages, num_ctx=8192, think=False))
+    (request,) = provider.requests
+    assert request["model"] == "claude-haiku-5-5"
+    assert request["system"][0]["text"] == executor.PICK_SYSTEM
+    assert s._system_text() not in json.dumps(request["system"])  # the base prompt doesn't come along
+    assert all(m["role"] != "system" for m in request["messages"])
+
+
+def test_a_planning_call_runs_under_the_planners_instructions(claude_session, monkeypatch, fake):
+    from core import planner
+
+    plan = json.dumps({"steps": []})
+    s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": plan}))
+
+    def chat_json(messages, schema, think):
+        return "".join(x for x in s._chat(session.MODEL, messages, num_ctx=8192, think=think, fmt=schema)
+                       if isinstance(x, str))
+
+    planner.make_plan("what is the backoff cap?", s.tool_definitions, chat_json, False, repairs=0)
+    request = provider.requests[0]
+    assert request["system"][0]["text"] == planner.system_prompt(s.tool_definitions)
+    assert request["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_an_ordinary_turn_runs_under_the_base_prompt(claude_session, monkeypatch, fake):
+    s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": "Hello."}))
+    list(s.ask("hi"))
+    assert provider.requests[0]["system"][0]["text"] == s._system_text()

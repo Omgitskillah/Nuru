@@ -10,8 +10,11 @@ loop, tools, checks and logs work unchanged:
 - {"thinking": ...} with the full reasoning, then a usage dict.
 
 The messages it receives are Ollama-shaped (role/content, assistant tool_calls, role "tool" results in
-call order); to_anthropic() turns them into Anthropic content blocks. The system prompt (system.md, the
-same text the Modelfiles carry) and the tool list are marked for prompt caching.
+call order); to_anthropic() turns them into Anthropic content blocks. The system prompt and the tool list
+are marked for prompt caching. Which system prompt: the request's own role="system" messages if it has
+any (the planner's and executor's instructions), joined in order; otherwise `system`, the session's
+system.md. That is what Ollama does - a request's system message takes the place of the Modelfile's
+SYSTEM - so a call means the same on either provider.
 
 Every request is also written locally, whole, to NURU_LOG_DIR/claude-requests-<date>.jsonl: what was
 sent (messages, tool names), the model, the thinking setting and the usage, so it can be checked
@@ -28,8 +31,10 @@ import anthropic
 import requests
 from claude_access.claude import ClaudeProvider
 from claude_access.models import MAIN_MODELS
+from dotenv import dotenv_values
 
 PREFIX = "anthropic:"
+ENV_FILE = Path(__file__).resolve().parents[4] / ".env.nuru"
 # Thinking shares max_tokens with the reply; too small and the reply is cut off after the thinking.
 MAX_TOKENS = 16000
 LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[3] / ".logs"))
@@ -43,6 +48,18 @@ _provider: ClaudeProvider | None = None
 class ClaudeError(requests.exceptions.RequestException):
     """A failed Claude request. A RequestException, so the session handles it as it does a failed
     Ollama request: the turn stops with the error and the user's message isn't kept."""
+
+
+def main_model_setting(environ=None, env_file: Path | None = None) -> str:
+    """NURU_MAIN_MODEL as the session resolves it: the environment wins over .env.nuru (load_dotenv
+    never overrides a variable that is already set, even to ""), stripped of whitespace. Anyone who
+    must know whether a run goes to Claude - run_suite's --allow-cloud guard - asks this."""
+    environ = os.environ if environ is None else environ
+    if "NURU_MAIN_MODEL" in environ:
+        value = environ["NURU_MAIN_MODEL"]
+    else:
+        value = dotenv_values(env_file or ENV_FILE).get("NURU_MAIN_MODEL") or ""
+    return value.strip()
 
 
 def model_id(main_model: str) -> str:
@@ -122,6 +139,12 @@ def to_anthropic(messages: list[dict]) -> list[dict]:
     return out
 
 
+def system_text(messages: list[dict], base: str | None) -> str | None:
+    """The system prompt a request runs under: its own system messages, else `base`."""
+    own = [m["content"] for m in messages if m.get("role") == "system" and (m.get("content") or "").strip()]
+    return "\n\n".join(own) if own else base
+
+
 def _tools(tools: list[dict] | None) -> list[dict] | None:
     if not tools:
         return None
@@ -163,6 +186,7 @@ def chat(
     """See the module docstring. `num_ctx` is Nuru's own budget (the API has no such setting) and
     `options` (sampling) is ignored: these models reject temperature, top_p and top_k."""
     thinking, effort = _thinking(model, think)
+    system = system_text(messages, system)
     output_config = {**({"effort": effort} if effort else {}),
                      **({"format": {"type": "json_schema", "schema": fmt}} if fmt is not None else {})}
     request = {

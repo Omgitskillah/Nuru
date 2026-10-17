@@ -3,7 +3,7 @@
 const { FIXTURES, until } = require("./helpers/setup");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Component, Notice, window } = require("obsidian");
+const { Component, MarkdownView, Menu, Notice, window } = require("obsidian");
 
 const { Display } = require("../lib/protocol");
 const { ConnectionProblem } = require("../lib/connection");
@@ -25,9 +25,14 @@ function fakeClient({ history = [], live = {} } = {}) {
     chat: "ready", // what /v1/status says about the model
     async status() { calls.push(["status"]); return { ready: { chat: this.chat } }; },
     async conversations() { return { conversations: [{ id: "conv0000demo", title: "Trip", created_at: "2026-10-09T12:00:00.000Z" }] }; },
-    async conversation(id) { calls.push(["conversation", id]); return { conversation_id: id, turns: history }; },
+    saved: {}, // the conversation's stored model / thinking
+    async conversation(id) { calls.push(["conversation", id]); return { conversation_id: id, turns: history, ...this.saved }; },
     async createConversation(title) { calls.push(["create", title]); return { conversation_id: "conv0000new1" }; },
-    async submit(id, text, attachments) { calls.push(["submit", id, text, attachments]); return { turn_id: "turn0000new1" }; },
+    async submit(id, text, attachments, requestId, choice) {
+      calls.push(["submit", id, text, attachments]);
+      if (choice && Object.keys(choice).length) calls.push(["choice", choice]);
+      return { turn_id: "turn0000new1" };
+    },
     async cancel(turnId) { calls.push(["cancel", turnId]); return {}; },
     async answer(...args) { calls.push(["answer", ...args]); return {}; },
     events(turnId, after, onEvent, signal) {
@@ -42,8 +47,13 @@ function fakeClient({ history = [], live = {} } = {}) {
 
 async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status } = {}) {
   const opened = [];
+  // The note being edited; `editing.active = false` is the panel having the focus instead.
+  const editing = { selection, active: true };
+  const note = Object.assign(new MarkdownView(), { file, containerEl: document.createElement("div"),
+    editor: { getSelection: () => editing.selection } });
   const app = { workspace: {
-    getActiveFile: () => file, getActiveViewOfType: () => ({ editor: { getSelection: () => selection } }),
+    getActiveFile: () => file, getActiveViewOfType: () => (editing.active ? note : null),
+    on: () => ({ off() {} }),
     openLinkText: (...args) => opened.push(args), getLeavesOfType: () => [],
   } };
   const plugin = {
@@ -54,7 +64,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
   };
   const view = new ChatView({ app }, plugin);
   await view.open();
-  return { view, opened, plugin };
+  return { view, opened, plugin, editing, note };
 }
 
 const rendered = (turn) => until(() => turn.replyEl.childNodes.length > 0 || turn.runner.display.reply === "");
@@ -92,7 +102,8 @@ test("a question waiting for an answer gets a card; answering sends its operatio
   const [turn] = view.turns.values();
   await until(() => turn.questionEl.querySelector("button"));
   assert.match(turn.questionEl.querySelector(".nuru-countdown").textContent, /s to answer/);
-  assert.equal(view.stopButton.hidden, false);
+  assert.equal(view.sendButton.dataset.icon, "square", "the send arrow is a stop square while Nuru answers");
+  assert.ok(view.sendButton.classList.contains("nuru-stop"));
   const yes = [...turn.questionEl.querySelectorAll("button")].find((b) => b.textContent.startsWith("Yes"));
   yes.click();
   await until(() => client.calls.some((c) => c[0] === "answer"));
@@ -105,10 +116,70 @@ test("a question waiting for an answer gets a card; answering sends its operatio
   assert.ok(Component.listeners < listeners && Component.intervals === 0);
 });
 
+test("a selection is shown, sent once, and shown again only when it changes", async () => {
+  const client = fakeClient();
+  const { view, editing } = await open({ client, file: { path: "nuru/Trip.md" }, selection: "Day 1\nDay 2\nDay 3" });
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 3 lines selected");
+  view.input.value = "plan this";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "nuru/Trip.md", selection: "Day 1\nDay 2\nDay 3" }]);
+  await until(() => view.selectionEl.textContent === "");
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "", "the same selection isn't offered again");
+  editing.selection = "Day 2";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 5 characters selected");
+  editing.selection = "";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "");
+  view.stop();
+  await view.close();
+});
+
+test("selected table cells are sent as a Markdown table, with their columns' header", async () => {
+  const client = fakeClient();
+  // Obsidian's Live Preview table: the selected cells are marked; the editor itself holds a stray character.
+  const { view, note } = await open({ client, file: { path: "Nuru/Learning/Model Benchmarks.md" }, selection: "x" });
+  note.containerEl.innerHTML = `<table class="table-editor"><thead><tr><th>Feature</th><th>Gemma4:12b</th><th>Qwen3:8b</th></tr></thead>
+    <tbody><tr><td class="is-selected start top">Tool discovery</td><td class="is-selected end top">5</td><td>5</td></tr>
+    <tr><td class="is-selected start bottom">Path | file parsing</td><td class="is-selected end bottom">3</td><td>5</td></tr>
+    <tr><td>Average</td><td>4.4</td><td>5</td></tr></tbody></table>`;
+  document.dispatchEvent(new window.Event("mouseup"));
+  assert.equal(view.selectionEl.textContent, "Model Benchmarks · table (2 rows × 2 columns) selected");
+  view.input.value = "compare";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "Nuru/Learning/Model Benchmarks.md",
+    selection: "| Feature | Gemma4:12b |\n| --- | --- |\n| Tool discovery | 5 |\n| Path \\| file parsing | 3 |" }]);
+  view.stop();
+  await view.close();
+});
+
+test("an attached note isn't sent twice when text in it is also selected; the clip attaches the note", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, file: { path: "nuru/Trip.md" }, selection: "Rome" });
+  assert.equal(view.containerEl.querySelector(".nuru-clip").dataset.icon, "paperclip");
+  assert.equal(view.sendButton.dataset.icon, "arrow-up");
+  document.dispatchEvent(new window.Event("selectionchange"));
+  view.containerEl.querySelector(".nuru-clip").click();
+  view.input.value = "summarise";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "nuru/Trip.md" }]);
+  view.stop();
+  await view.close();
+});
+
 test("a message goes with only what was attached, and starts a conversation if none is open", async () => {
   const client = fakeClient();
-  const { view } = await open({ client, conversationId: null, file: { path: "nuru/Trip.md" }, selection: "Rome" });
-  view.attach(true);
+  const { view, editing } = await open({ client, conversationId: null, file: { path: "nuru/Trip.md" }, selection: "Rome" });
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 4 characters selected");
+  editing.active = false; // clicking into the panel: the note keeps its selection
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 4 characters selected");
   view.input.value = "summarise this";
   view.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await until(() => client.calls.some((c) => c[0] === "submit"));
@@ -305,7 +376,7 @@ test("a late answer for a message sent from A leaves B's draft and attachments a
   const sending = view.send();
   await view.openConversation("conv0000bbbb");
   view.input.value = "a draft for B";
-  view.attach(false);
+  view.attach();
   answer.resolve({ turn_id: "turn0000aaa1" });
   await sending;
   assert.equal(view.input.value, "a draft for B");
@@ -362,7 +433,7 @@ async function pendingFromA(found) {
   await view.send();
   await view.openConversation("conv0000bbbb");
   view.input.value = "for B";
-  view.attach(false);
+  view.attach();
   const sending = view.send();
   const release = () => (found ? lookup.resolve({ conversation_id: "conv0000aaaa", turn_id: "turn0000aaa1", state: "running" })
     : lookup.reject(Object.assign(new Error("not found"), { status: 404 })));
@@ -375,7 +446,7 @@ for (const found of [true, false]) {
     await view.openConversation("conv0000cccc");
     files.path = "nuru/C.md";
     view.input.value = "a draft for C";
-    view.attach(false);
+    view.attach();
     release();
     await sending;
     assert.equal(client.calls.filter((c) => c[0] === "submit").length, 1, "only A's first attempt was ever sent");
@@ -646,5 +717,111 @@ test("Vaulted shows only once a note was written, and stays folded if the user f
   }
   assert.ok(!turn.vaultedEl.open);
   assert.equal(turn.vaultedEl.querySelectorAll("a").length, 1);
+  await view.close();
+});
+
+
+const MODELS = { default: "qwen3.5:4b-q8_0", choices: [
+  { id: "qwen3.5:4b-q8_0", label: "qwen3.5:4b-q8_0", cloud: false, default_thinking: "off",
+    thinking: [{ id: "off", label: "Off" }, { id: "low", label: "On" }] },
+  { id: "anthropic:claude-haiku-5-5", label: "Claude Haiku 5.5", cloud: true, default_thinking: "off",
+    thinking: [{ id: "off", label: "Off" }, { id: "low", label: "Low" }, { id: "high", label: "High" }] },
+  { id: "plain:1b", label: "plain:1b", cloud: false, default_thinking: null, thinking: [] },
+] };
+
+test("the model and thinking buttons show the conversation's choice; a pick goes with the next message", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0");
+  assert.equal(view.thinkingButton.textContent, "Thinking: Off");
+
+  view.modelButton.click();
+  assert.deepEqual(Menu.shown.items.map((i) => [i.title, i.checked]),
+    [["qwen3.5:4b-q8_0", true], ["Claude Haiku 5.5 ☁ cloud", false], ["plain:1b", false]]);
+  Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
+  assert.equal(view.modelButton.textContent, "Claude Haiku 5.5 ☁");
+  view.thinkingButton.click();
+  assert.deepEqual(Menu.shown.items.map((i) => i.title), ["Off", "Low", "High"]);
+  Menu.shown.pick("High");
+  assert.equal(view.thinkingButton.textContent, "Thinking: High");
+
+  view.input.value = "hello";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "choice"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "choice")[1], { model: "anthropic:claude-haiku-5-5", thinking: "high" });
+  await until(() => view.input.value === "");
+  view.input.value = "again"; // the button is a stop button while the first turn runs: Enter sends
+  view.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await until(() => client.calls.filter((c) => c[0] === "submit").length === 2);
+  assert.equal(client.calls.filter((c) => c[0] === "choice").length, 1, "the next message carries no change");
+  view.stop();
+  await view.close();
+});
+
+test("a model that can't think has no thinking button; an opened conversation shows its stored choice", async () => {
+  const client = fakeClient();
+  client.saved = { model: "anthropic:claude-haiku-5-5", thinking: "low" };
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  await until(() => view.modelButton.textContent === "Claude Haiku 5.5 ☁");
+  assert.equal(view.thinkingButton.textContent, "Thinking: Low");
+  view.modelButton.click();
+  Menu.shown.pick("plain:1b");
+  assert.ok(view.thinkingButton.hidden, "plain:1b can't think");
+  await view.openConversation(null);
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0", "a new conversation starts at the service's default");
+  await view.close();
+});
+
+test("without a model list from the service, neither button shows", async () => {
+  const { view } = await open({ client: fakeClient(), status: { ready: { chat: "ready" } } });
+  assert.ok(view.modelButton.hidden && view.thinkingButton.hidden);
+  await view.close();
+});
+
+test("a model picked while the last message is still on its way goes with the next one", async () => {
+  const client = fakeClient();
+  const answer = deferred();
+  const submit = client.submit;
+  let first = true; // only the first message's acceptance is slow
+  client.submit = async (...args) => {
+    const got = await submit.apply(client, args);
+    if (first) { first = false; await answer.promise; }
+    return got;
+  };
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  view.modelButton.click();
+  Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
+  view.input.value = "hello";
+  const sent = view.send();
+  await until(() => client.calls.some((c) => c[0] === "choice"));
+  view.modelButton.click();
+  Menu.shown.pick("qwen3.5:4b-q8_0"); // back to local before Nuru has accepted the first message
+  answer.resolve({ turn_id: "turn0000new1" });
+  await sent;
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0");
+  view.input.value = "again";
+  await view.send();
+  assert.deepEqual(client.calls.filter((c) => c[0] === "choice").map((c) => c[1].model),
+    ["anthropic:claude-haiku-5-5", "qwen3.5:4b-q8_0"], "the second message runs where the button says");
+  view.stop();
+  await view.close();
+});
+
+test("a selection that would be a sixth attachment isn't sent, and says so", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, file: { path: "nuru/Other.md" }, selection: "Rome" });
+  view.attachments = ["A", "B", "C", "D", "E"].map((n) => ({ path: `nuru/${n}.md` }));
+  view.renderChips();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Other · 4 characters selected — not sent: 5 notes are attached, remove one to send it");
+  view.input.value = "compare";
+  await view.send();
+  assert.equal(client.calls.find((c) => c[0] === "submit")[3].length, 5, "submit_turn takes at most 5");
+
+  view.attachments = view.attachments.slice(1); // a note removed: the selection fits again
+  view.renderChips();
+  view.trackSelection();
+  assert.equal(view.selectionEl.textContent, "Other · 4 characters selected");
+  view.stop();
   await view.close();
 });

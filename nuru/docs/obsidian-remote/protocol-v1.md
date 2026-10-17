@@ -48,10 +48,10 @@ The service makes no tool or model call before all four checks pass.
 
 | Operation | Body | Answer |
 | --- | --- | --- |
-| `GET /v1/status` | none | `status`. It works before any model is loaded. |
+| `GET /v1/status` | none | `status`. It works before any model is loaded. `models`, when present, lists what a conversation may run on (see [Models](#models)). |
 | `POST /v1/conversations` | `create_conversation` | `{v, conversation_id}` |
 | `GET /v1/conversations?before=&limit=` | none | `{v, conversations: [{id, title, created_at}]}`, newest first. `limit` is at most 50 (default 20); `before` is the last ID of the previous page. |
-| `GET /v1/conversations/{id}?before=&limit=` | none | `{v, conversation_id, title, created_at, turns: [{turn_id, text, state, display}]}`, newest first, at most 50 turns per page. `display` is what `Display` shows for the turn. |
+| `GET /v1/conversations/{id}?before=&limit=` | none | `{v, conversation_id, title, created_at, model, thinking, turns: [{turn_id, text, state, display}]}`, newest first, at most 50 turns per page. `display` is what `Display` shows for the turn. |
 | `POST /v1/conversations/{id}/turns` | `submit_turn` | 202 `accepted_turn`, sent once acceptance is stored and before generation starts |
 | `GET /v1/turns/{id}/events?after={seq}` | none | Replays the events after `seq`, then follows live ones until the terminal event |
 | `POST /v1/turns/{id}/cancel` | `cancel_turn` | 202 `{v, conversation_id, turn_id}`, also for a turn that has already ended |
@@ -183,6 +183,22 @@ A turn's `attachments` are only what the user attached. The model is told each n
 and reads the note itself, with its own tools and under the same rules as any other read; a
 `selection` is quoted in the message. The service never pastes a note's contents in. A path
 that resolves outside the vault, through a symlink too, is refused with `invalid_request`.
+
+## Models
+
+`status.models` is `{default, choices}`: the configured model's id (`NURU_BASE_MODEL`, or
+`anthropic:<model>` from `NURU_MAIN_MODEL`) and each model a conversation may pick, the default
+first. Each choice is `{id, label, cloud, thinking, default_thinking}`: `cloud` is true for Claude,
+where what the model reads is sent to Anthropic; `thinking` lists the levels that differ for that
+model (`[{id, label}]`, empty if it can't think). Local choices are the supported models pulled in
+Ollama; Claude's appear only when an API key is set.
+
+`submit_turn` may carry `model` and `thinking`. They're stored on the conversation, and this turn
+and the next ones run with them; a turn without them runs on what the conversation last ran on. A
+new `model` resets `thinking` to that model's default unless the same message gives one. A model
+the service doesn't list, or a level the model doesn't have, is `invalid_request`. A conversation's
+`model` and `thinking` read back as `null` for the defaults. The whole conversation's history goes to
+whichever model runs the turn. Switching from one local model to another unloads the first.
 
 ## Errors
 

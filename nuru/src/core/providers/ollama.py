@@ -80,6 +80,12 @@ def create_model(model: str, base_model: str, modelfile_path: Path) -> str:
     return rendered
 
 
+def unload_model(model: str) -> None:
+    """Unloads `model` if it's in memory."""
+    if is_model_loaded(model):
+        requests.post(f"{BASE}/api/generate", json={"model": model, "keep_alive": 0}, timeout=30).raise_for_status()
+
+
 def unload_all_models() -> None:
     """Unloads every model currently resident in memory."""
     for m in loaded_models():

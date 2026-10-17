@@ -71,7 +71,10 @@
             "type": "object", "additionalProperties": false, "required": ["path"],
             "properties": {"path": {"$ref": "#/$defs/vault_path"}, "selection": {"type": "string", "maxLength": 16000}}
           }
-        }
+        },
+        "model": {"description": "Run this turn and the conversation's next ones on this model: an id from status.models.",
+                  "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,100}$"},
+        "thinking": {"description": "A thinking level the model offers in status.models.", "enum": ["off", "low", "high"]}
       }
     },
     "answer_question": {
@@ -110,6 +113,28 @@
                       "properties": {"active": {"type": "integer", "minimum": 0, "maximum": 1},
                                      "waiting": {"type": "integer", "minimum": 0},
                                      "limit": {"type": "integer", "minimum": 0}}}
+          }
+        },
+        "models": {
+          "description": "The models a conversation may pick, the configured one (default) first. Thinking is empty for a model that can't think.",
+          "type": "object", "additionalProperties": false, "required": ["default", "choices"],
+          "properties": {
+            "default": {"type": "string", "maxLength": 100},
+            "choices": {
+              "type": "array", "maxItems": 50,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["id", "label", "cloud", "thinking", "default_thinking"],
+                "properties": {
+                  "id": {"type": "string", "maxLength": 100},
+                  "label": {"type": "string", "maxLength": 100},
+                  "cloud": {"type": "boolean"},
+                  "thinking": {"type": "array", "maxItems": 3,
+                               "items": {"type": "object", "additionalProperties": false, "required": ["id", "label"],
+                                         "properties": {"id": {"enum": ["off", "low", "high"]}, "label": {"type": "string", "maxLength": 20}}}},
+                  "default_thinking": {"enum": ["off", "low", "high", null]}
+                }
+              }
+            }
           }
         }
       }

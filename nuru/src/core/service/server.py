@@ -517,7 +517,10 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     except ServiceBusy as error:
         sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
-    service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit)
+    from core import main_models
+    default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
+    service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit,
+                      models=lambda: main_models.choices(default_model))
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)

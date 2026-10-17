@@ -7,6 +7,7 @@ down again. A turn is a generator of events, so cli.py prints them and ui.py ren
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -52,6 +53,7 @@ from core.providers.ollama import (
     is_model_loaded,
     stop_server,
     unload_all_models,
+    unload_model,
 )
 from core.vault_indexer import VaultIndexer, semantic_db
 from core.vault_link_auditor import VaultLinkAuditor
@@ -448,6 +450,9 @@ class Session:
         self.steward: VaultSteward | None = None
         self.model_info: dict | None = None
         self._cached_system_text = system_text
+        self._configured_system_text = system_text  # the configured model's, for use_model(None)
+        self._main = None  # use_model()'s model, when it isn't the configured one
+        self._think_level = None
         self._tool_validators = tool_dispatch.validators(tool_definitions)
         self._server_validators = tool_dispatch.validators(server_tools or tool_definitions)
         self._vault_scope = str(Path(os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH") or ".").resolve())
@@ -573,17 +578,75 @@ class Session:
     def context_window(self) -> int:
         return _context_window(self.model_info)
 
+    # ------------------------------------------------------------------ the main model
+    # A Session runs on the configured model (MODEL, PROFILE, chat and THINK above) until use_model()
+    # picks another for the conversation it serves; self._main then holds that one.
+    def _model(self) -> str:
+        return self._main["model"] if self._main else MODEL
+
+    def _claude(self) -> bool:
+        return self._main["claude"] if self._main else CLAUDE
+
+    def _profile(self) -> model_profile.ModelProfile:
+        return self._main["profile"] if self._main else PROFILE
+
+    def _think(self):
+        """The `think` value a turn starts from: the chosen level, else the model's default."""
+        if self._think_level is None:
+            return self._main["profile"].think(self._main["profile"].default) if self._main else THINK
+        return self._profile().think(self._think_level)
+
+    def _chat_with(self, model, messages, **kwargs):
+        return (self._main["chat"] if self._main else chat)(model, messages, **kwargs)
+
+    def model_id(self) -> str:
+        """The model this Session runs on, as NURU_BASE_MODEL / NURU_MAIN_MODEL name it."""
+        if self._main:
+            return self._main["id"]
+        return MAIN_MODEL if CLAUDE else BASE_MODEL
+
+    def use_model(self, model_id: str | None = None, thinking: str | None = None) -> None:
+        """Run the next turns on `model_id` (None: the configured model) at `thinking` (None: the
+        model's default level). The conversation's history goes to whichever model runs the turn.
+        A local model this replaces is unloaded."""
+        default_id = MAIN_MODEL if CLAUDE else BASE_MODEL
+        target = None if model_id in (None, default_id) else model_id
+        current = self._main["id"] if self._main else None
+        if target != current:
+            previous, previous_claude = self._model(), self._claude()
+            if target is None:
+                main, system = None, self._configured_system_text
+            elif target.startswith(claude_provider.PREFIX):
+                name = claude_provider.model_id(target)
+                main = {"id": target, "model": name, "claude": True, "profile": model_profile.for_model(name),
+                        "chat": claude_provider.chat}
+                system = render_system((MODELFILES_DIR / "system.md").read_text())
+            else:
+                alias = "nuru-" + re.sub(r"[^a-z0-9._-]+", "-", target.lower())
+                rendered = create_model(alias, target, _modelfile_for(target))
+                main = {"id": target, "model": alias, "claude": False, "profile": model_profile.for_model(target),
+                        "chat": ollama_chat}
+                system = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
+            if not previous_claude:
+                unload_model(previous)
+            self._main, self._cached_system_text, self.model_info = main, system, None
+        if thinking is not None and thinking not in model_profile.LEVELS:
+            raise ValueError(f"Unsupported thinking level {thinking!r}")
+        self._think_level = thinking
+
     def load_model(self) -> None:
         """Make sure the Ollama server is up and the model is loaded, starting either if it isn't."""
         server_spawned = ensure_server_running()  # with Claude too: the notes search embeds through Ollama
-        self.model_info = claude_provider.model_info(MODEL) if CLAUDE else ensure_model_loaded(MODEL, _context_window)
+        model = self._model()
+        self.model_info = claude_provider.model_info(model) if self._claude() else ensure_model_loaded(model, _context_window)
         self.logger.model_lifecycle(server_spawned, self.model_info)
 
     def loaded_model_info(self) -> dict | None:
         """Static info about the model, or None if it isn't in memory right now."""
-        if CLAUDE:
-            return claude_provider.model_info(MODEL)
-        return ensure_model_loaded(MODEL, _context_window) if is_model_loaded(MODEL) else None
+        model = self._model()
+        if self._claude():
+            return claude_provider.model_info(model)
+        return ensure_model_loaded(model, _context_window) if is_model_loaded(model) else None
 
     def _system_text(self) -> str:
         return self._cached_system_text
@@ -615,9 +678,9 @@ class Session:
             self.logger.context_reduction(num_ctx, original_history_count - history_count, omitted_tokens)
         require_fit(num_ctx, messages, system=self._system_text(),
                     tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
-        if CLAUDE:
+        if self._claude():
             kwargs["system"] = self._system_text()
-        yield from chat(model, messages, num_ctx=num_ctx, **kwargs)
+        yield from self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
 
     def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
         budget = available_tokens(window, messages, system=self._system_text(), tools=tools, fmt=fmt)
@@ -671,7 +734,7 @@ class Session:
         tools_refused = False  # a tool call after tools closed has been refused once
         messages = None
         prompt_tokens_recorded = False
-        think = THINK
+        think = self._think()
         # Reasoning from a call that ended with no reply, kept in case the retry below writes
         # nothing either and it has to stand in as the reply after all.
         carried_thinking = ""
@@ -772,7 +835,7 @@ class Session:
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
             start = time.monotonic()
             try:
-                stream = self._chat(MODEL, messages, num_ctx=num_ctx, history_count=history_count, think=think, tools=tools_offered, **PROFILE.options(think))
+                stream = self._chat(self._model(), messages, num_ctx=num_ctx, history_count=history_count, think=think, tools=tools_offered, **self._profile().options(think))
                 for out in stream:
                     if _cancelled(cancel):
                         self._end_cancelled(turn_id, output_text)
@@ -1261,7 +1324,7 @@ class Session:
             self._repair_rounds += 1
             started, output, usage = time.monotonic(), "", {}
             try:
-                for out in self._chat(MODEL, msgs, num_ctx=num_ctx, think=think_value, fmt=fmt, **PROFILE.options(think_value)):
+                for out in self._chat(self._model(), msgs, num_ctx=num_ctx, think=think_value, fmt=fmt, **self._profile().options(think_value)):
                     if isinstance(out, str):
                         output += out
                     elif "stop_reason" in out:
@@ -1328,7 +1391,7 @@ class Session:
         retry = [*messages, {"role": "assistant", "content": draft},
                  {"role": "user", "content": REGENERATE.format(failures="; ".join(claim["failures"]), log=log)}]
         try:
-            second = "".join(out for out in self._chat(MODEL, retry, num_ctx=num_ctx, think=think, **PROFILE.options(think))
+            second = "".join(out for out in self._chat(self._model(), retry, num_ctx=num_ctx, think=think, **self._profile().options(think))
                              if isinstance(out, str))
         except (requests.exceptions.RequestException, ContextBudgetExceeded):
             second = ""
@@ -1457,10 +1520,10 @@ class Session:
             except ContextBudgetExceeded as e:
                 yield Failure(str(e))
                 raise
-            think = THINK
+            think = self._think()
             while True:
                 start, out, thinking, usage = time.monotonic(), "", "", {}
-                for piece in self._chat(MODEL, messages, num_ctx=num_ctx, think=think, fmt=fmt, **PROFILE.options(think)):
+                for piece in self._chat(self._model(), messages, num_ctx=num_ctx, think=think, fmt=fmt, **self._profile().options(think)):
                     if isinstance(piece, str):
                         out += piece
                     elif "thinking" in piece:
@@ -1604,7 +1667,7 @@ class Session:
         """Unload every model and stop the Ollama server if we started it, and log why the session ended.
         With Claude as the main model Ollama is left as it is: it serves only the embeddings, and may be
         running other models."""
-        if not CLAUDE:
+        if not CLAUDE or (self._main and not self._main["claude"]):
             unload_all_models()
             stop_server()
         self.logger.session_end(reason=reason, models_unloaded=True, server_stopped=True)

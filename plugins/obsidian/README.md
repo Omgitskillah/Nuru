@@ -6,8 +6,14 @@ A sidebar for chatting with Nuru, running on this computer as `nuru-serve`, abou
 
 What it does:
 - Pick a conversation or start one; history comes back from the service.
-- Send a message. A note or a selection goes with it only when you press **Attach note** or
-  **Attach selection**.
+- Send a message with the arrow (or Enter). While Nuru answers, the arrow is a red square that stops the turn.
+- Attach the open note with the paperclip. Text you select in a note goes with your next message by
+  itself: the line above the message box names the note and how much is selected, or the size of a
+  table selection, whose cells go as a Markdown table. It's sent once, and offered again when it changes.
+- Pick the conversation's model and thinking level with the two small buttons beside the arrow. The
+  list is the service's: supported local models, and Claude (marked ☁, cloud) when it has a key. Thinking
+  shows only for a model that can think. A change goes with your next message; the conversation keeps it,
+  and its whole history goes to the new model.
 - Your messages show as bubbles on the right; Nuru's replies as Markdown across the panel, in the input box's
   font size.
 - While a turn runs, its line says what Nuru is doing now, with the seconds so far and the tool calls so
@@ -29,7 +35,7 @@ What it does:
   unavailable), the notes server, and turns running or waiting. It refreshes every 10 seconds.
 - Answer Nuru's questions before they expire. The service's clock decides, and no answer counts as No.
   Closing the panel never answers.
-- **Stop** a turn. Closing the panel only stops following it, and reopening picks it up again.
+- **Stop** a turn with the red square. Closing the panel only stops following it, and reopening picks it up again.
 - Note links open in Obsidian, web links in the browser. Replies are rendered with markdown-it, not
   Obsidian's renderer: raw HTML shows as text, and images and embeds show as links, so nothing in a reply
   runs or loads. Callouts, math and embeds therefore show as their text.

@@ -3,7 +3,7 @@
 const { FIXTURES, until } = require("./helpers/setup");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Component, Notice, window } = require("obsidian");
+const { Component, MarkdownView, Notice, window } = require("obsidian");
 
 const { Display } = require("../lib/protocol");
 const { ConnectionProblem } = require("../lib/connection");
@@ -42,8 +42,13 @@ function fakeClient({ history = [], live = {} } = {}) {
 
 async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status } = {}) {
   const opened = [];
+  // The note being edited; `editing.active = false` is the panel having the focus instead.
+  const editing = { selection, active: true };
+  const note = Object.assign(new MarkdownView(), { file, containerEl: document.createElement("div"),
+    editor: { getSelection: () => editing.selection } });
   const app = { workspace: {
-    getActiveFile: () => file, getActiveViewOfType: () => ({ editor: { getSelection: () => selection } }),
+    getActiveFile: () => file, getActiveViewOfType: () => (editing.active ? note : null),
+    on: () => ({ off() {} }),
     openLinkText: (...args) => opened.push(args), getLeavesOfType: () => [],
   } };
   const plugin = {
@@ -54,7 +59,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
   };
   const view = new ChatView({ app }, plugin);
   await view.open();
-  return { view, opened, plugin };
+  return { view, opened, plugin, editing, note };
 }
 
 const rendered = (turn) => until(() => turn.replyEl.childNodes.length > 0 || turn.runner.display.reply === "");
@@ -92,7 +97,8 @@ test("a question waiting for an answer gets a card; answering sends its operatio
   const [turn] = view.turns.values();
   await until(() => turn.questionEl.querySelector("button"));
   assert.match(turn.questionEl.querySelector(".nuru-countdown").textContent, /s to answer/);
-  assert.equal(view.stopButton.hidden, false);
+  assert.equal(view.sendButton.dataset.icon, "square", "the send arrow is a stop square while Nuru answers");
+  assert.ok(view.sendButton.classList.contains("nuru-stop"));
   const yes = [...turn.questionEl.querySelectorAll("button")].find((b) => b.textContent.startsWith("Yes"));
   yes.click();
   await until(() => client.calls.some((c) => c[0] === "answer"));
@@ -105,10 +111,70 @@ test("a question waiting for an answer gets a card; answering sends its operatio
   assert.ok(Component.listeners < listeners && Component.intervals === 0);
 });
 
+test("a selection is shown, sent once, and shown again only when it changes", async () => {
+  const client = fakeClient();
+  const { view, editing } = await open({ client, file: { path: "nuru/Trip.md" }, selection: "Day 1\nDay 2\nDay 3" });
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 3 lines selected");
+  view.input.value = "plan this";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "nuru/Trip.md", selection: "Day 1\nDay 2\nDay 3" }]);
+  await until(() => view.selectionEl.textContent === "");
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "", "the same selection isn't offered again");
+  editing.selection = "Day 2";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 5 characters selected");
+  editing.selection = "";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "");
+  view.stop();
+  await view.close();
+});
+
+test("selected table cells are sent as a Markdown table, with their columns' header", async () => {
+  const client = fakeClient();
+  // Obsidian's Live Preview table: the selected cells are marked; the editor itself holds a stray character.
+  const { view, note } = await open({ client, file: { path: "Nuru/Learning/Model Benchmarks.md" }, selection: "x" });
+  note.containerEl.innerHTML = `<table class="table-editor"><thead><tr><th>Feature</th><th>Gemma4:12b</th><th>Qwen3:8b</th></tr></thead>
+    <tbody><tr><td class="is-selected start top">Tool discovery</td><td class="is-selected end top">5</td><td>5</td></tr>
+    <tr><td class="is-selected start bottom">Path | file parsing</td><td class="is-selected end bottom">3</td><td>5</td></tr>
+    <tr><td>Average</td><td>4.4</td><td>5</td></tr></tbody></table>`;
+  document.dispatchEvent(new window.Event("mouseup"));
+  assert.equal(view.selectionEl.textContent, "Model Benchmarks · table (2 rows × 2 columns) selected");
+  view.input.value = "compare";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "Nuru/Learning/Model Benchmarks.md",
+    selection: "| Feature | Gemma4:12b |\n| --- | --- |\n| Tool discovery | 5 |\n| Path \\| file parsing | 3 |" }]);
+  view.stop();
+  await view.close();
+});
+
+test("an attached note isn't sent twice when text in it is also selected; the clip attaches the note", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, file: { path: "nuru/Trip.md" }, selection: "Rome" });
+  assert.equal(view.containerEl.querySelector(".nuru-clip").dataset.icon, "paperclip");
+  assert.equal(view.sendButton.dataset.icon, "arrow-up");
+  document.dispatchEvent(new window.Event("selectionchange"));
+  view.containerEl.querySelector(".nuru-clip").click();
+  view.input.value = "summarise";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "submit"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "submit")[3], [{ path: "nuru/Trip.md" }]);
+  view.stop();
+  await view.close();
+});
+
 test("a message goes with only what was attached, and starts a conversation if none is open", async () => {
   const client = fakeClient();
-  const { view } = await open({ client, conversationId: null, file: { path: "nuru/Trip.md" }, selection: "Rome" });
-  view.attach(true);
+  const { view, editing } = await open({ client, conversationId: null, file: { path: "nuru/Trip.md" }, selection: "Rome" });
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 4 characters selected");
+  editing.active = false; // clicking into the panel: the note keeps its selection
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Trip · 4 characters selected");
   view.input.value = "summarise this";
   view.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await until(() => client.calls.some((c) => c[0] === "submit"));
@@ -305,7 +371,7 @@ test("a late answer for a message sent from A leaves B's draft and attachments a
   const sending = view.send();
   await view.openConversation("conv0000bbbb");
   view.input.value = "a draft for B";
-  view.attach(false);
+  view.attach();
   answer.resolve({ turn_id: "turn0000aaa1" });
   await sending;
   assert.equal(view.input.value, "a draft for B");
@@ -362,7 +428,7 @@ async function pendingFromA(found) {
   await view.send();
   await view.openConversation("conv0000bbbb");
   view.input.value = "for B";
-  view.attach(false);
+  view.attach();
   const sending = view.send();
   const release = () => (found ? lookup.resolve({ conversation_id: "conv0000aaaa", turn_id: "turn0000aaa1", state: "running" })
     : lookup.reject(Object.assign(new Error("not found"), { status: 404 })));
@@ -375,7 +441,7 @@ for (const found of [true, false]) {
     await view.openConversation("conv0000cccc");
     files.path = "nuru/C.md";
     view.input.value = "a draft for C";
-    view.attach(false);
+    view.attach();
     release();
     await sending;
     assert.equal(client.calls.filter((c) => c[0] === "submit").length, 1, "only A's first attempt was ever sent");

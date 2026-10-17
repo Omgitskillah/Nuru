@@ -33,6 +33,14 @@
 .nuru-countdown { font-size: var(--font-ui-small); }
 .nuru-composer { border-top: 1px solid var(--background-modifier-border); padding: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-2); }
 .nuru-input { width: 100%; resize: vertical; font-size: var(--font-ui-small); }
-.nuru-buttons { display: flex; gap: var(--size-4-2); justify-content: flex-end; flex-wrap: wrap; }
+.nuru-buttons { display: flex; gap: var(--size-4-2); justify-content: space-between; align-items: center; }
+/* Selected text in the open note, going with the next message: a quiet line above the message box. */
+.nuru-selection:not(:empty) { font-size: var(--font-ui-smaller); color: var(--text-muted); overflow-wrap: anywhere; }
+.nuru-composer > .nuru-selection:empty { display: none; }
+.nuru-clip { color: var(--icon-color); }
+/* Send: an arrow in the theme's accent; while Nuru answers, a stop square in red. */
+.nuru-send { border-radius: 50%; width: var(--size-4-8); height: var(--size-4-8); padding: 0; display: flex; align-items: center; justify-content: center; background: var(--interactive-accent); color: var(--text-on-accent); }
+.nuru-send:hover { background: var(--interactive-accent-hover); }
+.nuru-send.nuru-stop, .nuru-send.nuru-stop:hover { background: var(--color-red); color: var(--text-on-accent); }
 .nuru-attachments { display: flex; gap: var(--size-4-1); flex-wrap: wrap; }
 .nuru-chip { display: flex; align-items: center; gap: var(--size-4-1); background: var(--background-secondary); border-radius: var(--radius-s); padding: 0 var(--size-4-1); font-size: var(--font-ui-small); }

@@ -6,7 +6,7 @@
 // turns themselves, and never answers a question.
 "use strict";
 
-const { ItemView, Keymap, MarkdownView, Notice } = require("obsidian");
+const { ItemView, Keymap, MarkdownView, Notice, setIcon } = require("obsidian");
 
 const { Activity, argumentLines, mainArgument, retryWords } = require("./activity");
 const { LANTERN } = require("./icon");
@@ -17,6 +17,7 @@ const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
 const RENDER_MS = 80; // a streaming reply is rendered again at most this often
+const SELECTION_CHARS = 16000; // a selection is sent up to this long
 const STATUS_SECONDS = 10; // the status line is refreshed this often while the panel is open
 const CHAT_WORDS = { idle: "model not loaded yet", loading: "loading the model", ready: "model ready",
   unavailable: "model unavailable" };
@@ -69,6 +70,13 @@ class ChatView extends ItemView {
     this.registerDomEvent(this.messagesEl, "click", (event) => this.onLinkClick(event));
 
     const composer = root.createDiv({ cls: "nuru-composer" });
+    // What's selected in the open note goes with the next message; this line says so.
+    this.selectionEl = composer.createDiv({ cls: "nuru-selection" });
+    this.selection = null;
+    this.sentSelection = null;
+    // Table cells selected in Live Preview change no text selection: they're marked in the page.
+    for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(document, type, () => this.trackSelection());
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.trackSelection()));
     this.chipsEl = composer.createDiv({ cls: "nuru-attachments" });
     this.input = composer.createEl("textarea", { cls: "nuru-input", attr: { rows: "3", "aria-label": "Message to Nuru",
       placeholder: "Message Nuru (Enter to send, Shift+Enter for a new line)" } });
@@ -79,15 +87,13 @@ class ChatView extends ItemView {
       }
     });
     const buttons = composer.createDiv({ cls: "nuru-buttons" });
-    const attachNote = buttons.createEl("button", { text: "Attach note" });
-    this.registerDomEvent(attachNote, "click", () => this.attach(false));
-    const attachSelection = buttons.createEl("button", { text: "Attach selection" });
-    this.registerDomEvent(attachSelection, "click", () => this.attach(true));
-    this.stopButton = buttons.createEl("button", { text: "Stop", cls: "nuru-stop", attr: { "aria-label": "Stop Nuru" } });
-    this.stopButton.hidden = true;
-    this.registerDomEvent(this.stopButton, "click", () => this.stop());
-    this.sendButton = buttons.createEl("button", { text: "Send", cls: "mod-cta" });
-    this.registerDomEvent(this.sendButton, "click", () => this.send());
+    const attachNote = buttons.createEl("button", { cls: "clickable-icon nuru-clip", attr: { "aria-label": "Attach note" } });
+    setIcon(attachNote, "paperclip");
+    this.registerDomEvent(attachNote, "click", () => this.attach());
+    // One button: an arrow that sends, a square that stops while Nuru is answering.
+    this.sendButton = buttons.createEl("button", { cls: "nuru-send" });
+    this.registerDomEvent(this.sendButton, "click", () => (this.running ? this.stop() : this.send()));
+    this.updateButtons();
 
     this.registerInterval(window.setInterval(() => this.tick(), 1000)); // question countdowns, waiting turns
     await this.reconnect();
@@ -172,7 +178,10 @@ class ChatView extends ItemView {
     this.sendButton.disabled = true;
     const generation = this.generation;
     // Everything this message is, taken now, before anything is awaited: what's on screen may change.
-    const draft = { text, attachments: [...this.attachments], origin: this.conversationId };
+    const selected = this.selection;
+    const selection = selected && !this.attachments.some((a) => a.path === selected.path)
+      ? [{ path: selected.path, selection: selected.selection }] : [];
+    const draft = { text, attachments: [...this.attachments, ...selection], origin: this.conversationId };
     try {
       let message = this.pending;
       if (message && (message.text !== text || message.origin !== draft.origin)) {
@@ -196,6 +205,11 @@ class ChatView extends ItemView {
         this.input.value = "";
         this.attachments = [];
         this.renderChips();
+        if (selection.length) {
+          this.sentSelection = selection[0];
+          this.selection = null;
+          this.renderSelection();
+        }
       }
       await this.show(message, accepted.turn_id, generation);
     } catch (error) {
@@ -245,25 +259,35 @@ class ChatView extends ItemView {
     if (this.conversationId === message.conversationId && !this.turns.has(turnId)) this.addTurn(turnId, message.text);
   }
 
-  // Only what the user asks for: the open note, or the text selected in it.
-  attach(selection) {
+  // Only what the user asks for: the open note. A selection in it goes by itself (trackSelection).
+  attach() {
     const file = this.app.workspace.getActiveFile();
     if (!file) {
       new Notice("Nuru: open a note first.");
       return;
     }
-    const attachment = { path: file.path };
-    if (selection) {
-      const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-      const selected = editor ? editor.getSelection() : "";
-      if (!selected) {
-        new Notice("Nuru: select some text in the note first.");
-        return;
-      }
-      attachment.selection = selected.slice(0, 16000);
-    }
-    this.attachments = [...this.attachments.filter((a) => a.path !== file.path), attachment].slice(-5);
+    this.attachments = [...this.attachments.filter((a) => a.path !== file.path), { path: file.path }].slice(-5);
     this.renderChips();
+  }
+
+  // The text selected in the note being edited, kept while the focus is here in the panel: clicking
+  // the panel makes it the active view, and the note's editor still holds its selection. A selection
+  // already sent with a message isn't sent again until it changes.
+  trackSelection() {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) return;
+    const table = selectedCells(view.containerEl);
+    const text = table ? table.markdown : view.editor.getSelection();
+    this.selection = text && view.file ? { path: view.file.path, selection: text.slice(0, SELECTION_CHARS), length: text.length,
+      table: table && { rows: table.rows, columns: table.columns } } : null;
+    if (this.sentSelection && this.selection && this.sentSelection.path === this.selection.path
+        && this.sentSelection.selection === this.selection.selection) this.selection = null;
+    else this.sentSelection = null;
+    this.renderSelection();
+  }
+
+  renderSelection() {
+    this.selectionEl.setText(this.selection ? selectionWords(this.selection) : "");
   }
 
   renderChips() {
@@ -661,8 +685,11 @@ class ChatView extends ItemView {
   }
 
   updateButtons() {
-    const running = [...this.turns.values()].some((turn) => !turn.runner.display.ended && turn.runner.connection !== "lost");
-    if (this.stopButton) this.stopButton.hidden = !running;
+    if (!this.sendButton) return;
+    this.running = [...this.turns.values()].some((turn) => !turn.runner.display.ended && turn.runner.connection !== "lost");
+    setIcon(this.sendButton, this.running ? "square" : "arrow-up");
+    this.sendButton.toggleClass("nuru-stop", this.running);
+    this.sendButton.setAttr("aria-label", this.running ? "Stop Nuru" : "Send");
   }
 
   setStatus(text, problem = false) {
@@ -674,6 +701,35 @@ class ChatView extends ItemView {
 // A link to a note in the vault, opened by onLinkClick like a link in a reply.
 function noteLink(parent, path) {
   return parent.createEl("a", { cls: "internal-link", text: path, attr: { href: path, "data-href": path } });
+}
+
+// The cells selected in a Live Preview table (Obsidian marks them td/th.is-selected in table.table-editor),
+// as a Markdown table, with the header of their columns when it isn't selected itself. Null when none are.
+function selectedCells(root) {
+  const table = root.querySelector("table.table-editor:has(.is-selected)");
+  if (!table) return null;
+  const cell = (el) => el.textContent.trim().replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const rows = [...table.querySelectorAll("tr")].map((tr) => [...tr.children].filter((c) => c.matches("td, th")));
+  const picked = rows.map((cells) => cells.map((c, i) => [i, c]).filter(([, c]) => c.classList.contains("is-selected")))
+    .filter((cells) => cells.length);
+  const columns = [...new Set(picked.flat().map(([i]) => i))].sort((a, b) => a - b);
+  const header = rows[0] || [];
+  const headerPicked = header.some((c) => c.classList.contains("is-selected"));
+  const line = (values) => `| ${values.join(" | ")} |`;
+  const body = picked.map((cells) => line(columns.map((i) => { const hit = cells.find(([j]) => j === i); return hit ? cell(hit[1]) : ""; })));
+  const top = headerPicked ? body.shift() : line(columns.map((i) => (header[i] ? cell(header[i]) : "")));
+  const markdown = [top, line(columns.map(() => "---")), ...body].join("\n");
+  return { markdown, rows: picked.length, columns: columns.length };
+}
+
+// "Trip · 42 characters selected", lines for a selection across several, or the size of a table selection.
+function selectionWords({ path, selection, length, table }) {
+  const name = path.split("/").pop().replace(/\.md$/, "");
+  const lines = selection.split("\n").length;
+  const amount = table ? `table (${table.rows} row${table.rows === 1 ? "" : "s"} × ${table.columns} column${table.columns === 1 ? "" : "s"})`
+    : lines > 1 ? `${lines} lines` : `${length.toLocaleString("en")} character${length === 1 ? "" : "s"}`;
+  const cut = !table && length > SELECTION_CHARS ? ` (the first ${SELECTION_CHARS.toLocaleString("en")} characters are sent)` : "";
+  return `${name} · ${amount} selected${cut}`;
 }
 
 function ordinal(n) {

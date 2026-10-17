@@ -69,6 +69,8 @@ class Component {
     this.register(() => { el.removeEventListener(type, handler); Component.listeners -= 1; });
   }
 
+  registerEvent(ref) { this.register(() => ref.off()); }
+
   registerInterval(id) {
     Component.intervals += 1;
     this.register(() => { window.clearInterval(id); Component.intervals -= 1; });
@@ -140,7 +142,10 @@ Notice.shown = [];
 
 class MarkdownView {}
 
+// Obsidian draws a Lucide icon; here the element only records which one.
+function setIcon(el, name) { el.empty(); el.dataset.icon = name; }
+
 const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event.ctrlKey)) };
 
-module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Keymap,
+module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Keymap, setIcon,
   window };

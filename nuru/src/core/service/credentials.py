@@ -3,7 +3,8 @@ tests): the directory 0700, every file 0600.
 
 `tokens.json` holds only a hash of each client's token, with the principal and client it names. A
 local client reads its own token from `clients/<name>.token`, written once when the client is added.
-WP01 has one principal, the operator. Pairing (M4) replaces adding a client by hand.
+WP01 has one principal, the operator. WP02 remote devices use a separate registry
+and never authenticate with these local-only credentials.
 """
 
 import hashlib

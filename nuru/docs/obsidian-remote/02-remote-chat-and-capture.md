@@ -1,6 +1,7 @@
 # WP02 — Remote Nuru chat and reliable note capture
 
-Status: in progress, 2026-10-12 (M1 and M2 implemented). All thresholds below are acceptance targets, not
+Status: in progress, 2026-10-13 (M1 and M2 implemented; M3 implementation under review,
+real private HTTPS gate pending). See the [M3 operator guide](wp02-m3-private-access.md). All thresholds below are acceptance targets, not
 measurements. Depends on [WP01 local service and plugin](01-local-obsidian-chat.md).
 The same service later exposes [WP03 maintenance reports](03-vault-maintenance-ui.md).
 
@@ -61,9 +62,10 @@ request. The accepting listener determines which credential class is allowed;
 forwarding headers cannot grant access or turn a local request into a remote one.
 
 Introduce revocable device credentials with explicit capabilities, at minimum:
-`capture:create`, `chat:use`, and `notes:read`. A chat operation that writes also
-requires the relevant server-side write capability and existing Nuru policy/
-approval checks. A capture-only phone credential must never gain vault-read,
+`capture:create`, `chat:use`, and `notes:read`. Remote conversation history, events,
+request status and turn submission also require `notes:read`, because shared history can contain note excerpts. A chat
+operation that writes additionally requires the relevant server-side write
+capability and existing Nuru policy/approval checks. A capture-only phone credential must never gain vault-read,
 conversation or arbitrary-write access. Vault root is host configuration, not a
 client parameter. Maintain one operator and vault, but isolate unauthenticated or
 unauthorized devices from all resources; authenticate before reading request bodies.

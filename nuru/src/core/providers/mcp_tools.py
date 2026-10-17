@@ -111,6 +111,9 @@ class MCPTools:
 
     def call_harness_tool(self, name: str, arguments: dict) -> ToolResult:
         """Runs any tool on whichever server reported it. Only the harness calls this."""
+        authorize = getattr(self, "authorize_tool", None)
+        if authorize is not None and not authorize(name):
+            return ToolResult("Error: device permission does not allow this tool.", is_error=True)
         if not self._tool_sessions:
             self.all_tools()
         session = self._tool_sessions[name]

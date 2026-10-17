@@ -103,3 +103,222 @@ M3 still must enforce scoped credentials, validate the private listener and
 HTTPS route, bound accepted connections before private exposure, and test
 migration and rollback. M4 must ship request-aware
 shortcuts, so installed legacy shortcuts remain single-shot until updated.
+
+## M3: scoped devices and private listener (2026-10-13)
+
+**Status:** implemented for review on `wp02-m3-pairing-private-access`, based on
+merged M2 (`b4c79b2`). The real private HTTPS/cutover gate remains **incomplete**.
+[Operator and rollback guide](../../docs/obsidian-remote/wp02-m3-private-access.md).
+
+Implemented and covered by model-free tests:
+
+- An opt-in remote-only listener on 127.0.0.1:27127, sharing the host and capture
+  ledger with WP01. Local tokens and remote credentials fail on the other listener,
+  even with forged forwarding headers. Remote status omits vault identity/name.
+- Host-local device approval, capture-only bearer issuance/import, rotation,
+  revocation, and hashed persistent storage. Rotation retains capture ownership;
+  revoking and recreating a name does not expose prior receipts. Imports cannot
+  duplicate another device's token or gain chat authority.
+- Single-use, five-minute pairing, Secure/HttpOnly/SameSite cookies, idle/absolute
+  expiry, session-bound CSRF, explicit Origin/Host checks, logout, and a minimal
+  same-origin pairing page. Session secrets never enter localStorage or URLs.
+- Legacy Android schema-90 setup: pinned RemoteNotes source attribution, one-time
+  five-minute download, headers, wrong-method handling and invalidation on restart,
+  cancellation, rotation or revocation. M4 still owns request-aware templates.
+- Authentication and scope checks before body reads, ownership preflight for URL
+  resources, bounded headers/uploads/connections, per-device API quotas, and
+  revocation rechecks after upload and during streams. Code-issued write approvals
+  require write scope. Both ordinary and harness tool dispatch enforce live scopes;
+  denied queued turns do not initialize the model.
+- A disposable HTTP proxy rehearsal switches from a frozen legacy responder to
+  Nuru, rolls back, then switches forward. The legacy payload still works, authored
+  bytes stay unchanged, and the original request-ID receipt replays without a new
+  note. This is not evidence of a live old receiver or Tailscale migration.
+
+Validation notes:
+
+- Initial tests without loopback permissions failed at socket bind; rerunning with
+  loopback enabled passed. A socket-capacity test was corrected to accept both EOF
+  and TCP reset as bounded refusal, as macOS returns reset on excess connections.
+- The initial combined model-free suite passed **206 tests in 45.15 s**. Final
+  protocol/authorization regression results are recorded below.
+- Tailscale CLI **1.102.4-t3caf7d9e7-g084ee3b64** reports a running node. Read-only
+  inspection found private HTTPS port 443 targeting `http://127.0.0.1:27124`, with
+  no enabled Funnel. No route, receiver, installed shortcut, or personal vault
+  was changed. Full status output and hostname are omitted from committed evidence.
+- Running the new `remote-check` against that actual origin exited **2**, correctly
+  reporting that Serve must target the remote listener. The command performs only
+  `status --json` and `serve status --json`; it never mutates Tailscale configuration.
+
+Still required before ticking M3: operator-approved actual HTTPS cutover against a
+scratch vault, invalid/revoked rejection over that route, actual legacy receiver
+write drain and rollback, and installed-client Content-Length compatibility.
+Physical phone/chat acceptance remains M4. All live-model tests remain deferred
+as requested; none were run for this milestone.
+
+TODO justification: M3 changes from open to **in progress**, because the code and
+model-free checks are reviewable but the original real private HTTPS exit gate
+has not passed. The gate is retained, not weakened or marked complete. The main
+WP02 plan links the operator guide and states this remaining gate explicitly.
+
+Final regression command:
+
+```sh
+.venv/bin/python -m pytest \
+  nuru/tests/test_remote_credentials.py nuru/tests/test_remote_server.py \
+  nuru/tests/test_service_server.py nuru/tests/test_service_host.py \
+  nuru/tests/test_service_protocol.py nuru/tests/test_remote_contract.py \
+  nuru/tests/test_capture_writer.py nuru/tests/test_tool_dispatch.py \
+  nuru/tests/test_mcp_tools.py -q
+```
+
+**288 passed in 48.32 s**. `node --check nuru/src/core/service/pair.js` and
+`git diff --check` passed. A subsequent targeted check covers reserved/invalid
+remote CLI ports and prevents the two credential boundaries sharing a listener.
+The targeted credential/CLI rerun passed **20 tests in 0.18 s**, including all
+four reserved/invalid port cases added after the combined suite.
+
+Final HTTP compatibility review added HEAD/OPTIONS/PUT/PATCH/DELETE handling for
+Android setup links: each returns 405 without consuming a live download; HEAD
+sends no response body. The remote HTTP suite then passed **26 tests in 27.89 s**.
+
+### PR #21 review corrections (2026-10-13)
+
+- **P1, shared-history read bypass:** all remote conversation operations now
+  require `chat:use` plus `notes:read`, including creation, listing, history,
+  events, request status, cancellation and turn submission. Status and the
+  authenticated device's own session/logout remain available without read scope.
+  The queued-inference/dispatch guard also requires read authority. A real HTTP
+  regression creates a local conversation containing a private note excerpt and
+  proves a chat-only browser can neither retrieve it nor continue it (403 before
+  consuming the submitted body); a read-authorized browser can still share it.
+  The M1 permission table and fixtures are deliberately corrected: a shared
+  conversation can carry note text, so the previous chat-only grant was unsafe.
+- **P2, phone pairing:** ten random base32 characters (50 bits), displayed in two
+  groups of five, replace the hand-entered 64-hex code. Case/space/separator
+  normalization preserves usability. Ten failed exchanges per minute are allowed
+  across all callers; further attempts get 429/Retry-After without consuming a
+  valid code. Missing/malformed credentials count too; successful exchanges or
+  new host grants do not reset the failure budget. Concurrency tests verify the
+  bound is atomic. Codes remain single-use with five-minute/restart expiry;
+  browser sessions and shortcut secrets remain 256 bits. Origin checks complement,
+  rather than replace, code entropy and the attempt limit.
+- **P3, expiry surprises:** keep the contract's 90-day shortcut and seven-day/
+  24-hour browser limits. Device listings and issuance now expose readable expiry,
+  near-expiry/expired state and renewal instructions; imported legacy credentials
+  explicitly explain their no-expiry migration exception. The browser page shows
+  its expiry and re-pairing requirement. Bearer 401s retain the legacy JSON shape
+  and add actionable WWW-Authenticate guidance. Newly generated Android imports
+  add `codeOnFailure` for 401 renewal, and warn about ambiguous retries on network/
+  other failures. The existing prepare/success scripts remain unchanged. The
+  failure-hook field was checked against upstream `ImportExportShortcut.kt`;
+  null network responses follow the official scripting documentation. Node tests
+  execute the generated script for 401, 500 and missing-response cases. No
+  installed shortcut was changed.
+- **Real Host gate:** the operator guide now explicitly requires an actual HTTPS
+  request through Serve to return the pairing page with the original `ts.net`
+  Host. A synthetic Host header does not satisfy this check. This remains pending
+  with the existing cutover/rollback gate; no Tailscale route was changed.
+
+TODO rationale in this review update: link M3 to PR #21 and record the three code
+corrections, while retaining **in progress** and the original real HTTPS gate.
+
+The same full model-free regression command above passed **323 tests in 54.73 s**
+after these fixes. `node --check nuru/src/core/service/pair.js` and
+`git diff --check` also passed. No local-model calls were made.
+
+### Real Tailscale HTTPS cutover and rollback rehearsal (2026-10-17)
+
+Operator-approved rehearsal on the real host, run by the user with Claude. Tested commit
+**`040c0a5`** (PR #21 rebased onto main `9536861`, plus two regression tests). Python 3.14.7,
+Tailscale 1.102.4, `nuru-serve --port 27128 --remote-origin https://<host>.<tailnet>.ts.net`
+(remote listener 127.0.0.1:27127). The vault, service directory, conversation database and logs
+were disposable (`mktemp -d /tmp/nuru-m3.XXXXXX`, umask 077). No model was loaded and no chat
+turn was submitted. Tokens, pairing codes, setup URLs and personal note text are omitted.
+
+**Starting configuration:** one HTTPS root handler `/ → http://127.0.0.1:27124`, Funnel off,
+saved as JSON before any change. The old receiver was the RemoteNotes Obsidian plugin
+`remote-notes-capture` (branch `feat/obsidian-background-capture`), installed only in the
+RemoteNotes `TestVault` (28 notes). It was drained and stopped by disabling the plugin and
+closing Obsidian.
+
+**Cutover to 127.0.0.1:27127:** `remote-check` passed ("Private HTTPS route targets the remote
+listener; Funnel is disabled"). `curl --fail` on the origin got HTTP 200 with the pairing page,
+TLS verified, with no `-k`, no Host override and no Funnel. On an iPhone over the tailnet the
+page loaded without a warning, paired as `m3-browser` and displayed its scopes and expiry. An
+unpaired Mac browser showed "No active session".
+
+**Pairing and browser session** (over HTTPS):
+
+| Check | Result |
+|---|---|
+| Valid code / same code reused | 200 / 401 |
+| Pending code cancelled, then used | 401 |
+| Code used after 5 min 20 s | 401 |
+| `Set-Cookie` | `__Host-nuru=…; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800` |
+| `GET /v1/session` | scopes, `expires_at` (7 days), `idle_expires_at` (24 h), renewal text |
+| Cookie mutation without CSRF / with a foreign Origin / with correct Origin and CSRF | 403 / 403 / 201 |
+| Logout, then the same session for a read and a mutation | 200, then 401 / 401 |
+
+**Capture and credential boundaries** (capture-only shortcut bearer, `Content-Length` bodies):
+
+| Check | Result |
+|---|---|
+| Legacy body `M3 legacy café\n` | 201; 1 note |
+| Request-aware `m3-rehearsal-000001` | 201; receipt |
+| Identical repeat | 201; byte-identical receipt; no new note |
+| Same request ID, different content | 409; note unchanged (hash equals receipt revision) |
+| `GET /v1/captures/requests/m3-rehearsal-000001` | 200, `completed`, matching receipt |
+| Capture-only bearer reads conversations | 403 |
+| Missing / invalid credential | 401 / 401; no note |
+| Local Obsidian token on the remote listener | 401 |
+| Remote bearer on the local listener | 401 |
+| Reissue: old bearer / new bearer reads the existing receipt | 401 / 200, same receipt |
+| After revoke, new bearer | 401 |
+| Credential aged past expiry in the disposable `devices.db` only | 401, legacy JSON body unchanged, renewal guidance in `WWW-Authenticate`; no note |
+
+Note bytes after the `uid`-only frontmatter were exact UTF-8 (`caf\xc3\xa9`) with the trailing
+newline kept.
+
+**Android onboarding:** first download 200 (`Cache-Control: no-store`, attachment
+`remote-notes.json`, schema keys `categories`, `version`), second 404. POST on a fresh link got
+405, and a GET afterwards got 200 (not consumed). A cancelled fresh link got 404. Not done: an
+import on a physical Android device.
+
+**Installed legacy shortcut:** the iPhone shortcut's existing token was imported privately
+(`device shortcut m3-legacy --import-legacy`: capture-only, no expiry). One labelled capture
+through HTTPS created exactly one note whose body matched the text sent. Installed upload
+framing, URL and token compatibility hold.
+
+**Rollback and forward again:**
+- **Rollback:** the old receiver was restarted, and the route was restored to 27124, identical to
+  the saved JSON. One labelled shortcut capture reached the old receiver (TestVault 28 → 29).
+  The Nuru scratch vault stayed at 4 notes.
+- **Forward:** the receiver was stopped again and the route was switched back to 27127.
+  `remote-check` passed. The scratch vault hashes and note count were unchanged across the
+  rollback.
+- **Replay:** `m3-rehearsal-000002`, a request-aware capture made before the rollback by device
+  `m3-replay`, returned the byte-identical receipt (HTTP 201) with no new note, and its status
+  was `completed`.
+
+**Final state:** the route was restored to `/ → http://127.0.0.1:27124`, identical to the saved
+original; Funnel off; the rehearsal server stopped. Scratch vault notes (sha256 prefix): legacy
+`cc5c0c2bb3abbba7`, request-aware `182d90ff77fb1e38`, installed shortcut `49a66c93ddf703f9`,
+replay target `f96d3d051cb1c244`.
+
+**Deviations and observations:**
+- **Replay device:** the plan said to replay `m3-rehearsal-000001` with the original device, but
+  step 5 had revoked that device. The replay used `m3-rehearsal-000002` from a new capture-only
+  device instead, recorded before the rollback.
+- **Cookie flags** were verified from the server's `Set-Cookie` over HTTPS. The browser pairing
+  was done in iPhone Safari, so no developer-tools view was recorded.
+- **One pairing code was shown in the agent's transcript.** It was cancelled at once and
+  confirmed 401, and a new code was issued without being shown.
+- **`device cancel` on an Android onboarding** invalidates the link, but the device still lists
+  as `active`. The link is unusable; whether the credential should also be revoked is a
+  follow-up question.
+- **RemoteNotes token file:** the plugin's `data.json` holds the capture token in a
+  world-readable file (`-rw-r--r--`). This is a RemoteNotes issue, not part of this PR.
+
+The real HTTPS exit gate passed: invalid and revoked credentials were rejected before any vault
+access over real HTTPS, and migration, rollback and forward-replay were tested.

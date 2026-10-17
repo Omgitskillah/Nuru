@@ -131,6 +131,16 @@ def is_model_loaded(model: str) -> bool:
 _SPIN_INTERVAL_SECONDS = 1
 
 
+def _keep_alive() -> dict:
+    """NURU_KEEP_ALIVE: how long Ollama keeps the model loaded after each request - a duration
+    ("30m", "2h"), seconds ("600"), or "-1" for until Ollama stops. Read per request, since Ollama
+    resets the model's timer to each request's own keep_alive. Unset: Ollama's default (5 minutes)."""
+    value = os.environ.get("NURU_KEEP_ALIVE", "").strip()
+    if not value:
+        return {}
+    return {"keep_alive": int(value) if value.lstrip("-").isdigit() else value}
+
+
 def _load_model_with_spinner(model: str, num_ctx: int | None = None) -> None:
     """Issues the blocking load request while printing increasing dots once a second."""
     done = threading.Event()
@@ -144,7 +154,7 @@ def _load_model_with_spinner(model: str, num_ctx: int | None = None) -> None:
     spinner = threading.Thread(target=spin, daemon=True)
     spinner.start()
     try:
-        body = {"model": model, **({"options": {"num_ctx": num_ctx}} if num_ctx else {})}
+        body = {"model": model, **({"options": {"num_ctx": num_ctx}} if num_ctx else {}), **_keep_alive()}
         r = requests.post(f"{BASE}/api/generate", json=body, timeout=300)
         r.raise_for_status()
     finally:
@@ -213,6 +223,7 @@ def chat(
         "stream": True,
         "think": think,
         "options": {**(options or {}), "num_ctx": num_ctx},
+        **_keep_alive(),
     }
     if tools:
         payload["tools"] = tools

@@ -18,6 +18,7 @@ const { TurnRunner } = require("./turns");
 const VIEW_TYPE = "nuru-chat";
 const RENDER_MS = 80; // a streaming reply is rendered again at most this often
 const SELECTION_CHARS = 16000; // a selection is sent up to this long
+const MAX_ATTACHMENTS = 5; // what submit_turn takes, the selection included
 const STATUS_SECONDS = 10; // the status line is refreshed this often while the panel is open
 const CHAT_WORDS = { idle: "model not loaded yet", loading: "loading the model", ready: "model ready",
   unavailable: "model unavailable" };
@@ -192,10 +193,10 @@ class ChatView extends ItemView {
     this.sendButton.disabled = true;
     const generation = this.generation;
     // Everything this message is, taken now, before anything is awaited: what's on screen may change.
-    const selected = this.selection;
-    const selection = selected && !this.attachments.some((a) => a.path === selected.path)
-      ? [{ path: selected.path, selection: selected.selection }] : [];
-    const draft = { text, attachments: [...this.attachments, ...selection], origin: this.conversationId, choice: { ...this.changed } };
+    const selected = this.selectionSent() ? this.selection : null;
+    const selection = selected ? [{ path: selected.path, selection: selected.selection }] : [];
+    const changed = this.changed; // replaced, never changed in place, by a pick made while this is sent
+    const draft = { text, attachments: [...this.attachments, ...selection], origin: this.conversationId, choice: { ...changed } };
     try {
       let message = this.pending;
       if (message && (message.text !== text || message.origin !== draft.origin)) {
@@ -215,7 +216,7 @@ class ChatView extends ItemView {
       const accepted = await this.client.submit(message.conversationId, message.text, message.attachments, message.submitId,
         message.choice);
       this.pending = null;
-      if (generation === this.generation) this.changed = {};
+      if (generation === this.generation && this.changed === changed) this.changed = {};
       // The composer is cleared only if it still holds this message, in the view it was sent from.
       if (generation === this.generation && this.input.value.trim() === message.text) {
         this.input.value = "";
@@ -282,7 +283,7 @@ class ChatView extends ItemView {
       new Notice("Nuru: open a note first.");
       return;
     }
-    this.attachments = [...this.attachments.filter((a) => a.path !== file.path), { path: file.path }].slice(-5);
+    this.attachments = [...this.attachments.filter((a) => a.path !== file.path), { path: file.path }].slice(-MAX_ATTACHMENTS);
     this.renderChips();
   }
 
@@ -302,11 +303,22 @@ class ChatView extends ItemView {
     this.renderSelection();
   }
 
+  // Whether the selection goes with the next message: not when its note is attached whole, nor when
+  // that would make one attachment too many.
+  selectionSent() {
+    const selected = this.selection;
+    return Boolean(selected) && !this.attachments.some((a) => a.path === selected.path)
+      && this.attachments.length < MAX_ATTACHMENTS;
+  }
+
   renderSelection() {
-    this.selectionEl.setText(this.selection ? selectionWords(this.selection) : "");
+    const full = this.selection && !this.selectionSent() && !this.attachments.some((a) => a.path === this.selection.path);
+    this.selectionEl.setText(!this.selection ? ""
+      : selectionWords(this.selection) + (full ? ` — not sent: ${MAX_ATTACHMENTS} notes are attached, remove one to send it` : ""));
   }
 
   renderChips() {
+    this.renderSelection(); // a full set of notes leaves no room for the selection
     this.chipsEl.empty();
     for (const attachment of this.attachments) {
       const chip = this.chipsEl.createDiv({ cls: "nuru-chip" });

@@ -777,3 +777,51 @@ test("without a model list from the service, neither button shows", async () => 
   assert.ok(view.modelButton.hidden && view.thinkingButton.hidden);
   await view.close();
 });
+
+test("a model picked while the last message is still on its way goes with the next one", async () => {
+  const client = fakeClient();
+  const answer = deferred();
+  const submit = client.submit;
+  let first = true; // only the first message's acceptance is slow
+  client.submit = async (...args) => {
+    const got = await submit.apply(client, args);
+    if (first) { first = false; await answer.promise; }
+    return got;
+  };
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  view.modelButton.click();
+  Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
+  view.input.value = "hello";
+  const sent = view.send();
+  await until(() => client.calls.some((c) => c[0] === "choice"));
+  view.modelButton.click();
+  Menu.shown.pick("qwen3.5:4b-q8_0"); // back to local before Nuru has accepted the first message
+  answer.resolve({ turn_id: "turn0000new1" });
+  await sent;
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0");
+  view.input.value = "again";
+  await view.send();
+  assert.deepEqual(client.calls.filter((c) => c[0] === "choice").map((c) => c[1].model),
+    ["anthropic:claude-haiku-5-5", "qwen3.5:4b-q8_0"], "the second message runs where the button says");
+  view.stop();
+  await view.close();
+});
+
+test("a selection that would be a sixth attachment isn't sent, and says so", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, file: { path: "nuru/Other.md" }, selection: "Rome" });
+  view.attachments = ["A", "B", "C", "D", "E"].map((n) => ({ path: `nuru/${n}.md` }));
+  view.renderChips();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "Other · 4 characters selected — not sent: 5 notes are attached, remove one to send it");
+  view.input.value = "compare";
+  await view.send();
+  assert.equal(client.calls.find((c) => c[0] === "submit")[3].length, 5, "submit_turn takes at most 5");
+
+  view.attachments = view.attachments.slice(1); // a note removed: the selection fits again
+  view.renderChips();
+  view.trackSelection();
+  assert.equal(view.selectionEl.textContent, "Other · 4 characters selected");
+  view.stop();
+  await view.close();
+});

@@ -35,6 +35,11 @@ class FakeResponse:
 # --- is_server_running / ensure_server_running ---
 
 
+@pytest.fixture(autouse=True)
+def _default_keep_alive(monkeypatch):
+    monkeypatch.delenv("NURU_KEEP_ALIVE", raising=False)  # a .env.nuru setting would change every request
+
+
 def test_is_server_running_true_when_reachable(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(ok=True))
     assert ollama.is_server_running() is True
@@ -337,7 +342,7 @@ def test_ensure_model_loaded_calls_generate_if_not_loaded(monkeypatch):
 
     info = ollama.ensure_model_loaded("qwen3:8b")
 
-    assert calls == [(f"{ollama.BASE}/api/generate", {"model": "qwen3:8b"})]
+    assert calls == [(f"{ollama.BASE}/api/generate", {"model": "qwen3:8b", "keep_alive": "30m"})]
     assert info["supports_thinking"] is False
 
 
@@ -354,7 +359,7 @@ def test_ensure_model_loaded_loads_at_the_window_the_chats_will_use(monkeypatch)
 
     ollama.ensure_model_loaded("qwen3:8b", lambda info: min(info["context_window"], 16384))
 
-    assert calls == [{"model": "qwen3:8b", "options": {"num_ctx": 16384}}]
+    assert calls == [{"model": "qwen3:8b", "options": {"num_ctx": 16384}, "keep_alive": "30m"}]
 
 
 def test_ensure_model_loaded_shows_spinner_while_loading(monkeypatch):
@@ -473,6 +478,22 @@ def test_chat_sends_sampling_options_alongside_num_ctx(monkeypatch):
     list(ollama.chat("qwen3.5:4b", [], num_ctx=4096, options={"temperature": 0.7, "num_ctx": 1}))
 
     assert seen["json"]["options"] == {"temperature": 0.7, "num_ctx": 4096}  # num_ctx is the session's
+
+
+@pytest.mark.parametrize("setting, sent", [("2h", "2h"), ("600", 600), ("-1", -1), (" ", "30m"), (None, "30m")])
+def test_chat_and_load_send_the_keep_alive_setting(monkeypatch, setting, sent):
+    """Ollama resets the model's idle timer to each request's keep_alive, so every request carries it."""
+    if setting is not None:
+        monkeypatch.setenv("NURU_KEEP_ALIVE", setting)
+    bodies = []
+    monkeypatch.setattr(requests, "post", lambda url, json, **k: bodies.append(json) or FakeResponse(lines=[]))
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [])
+    monkeypatch.setattr(ollama, "model_info", lambda model: {"details": {}, "capabilities": []})
+
+    list(ollama.chat("qwen3:8b", []))
+    ollama.ensure_model_loaded("qwen3:8b")
+
+    assert [b.get("keep_alive") for b in bodies] == [sent, sent]
 
 
 def test_chat_sends_tools_when_given(monkeypatch):

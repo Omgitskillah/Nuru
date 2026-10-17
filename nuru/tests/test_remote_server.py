@@ -311,6 +311,29 @@ def test_revoked_queued_turn_never_builds_a_model(remote):
     assert not built
 
 
+def test_a_device_revoked_after_admission_never_builds_a_model(remote):
+    """Admission doesn't decide: the turn rechecks the device's credential when it starts, so one
+    revoked after its HTTP request was authenticated never reaches a model."""
+    from core.service.server import remote_tool_allowed
+    client, credentials, _, service, built = remote
+    cookie, _ = pair(client, credentials, scopes=["chat:use", "notes:read"])
+    device = credentials.authenticate(cookie, "browser")
+    assert remote_tool_allowed(credentials, device, None)  # admitted: allowed to start a turn
+    _, conversation = service.create_conversation("operator", {"request_id": "conversation-test-02"})
+    assert credentials.revoke("phone")
+    _, turn = service.submit_turn("operator", conversation["conversation_id"],
+                                  {"request_id": "revoked-turn-test-01", "text": "hello"},
+                                  authorize=lambda name: remote_tool_allowed(credentials, device, name))
+    events, ended = [], False
+    for _ in range(10):  # each wait returns as soon as there are new events
+        more, ended = service.wait_events(turn["turn_id"], events[-1]["seq"] if events else 0, 1)
+        events += more
+        if ended:
+            break
+    assert events[-1]["type"] == "failed" and "revoked" in events[-1]["data"]["message"]
+    assert not built
+
+
 def test_write_approval_requires_write_scope_before_body(remote, monkeypatch):
     client, credentials, _, service, _ = remote
     cookie, _ = pair(client, credentials, scopes=["chat:use", "notes:read"])

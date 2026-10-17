@@ -226,3 +226,99 @@ corrections, while retaining **in progress** and the original real HTTPS gate.
 The same full model-free regression command above passed **323 tests in 54.73 s**
 after these fixes. `node --check nuru/src/core/service/pair.js` and
 `git diff --check` also passed. No local-model calls were made.
+
+### Real Tailscale HTTPS cutover and rollback rehearsal (2026-10-17)
+
+Operator-approved rehearsal on the real host, run by the user with Claude. Tested commit
+**`040c0a5`** (PR #21 rebased onto main `9536861`, plus two regression tests). Python 3.14.7,
+Tailscale 1.102.4, `nuru-serve --port 27128 --remote-origin https://<host>.<tailnet>.ts.net`
+(remote listener 127.0.0.1:27127). The vault, service directory, conversation database and logs
+were disposable (`mktemp -d /tmp/nuru-m3.XXXXXX`, umask 077). No model was loaded and no chat
+turn was submitted. Tokens, pairing codes, setup URLs and personal note text are omitted.
+
+**Starting configuration:** one HTTPS root handler `/ → http://127.0.0.1:27124`, Funnel off,
+saved as JSON before any change. The old receiver was the RemoteNotes Obsidian plugin
+`remote-notes-capture` (branch `feat/obsidian-background-capture`), installed only in the
+RemoteNotes `TestVault` (28 notes). It was drained and stopped by disabling the plugin and
+closing Obsidian.
+
+**Cutover to 127.0.0.1:27127:** `remote-check` passed ("Private HTTPS route targets the remote
+listener; Funnel is disabled"). `curl --fail` on the origin got HTTP 200 with the pairing page,
+TLS verified, with no `-k`, no Host override and no Funnel. On an iPhone over the tailnet the
+page loaded without a warning, paired as `m3-browser` and displayed its scopes and expiry. An
+unpaired Mac browser showed "No active session".
+
+**Pairing and browser session** (over HTTPS):
+
+| Check | Result |
+|---|---|
+| Valid code / same code reused | 200 / 401 |
+| Pending code cancelled, then used | 401 |
+| Code used after 5 min 20 s | 401 |
+| `Set-Cookie` | `__Host-nuru=…; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800` |
+| `GET /v1/session` | scopes, `expires_at` (7 days), `idle_expires_at` (24 h), renewal text |
+| Cookie mutation without CSRF / with a foreign Origin / with correct Origin and CSRF | 403 / 403 / 201 |
+| Logout, then the same session for a read and a mutation | 200, then 401 / 401 |
+
+**Capture and credential boundaries** (capture-only shortcut bearer, `Content-Length` bodies):
+
+| Check | Result |
+|---|---|
+| Legacy body `M3 legacy café\n` | 201; 1 note |
+| Request-aware `m3-rehearsal-000001` | 201; receipt |
+| Identical repeat | 201; byte-identical receipt; no new note |
+| Same request ID, different content | 409; note unchanged (hash equals receipt revision) |
+| `GET /v1/captures/requests/m3-rehearsal-000001` | 200, `completed`, matching receipt |
+| Capture-only bearer reads conversations | 403 |
+| Missing / invalid credential | 401 / 401; no note |
+| Local Obsidian token on the remote listener | 401 |
+| Remote bearer on the local listener | 401 |
+| Reissue: old bearer / new bearer reads the existing receipt | 401 / 200, same receipt |
+| After revoke, new bearer | 401 |
+| Credential aged past expiry in the disposable `devices.db` only | 401, legacy JSON body unchanged, renewal guidance in `WWW-Authenticate`; no note |
+
+Note bytes after the `uid`-only frontmatter were exact UTF-8 (`caf\xc3\xa9`) with the trailing
+newline kept.
+
+**Android onboarding:** first download 200 (`Cache-Control: no-store`, attachment
+`remote-notes.json`, schema keys `categories`, `version`), second 404. POST on a fresh link got
+405, and a GET afterwards got 200 (not consumed). A cancelled fresh link got 404. Not done: an
+import on a physical Android device.
+
+**Installed legacy shortcut:** the iPhone shortcut's existing token was imported privately
+(`device shortcut m3-legacy --import-legacy`: capture-only, no expiry). One labelled capture
+through HTTPS created exactly one note whose body matched the text sent. Installed upload
+framing, URL and token compatibility hold.
+
+**Rollback and forward again:**
+- **Rollback:** the old receiver was restarted, and the route was restored to 27124, identical to
+  the saved JSON. One labelled shortcut capture reached the old receiver (TestVault 28 → 29).
+  The Nuru scratch vault stayed at 4 notes.
+- **Forward:** the receiver was stopped again and the route was switched back to 27127.
+  `remote-check` passed. The scratch vault hashes and note count were unchanged across the
+  rollback.
+- **Replay:** `m3-rehearsal-000002`, a request-aware capture made before the rollback by device
+  `m3-replay`, returned the byte-identical receipt (HTTP 201) with no new note, and its status
+  was `completed`.
+
+**Final state:** the route was restored to `/ → http://127.0.0.1:27124`, identical to the saved
+original; Funnel off; the rehearsal server stopped. Scratch vault notes (sha256 prefix): legacy
+`cc5c0c2bb3abbba7`, request-aware `182d90ff77fb1e38`, installed shortcut `49a66c93ddf703f9`,
+replay target `f96d3d051cb1c244`.
+
+**Deviations and observations:**
+- **Replay device:** the plan said to replay `m3-rehearsal-000001` with the original device, but
+  step 5 had revoked that device. The replay used `m3-rehearsal-000002` from a new capture-only
+  device instead, recorded before the rollback.
+- **Cookie flags** were verified from the server's `Set-Cookie` over HTTPS. The browser pairing
+  was done in iPhone Safari, so no developer-tools view was recorded.
+- **One pairing code was shown in the agent's transcript.** It was cancelled at once and
+  confirmed 401, and a new code was issued without being shown.
+- **`device cancel` on an Android onboarding** invalidates the link, but the device still lists
+  as `active`. The link is unusable; whether the credential should also be revoked is a
+  follow-up question.
+- **RemoteNotes token file:** the plugin's `data.json` holds the capture token in a
+  world-readable file (`-rw-r--r--`). This is a RemoteNotes issue, not part of this PR.
+
+The real HTTPS exit gate passed: invalid and revoked credentials were rejected before any vault
+access over real HTTPS, and migration, rollback and forward-replay were tested.

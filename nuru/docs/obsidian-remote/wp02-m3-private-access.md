@@ -1,8 +1,8 @@
 # WP02-M3: device pairing and private HTTPS
 
 Implementation: 2026-10-13. The model-free HTTP suite is the automated gate.
-**Real Tailscale HTTPS cutover and rollback are still pending**; this milestone
-must remain in progress until their evidence is recorded. Phone chat and
+The real Tailscale HTTPS cutover and rollback rehearsal passed on 2026-10-17; see the
+[evidence record](../../evals/obsidian_remote/wp02-remote-chat-capture.md). Phone chat and
 request-aware shortcut templates remain M4.
 
 ## Start without changing existing routes
@@ -161,5 +161,6 @@ Use the Tailscale CLI installed on the host (`tailscale`, or the macOS app binar
 The automated rehearsal uses a disposable HTTP proxy and a frozen legacy responder
 for steps 4/7/8. It proves retention through target changes, not real Tailscale,
 Obsidian receiver shutdown, installed shortcut framing, or physical phone behavior.
-On 2026-10-13, the actual host's HTTPS root still targets port 27124. It was inspected
-but not changed. Those real migration/HTTPS checks remain an explicit open gate.
+On 2026-10-17 the real migration was rehearsed on the host: cutover to 27127, HTTPS checks,
+rollback to the RemoteNotes receiver on 27124 and forward again with replay. The route was
+then restored to 27124. Evidence is in the M3 evaluation record.

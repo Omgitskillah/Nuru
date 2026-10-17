@@ -131,13 +131,15 @@ def is_model_loaded(model: str) -> bool:
 _SPIN_INTERVAL_SECONDS = 1
 
 
+DEFAULT_KEEP_ALIVE = "30m"
+
+
 def _keep_alive() -> dict:
     """NURU_KEEP_ALIVE: how long Ollama keeps the model loaded after each request - a duration
     ("30m", "2h"), seconds ("600"), or "-1" for until Ollama stops. Read per request, since Ollama
-    resets the model's timer to each request's own keep_alive. Unset: Ollama's default (5 minutes)."""
-    value = os.environ.get("NURU_KEEP_ALIVE", "").strip()
-    if not value:
-        return {}
+    resets the model's timer to each request's own keep_alive. Unset: 30 minutes, long enough for a
+    pause in work, short enough to free the memory after a real break."""
+    value = os.environ.get("NURU_KEEP_ALIVE", "").strip() or DEFAULT_KEEP_ALIVE
     return {"keep_alive": int(value) if value.lstrip("-").isdigit() else value}
 
 

@@ -81,9 +81,11 @@ class NuruClient {
 
   createConversation(title, requestId) { return this.post("/v1/conversations", title ? { title } : {}, requestId); }
 
-  submit(conversationId, text, attachments = [], requestId) {
+  // `choice` ({model, thinking}, either optional) changes the conversation's model or thinking level
+  // from this turn on; without it the turn runs on what the conversation last ran on.
+  submit(conversationId, text, attachments = [], requestId, choice = {}) {
     return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/turns`,
-      { text, ...(attachments.length ? { attachments } : {}) }, requestId);
+      { text, ...(attachments.length ? { attachments } : {}), ...choice }, requestId);
   }
 
   // What became of a request (GET /v1/requests/{id}); a NuruError with status 404 if the service never

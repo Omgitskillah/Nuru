@@ -6,7 +6,7 @@
 // turns themselves, and never answers a question.
 "use strict";
 
-const { ItemView, Keymap, MarkdownView, Notice, setIcon } = require("obsidian");
+const { ItemView, Keymap, MarkdownView, Menu, Notice, setIcon } = require("obsidian");
 
 const { Activity, argumentLines, mainArgument, retryWords } = require("./activity");
 const { LANTERN } = require("./icon");
@@ -90,8 +90,18 @@ class ChatView extends ItemView {
     const attachNote = buttons.createEl("button", { cls: "clickable-icon nuru-clip", attr: { "aria-label": "Attach note" } });
     setIcon(attachNote, "paperclip");
     this.registerDomEvent(attachNote, "click", () => this.attach());
+    const actions = buttons.createDiv({ cls: "nuru-actions" });
+    // The conversation's model and thinking level, each a small button with a menu; a change goes with
+    // the next message. Hidden when the service offers no choice, and thinking for a model that can't.
+    this.modelButton = actions.createEl("button", { cls: "nuru-pill", attr: { "aria-label": "Model" } });
+    this.registerDomEvent(this.modelButton, "click", (event) => this.pickModel(event));
+    this.thinkingButton = actions.createEl("button", { cls: "nuru-pill", attr: { "aria-label": "Thinking" } });
+    this.registerDomEvent(this.thinkingButton, "click", (event) => this.pickThinking(event));
+    this.choice = { model: null, thinking: null }; // null: the conversation's (or the service's) default
+    this.changed = {}; // what the user picked since the conversation's last message
+    this.renderChoice();
     // One button: an arrow that sends, a square that stops while Nuru is answering.
-    this.sendButton = buttons.createEl("button", { cls: "nuru-send" });
+    this.sendButton = actions.createEl("button", { cls: "nuru-send" });
     this.registerDomEvent(this.sendButton, "click", () => (this.running ? this.stop() : this.send()));
     this.updateButtons();
 
@@ -145,6 +155,8 @@ class ChatView extends ItemView {
     this.turns.clear();
     this.messagesEl.empty();
     this.conversationId = null;
+    this.choice = { model: null, thinking: null };
+    this.changed = {};
     if (id) {
       let history;
       try {
@@ -157,10 +169,12 @@ class ChatView extends ItemView {
       if (generation !== this.generation) return; // another conversation was opened, or the panel closed
       if (history) {
         this.conversationId = id;
+        this.choice = { model: history.model ?? null, thinking: history.thinking ?? null };
         for (const saved of [...history.turns].reverse()) this.addTurn(saved.turn_id, saved.text, saved.display);
       }
     }
     this.picker.value = this.conversationId || "";
+    this.renderChoice();
     await this.plugin.remember({ conversationId: this.conversationId });
     this.updateButtons();
   }
@@ -181,7 +195,7 @@ class ChatView extends ItemView {
     const selected = this.selection;
     const selection = selected && !this.attachments.some((a) => a.path === selected.path)
       ? [{ path: selected.path, selection: selected.selection }] : [];
-    const draft = { text, attachments: [...this.attachments, ...selection], origin: this.conversationId };
+    const draft = { text, attachments: [...this.attachments, ...selection], origin: this.conversationId, choice: { ...this.changed } };
     try {
       let message = this.pending;
       if (message && (message.text !== text || message.origin !== draft.origin)) {
@@ -198,8 +212,10 @@ class ChatView extends ItemView {
         const created = await this.client.createConversation(text.slice(0, 60), message.createId);
         message.conversationId = created.conversation_id;
       }
-      const accepted = await this.client.submit(message.conversationId, message.text, message.attachments, message.submitId);
+      const accepted = await this.client.submit(message.conversationId, message.text, message.attachments, message.submitId,
+        message.choice);
       this.pending = null;
+      if (generation === this.generation) this.changed = {};
       // The composer is cleared only if it still holds this message, in the view it was sent from.
       if (generation === this.generation && this.input.value.trim() === message.text) {
         this.input.value = "";
@@ -628,10 +644,70 @@ class ChatView extends ItemView {
     return `${now ? now.what : "Writing the reply"}…${now ? time(now.since) : ""}${count}`;
   }
 
+  // ------------------------------------------------------------------ model and thinking
+  // The model this conversation runs on, as status.models describes it; null without a list.
+  currentModel() {
+    const models = this.service?.models;
+    if (!models) return null;
+    const id = this.choice.model ?? models.default;
+    return models.choices.find((c) => c.id === id) || null;
+  }
+
+  currentThinking(model = this.currentModel()) {
+    if (!model || !model.thinking.length) return null;
+    const id = this.choice.thinking ?? model.default_thinking;
+    return model.thinking.find((level) => level.id === id) || model.thinking[0];
+  }
+
+  renderChoice() {
+    if (!this.modelButton) return;
+    const model = this.currentModel();
+    const thinking = this.currentThinking(model);
+    this.modelButton.hidden = !model;
+    this.modelButton.setText(model ? `${model.label}${model.cloud ? " ☁" : ""}` : "");
+    this.modelButton.setAttr("title", model?.cloud ? "Runs on Claude: what Nuru reads is sent to Anthropic" : "Runs on this Mac");
+    this.thinkingButton.hidden = !thinking;
+    this.thinkingButton.setText(thinking ? `Thinking: ${thinking.label}` : "");
+  }
+
+  pickModel(event) {
+    const models = this.service?.models;
+    if (!models) return;
+    const current = this.currentModel();
+    const menu = new Menu();
+    for (const choice of models.choices) {
+      menu.addItem((item) => item.setTitle(`${choice.label}${choice.cloud ? " ☁ cloud" : ""}`)
+        .setChecked(choice.id === current?.id)
+        .onClick(() => {
+          if (choice.id === current?.id) return;
+          this.choice = { model: choice.id, thinking: null }; // a new model starts at its own default level
+          this.changed = { model: choice.id };
+          this.renderChoice();
+        }));
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  pickThinking(event) {
+    const model = this.currentModel();
+    const current = this.currentThinking(model);
+    if (!current) return;
+    const menu = new Menu();
+    for (const level of model.thinking) {
+      menu.addItem((item) => item.setTitle(level.label).setChecked(level.id === current.id).onClick(() => {
+        this.choice = { ...this.choice, thinking: level.id };
+        this.changed = { ...this.changed, model: model.id, thinking: level.id };
+        this.renderChoice();
+      }));
+    }
+    menu.showAtMouseEvent(event);
+  }
+
   // ------------------------------------------------------------------ the service's status
   showService(status) {
     if (!status?.ready) return;
     this.service = status;
+    this.renderChoice();
     this.chat = status.ready.chat;
     const { ready } = status;
     const parts = [status.vault?.name, CHAT_WORDS[ready.chat] || ready.chat,

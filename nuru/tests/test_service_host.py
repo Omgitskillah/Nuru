@@ -587,7 +587,7 @@ def test_migrations_run_once_and_the_two_databases_join(harness, tmp_path):
     h.close()
     ServiceStore(tmp_path / "service.db").close()  # opening again changes nothing
     with sqlite3.connect(tmp_path / "service.db") as db:
-        assert db.execute("SELECT version FROM service_migrations").fetchall() == [(1,), (2,), (3,)]
+        assert db.execute("SELECT version FROM service_migrations").fetchall() == [(1,), (2,), (3,), (4,)]
         db.execute("ATTACH DATABASE ? AS history", (str(tmp_path / "conversation.db"),))
         joined = db.execute("SELECT c.id, m.content FROM conversations c "
                             "JOIN history.messages m ON m.conversation_id = c.store_id").fetchall()

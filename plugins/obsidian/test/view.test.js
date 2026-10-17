@@ -3,7 +3,7 @@
 const { FIXTURES, until } = require("./helpers/setup");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Component, MarkdownView, Notice, window } = require("obsidian");
+const { Component, MarkdownView, Menu, Notice, window } = require("obsidian");
 
 const { Display } = require("../lib/protocol");
 const { ConnectionProblem } = require("../lib/connection");
@@ -25,9 +25,14 @@ function fakeClient({ history = [], live = {} } = {}) {
     chat: "ready", // what /v1/status says about the model
     async status() { calls.push(["status"]); return { ready: { chat: this.chat } }; },
     async conversations() { return { conversations: [{ id: "conv0000demo", title: "Trip", created_at: "2026-10-09T12:00:00.000Z" }] }; },
-    async conversation(id) { calls.push(["conversation", id]); return { conversation_id: id, turns: history }; },
+    saved: {}, // the conversation's stored model / thinking
+    async conversation(id) { calls.push(["conversation", id]); return { conversation_id: id, turns: history, ...this.saved }; },
     async createConversation(title) { calls.push(["create", title]); return { conversation_id: "conv0000new1" }; },
-    async submit(id, text, attachments) { calls.push(["submit", id, text, attachments]); return { turn_id: "turn0000new1" }; },
+    async submit(id, text, attachments, requestId, choice) {
+      calls.push(["submit", id, text, attachments]);
+      if (choice && Object.keys(choice).length) calls.push(["choice", choice]);
+      return { turn_id: "turn0000new1" };
+    },
     async cancel(turnId) { calls.push(["cancel", turnId]); return {}; },
     async answer(...args) { calls.push(["answer", ...args]); return {}; },
     events(turnId, after, onEvent, signal) {
@@ -712,5 +717,63 @@ test("Vaulted shows only once a note was written, and stays folded if the user f
   }
   assert.ok(!turn.vaultedEl.open);
   assert.equal(turn.vaultedEl.querySelectorAll("a").length, 1);
+  await view.close();
+});
+
+
+const MODELS = { default: "qwen3.5:4b-q8_0", choices: [
+  { id: "qwen3.5:4b-q8_0", label: "qwen3.5:4b-q8_0", cloud: false, default_thinking: "off",
+    thinking: [{ id: "off", label: "Off" }, { id: "low", label: "On" }] },
+  { id: "anthropic:claude-haiku-5-5", label: "Claude Haiku 5.5", cloud: true, default_thinking: "off",
+    thinking: [{ id: "off", label: "Off" }, { id: "low", label: "Low" }, { id: "high", label: "High" }] },
+  { id: "plain:1b", label: "plain:1b", cloud: false, default_thinking: null, thinking: [] },
+] };
+
+test("the model and thinking buttons show the conversation's choice; a pick goes with the next message", async () => {
+  const client = fakeClient();
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0");
+  assert.equal(view.thinkingButton.textContent, "Thinking: Off");
+
+  view.modelButton.click();
+  assert.deepEqual(Menu.shown.items.map((i) => [i.title, i.checked]),
+    [["qwen3.5:4b-q8_0", true], ["Claude Haiku 5.5 ☁ cloud", false], ["plain:1b", false]]);
+  Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
+  assert.equal(view.modelButton.textContent, "Claude Haiku 5.5 ☁");
+  view.thinkingButton.click();
+  assert.deepEqual(Menu.shown.items.map((i) => i.title), ["Off", "Low", "High"]);
+  Menu.shown.pick("High");
+  assert.equal(view.thinkingButton.textContent, "Thinking: High");
+
+  view.input.value = "hello";
+  view.sendButton.click();
+  await until(() => client.calls.some((c) => c[0] === "choice"));
+  assert.deepEqual(client.calls.find((c) => c[0] === "choice")[1], { model: "anthropic:claude-haiku-5-5", thinking: "high" });
+  await until(() => view.input.value === "");
+  view.input.value = "again"; // the button is a stop button while the first turn runs: Enter sends
+  view.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await until(() => client.calls.filter((c) => c[0] === "submit").length === 2);
+  assert.equal(client.calls.filter((c) => c[0] === "choice").length, 1, "the next message carries no change");
+  view.stop();
+  await view.close();
+});
+
+test("a model that can't think has no thinking button; an opened conversation shows its stored choice", async () => {
+  const client = fakeClient();
+  client.saved = { model: "anthropic:claude-haiku-5-5", thinking: "low" };
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  await until(() => view.modelButton.textContent === "Claude Haiku 5.5 ☁");
+  assert.equal(view.thinkingButton.textContent, "Thinking: Low");
+  view.modelButton.click();
+  Menu.shown.pick("plain:1b");
+  assert.ok(view.thinkingButton.hidden, "plain:1b can't think");
+  await view.openConversation(null);
+  assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0", "a new conversation starts at the service's default");
+  await view.close();
+});
+
+test("without a model list from the service, neither button shows", async () => {
+  const { view } = await open({ client: fakeClient(), status: { ready: { chat: "ready" } } });
+  assert.ok(view.modelButton.hidden && view.thinkingButton.hidden);
   await view.close();
 });

@@ -38,6 +38,10 @@
 .nuru-selection:not(:empty) { font-size: var(--font-ui-smaller); color: var(--text-muted); overflow-wrap: anywhere; }
 .nuru-composer > .nuru-selection:empty { display: none; }
 .nuru-clip { color: var(--icon-color); }
+.nuru-actions { display: flex; gap: var(--size-4-1); align-items: center; min-width: 0; }
+/* The model and thinking: small quiet buttons beside send, each opening a menu. */
+.nuru-pill { font-size: var(--font-ui-smaller); color: var(--text-muted); padding: 0 var(--size-4-2); height: var(--size-4-6); max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nuru-pill[hidden] { display: none; }
 /* Send: an arrow in the theme's accent; while Nuru answers, a stop square in red. */
 .nuru-send { border-radius: 50%; width: var(--size-4-8); height: var(--size-4-8); padding: 0; display: flex; align-items: center; justify-content: center; background: var(--interactive-accent); color: var(--text-on-accent); }
 .nuru-send:hover { background: var(--interactive-accent-hover); }

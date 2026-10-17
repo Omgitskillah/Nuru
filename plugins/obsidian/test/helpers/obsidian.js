@@ -142,10 +142,26 @@ Notice.shown = [];
 
 class MarkdownView {}
 
+// Obsidian's context menu: here it records its items, and the last one shown, for a test to pick from.
+class Menu {
+  constructor() { this.items = []; }
+  addItem(build) {
+    const item = { title: "", checked: false, click: null };
+    const api = { setTitle(t) { item.title = t; return api; }, setChecked(c) { item.checked = c; return api; },
+      onClick(f) { item.click = f; return api; }, setIcon() { return api; } };
+    build(api);
+    this.items.push(item);
+    return this;
+  }
+  showAtMouseEvent() { Menu.shown = this; }
+  pick(title) { this.items.find((i) => i.title === title).click(); }
+}
+Menu.shown = null;
+
 // Obsidian draws a Lucide icon; here the element only records which one.
 function setIcon(el, name) { el.empty(); el.dataset.icon = name; }
 
 const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event.ctrlKey)) };
 
-module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Keymap, setIcon,
+module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
   window };

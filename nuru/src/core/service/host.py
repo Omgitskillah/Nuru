@@ -76,16 +76,21 @@ class _Live:
     # the turn is stored, its end above all (_caught_up); the turn has been told to stop.
     unrecorded: list[Callable[[TurnStream], None]] = dataclasses.field(default_factory=list)
     authorize: Callable[[str | None], bool] | None = None
+    model: str | None = None  # the conversation's model and thinking level; None: the defaults
+    thinking: str | None = None
     lost_outcome: bool = False  # an outcome couldn't be stored when it came: the turn ends failed
 
 
 class Service:
     def __init__(self, store: ServiceStore, conversations: ConversationStore, session_factory: Callable[[int], object],
                  vault: Path, *, queue_limit: int = QUEUE_LIMIT, answer_seconds: float | None = None,
-                 retention_days: int = RETENTION_DAYS) -> None:
+                 retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None) -> None:
         """`session_factory(conversation_id)` builds the Session (in the worker thread, on the first
-        turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS)."""
+        turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS).
+        `models()` gives the models a conversation may pick (core.main_models.choices); without it,
+        every conversation runs on the configured model."""
         self.store, self.conversations, self._factory = store, conversations, session_factory
+        self._models = models
         self.vault = Path(vault).resolve()
         self.vault_id = protocol.vault_id(self.vault)
         self.queue_limit, self.answer_seconds = queue_limit, answer_seconds
@@ -218,13 +223,17 @@ class Service:
             if conversation is None:
                 raise ProtocolError("not_found", "no such conversation")
             prompt = self._prompt(payload)
+            model, thinking = self._model_choice(conversation, payload)
             waiting = len(self._queue) + (self._active is not None)
             if waiting > self.queue_limit:
                 raise ProtocolError("queue_full", f"{self.queue_limit} turns are already waiting", retry_after_seconds=5)
             turn_id = protocol.new_id()
             self.store.add_turn(turn_id, conversation_id, payload["request_id"], payload["text"])
+            if (model, thinking) != (conversation["model"], conversation["thinking"]):
+                self.store.set_conversation_model(conversation_id, model, thinking)
             live = _Live(TurnStream(conversation_id, turn_id), conversation["store_id"], prompt)
             live.authorize = authorize
+            live.model, live.thinking = model, thinking
             self._emit(live, lambda s: s.emit("accepted", {"request_id": payload["request_id"]}))
             if waiting:
                 self._emit(live, lambda s: s.emit("queued", {"position": waiting}))
@@ -238,6 +247,26 @@ class Service:
             return 202, body, conversation_id, turn_id, then
 
         return self._request(principal, "submit_turn", payload, conversation_id, act)
+
+    def _model_choice(self, conversation: dict, payload: dict) -> tuple[str | None, str | None]:
+        """The model and thinking level this turn runs at: what the message picks, else what the
+        conversation last ran on. A new model resets thinking to its default unless one is given."""
+        model, thinking = conversation["model"], conversation["thinking"]
+        if "model" not in payload and "thinking" not in payload:
+            return model, thinking
+        if self._models is None:
+            raise ProtocolError("invalid_request", "this service runs one model")
+        listed = self._models()
+        if "model" in payload and payload["model"] != (model or listed["default"]):
+            model, thinking = payload["model"], None
+        chosen = next((c for c in listed["choices"] if c["id"] == (model or listed["default"])), None)
+        if chosen is None:
+            raise ProtocolError("invalid_request", "model: not one this service offers")
+        if "thinking" in payload:
+            thinking = payload["thinking"]
+            if thinking not in {level["id"] for level in chosen["thinking"]}:
+                raise ProtocolError("invalid_request", "thinking: not a level this model has")
+        return (None if model == listed["default"] else model), thinking
 
     def _prompt(self, payload: dict) -> str:
         """The message as Session gets it: the text, then what the user attached, if anything. A note is
@@ -347,9 +376,12 @@ class Service:
     def status(self) -> dict:
         with self._lock:
             queue = {"active": int(self._active is not None), "waiting": len(self._queue), "limit": self.queue_limit}
-            return {"v": protocol.VERSION, "service": "nuru", "version": self.version,
+            body = {"v": protocol.VERSION, "service": "nuru", "version": self.version,
                     "vault": {"id": self.vault_id, "name": self.vault.name[:200]},
                     "ready": {"chat": self.chat, "notes": "ready" if self.vault.is_dir() else "unavailable", "queue": queue}}
+        if self._models is not None:
+            body["models"] = self._models()  # outside the lock: it may ask Ollama
+        return body
 
     def request_state(self, principal: str, request_id: str, operation: str) -> dict:
         with self._lock:
@@ -390,7 +422,8 @@ class Service:
                     display = dataclasses.asdict(shown)
                 turns.append({"turn_id": turn["id"], "text": turn["text"], "state": turn["state"], "display": display})
         return {"v": protocol.VERSION, "conversation_id": conversation_id, "title": conversation["title"],
-                "created_at": conversation["created_at"], "turns": turns}
+                "created_at": conversation["created_at"], "model": conversation["model"],
+                "thinking": conversation["thinking"], "turns": turns}
 
     def check_cursor(self, principal: str, turn_id: str, after: int) -> None:
         """Raise unless `turn_id` is the principal's and `after` is a cursor into its stored events."""
@@ -534,6 +567,15 @@ class Service:
         session.authorize_tool = live.authorize
         if getattr(session, "tools", None) is not None:
             session.tools.authorize_tool = live.authorize
+        try:
+            if hasattr(session, "use_model"):  # a Session; scripted stand-ins run one model
+                session.use_model(live.model, live.thinking)
+        except Exception:
+            with self._lock:
+                if not self._unsafe:
+                    self._emit(live, lambda s: s.emit("failed", {"code": "model_unavailable",
+                                                                 "message": "Nuru couldn't switch to that model."}))
+            return
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
         session.on_tool_outcome = lambda call_id, name, arguments, outcome, write: self._tool_outcome(live, call_id, name, outcome, write)

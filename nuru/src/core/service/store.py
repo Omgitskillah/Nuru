@@ -88,6 +88,10 @@ _MIGRATIONS = {
     ALTER TABLE captures ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX captures_device_all ON captures(device_id);
     """,
+    4: """
+    ALTER TABLE conversations ADD COLUMN model TEXT;     -- NULL: the configured model
+    ALTER TABLE conversations ADD COLUMN thinking TEXT;  -- NULL: the model's default level
+    """,
 }
 TERMINAL_STATES = ("completed", "failed", "cancelled")
 
@@ -244,9 +248,12 @@ class ServiceStore:
     def conversation(self, conversation_id: str, principal: str) -> dict | None:
         """The conversation, or None if it doesn't exist or belongs to another principal: the two
         are answered alike, so an ID doesn't give away whether it exists."""
-        row = self._conn.execute("SELECT id, store_id, title, created_at FROM conversations WHERE id = ? AND principal = ?",
-                                 (conversation_id, principal)).fetchone()
-        return dict(zip(("id", "store_id", "title", "created_at"), row)) if row else None
+        row = self._conn.execute("SELECT id, store_id, title, created_at, model, thinking FROM conversations "
+                                 "WHERE id = ? AND principal = ?", (conversation_id, principal)).fetchone()
+        return dict(zip(("id", "store_id", "title", "created_at", "model", "thinking"), row)) if row else None
+
+    def set_conversation_model(self, conversation_id: str, model: str | None, thinking: str | None) -> None:
+        self._conn.execute("UPDATE conversations SET model = ?, thinking = ? WHERE id = ?", (model, thinking, conversation_id))
 
     def conversations(self, principal: str, before: str | None, limit: int) -> list[dict]:
         """Newest first; `before` is the last ID of the previous page."""

@@ -338,6 +338,25 @@ def test_load_model_starts_the_server_and_loads_the_model(monkeypatch):
     assert calls == ["server", ("model", session.MODEL)]
 
 
+@pytest.mark.parametrize("info, expected", [
+    ({"context_window": 4096}, 4096),      # the model's maximum, below the cap
+    ({"context_window": 262144}, 16384),   # capped at MAX_NUM_CTX
+    ({}, 8192),                            # no metadata: DEFAULT_NUM_CTX
+])
+def test_the_model_is_loaded_at_the_window_its_chats_will_use(monkeypatch, info, expected):
+    """Loading at another num_ctx than the chats' makes Ollama load the model a second time."""
+    s = start_session(monkeypatch)
+    monkeypatch.setattr(session, "MAX_NUM_CTX", 16384)
+    monkeypatch.setattr(session, "ensure_server_running", lambda: True)
+    windows = []
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, window: windows.append(window(info)) or info)
+
+    s.load_model()
+
+    assert windows == [expected]
+    assert session._context_window(s.model_info) == expected  # what the chats ask for
+
+
 def test_loaded_model_info_returns_the_info_when_the_model_is_loaded(monkeypatch):
     s = start_session(monkeypatch)
     monkeypatch.setattr(session, "is_model_loaded", lambda model: True)

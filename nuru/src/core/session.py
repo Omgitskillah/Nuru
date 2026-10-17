@@ -583,7 +583,7 @@ class Session:
         """Static info about the model, or None if it isn't in memory right now."""
         if CLAUDE:
             return claude_provider.model_info(MODEL)
-        return ensure_model_loaded(MODEL) if is_model_loaded(MODEL) else None
+        return ensure_model_loaded(MODEL, _context_window) if is_model_loaded(MODEL) else None
 
     def _system_text(self) -> str:
         return self._cached_system_text

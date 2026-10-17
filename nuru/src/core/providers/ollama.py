@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import requests
@@ -165,7 +166,7 @@ def _load_model_with_spinner(model: str, num_ctx: int | None = None) -> None:
         print("\r" + " " * (len(model) + 20) + "\r", end="", flush=True)
 
 
-def ensure_model_loaded(model: str, window=None) -> dict:
+def ensure_model_loaded(model: str, window: Callable[[dict], int] | None = None) -> dict:
     """Load `model` into memory first if it isn't resident yet.
 
     Returns its static info (parameter_size, quantization_level, family, supports_thinking).

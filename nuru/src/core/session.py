@@ -472,6 +472,7 @@ class Session:
         self._shown_call: str | None = None  # the call_id of the ToolCall last shown, until it runs
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
+        self._in_use = None  # the shared lock on this vault's history (core.vault_data.hold_history)
         self.link_auditor: VaultLinkAuditor | None = None
         self.steward: VaultSteward | None = None
         self.model_info: dict | None = None
@@ -507,11 +508,24 @@ class Session:
 
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
-        db_path, log_dir = data_paths(vault if vault is not None else configured_vault())
+        served = vault if vault is not None else configured_vault()
+        in_use = None
+        if DB_PATH is None:
+            from core import vault_data
+            from core.vault_identity import Registry
+            # Recovered, and this history held for the whole session, under the migration lock: no
+            # move can start in between, or replace the database while the session has it open.
+            with vault_data.opening(Registry().identify(served)):
+                db_path, log_dir = data_paths(served, recover=False)
+                in_use = vault_data.hold_history(db_path)
+        else:
+            db_path, log_dir = data_paths(served)
         if LOG_DIR is None:
             claude_provider.LOG_DIR = log_dir  # Claude's request log goes with the vault's other logs
 
         with ExitStack() as opened:
+            if in_use is not None:
+                opened.callback(in_use.close)
             python_server = python_server_params()
             obsidian, deep_think = OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS
             if vault is not None:
@@ -582,6 +596,7 @@ class Session:
                 session.steward.on_change = logger.stewardship
                 session.steward.start()
                 opened.callback(session.steward.stop)
+            session._in_use = in_use
             opened.pop_all()  # it worked, so the session owns them now
         return session
 
@@ -1716,5 +1731,8 @@ class Session:
             self.steward.stop()
         self.tools.close()
         self.store.close()
+        if self._in_use is not None:
+            self._in_use.close()  # a move may now replace this history
+            self._in_use = None
         if self.shadow:
             self.shadow.close()

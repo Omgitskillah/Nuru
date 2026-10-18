@@ -245,3 +245,28 @@ def test_a_log_cut_off_midway_is_copied_again(legacy, vault_uuid, tmp_path, monk
     assert len(list(logs.glob("*.jsonl"))) == 4
     for log in logs.glob("*.jsonl"):
         assert log.read_text() == (legacy.parent / ".logs" / log.name).read_text()
+
+
+# --------------------------------------------------------------------------- a standalone Nuru session
+def test_a_move_waits_for_every_session_using_the_history_to_close(legacy, vault_uuid, tmp_path, monkeypatch):
+    """Astra's reproduction: the nuru app's Session holds a new-layout history open (no service lock)."""
+    from test_session import start_session
+    monkeypatch.setattr(session, "DB_PATH", None)
+    monkeypatch.setattr(session, "LOG_DIR", None)
+    monkeypatch.setenv("VAULT_PATH", str(tmp_path / "NuruVault"))
+    cli = start_session(monkeypatch)
+    other = start_session(monkeypatch)  # two sessions share the history
+
+    with pytest.raises(vault_data.MigrationError, match="Nuru is running"):
+        vault_data.adopt_legacy(vault_uuid)
+    cli.close()
+    with pytest.raises(vault_data.MigrationError, match="Nuru is running"):
+        vault_data.adopt_legacy(vault_uuid)  # one still open
+    other.store.create_conversation("still writable")  # nothing was replaced under it
+    other.close()
+
+    # All closed: the lock no longer stops it, but those sessions started conversations of their own,
+    # so the move refuses for the reason that's left, and the old files are untouched.
+    with pytest.raises(vault_data.MigrationError, match="already holds conversations"):
+        vault_data.adopt_legacy(vault_uuid)
+    assert (legacy / "conversation.db").exists()

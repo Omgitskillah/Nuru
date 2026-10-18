@@ -147,6 +147,37 @@ def _recover(vault_uuid: str) -> int:
     return copied
 
 
+def _history_lock(db_path: Path, shared: bool):
+    """An open file holding a lock on `<conversation.db>.inuse`: shared for each Nuru session using that
+    history, for as long as it runs; exclusive, never waiting, for a move. ServiceBusy if it can't be had.
+    Windows has no shared file locks, so there each session locks one byte of its own and a move
+    locks them all."""
+    from core.service.store import ServiceBusy
+
+    path = db_path.with_name(db_path.name + ".inuse")
+    handle = open(path, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            import random
+            handle.seek(random.randrange(1, 1 << 30) if shared else 0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1 if shared else 1 << 30)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise ServiceBusy(f"a Nuru session is using {db_path}") from None
+    return handle
+
+
+def hold_history(db_path: Path):
+    """For a Nuru session (the service's or the CLI's): a shared lock on its conversation database for
+    as long as the session runs, so no move replaces it underneath. Close the returned file to let go.
+    Take it inside opening(), so a move can't start between recovery and this."""
+    return _history_lock(db_path, shared=True)
+
+
 @contextlib.contextmanager
 def opening(vault_uuid: str):
     """For a service starting: recover, then open the databases and take their owner lock inside this
@@ -255,11 +286,13 @@ def adopt_legacy(vault_uuid: str) -> dict:
             raise MigrationError(f"no old data to move in {legacy_db}")
         held = []
         try:
-            for database in (legacy_db / "service.db", db_dir(vault_uuid) / "service.db"):
-                try:
+            try:
+                for database in (legacy_db / "service.db", db_dir(vault_uuid) / "service.db"):
                     held.append(_lock(database.with_name(database.name + ".lock")))
-                except ServiceBusy:
-                    raise MigrationError("Nuru is running: stop it (quit Obsidian, or Ctrl-C nuru-serve) and run this again") from None
+                held.append(_history_lock(db_dir(vault_uuid) / "conversation.db", shared=False))  # no session open
+            except ServiceBusy:
+                raise MigrationError("Nuru is running: stop it (quit Obsidian, Ctrl-C nuru-serve, close the nuru app) "
+                                     "and run this again") from None
             if live.exists() and not _empty(live):
                 raise MigrationError(f"{live} already holds conversations; moving the old ones in would mix two histories")
 

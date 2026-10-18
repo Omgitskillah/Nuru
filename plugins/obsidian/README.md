@@ -74,7 +74,13 @@ loads it.
   and offers **Switch Nuru to this vault**. That works only for a Nuru the plugin started, and only while
   that vault has no turn running or waiting.
 - **The plugin's settings** show the port (27125 unless you change it), where the token is read from,
-  this vault's ID, and **Check and reconnect**.
+  this vault's ID (`.nuru/vault-id`, which Nuru writes the first time it serves the vault, and which
+  stays the same if you move or rename the vault), and **Check and reconnect**.
+- **A copied vault**: Nuru won't serve a copy of a vault while the original still exists, since both
+  would claim the same history. Settle it in the Nuru folder: `uv run nuru-serve vault rebind <vault>`
+  if this copy is the one to keep, or `uv run nuru-serve vault clone <vault>` to make it a separate vault.
+- **The plugin needs a Nuru from WP04 M1 or later.** Against an older one it says so: `git pull` in the
+  Nuru folder, then restart Nuru.
 - Why the Nuru folder isn't a plugin setting: plugin settings live in the vault and sync with it, so a
   synced or shared vault could point the plugin at a folder of its own and have its code run when the
   vault opens. `~/.nuru/install.json` is only on this computer.

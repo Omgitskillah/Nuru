@@ -56,6 +56,7 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/questions/([^/]+)/answers", "answer_question"),
     ("GET", r"/v1/requests/([^/]+)", "request_state"),
     ("POST", r"/v1/service/stop", "stop_service"),
+    ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
 ]
 
 
@@ -227,8 +228,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.capture_answer(405, {"ok": False, "error": "method_not_allowed"})
             if url.path == "/v1/captures" or url.path.startswith("/v1/captures/"):
                 return self.capture_route(method, url.path, device_id)
-            if re.match(r"^/v(?!1/)\d+/", url.path):
-                raise ProtocolError("unsupported_version", "this service speaks protocol version 1")
+            if re.match(r"^/v(?!1/)\d+/", url.path) and url.path != "/v2/status":
+                raise ProtocolError("unsupported_version", "this service speaks protocol version 1, and version 2's status")
             for route_method, pattern, name in _ROUTES:
                 match = re.fullmatch(pattern, url.path)
                 if match and route_method == method:
@@ -365,6 +366,12 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ operations
     def on_status(self, principal, query):
         body = self.server.service.status()
+        if self.server.remote_origin:
+            body.pop("vault", None)
+        self.answer(200, body)
+
+    def on_status_v2(self, principal, query):
+        body = self.server.service.status_v2()
         if self.server.remote_origin:
             body.pop("vault", None)
         self.answer(200, body)
@@ -545,10 +552,16 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     except ServiceBusy as error:
         sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
+    from core.vault_identity import Registry, RegistryError, VaultConflict
+    try:
+        vault_uuid = Registry().identify(vault)
+    except (VaultConflict, RegistryError, ValueError) as error:
+        store.close()
+        sys.exit(f"nuru-serve: {error}")
     from core import main_models
     default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
     service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit,
-                      models=lambda: main_models.choices(default_model))
+                      models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)
@@ -641,6 +654,10 @@ def main(argv: list[str] | None = None) -> None:
                         help="started by the Obsidian plugin: stop when stdin closes; another vault may stop it when idle")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
+    vault_command = commands.add_parser("vault", help="vault IDs on this computer: list, or settle a copied vault")
+    vault_command.add_argument("action", choices=["list", "rebind", "clone"])
+    vault_command.add_argument("vault", nargs="?", help="the vault to rebind (keep its ID) or clone (give it a new one)")
+    vault_command.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     token = commands.add_parser("token", help="add, remove or list the clients that may sign in")
     token.add_argument("action", choices=["add", "remove", "list"])
     token.add_argument("client", nargs="?")
@@ -674,6 +691,8 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "device":
         return device_command(args, parser)
+    if args.command == "vault":
+        return vault_command_run(args, parser)
     if args.command != "token":
         return serve(args.port, args.queue, args.remote_origin, args.remote_port, args.managed)
     credentials = Credentials()
@@ -691,6 +710,36 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"no client named {args.client}")
     else:
         print(f"{args.client}: token revoked")
+
+
+def vault_command_run(args, parser):
+    """`vault list`, and `vault rebind|clone <vault>` for a vault refused as a copy (core.vault_identity)."""
+    from core.vault_identity import Registry, RegistryError, read
+    registry = Registry()
+    if args.action == "list":
+        try:
+            entries = registry.entries()
+        except RegistryError as error:
+            sys.exit(f"nuru-serve: {error}")
+        for vault_uuid, path in sorted(entries.items(), key=lambda item: item[1]):
+            here = "" if read(Path(path)) == vault_uuid else "  (no longer there)"
+            print(f"{vault_uuid}  {path}{here}")
+        return
+    if not args.vault:
+        parser.error(f"vault {args.action} needs the vault's folder")
+    vault = Path(args.vault).expanduser().resolve()
+    if not vault.is_dir():
+        parser.error(f"no folder at {vault}")
+    what = (f"Keep {vault} as the vault with this ID and its history; the other copy is treated as old."
+            if args.action == "rebind" else f"Give {vault} a new ID: a separate vault, starting with no history.")
+    if not args.yes and input(f"{what} Go ahead? [y/N] ").strip().lower() not in {"y", "yes"}:
+        print("Nothing changed.")
+        return
+    try:
+        vault_uuid = registry.rebind(vault) if args.action == "rebind" else registry.clone(vault)
+    except (ValueError, RegistryError) as error:
+        parser.error(str(error))
+    print(f"{vault}: vault ID {vault_uuid}")
 
 
 def device_command(args, parser):

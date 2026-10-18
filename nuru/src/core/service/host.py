@@ -84,7 +84,8 @@ class _Live:
 class Service:
     def __init__(self, store: ServiceStore, conversations: ConversationStore, session_factory: Callable[[int], object],
                  vault: Path, *, queue_limit: int = QUEUE_LIMIT, answer_seconds: float | None = None,
-                 retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None) -> None:
+                 retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None,
+                 vault_uuid: str | None = None) -> None:
         """`session_factory(conversation_id)` builds the Session (in the worker thread, on the first
         turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS).
         `models()` gives the models a conversation may pick (core.main_models.choices); without it,
@@ -92,7 +93,8 @@ class Service:
         self.store, self.conversations, self._factory = store, conversations, session_factory
         self._models = models
         self.vault = Path(vault).resolve()
-        self.vault_id = protocol.vault_id(self.vault)
+        self.vault_id = protocol.vault_id(self.vault)  # v1's path hash
+        self.vault_uuid = vault_uuid  # v2's identity (core.vault_identity), set by nuru-serve
         self.queue_limit, self.answer_seconds = queue_limit, answer_seconds
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)  # an event was stored, or the queue moved
@@ -390,6 +392,13 @@ class Service:
                     "ready": {"chat": self.chat, "notes": "ready" if self.vault.is_dir() else "unavailable", "queue": queue}}
         if self._models is not None:
             body["models"] = self._models()  # outside the lock: it may ask Ollama
+        return body
+
+    def status_v2(self) -> dict:
+        """Protocol v2's status: v1's, with the vault named by its UUID instead of its path hash."""
+        body = self.status()
+        body["v"] = 2
+        body["vault"] = {"uuid": self.vault_uuid, "name": body["vault"]["name"]}
         return body
 
     def request_state(self, principal: str, request_id: str, operation: str) -> dict:

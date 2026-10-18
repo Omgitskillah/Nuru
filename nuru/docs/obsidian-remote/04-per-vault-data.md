@@ -49,9 +49,11 @@ Deleting a vault leaves its data on the computer until `nuru-serve vault forget`
   client relies on changes meaning:
   - **`/v1/…` is still served, unchanged.** `status.vault.id` stays the path hash, and no new error codes
     are added. An old plugin keeps working against a new service, including its own same-vault check.
-  - **`/v2/status`** gives `vault: {uuid, name}` and drops the path hash. It adds an error `wrong_vault`,
-    409, carrying `{served: {uuid, name}}`, which M4 uses. `protocol-v2.md` and its schema are written
-    in this milestone. Only the changed parts are new; everything else is v1's, under `/v2/`.
+  - **`/v2/status`** gives `vault: {uuid, name}` and drops the path hash. `protocol-v2.md` and its
+    schema are written in this milestone. Only the changed part is new: `GET /v2/status`. Everything
+    else stays at `/v1/…`, which a v2 service serves unchanged. Copying all of v1 under `/v2/` would
+    have rewritten every body's `v` and the stored events for no change in meaning. *(Built in M1 this
+    way; see protocol-v2.md.)*
   - **The plugin moves to v2.** It reads its own `.nuru/vault-id` and compares UUIDs. Against a service
     that answers `/v2/` with `unsupported_version`, which is today's answer to any other version, it
     says "Update Nuru: this plugin needs a newer Nuru (`git pull` in the Nuru folder)". It never falls
@@ -60,7 +62,7 @@ Deleting a vault leaves its data on the computer until `nuru-serve vault forget`
     - an old plugin with a new service: chats over v1;
     - a new plugin with an old service: shows the update message and sends nothing;
     - a new plugin with a new service: v2;
-    - a v1 client never sees a UUID or `wrong_vault`.
+    - a v1 client never sees a UUID.
   - **Done when:** a moved vault keeps its ID and its history; a copied one is refused until rebound or
     cloned. The plugin and the service always agree on the ID, and the version tests pass.
 
@@ -111,8 +113,9 @@ Deleting a vault leaves its data on the computer until `nuru-serve vault forget`
 ### M4 — Phones bound to one vault
 
 - **Pairing** records the vault's UUID in the device's credential: one vault per computer for a phone.
-- **When that vault isn't being served,** a capture or chat from the device is refused with v2's 409
-  `wrong_vault` (M1) and a retry message, such as "Nuru is serving another vault on this Mac. Try again when
+- **When that vault isn't being served,** a capture or chat from the device is refused with v1's own
+  409 `conflict` and a retry message (its routes are v1's, whose contract doesn't change; review of
+  PR #32 dropped a v2-only `wrong_vault`), such as "Nuru is serving another vault on this Mac. Try again when
   it's back on <vault>." Nothing is queued: an offline queue would be its own decision.
 - `device list` shows each device's vault.
 - **Done when:** with the service switched to another vault, a capture is refused and lands nowhere.
@@ -134,6 +137,6 @@ These checks run on a real Mac:
    being served at the first start, which is NuruVault today? Or should they go to a read-only archive
    that no vault lists?
 Decided with Astra on PR #30:
-- **The UUID and `wrong_vault` go in protocol v2,** with v1 frozen (M1).
+- **The UUID goes in protocol v2,** with v1 frozen (M1). v2 is only the status; no new error codes.
 - **`vault rebind` and `vault clone` stay at the terminal for the first release,** with an explicit source
   and target and a confirmation. The panel explains the conflict and shows the command.

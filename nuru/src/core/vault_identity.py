@@ -8,19 +8,33 @@ a new vault with its own UUID). A UUID whose old path is gone or holds another I
 registry just follows it.
 
 The file is created by the service the first time it serves a vault, and read by the Obsidian plugin.
+
+The registry is authoritative, so it fails closed: a missing file is an empty registry, but one that
+can't be read or isn't a registry stops everything that needs it (RegistryError), and is left as it is
+for the user to look at. Every read-modify-write holds registry.lock, so services for different vaults
+and the CLI never lose each other's entries.
 """
 
+import contextlib
 import json
 import os
 import shlex
+import tempfile
+import time
 import uuid as uuidlib
 from pathlib import Path
+
+LOCK_SECONDS = 10
 
 ID_FILE = Path(".nuru") / "vault-id"
 
 
 def vaults_dir() -> Path:
     return Path(os.environ.get("NURU_VAULTS_DIR") or Path.home() / ".nuru" / "vaults")
+
+
+class RegistryError(RuntimeError):
+    """registry.json exists but can't be read as a registry: nothing is decided from it."""
 
 
 class VaultConflict(RuntimeError):
@@ -56,27 +70,71 @@ def _write(vault: Path, vault_uuid: str, *, replace: bool) -> None:
         file.write(vault_uuid + "\n")
 
 
+@contextlib.contextmanager
+def _exclusive(path: Path):
+    """Hold an exclusive lock on `path` (another process waits, up to LOCK_SECONDS)."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    handle = open(path, "a+")
+    deadline = time.monotonic() + LOCK_SECONDS
+    try:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise RegistryError(f"{path} is held by another Nuru for more than {LOCK_SECONDS} s") from None
+                time.sleep(0.05)
+        yield
+    finally:
+        handle.close()  # releases the lock
+
+
 class Registry:
     def __init__(self, directory: Path | None = None) -> None:
         self.path = Path(directory or vaults_dir()) / "registry.json"
+        self.lock = self.path.with_name("registry.lock")
 
     def entries(self) -> dict[str, str]:
-        """{uuid: last-seen path}."""
+        """{uuid: last-seen path}. Empty only when there's no registry yet; RegistryError otherwise."""
         try:
             data = json.loads(self.path.read_text())
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return {}
-        return {k: v for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
+        except (OSError, ValueError) as error:
+            raise RegistryError(f"{self.path} can't be read ({type(error).__name__}); it's left as it is. "
+                                "Fix or move it aside, then start Nuru again") from None
+        if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+            raise RegistryError(f"{self.path} isn't a Nuru vault registry; it's left as it is. "
+                                "Fix or move it aside, then start Nuru again")
+        return data
 
     def _save(self, entries: dict[str, str]) -> None:
+        """Replace the registry in one step, from a temporary file of its own (callers hold the lock)."""
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        temporary.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n")
-        os.replace(temporary, self.path)
+        fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix="registry.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as file:
+                file.write(json.dumps(entries, indent=2, sort_keys=True) + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
 
     def identify(self, vault: Path) -> str:
         """The vault's UUID, made if it has none, after checking it isn't a copy (VaultConflict)."""
-        vault = Path(vault).resolve()
+        with _exclusive(self.lock):
+            return self._identify(Path(vault).resolve())
+
+    def _identify(self, vault: Path) -> str:
         vault_uuid = read(vault)
         if vault_uuid is None:
             try:
@@ -98,20 +156,26 @@ class Registry:
     def rebind(self, vault: Path) -> str:
         """`vault` keeps its UUID (and so its history); the other copy is the stale one."""
         vault = Path(vault).resolve()
-        vault_uuid = read(vault)
-        if vault_uuid is None:
-            raise ValueError(f"{vault} has no Nuru vault ID")
-        entries = self.entries()
-        entries[vault_uuid] = str(vault)
-        self._save(entries)
+        with _exclusive(self.lock):
+            vault_uuid = read(vault)
+            if vault_uuid is None:
+                raise ValueError(f"{vault} has no Nuru vault ID")
+            entries = self.entries()
+            entries[vault_uuid] = str(vault)
+            self._save(entries)
         return vault_uuid
 
     def clone(self, vault: Path) -> str:
-        """`vault` gets a new UUID: a separate vault, with an empty history."""
+        """`vault` gets a new UUID: a separate vault, with an empty history.
+
+        The registry entry is committed before the vault's file changes. Interrupted between the two,
+        the vault still holds its old UUID, so it's still refused as a copy and `clone` can simply run
+        again; the unused new entry points at a vault that doesn't hold its UUID, which counts as gone."""
         vault = Path(vault).resolve()
         vault_uuid = str(uuidlib.uuid4())
-        _write(vault, vault_uuid, replace=True)
-        entries = self.entries()
-        entries[vault_uuid] = str(vault)
-        self._save(entries)
+        with _exclusive(self.lock):
+            entries = self.entries()
+            entries[vault_uuid] = str(vault)
+            self._save(entries)
+            _write(vault, vault_uuid, replace=True)
         return vault_uuid

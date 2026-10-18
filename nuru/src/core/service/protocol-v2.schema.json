@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "nuru-serve protocol v2: only what changed from v1 (protocol-v2.md)",
+  "title": "nuru-serve protocol v2: only what changed from v1, the status (protocol-v2.md)",
   "$defs": {
     "uuid": {
       "type": "string",
@@ -164,91 +164,6 @@
                       null
                     ]
                   }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "error": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "v",
-        "error"
-      ],
-      "properties": {
-        "v": {
-          "const": 2
-        },
-        "error": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "code",
-            "message"
-          ],
-          "properties": {
-            "code": {
-              "enum": [
-                "unauthorized",
-                "forbidden_origin",
-                "forbidden",
-                "not_found",
-                "unsupported_version",
-                "invalid_request",
-                "payload_too_large",
-                "conflict",
-                "queue_full",
-                "cursor_expired",
-                "question_closed",
-                "wrong_operation",
-                "model_unavailable",
-                "shutting_down",
-                "internal",
-                "wrong_vault"
-              ]
-            },
-            "message": {
-              "type": "string",
-              "maxLength": 500
-            },
-            "retry_after_seconds": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "resync": {
-              "description": "cursor_expired only: where the client can rebuild from. Never starts a new turn.",
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "turn"
-              ],
-              "properties": {
-                "turn": {
-                  "type": "string"
-                },
-                "conversation": {
-                  "type": "string"
-                }
-              }
-            },
-            "served": {
-              "description": "wrong_vault only: the vault being served.",
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "uuid",
-                "name"
-              ],
-              "properties": {
-                "uuid": {
-                  "$ref": "#/$defs/uuid"
-                },
-                "name": {
-                  "type": "string",
-                  "maxLength": 200
                 }
               }
             }

@@ -16,7 +16,7 @@ from core.service.credentials import Credentials
 from core.service.host import Service
 from core.service.server import NuruServer, main
 from core.service.store import ServiceStore
-from core.vault_identity import ID_FILE, Registry, VaultConflict
+from core.vault_identity import ID_FILE, Registry, RegistryError, VaultConflict
 from test_service_host import ScriptedSession, reply
 from test_service_server import Client
 
@@ -82,6 +82,63 @@ def test_a_file_that_isnt_an_id_is_never_overwritten(tmp_path, registry):
     assert (notes / ID_FILE).read_text() == "not an id\n"
 
 
+def test_a_registry_that_cant_be_read_stops_everything_and_is_kept(tmp_path, registry):
+    notes = vault(tmp_path, "Notes")
+    registry.identify(notes)
+    copy = tmp_path / "Notes copy"
+    shutil.copytree(notes, copy)
+    registry.path.write_text("{not json")
+    for act in (registry.identify, registry.rebind, registry.clone):
+        with pytest.raises(RegistryError, match="left as it is"):
+            act(copy)
+    assert registry.path.read_text() == "{not json", "kept for the user to look at"
+    assert vault_identity.read(copy) == vault_identity.read(notes), "the copy wasn't given a new ID either"
+    registry.path.write_text('["a list"]')
+    with pytest.raises(RegistryError, match="isn't a Nuru vault registry"):
+        registry.identify(copy)
+
+
+def test_services_and_the_cli_at_once_never_lose_an_entry(tmp_path, registry):
+    vaults = [vault(tmp_path, f"Vault {n}") for n in range(12)]
+    errors = []
+
+    def serve(folder):
+        try:
+            Registry(registry.path.parent).identify(folder)
+        except Exception as error:  # noqa: BLE001 - the test reports it
+            errors.append(error)
+
+    threads = [threading.Thread(target=serve, args=(folder,)) for folder in vaults]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not errors
+    assert sorted(registry.entries().values()) == sorted(str(v.resolve()) for v in vaults)
+    assert not list(registry.path.parent.glob("*.tmp"))
+
+
+def test_an_interrupted_clone_leaves_the_copy_refused_and_can_run_again(tmp_path, registry, monkeypatch):
+    notes = vault(tmp_path, "Notes")
+    first = registry.identify(notes)
+    copy = tmp_path / "Notes copy"
+    shutil.copytree(notes, copy)
+
+    def crash(*args, **kwargs):
+        raise OSError("crashed before the vault's file changed")
+
+    real_write = vault_identity._write
+    monkeypatch.setattr(vault_identity, "_write", crash)
+    with pytest.raises(OSError):
+        registry.clone(copy)
+    monkeypatch.setattr(vault_identity, "_write", real_write)
+    assert vault_identity.read(copy) == first
+    with pytest.raises(VaultConflict):
+        registry.identify(copy), "still a copy, so still refused"
+    assert registry.clone(copy) != first
+    assert registry.identify(copy) != first and registry.identify(notes) == first
+
+
 def test_vault_rebind_asks_first(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NURU_VAULTS_DIR", str(tmp_path / "vaults"))
     notes = vault(tmp_path, "Notes")
@@ -130,11 +187,3 @@ def test_an_old_plugin_sees_v1_as_it_was(served):
     assert body["vault"]["id"] == protocol.vault_id(service.vault), "still the path hash"
     assert vault_uuid not in json.dumps(body), "a v1 client never sees the UUID"
     protocol.validate("status", body)
-
-
-def test_wrong_vault_is_a_v2_error_only():
-    v1 = json.loads(protocol.SCHEMA_PATH.read_text())["$defs"]["error"]["properties"]["error"]["properties"]["code"]["enum"]
-    v2 = V2_SCHEMA["$defs"]["error"]["properties"]["error"]["properties"]["code"]["enum"]
-    assert "wrong_vault" not in v1 and set(v2) == set(v1) | {"wrong_vault"}
-    assert set(protocol.ERRORS_V2) == set(v2) and protocol.ERRORS_V2["wrong_vault"] == 409
-    assert "wrong_vault" not in protocol.ERRORS

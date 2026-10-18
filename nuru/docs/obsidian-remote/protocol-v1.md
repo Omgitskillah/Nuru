@@ -2,7 +2,7 @@
 
 Status: frozen for WP01 M1, 2026-10-09. A change that breaks
 `nuru/tests/fixtures/protocol_v1.json` is a protocol change and needs version 2.
-[Version 2](protocol-v2.md) (WP04) changes only the status's vault identity and adds `wrong_vault`;
+[Version 2](protocol-v2.md) (WP04) changes only the status's vault identity;
 a v2 service serves all of version 1, unchanged.
 
 Shapes: [`protocol-v1.schema.json`](../../src/core/service/protocol-v1.schema.json).

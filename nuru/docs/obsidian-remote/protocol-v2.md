@@ -1,11 +1,11 @@
 # nuru-serve protocol, version 2
 
 Status: WP04 M1, 2026-10-18. Version 2 is **only what changed** from [version 1](protocol-v1.md): the
-vault is named by a UUID instead of a hash of its path. Everything else is version 1, served at `/v1/…`
-exactly as before by a service that also speaks version 2. A v1 client never sees a UUID or a v2 error.
+status names the vault by a UUID instead of a hash of its path. Everything else is version 1, served at `/v1/…`
+exactly as before by a service that also speaks version 2. A v1 client never sees a UUID.
 
 Shapes: [`protocol-v2.schema.json`](../../src/core/service/protocol-v2.schema.json), which defines only
-`status` and `error`. Tests: `nuru/tests/test_vault_identity.py`.
+`status`. Tests: `nuru/tests/test_vault_identity.py`.
 
 ## The vault's identity
 
@@ -30,11 +30,9 @@ v1's `status`, with:
 
 ## Errors
 
-v1's error body with `v: 2`, and one more code:
-
-| Code | HTTP | When |
-| --- | --- | --- |
-| `wrong_vault` | 409 | A request meant for one vault reached a service serving another (WP04 M4). `served: {uuid, name}` says which vault is served. |
+Version 2 adds no error codes. A request that reaches a service serving another vault (WP04 M4: a
+phone bound to one vault) goes to a `/v1/…` route, so it's refused with v1's own `conflict` (409) and a
+message saying which vault is being served; v1's contract stays exactly as it was.
 
 ## Versions together
 

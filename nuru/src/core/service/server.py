@@ -552,10 +552,10 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     except ServiceBusy as error:
         sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
-    from core.vault_identity import Registry, VaultConflict
+    from core.vault_identity import Registry, RegistryError, VaultConflict
     try:
         vault_uuid = Registry().identify(vault)
-    except (VaultConflict, ValueError) as error:
+    except (VaultConflict, RegistryError, ValueError) as error:
         store.close()
         sys.exit(f"nuru-serve: {error}")
     from core import main_models
@@ -714,10 +714,14 @@ def main(argv: list[str] | None = None) -> None:
 
 def vault_command_run(args, parser):
     """`vault list`, and `vault rebind|clone <vault>` for a vault refused as a copy (core.vault_identity)."""
-    from core.vault_identity import Registry, read
+    from core.vault_identity import Registry, RegistryError, read
     registry = Registry()
     if args.action == "list":
-        for vault_uuid, path in sorted(registry.entries().items(), key=lambda item: item[1]):
+        try:
+            entries = registry.entries()
+        except RegistryError as error:
+            sys.exit(f"nuru-serve: {error}")
+        for vault_uuid, path in sorted(entries.items(), key=lambda item: item[1]):
             here = "" if read(Path(path)) == vault_uuid else "  (no longer there)"
             print(f"{vault_uuid}  {path}{here}")
         return
@@ -733,7 +737,7 @@ def vault_command_run(args, parser):
         return
     try:
         vault_uuid = registry.rebind(vault) if args.action == "rebind" else registry.clone(vault)
-    except ValueError as error:
+    except (ValueError, RegistryError) as error:
         parser.error(str(error))
     print(f"{vault}: vault ID {vault_uuid}")
 

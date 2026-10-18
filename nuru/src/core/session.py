@@ -195,15 +195,18 @@ LOG_DIR = Path(os.environ["NURU_LOG_DIR"]) if os.environ.get("NURU_LOG_DIR") els
 DB_PATH = Path(os.environ["NURU_DB_PATH"]) if os.environ.get("NURU_DB_PATH") else None
 
 
-def data_paths(vault: Path) -> tuple[Path, Path]:
+def data_paths(vault: Path, *, recover: bool = True) -> tuple[Path, Path]:
     """(the conversation database, the log folder) for `vault`: NURU_DB_PATH / NURU_LOG_DIR if set,
-    else the vault's own folder on this computer (core.vault_data). Gives the vault its ID if it has none."""
+    else the vault's own folder on this computer (core.vault_data), after finishing or undoing an
+    interrupted move (recover=False: the caller has done that, under the migration lock). Gives the
+    vault its ID if it has none."""
     if DB_PATH is not None and LOG_DIR is not None:
         return DB_PATH, LOG_DIR
     from core import vault_data
     from core.vault_identity import Registry
     vault_uuid = Registry().identify(vault)
-    vault_data.recover(vault_uuid)
+    if recover:
+        vault_data.recover(vault_uuid)
     return (DB_PATH or vault_data.db_dir(vault_uuid) / "conversation.db",
             LOG_DIR or vault_data.logs_dir(vault_uuid))
 

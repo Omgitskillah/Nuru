@@ -16,6 +16,7 @@ A service started any other way has no key, so no plugin can stop it.
 """
 
 import argparse
+import contextlib
 import hmac
 import json
 import os
@@ -552,12 +553,11 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     from core.vault_identity import Registry, RegistryError, VaultConflict
     try:
         vault_uuid = Registry().identify(vault)
-        db_path, _ = session.data_paths(vault)  # this vault's own, on this computer (core.vault_data)
-    except (VaultConflict, RegistryError, ValueError) as error:
-        sys.exit(f"nuru-serve: {error}")
-    try:
-        store = ServiceStore(db_path.with_name("service.db"))  # owns the database before recovering it
-    except ServiceBusy as error:
+        # Recovery and the owner lock under the migration lock: a move can't start in between.
+        with vault_data.opening(vault_uuid) if session.DB_PATH is None else contextlib.nullcontext():
+            db_path, _ = session.data_paths(vault, recover=False)  # this vault's own (core.vault_data)
+            store = ServiceStore(db_path.with_name("service.db"))  # owns the database before recovering it
+    except (VaultConflict, RegistryError, ValueError, vault_data.MigrationError, ServiceBusy) as error:
         sys.exit(f"nuru-serve: {error}")
     if session.DB_PATH is None and vault_data.legacy_waiting():
         print("nuru-serve: conversations from before vaults had their own history are still in the Nuru folder; "

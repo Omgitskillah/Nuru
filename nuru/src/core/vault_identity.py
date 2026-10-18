@@ -71,11 +71,12 @@ def _write(vault: Path, vault_uuid: str, *, replace: bool) -> None:
 
 
 @contextlib.contextmanager
-def _exclusive(path: Path):
-    """Hold an exclusive lock on `path` (another process waits, up to LOCK_SECONDS)."""
+def _exclusive(path: Path, seconds: float = LOCK_SECONDS, busy: Exception | None = None):
+    """Hold an exclusive lock on `path`, waiting up to `seconds` for another process to let go, then
+    raising `busy` (a RegistryError by default). The OS releases it if the holder dies."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     handle = open(path, "a+")
-    deadline = time.monotonic() + LOCK_SECONDS
+    deadline = time.monotonic() + seconds
     try:
         while True:
             try:
@@ -89,7 +90,7 @@ def _exclusive(path: Path):
                 break
             except OSError:
                 if time.monotonic() > deadline:
-                    raise RegistryError(f"{path} is held by another Nuru for more than {LOCK_SECONDS} s") from None
+                    raise busy or RegistryError(f"{path} is held by another Nuru for more than {seconds:g} s") from None
                 time.sleep(0.05)
         yield
     finally:

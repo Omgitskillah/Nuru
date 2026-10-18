@@ -21,6 +21,8 @@ def legacy(tmp_path, monkeypatch):
     db.mkdir(parents=True)
     logs.mkdir()
     (logs / "20261017-221131_d9463c5a.jsonl").write_text('{"event": "turn"}\n')
+    for n in range(3):
+        (logs / f"20261016-10000{n}_eval.jsonl").write_text(f'{{"n": {n}}}\n')
     conversations = ConversationStore(db / "conversation.db")
     store_id = conversations.create_conversation("Trip")
     conversations.add_message(store_id, "user", "Where am I going?")
@@ -74,7 +76,7 @@ def test_without_a_configured_vault_nothing_is_given_an_id(monkeypatch):
 def test_adopting_moves_the_old_history_and_keeps_the_old_files(legacy, vault_uuid, tmp_path):
     moved = vault_data.adopt_legacy(vault_uuid)
     live = tmp_path / "vaults" / vault_uuid / "db"
-    assert moved["conversations"] == 1 and moved["logs"] == 1
+    assert moved["conversations"] == 1 and moved["logs"] == 4
     assert titles(live / "conversation.db") == ["Trip"] and titles(live / "service.db") == ["Trip"]
     assert (tmp_path / "vaults" / vault_uuid / "logs" / "20261017-221131_d9463c5a.jsonl").exists()
     assert not (legacy / "conversation.db").exists() and (legacy / "conversation.db.pre-wp04").exists()
@@ -173,3 +175,73 @@ def test_a_crash_at_any_step_leaves_the_old_layout_or_the_new_one(legacy, vault_
     if outcome == "old":
         vault_data.adopt_legacy(vault_uuid)  # and the move can simply run again
         new_layout_is_complete(legacy, vault_uuid, tmp_path)
+
+
+# --------------------------------------------------------------------------- a move and a starting Nuru
+def test_a_starting_nuru_never_touches_a_move_under_way(legacy, vault_uuid, tmp_path, monkeypatch):
+    """Astra's reproduction: a staging copy being written, and the move's lock held."""
+    monkeypatch.setattr(vault_data, "MIGRATE_WAIT_SECONDS", 0.2)
+    staging = vault_data.data_dir(vault_uuid) / "db.staging"
+    staging.mkdir()
+    with vault_data._migration_lock(0):  # the move, in another process
+        with pytest.raises(vault_data.MigrationBusy, match="being moved"):
+            vault_data.recover(vault_uuid)
+        with pytest.raises(vault_data.MigrationBusy):
+            with vault_data.opening(vault_uuid):
+                pass
+        with pytest.raises(vault_data.MigrationBusy):
+            vault_data.adopt_legacy(vault_uuid)  # nor a second move
+    assert staging.exists(), "the move's copy is left alone"
+    vault_data.recover(vault_uuid)  # once it's over (here: it died), recovery runs
+    assert not staging.exists()
+
+
+def test_a_move_cant_start_while_a_nuru_opens_its_history(legacy, vault_uuid):
+    with vault_data.opening(vault_uuid):  # a service starting: recovered, now opening its databases
+        with pytest.raises(vault_data.MigrationBusy):
+            vault_data.adopt_legacy(vault_uuid)
+    assert (legacy / "conversation.db").exists()
+
+
+def test_an_interrupted_log_copy_is_finished_by_running_the_move_again(legacy, vault_uuid, tmp_path, monkeypatch):
+    real_copy = vault_data.shutil.copy2
+    copied = []
+
+    def fail_on_the_second(source, target):
+        if len(copied) == 1:
+            raise OSError("disk full")
+        copied.append(source)
+        return real_copy(source, target)
+
+    monkeypatch.setattr(vault_data.shutil, "copy2", fail_on_the_second)
+    with pytest.raises(OSError, match="disk full"):
+        vault_data.adopt_legacy(vault_uuid)
+    monkeypatch.setattr(vault_data.shutil, "copy2", real_copy)
+    logs = tmp_path / "vaults" / vault_uuid / "logs"
+    assert len(list(logs.glob("*.jsonl"))) == 1, "the history moved; the logs didn't all follow"
+    assert not vault_data.legacy_waiting()
+
+    again = vault_data.adopt_legacy(vault_uuid)  # the same command, run again, finishes it
+    assert again["logs"] == 3 and again["conversations"] == 1
+    assert sorted(p.name for p in logs.iterdir()) == sorted(p.name for p in (legacy.parent / ".logs").iterdir())
+    assert json.loads((tmp_path / "vaults" / vault_uuid / "migration.json").read_text())["logs"] == "copied"
+    assert vault_data.adopt_legacy(vault_uuid)["logs"] == 0, "and a third time does nothing"
+
+
+def test_a_log_cut_off_midway_is_copied_again(legacy, vault_uuid, tmp_path, monkeypatch):
+    real_replace = vault_data.os.replace
+
+    def die_before_the_rename(src, dst):
+        if str(src).endswith(".partial"):
+            raise KeyboardInterrupt("crashed mid-copy")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(vault_data.os, "replace", die_before_the_rename)
+    with pytest.raises(KeyboardInterrupt):
+        vault_data.adopt_legacy(vault_uuid)
+    monkeypatch.setattr(vault_data.os, "replace", real_replace)
+    vault_data.recover(vault_uuid)  # the next start finishes the logs too
+    logs = tmp_path / "vaults" / vault_uuid / "logs"
+    assert len(list(logs.glob("*.jsonl"))) == 4
+    for log in logs.glob("*.jsonl"):
+        assert log.read_text() == (legacy.parent / ".logs" / log.name).read_text()

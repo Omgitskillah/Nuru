@@ -17,6 +17,7 @@ the old files are checkpointed and copied into db.staging/, checked, and only th
 one directory rename; `migration.json` records how far it got and recover() finishes or undoes it.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -24,7 +25,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from core.vault_identity import vaults_dir
+from core.vault_identity import _exclusive, vaults_dir
 
 LEGACY_ROOT = Path(__file__).resolve().parents[2]  # the nuru/ folder
 LEGACY_DB = LEGACY_ROOT / ".db"
@@ -84,28 +85,88 @@ def _retire_legacy() -> None:
                 os.replace(old, old.with_name(old.name + LEGACY_SUFFIX))
 
 
-def recover(vault_uuid: str) -> None:
-    """Finish or undo a move a crash interrupted, so the service never opens a half-moved db/: a
-    staging copy with nothing recorded → discarded; staged with db/ not yet replaced → the copy is discarded and nothing changed; staged with db/
-    in place → it activated, so it's recorded and finished; active → the old files are retired."""
+MIGRATE_WAIT_SECONDS = 30  # how long a starting service waits for a move under way
+
+
+class MigrationBusy(MigrationError):
+    """A move is under way: nothing may recover or open this computer's vault data meanwhile."""
+
+
+def _migration_lock(seconds: float):
+    """The lock a move holds from start to finish, and recovery takes before touching anything. An OS
+    lock, so a move that crashed doesn't leave it held."""
+    return _exclusive(vaults_dir() / ".migrate.lock", seconds, MigrationBusy(
+        "Nuru's history is being moved (`nuru-serve vault adopt-legacy`); start Nuru again when it has finished"))
+
+
+def _copy_logs(vault_uuid: str) -> int:
+    """Copy the old logs that aren't in the vault's logs/ yet, each through a .partial file, so a log
+    cut off midway is never taken for a whole one and a later pass copies it again. Idempotent."""
+    if not LEGACY_LOGS.is_dir():
+        return 0
+    target = logs_dir(vault_uuid)
+    target.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for log in sorted(LEGACY_LOGS.iterdir()):
+        if log.is_file() and not (target / log.name).exists():
+            partial = target / (log.name + ".partial")
+            shutil.copy2(log, partial)
+            os.replace(partial, target / log.name)
+            copied += 1
+    return copied
+
+
+def _recover(vault_uuid: str) -> int:
+    """recover(), for a caller that holds the migration lock. Returns how many logs it copied."""
     directory = data_dir(vault_uuid)
-    state = _state(directory).get("state")
+    recorded = _state(directory)
+    state = recorded.get("state")
     staging = directory / "db.staging"
     if state is None and staging.exists():  # a copy cut off before anything was recorded
         shutil.rmtree(staging)
-        return
+        return 0
     if state == "staged" and staging.exists():
         shutil.rmtree(staging)
         aside = directory / "db.replaced"
         if aside.exists() and not (directory / "db").exists():
             os.replace(aside, directory / "db")
         (directory / "migration.json").unlink()
-        return
+        return 0
     if state == "staged":
-        _set_state(directory, state="active", at=time.time())
+        recorded = {"state": "active", "at": time.time()}
+        _set_state(directory, **recorded)
         state = "active"
-    if state == "active":
-        _retire_legacy()
+    if state != "active":
+        return 0
+    shutil.rmtree(directory / "db.replaced", ignore_errors=True)
+    _retire_legacy()
+    if recorded.get("logs") == "copied":
+        return 0
+    copied = _copy_logs(vault_uuid)
+    _set_state(directory, **{**recorded, "logs": "copied"})
+    return copied
+
+
+@contextlib.contextmanager
+def opening(vault_uuid: str):
+    """For a service starting: recover, then open the databases and take their owner lock inside this
+    block, all under the migration lock, so a move can't start between the two (it then sees the
+    service's lock and refuses)."""
+    with _migration_lock(MIGRATE_WAIT_SECONDS):
+        _recover(vault_uuid)
+        yield
+
+
+def recover(vault_uuid: str) -> None:
+    """Finish or undo a move a crash interrupted, so the service never opens a half-moved db/. It waits
+    for a move under way (MigrationBusy after MIGRATE_WAIT_SECONDS) and never touches one in progress:
+    - a staging copy with nothing recorded → discarded;
+    - staged with db.staging still there → the rename never happened: the copy is discarded, an empty
+      db/ moved aside is put back, and the old files are used as before;
+    - staged with db.staging gone → it activated: recorded as active;
+    - active → old files not yet retired are retired, and logs not yet copied are copied."""
+    with _migration_lock(MIGRATE_WAIT_SECONDS):
+        _recover(vault_uuid)
 
 
 def _checkpoint(path: Path) -> None:
@@ -175,65 +236,51 @@ def _empty(db: Path) -> bool:
 
 
 def adopt_legacy(vault_uuid: str) -> dict:
-    """Move the old, untagged conversations, service state and logs into this vault's folder.
-    Run with no service running (the caller checks the old and new service databases' owner locks).
-    Returns what was moved; MigrationError (with nothing changed) if it can't be done safely."""
+    """Move the old, untagged conversations, service state and logs into this vault's folder. Run
+    with no service running: it refuses while one holds either service database. Run again after an
+    interruption, it finishes what's left. Returns what was moved; MigrationError if it can't be done
+    safely, with the old layout still working."""
     from core.service.store import ServiceBusy, _lock
 
-    legacy_db, legacy_logs = LEGACY_DB, LEGACY_LOGS  # read now, so tests can point them elsewhere
+    legacy_db = LEGACY_DB  # read now, so tests can point it elsewhere
     directory = data_dir(vault_uuid)
-    lock = directory.parent / ".migrate.lock"
-    try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        raise MigrationError(f"another move is under way ({lock}); if none is, remove that file") from None
-    os.close(fd)
-    held = []
-    try:
-        recover(vault_uuid)
+    with _migration_lock(0):
+        finished_logs = _recover(vault_uuid)
+        live = directory / "db"
         sources = [legacy_db / name for name in DB_FILES]
+        if _state(directory).get("state") == "active" and not any(path.exists() for path in sources):
+            return {"conversations": _counts(live / "conversation.db").get("conversations", 0),  # already moved
+                    "logs": finished_logs, "kept": [str(legacy_db / (name + LEGACY_SUFFIX)) for name in DB_FILES]}
         if not all(path.exists() for path in sources):
             raise MigrationError(f"no old data to move in {legacy_db}")
-        for database in (legacy_db / "service.db", db_dir(vault_uuid) / "service.db"):
-            try:
-                held.append(_lock(database.with_name(database.name + ".lock")))
-            except ServiceBusy:
-                raise MigrationError("Nuru is running: stop it (quit Obsidian, or Ctrl-C nuru-serve) and run this again") from None
-        live = directory / "db"
-        if live.exists() and not _empty(live):
-            raise MigrationError(f"{live} already holds conversations; moving the old ones in would mix two histories")
-
-        staging = directory / "db.staging"
-        shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(mode=0o700)
-        for source in sources:
-            _checkpoint(source)
-            _copy(source, staging / source.name)
-            _check(staging / source.name, source)
-        _check_references(staging)
-
-        _set_state(directory, state="staged", at=time.time())
-        if live.exists():
-            shutil.rmtree(directory / "db.replaced", ignore_errors=True)
-            os.replace(live, directory / "db.replaced")
-        os.replace(staging, live)  # the one step that puts the move in place
-        _set_state(directory, state="active", at=time.time())
-        shutil.rmtree(directory / "db.replaced", ignore_errors=True)
-        for handle in held:
-            handle.close()
         held = []
-        _retire_legacy()
-        logs = 0
-        if legacy_logs.is_dir():  # last: a failure here doesn't undo the move
-            target = logs_dir(vault_uuid)
-            target.mkdir(parents=True, exist_ok=True)
-            for log in legacy_logs.iterdir():
-                if log.is_file() and not (target / log.name).exists():
-                    shutil.copy2(log, target / log.name)
-                    logs += 1
+        try:
+            for database in (legacy_db / "service.db", db_dir(vault_uuid) / "service.db"):
+                try:
+                    held.append(_lock(database.with_name(database.name + ".lock")))
+                except ServiceBusy:
+                    raise MigrationError("Nuru is running: stop it (quit Obsidian, or Ctrl-C nuru-serve) and run this again") from None
+            if live.exists() and not _empty(live):
+                raise MigrationError(f"{live} already holds conversations; moving the old ones in would mix two histories")
+
+            staging = directory / "db.staging"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(mode=0o700)
+            for source in sources:
+                _checkpoint(source)
+                _copy(source, staging / source.name)
+                _check(staging / source.name, source)
+            _check_references(staging)
+
+            _set_state(directory, state="staged", at=time.time())
+            if live.exists():
+                shutil.rmtree(directory / "db.replaced", ignore_errors=True)
+                os.replace(live, directory / "db.replaced")
+            os.replace(staging, live)  # the one step that puts the move in place
+            _set_state(directory, state="active", at=time.time())
+        finally:
+            for handle in held:
+                handle.close()
+        logs = _recover(vault_uuid)  # active: retire the old files, then copy the logs (resumable)
         return {"conversations": _counts(live / "conversation.db").get("conversations", 0), "logs": logs,
                 "kept": [str(legacy_db / (name + LEGACY_SUFFIX)) for name in DB_FILES]}
-    finally:
-        for handle in held:
-            handle.close()
-        lock.unlink(missing_ok=True)

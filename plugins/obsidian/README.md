@@ -54,16 +54,28 @@ Needs Node 24 and npm, `uv`, and desktop Obsidian.
    It builds `dist/` and copies `main.js`, `manifest.json` and `styles.css` into
    `<vault>/.obsidian/plugins/nuru/`. It checks every path first, refuses symlinks, and swaps the files in
    only once all of them are copied. It never enables the plugin, and leaves the plugin's settings
-   (`data.json`), the vault's other settings and its notes alone.
-2. **Pair it with Nuru**: in the Nuru folder, `uv run nuru-serve token add obsidian`. This writes the
-   plugin's token to `~/.nuru/service/clients/obsidian.token`, outside the vault, so it never syncs.
-3. **Start the service**: `uv run nuru-serve`. It must serve this vault (`VAULT_PATH` in `.env.obsidian`):
-   the plugin compares the vault's ID with the service's and won't chat otherwise. Installing the plugin
-   doesn't change which vault the service serves. For another vault, such as a test one, set it for that
-   run: `VAULT_PATH=<vault> uv run nuru-serve`.
-4. **Enable it**: in Obsidian, Settings → Community plugins → **Nuru**. The lantern in the ribbon opens the
-   chat. **Nuru** in the plugin's settings shows the port (27125 unless you change it), where the token is
-   read from, this vault's ID, and **Check and reconnect**.
+   (`data.json`), the vault's other settings and its notes alone. It also records the Nuru folder and
+   `uv` in `~/.nuru/install.json`, outside every vault, for the plugin to start Nuru with.
+2. **Enable it**: in Obsidian, Settings → Community plugins, refresh the list and turn on **Nuru**. The
+   lantern in the ribbon opens the chat.
+
+That's all. Opening the panel starts Nuru for this vault if it isn't running ("Starting Nuru…"; the first
+time can take a minute while `uv` builds Nuru's environment), and pairs the plugin first if it has no
+token yet. A Nuru the plugin started stops when Obsidian quits, or when the plugin is turned off. Its
+output goes to `~/.nuru/service/serve.log`. Loading the model is a separate step: the first message
+loads it.
+
+- **Starting it yourself instead**: turn off **Start Nuru when the panel opens** in the plugin's settings,
+  and run `uv run nuru-serve` in the Nuru folder. The panel then shows a **Start Nuru** button when it
+  isn't running. A Nuru started from a terminal (or at login) is never stopped or switched by the plugin.
+- **Another vault**: Nuru serves one vault at a time. If it's serving another vault, the panel says which
+  and offers **Switch Nuru to this vault**. That works only for a Nuru the plugin started, and only while
+  that vault has no turn running or waiting.
+- **The plugin's settings** show the port (27125 unless you change it), where the token is read from,
+  this vault's ID, and **Check and reconnect**.
+- Why the Nuru folder isn't a plugin setting: plugin settings live in the vault and sync with it, so a
+  synced or shared vault could point the plugin at a folder of its own and have its code run when the
+  vault opens. `~/.nuru/install.json` is only on this computer.
 
 ## Upgrade
 

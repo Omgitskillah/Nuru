@@ -2,6 +2,7 @@
 .nuru-header { display: flex; gap: var(--size-4-2); padding: var(--size-4-2); border-bottom: 1px solid var(--background-modifier-border); }
 .nuru-picker { flex: 1; min-width: 0; }
 .nuru-status:not(:empty) { padding: var(--size-4-2); color: var(--text-muted); }
+.nuru-status-action { margin-left: var(--size-4-2); }
 .nuru-error { color: var(--text-error); }
 .nuru-messages { flex: 1; overflow-y: auto; padding: var(--size-4-2); font-size: var(--font-ui-small); }
 .nuru-turn { margin-bottom: var(--size-4-4); }

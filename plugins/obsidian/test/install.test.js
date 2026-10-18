@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { installFiles } = require("../lib/install");
+const { findUv, installFiles, recordInstall } = require("../lib/install");
 
 const FILES = ["main.js", "manifest.json", "styles.css"];
 
@@ -134,4 +134,16 @@ test("a failed first install leaves no plugin files behind", (t) => {
   assert.throws(() => installFiles(vault, bundle), /operation not permitted/);
   fs.renameSync = rename;
   assert.deepEqual(fs.readdirSync(target), []);
+});
+
+test("install.json records the Nuru folder and uv outside the vault, owner-only", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-home-"));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-bin-"));
+  fs.writeFileSync(path.join(bin, process.platform === "win32" ? "uv.exe" : "uv"), "");
+  const uv = findUv({ PATH: bin }, home);
+  assert.equal(uv, path.join(bin, process.platform === "win32" ? "uv.exe" : "uv"));
+  const file = recordInstall({ nuru: bin, uv, home });
+  assert.equal(file, path.join(home, ".nuru", "install.json"));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { nuru: fs.realpathSync(bin), uv });
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });

@@ -12,6 +12,7 @@ const { Activity, argumentLines, mainArgument, retryWords } = require("./activit
 const { LANTERN } = require("./icon");
 const { answerText, newRequestId } = require("./protocol");
 const { ConnectionProblem } = require("./connection");
+const { LaunchProblem } = require("./launcher");
 const { renderReply } = require("./render");
 const { TurnRunner } = require("./turns");
 
@@ -117,7 +118,9 @@ class ChatView extends ItemView {
   }
 
   // ------------------------------------------------------------------ connection and conversations
-  async reconnect() {
+  // Connect, starting the service for this vault first if it isn't running and `start` says so (the
+  // setting, or the Start button).
+  async reconnect({ start = this.plugin.settings.autoStart !== false } = {}) {
     const generation = ++this.generation;
     this.client = null;
     this.setStatus("Connecting to Nuru…");
@@ -125,10 +128,18 @@ class ChatView extends ItemView {
     try {
       ({ client, status } = await this.plugin.connect());
     } catch (error) {
-      if (generation === this.generation) {
-        this.setStatus(error instanceof ConnectionProblem ? error.message : `Couldn't connect: ${error.message}`, true);
+      if (generation !== this.generation) return;
+      if (!(start && error instanceof ConnectionProblem && ["no-service", "no-token"].includes(error.kind))) {
+        this.showProblem(error);
+        return;
       }
-      return;
+      this.setStatus("Starting Nuru…");
+      try {
+        ({ client, status } = await this.plugin.launcher.start());
+      } catch (failure) {
+        if (generation === this.generation) this.showProblem(failure);
+        return;
+      }
     }
     if (generation !== this.generation) return;
     this.client = client;
@@ -783,6 +794,34 @@ class ChatView extends ItemView {
   setStatus(text, problem = false) {
     this.statusEl.setText(text);
     this.statusEl.toggleClass("nuru-error", problem);
+  }
+
+  // Why Nuru can't chat here, with what can be done about it: start it, or switch it to this vault.
+  showProblem(error) {
+    const known = error instanceof ConnectionProblem || error instanceof LaunchProblem;
+    this.setStatus(known ? error.message : `Couldn't connect: ${error.message}`, true);
+    if (error.kind === "busy" && this.otherVault) {
+      this.statusEl.setText(`Nuru is busy with a turn in "${this.otherVault}": try again when it finishes.`);
+    }
+    this.otherVault = error.kind === "wrong-vault" ? error.vaultName : error.kind === "busy" ? this.otherVault : null;
+    const action = error.kind === "wrong-vault" || error.kind === "busy" ? ["Switch Nuru to this vault", () => this.switchHere()]
+      : ["no-service", "no-token", "exited", "slow", "not-stopped"].includes(error.kind) ? ["Start Nuru", () => this.reconnect({ start: true })]
+        : null;
+    if (!action) return;
+    const button = this.statusEl.createEl("button", { cls: "nuru-status-action", text: action[0] });
+    this.registerDomEvent(button, "click", action[1]);
+  }
+
+  async switchHere() {
+    const generation = ++this.generation;
+    this.setStatus("Switching Nuru to this vault…");
+    try {
+      await this.plugin.launcher.stopOther();
+    } catch (error) {
+      if (generation === this.generation) this.showProblem(error);
+      return;
+    }
+    if (generation === this.generation) await this.reconnect({ start: true });
   }
 }
 

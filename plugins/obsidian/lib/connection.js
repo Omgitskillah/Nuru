@@ -59,7 +59,7 @@ async function connect({ port = DEFAULT_PORT, vaultPath, home, fetch } = {}) {
     throw new ConnectionProblem("other", error.message);
   }
   if (status.vault.id !== vaultId(vaultPath)) {
-    throw new ConnectionProblem("wrong-vault", `it serves "${status.vault.name}"`);
+    throw Object.assign(new ConnectionProblem("wrong-vault", `it serves "${status.vault.name}"`), { vaultName: status.vault.name });
   }
   return { client, status };
 }

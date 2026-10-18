@@ -7,6 +7,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const PLUGIN_ID = "nuru"; // manifest.json's id: Obsidian loads a plugin from the folder named after it
@@ -70,4 +71,25 @@ function installFiles(vault, bundle) {
   return target;
 }
 
-module.exports = { PLUGIN_ID, installFiles };
+// The uv on PATH, or where its installer puts it. Obsidian started from the Dock doesn't get the
+// shell's PATH, so the plugin is given this absolute path (lib/launcher.js).
+function findUv(env = process.env, home = os.homedir()) {
+  const name = process.platform === "win32" ? "uv.exe" : "uv";
+  const dirs = [...(env.PATH || "").split(path.delimiter), path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin"),
+    "/opt/homebrew/bin", "/usr/local/bin"];
+  return dirs.filter(Boolean).map((dir) => path.join(dir, name)).find((p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile()) || null;
+}
+
+// ~/.nuru/install.json: the Nuru folder and uv, for the plugin to start nuru-serve with. Outside every
+// vault, so a vault can't change what the plugin runs.
+function recordInstall({ nuru, uv, home = os.homedir() }) {
+  const dir = path.join(home, ".nuru");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, "install.json");
+  const temporary = `${file}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify({ nuru: fs.realpathSync(nuru), uv }, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+  return file;
+}
+
+module.exports = { PLUGIN_ID, installFiles, findUv, recordInstall };

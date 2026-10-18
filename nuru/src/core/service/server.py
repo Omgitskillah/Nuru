@@ -1,19 +1,26 @@
 """nuru-serve: Nuru as a local service, speaking protocol v1 (nuru/docs/obsidian-remote/protocol-v1.md)
 over HTTP on 127.0.0.1.
 
-    uv run nuru-serve [--port 27125] [--queue 4]
+    uv run nuru-serve [--port 27125] [--queue 4] [--managed]
     uv run nuru-serve token add obsidian     # a client's token, for it to read from ~/.nuru/service/clients/
     uv run nuru-serve token remove obsidian
     uv run nuru-serve token list
 
 It starts without loading a model: the first turn loads it. Stopping the service (Ctrl-C) cancels the
 turns in hand and leaves Ollama and its models as they were.
+
+--managed is how the Obsidian plugin starts it: it stops when its stdin closes (the plugin that started
+it, or Obsidian, has gone), and writes a stop key to ~/.nuru/service/managed.json (owner-only) for
+POST /v1/service/stop, with which a plugin in another vault can switch it to its own when it's idle.
+A service started any other way has no key, so no plugin can stop it.
 """
 
 import argparse
+import hmac
 import json
 import os
 import re
+import secrets
 import signal
 import socket
 import sys
@@ -30,7 +37,7 @@ from core.service import protocol
 from core.service import remote_contract, remote_access
 from core.service.remote_credentials import RemoteCredentials, COOKIE, csrf
 from core.service.capture import CaptureError
-from core.service.credentials import Credentials
+from core.service.credentials import Credentials, _write_private
 from core.service.host import Service
 from core.service.protocol import ProtocolError
 
@@ -48,6 +55,7 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/turns/([^/]+)/cancel", "cancel_turn"),
     ("POST", r"/v1/questions/([^/]+)/answers", "answer_question"),
     ("GET", r"/v1/requests/([^/]+)", "request_state"),
+    ("POST", r"/v1/service/stop", "stop_service"),
 ]
 
 
@@ -361,6 +369,20 @@ class Handler(BaseHTTPRequestHandler):
             body.pop("vault", None)
         self.answer(200, body)
 
+    def on_stop_service(self, principal, query):
+        """Stop a --managed service with its stop key, unless a turn is running or waiting."""
+        if self.server.remote_origin or not self.server.stop_key:
+            raise ProtocolError("not_found", "no such path")
+        key = self.json_body(1024).get("stop_key")
+        if not isinstance(key, str) or not hmac.compare_digest(key.encode(), self.server.stop_key.encode()):
+            raise ProtocolError("forbidden", "wrong stop key")
+        queue = self.server.service.status()["ready"]["queue"]
+        if queue["active"] or queue["waiting"]:
+            raise ProtocolError("conflict", "Nuru is busy with a turn in this vault")
+        self.answer(202, {"stopping": True})
+        print("nuru-serve: stopping, as another vault asked", file=sys.stderr)
+        self.server.stop()
+
     def on_create_conversation(self, principal, query):
         self.answer(*self.server.service.create_conversation(principal, self.body("create_conversation")))
 
@@ -463,8 +485,14 @@ class NuruServer(ThreadingHTTPServer):
         self.remote_credentials = remote_credentials
         self.remote_credentials_origin = self.remote_origin
         self.closing = False
+        self.stop_key: str | None = None  # set by serve() for a --managed service
         self._slots = threading.BoundedSemaphore(connections)
         super().__init__(("127.0.0.1", port), Handler)
+
+    def stop(self) -> None:
+        """End serve_forever from any thread but its own; serve() then shuts down as for Ctrl-C."""
+        self.closing = True
+        threading.Thread(target=self.shutdown, name="nuru-stop", daemon=True).start()
 
     def get_request(self):
         request, address = super().get_request()
@@ -504,7 +532,8 @@ def _session_factory(vault: Path):
     return lambda conversation_id: Session.start(conversation_id, load_model=False, vault=vault)
 
 
-def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_port: int = 27127) -> None:
+def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_port: int = 27127,
+          managed: bool = False) -> None:
     from core import session
     from core.conversation_store import ConversationStore
     from core.service.store import ServiceBusy, ServiceStore
@@ -547,6 +576,9 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
+    managed_file = credentials.directory / "managed.json"
+    if managed:
+        _manage(server, managed_file, sys.stdin.buffer)
     print(f"nuru-serve: http://127.0.0.1:{server.server_port}, vault {service.vault.name} ({service.vault_id})", file=sys.stderr)
     if remote:
         threading.Thread(target=remote.serve_forever, name="nuru-remote", daemon=True).start()
@@ -556,6 +588,8 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
         print("nuru-serve: stopping", file=sys.stderr)
     finally:
         server.closing = True
+        if managed:
+            _forget_managed(managed_file)
         if remote:
             remote.closing = True
             remote.shutdown()
@@ -572,12 +606,40 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
             print("nuru-serve: a turn didn't stop in time; exiting with the database still owned", file=sys.stderr)
 
 
+def _manage(server: "NuruServer", path: Path, stdin) -> None:
+    """--managed: a stop key in `path` (owner-only), and a stop when `stdin` closes. It's a pipe from the
+    plugin that started the service, closed when that plugin or Obsidian is gone, even if it crashed."""
+    server.stop_key = secrets.token_urlsafe(32)
+    _write_private(path, json.dumps({"pid": os.getpid(), "port": server.server_port, "stop_key": server.stop_key}))
+
+    def orphaned():
+        try:
+            stdin.read()
+        except (OSError, ValueError):
+            pass
+        print("nuru-serve: the Obsidian plugin that started it is gone; stopping", file=sys.stderr)
+        server.stop()
+
+    threading.Thread(target=orphaned, name="nuru-managed", daemon=True).start()
+
+
+def _forget_managed(path: Path) -> None:
+    """Remove managed.json if it's still this process's: a newer service may have replaced it."""
+    try:
+        if json.loads(path.read_text()).get("pid") == os.getpid():
+            path.unlink()
+    except (OSError, ValueError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="nuru-serve", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=protocol.DEFAULT_PORT)
     parser.add_argument("--queue", type=int, default=4, help="turns that may wait behind the running one")
     parser.add_argument("--remote-origin", help="opt in: private HTTPS Tailscale origin")
     parser.add_argument("--remote-port", type=int, default=27127)
+    parser.add_argument("--managed", action="store_true",
+                        help="started by the Obsidian plugin: stop when stdin closes; another vault may stop it when idle")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
     token = commands.add_parser("token", help="add, remove or list the clients that may sign in")
@@ -614,7 +676,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "device":
         return device_command(args, parser)
     if args.command != "token":
-        return serve(args.port, args.queue, args.remote_origin, args.remote_port)
+        return serve(args.port, args.queue, args.remote_origin, args.remote_port, args.managed)
     credentials = Credentials()
     if args.action == "list":
         print("\n".join(credentials.clients()) or "no clients")

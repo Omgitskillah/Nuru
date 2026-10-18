@@ -57,6 +57,7 @@ The service makes no tool or model call before all four checks pass.
 | `POST /v1/turns/{id}/cancel` | `cancel_turn` | 202 `{v, conversation_id, turn_id}`, also for a turn that has already ended |
 | `POST /v1/questions/{id}/answers` | `answer_question` | 200 `{v, ...}` with the `question_closed` data, or 409 `question_closed` / `wrong_operation` |
 | `GET /v1/requests/{request_id}?operation=` | none | `request_state`, for a client that lost the response |
+| `POST /v1/service/stop` | `{stop_key}` | Only on the local listener, and only for a service started with `--managed` (by the Obsidian plugin), which writes the key to `~/.nuru/service/managed.json`, owner-only. 202 `{stopping: true}`, after which the service shuts down as for Ctrl-C; 403 `forbidden` for a wrong key; 409 `conflict` while a turn is running or waiting; 404 for any other service. This is how a plugin in another vault switches the service to its own. |
 
 ### Request IDs
 

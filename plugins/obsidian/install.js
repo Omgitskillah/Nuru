@@ -6,7 +6,7 @@
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { installFiles } = require("./lib/install");
+const { findUv, installFiles, recordInstall } = require("./lib/install");
 
 if (process.argv.length !== 3) {
   console.error("Usage: node install.js <existing-vault-path>");
@@ -19,6 +19,12 @@ if (result.error || result.status !== 0) {
 }
 try {
   console.log(`Installed: ${installFiles(process.argv[2], path.join(__dirname, "dist"))}`);
+  const uv = findUv();
+  if (uv) {
+    console.log(`Recorded for starting Nuru from Obsidian: ${recordInstall({ nuru: path.join(__dirname, "..", ".."), uv })}`);
+  } else {
+    console.log("uv wasn't found, so the plugin can't start Nuru by itself: start it with `uv run nuru-serve`.");
+  }
   console.log("Enable Nuru under Community plugins in this vault, or reload it there if it was already on.");
 } catch (error) {
   console.error(error.message);

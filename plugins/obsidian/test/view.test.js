@@ -45,7 +45,8 @@ function fakeClient({ history = [], live = {} } = {}) {
   };
 }
 
-async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status } = {}) {
+async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status, launcher,
+  autoStart = Boolean(launcher) } = {}) {
   const opened = [];
   // The note being edited; `editing.active = false` is the panel having the focus instead.
   const editing = { selection, active: true };
@@ -57,10 +58,15 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     openLinkText: (...args) => opened.push(args), getLeavesOfType: () => [],
   } };
   const plugin = {
-    settings: { port: 1, conversationId },
+    settings: { port: 1, conversationId, autoStart },
+    launcher,
     vaultPath: () => "/vault",
     remember: async (changes) => Object.assign(plugin.settings, changes),
-    connect: async () => { if (connectError) throw connectError; return { client, status }; },
+    connect: async () => {
+      const problem = typeof connectError === "function" ? connectError() : connectError;
+      if (problem) throw problem;
+      return { client, status };
+    },
   };
   const view = new ChatView({ app }, plugin);
   await view.open();
@@ -250,6 +256,57 @@ test("without a service the panel says why", async () => {
   const { view } = await open({ client: null, connectError: new ConnectionProblem("no-service") });
   assert.match(view.statusEl.textContent, /isn't running/);
   assert.ok(view.statusEl.classList.contains("nuru-error"));
+  await view.close();
+});
+
+test("opening the panel starts Nuru for this vault when it isn't running", async () => {
+  const client = fakeClient();
+  const launcher = { starts: 0, async start() { this.starts += 1; return { client, status: { ready: { chat: "idle" } } }; } };
+  const { view } = await open({ client, launcher, connectError: new ConnectionProblem("no-service") });
+  await until(() => client.calls.some((c) => c[0] === "conversation"));
+  assert.equal(launcher.starts, 1);
+  assert.equal(view.statusEl.textContent, "");
+  await view.close();
+});
+
+test("with starting turned off, the panel offers a Start button instead", async () => {
+  const client = fakeClient();
+  let up = false;
+  const launcher = { async start() { up = true; return { client, status: { ready: { chat: "idle" } } }; } };
+  const { view } = await open({ client, launcher, autoStart: false,
+    connectError: () => (up ? null : new ConnectionProblem("no-service")) });
+  assert.ok(!up, "nothing started by itself");
+  view.statusEl.querySelector(".nuru-status-action").click();
+  await until(() => client.calls.some((c) => c[0] === "conversation"));
+  assert.ok(up);
+  await view.close();
+});
+
+test("a service on another vault is named, and switched here only when it's idle", async () => {
+  const { LaunchProblem } = require("../lib/launcher");
+  const client = fakeClient();
+  let serving = "Work";
+  const busy = { value: true };
+  const launcher = {
+    async stopOther() { if (busy.value) throw new LaunchProblem("busy"); serving = null; },
+    async start() { serving = "here"; return { client, status: { ready: { chat: "idle" } } }; },
+  };
+  const wrong = () => Object.assign(new ConnectionProblem("wrong-vault", `it serves "${serving}"`), { vaultName: serving });
+  const { view } = await open({ client, launcher, connectError: () => (serving === "Work" ? wrong()
+    : serving === null ? new ConnectionProblem("no-service") : null) });
+  assert.match(view.statusEl.textContent, /different vault.*"Work"/);
+  const switchButton = () => view.statusEl.querySelector(".nuru-status-action");
+  assert.equal(switchButton().textContent, "Switch Nuru to this vault");
+
+  switchButton().click();
+  await until(() => /busy/.test(view.statusEl.textContent));
+  assert.match(view.statusEl.textContent, /busy with a turn in "Work"/);
+  assert.ok(switchButton(), "it can be tried again");
+
+  busy.value = false;
+  switchButton().click();
+  await until(() => client.calls.some((c) => c[0] === "conversation"));
+  assert.equal(serving, "here");
   await view.close();
 });
 

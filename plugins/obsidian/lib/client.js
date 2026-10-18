@@ -73,7 +73,8 @@ class NuruClient {
     }
   }
 
-  status() { return this.request("GET", "/v1/status"); }
+  // Protocol v2's status (the vault by its UUID); everything else is v1's, which a v2 service also serves.
+  status() { return this.request("GET", "/v2/status"); }
 
   conversations(limit = 50) { return this.request("GET", `/v1/conversations?limit=${limit}`); }
 

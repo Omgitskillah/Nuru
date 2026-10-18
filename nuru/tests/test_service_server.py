@@ -223,7 +223,8 @@ def test_a_revoked_token_stops_working(served):
 def test_malformed_requests_are_refused_without_echoing_them(served):
     client, service, *_ = served
     cases = [
-        ("GET", "/v2/status", None, 400, "unsupported_version"),
+        ("GET", "/v3/status", None, 400, "unsupported_version"),
+        ("GET", "/v2/conversations", None, 400, "unsupported_version"),  # v2 is only its status
         ("POST", "/v1/conversations", b"{not json", 400, "invalid_request"),
         ("POST", "/v1/conversations", json.dumps({"request_id": "short"}).encode(), 400, "invalid_request"),
         ("POST", "/v1/conversations", b"x" * (protocol.MAX_REQUEST_BYTES + 1), 413, "payload_too_large"),

@@ -16,8 +16,8 @@ function tokenPath(home = os.homedir()) {
   return path.join(home, ".nuru", "service", "clients", "obsidian.token");
 }
 
-// The vault's identity as nuru-serve reports it (core.service.protocol.vault_id): the first 32 hex
-// digits of the SHA-256 of its absolute path with symlinks resolved, as UTF-8.
+// The vault's identity in protocol v1 (core.service.protocol.vault_id): the first 32 hex digits of the
+// SHA-256 of its absolute path with symlinks resolved, as UTF-8. v2 uses vaultUuid instead.
 function vaultId(vaultPath) {
   return crypto.createHash("sha256").update(fs.realpathSync(vaultPath), "utf8").digest("hex").slice(0, 32);
 }
@@ -28,8 +28,22 @@ const PROBLEMS = {
   "no-service": "Nuru isn't running. Start it with `uv run nuru-serve` in the Nuru folder.",
   unauthorized: "Nuru refused this plugin's token. Add a new one with `uv run nuru-serve token add obsidian`.",
   "wrong-vault": "Nuru is serving a different vault from this one, so the plugin won't chat here.",
+  "old-service": "This plugin needs a newer Nuru: run `git pull` in the Nuru folder, then restart Nuru.",
   "other": "Nuru answered with an error.",
 };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// The vault's identity in protocol v2 (core.vault_identity): the UUID in <vault>/.nuru/vault-id, which
+// nuru-serve writes the first time it serves the vault. Null before then.
+function vaultUuid(vaultPath) {
+  try {
+    const text = fs.readFileSync(path.join(vaultPath, ".nuru", "vault-id"), "utf8").trim();
+    return UUID.test(text) ? text : null;
+  } catch {
+    return null;
+  }
+}
 
 class ConnectionProblem extends Error {
   constructor(kind, detail = "") {
@@ -56,12 +70,14 @@ async function connect({ port = DEFAULT_PORT, vaultPath, home, fetch } = {}) {
     if (!(error instanceof NuruError)) throw error;
     if (error.status === 0) throw new ConnectionProblem("no-service", error.detail); // what failed, for when it isn't that
     if (error.status === 401) throw new ConnectionProblem("unauthorized");
+    if (error.code === "unsupported_version") throw new ConnectionProblem("old-service"); // speaks only v1
     throw new ConnectionProblem("other", error.message);
   }
-  if (status.vault.id !== vaultId(vaultPath)) {
+  const own = vaultUuid(vaultPath);
+  if (!own || status.vault.uuid !== own) { // never falls back to v1's path hash
     throw Object.assign(new ConnectionProblem("wrong-vault", `it serves "${status.vault.name}"`), { vaultName: status.vault.name });
   }
   return { client, status };
 }
 
-module.exports = { DEFAULT_PORT, tokenPath, vaultId, connect, ConnectionProblem };
+module.exports = { DEFAULT_PORT, tokenPath, vaultId, vaultUuid, connect, ConnectionProblem };

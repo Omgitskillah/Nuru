@@ -3,7 +3,7 @@
 
 const { PluginSettingTab, Setting } = require("obsidian");
 
-const { tokenPath, vaultId, ConnectionProblem } = require("./connection");
+const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { logPath } = require("./launcher");
 
 class NuruSettingTab extends PluginSettingTab {
@@ -35,7 +35,9 @@ class NuruSettingTab extends PluginSettingTab {
       .setName("Token")
       .setDesc(`Read from ${tokenPath()}, outside the vault, so it never syncs. Starting Nuru from here makes ` +
         "one if there's none; or run `uv run nuru-serve token add obsidian`.");
-    new Setting(containerEl).setName("This vault").setDesc(`ID ${vaultId(this.plugin.vaultPath())}: Nuru must serve this one.`);
+    const own = vaultUuid(this.plugin.vaultPath());
+    new Setting(containerEl).setName("This vault").setDesc(own ? `ID ${own} (in .nuru/vault-id): Nuru must serve this one.`
+      : "No ID yet: Nuru gives the vault one (.nuru/vault-id) the first time it serves it.");
     const result = containerEl.createDiv({ cls: "nuru-settings-result" });
     new Setting(containerEl).setName("Connection").addButton((button) => button.setButtonText("Check and reconnect")
       .onClick(async () => {

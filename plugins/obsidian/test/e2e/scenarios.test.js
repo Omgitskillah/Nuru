@@ -13,7 +13,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 
 const { Display } = require("../../lib/protocol");
-const { connect, vaultId } = require("../../lib/connection");
+const { connect, vaultId, vaultUuid } = require("../../lib/connection");
 const { TurnRunner } = require("../../lib/turns");
 
 const ANSWER_SECONDS = 3;
@@ -51,6 +51,7 @@ const question = (runner) => until(() => runner.display.question, 10000).then(()
 
 test("Python's vault ID and Display are the plugin's", () => {
   assert.equal(vaultId(started.vault), started.vault_id);
+  assert.equal(vaultUuid(started.vault), started.vault_uuid, "the plugin reads the ID the service wrote");
   const python = JSON.parse(execFileSync("uv", ["run", "--locked", "python", "-c", `
 import dataclasses, json
 from core.service.protocol import Display

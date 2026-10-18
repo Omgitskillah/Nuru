@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "nuru-serve protocol v2: only what changed from v1 (protocol-v2.md)",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "service",
+        "version",
+        "vault",
+        "ready"
+      ],
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "service": {
+          "const": "nuru"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "vault": {
+          "description": "The vault's UUID (.nuru/vault-id) and name: never the host path.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "uuid",
+            "name"
+          ],
+          "properties": {
+            "uuid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "ready": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "chat",
+            "notes"
+          ],
+          "properties": {
+            "chat": {
+              "enum": [
+                "idle",
+                "loading",
+                "ready",
+                "unavailable"
+              ]
+            },
+            "notes": {
+              "enum": [
+                "ready",
+                "unavailable"
+              ]
+            },
+            "queue": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "active",
+                "waiting",
+                "limit"
+              ],
+              "properties": {
+                "active": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "waiting": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "models": {
+          "description": "The models a conversation may pick, the configured one (default) first. Thinking is empty for a model that can't think.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "default",
+            "choices"
+          ],
+          "properties": {
+            "default": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "choices": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "label",
+                  "cloud",
+                  "thinking",
+                  "default_thinking"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "cloud": {
+                    "type": "boolean"
+                  },
+                  "thinking": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "label"
+                      ],
+                      "properties": {
+                        "id": {
+                          "enum": [
+                            "off",
+                            "low",
+                            "high"
+                          ]
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 20
+                        }
+                      }
+                    }
+                  },
+                  "default_thinking": {
+                    "enum": [
+                      "off",
+                      "low",
+                      "high",
+                      null
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "error"
+      ],
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "unauthorized",
+                "forbidden_origin",
+                "forbidden",
+                "not_found",
+                "unsupported_version",
+                "invalid_request",
+                "payload_too_large",
+                "conflict",
+                "queue_full",
+                "cursor_expired",
+                "question_closed",
+                "wrong_operation",
+                "model_unavailable",
+                "shutting_down",
+                "internal",
+                "wrong_vault"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "retry_after_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "resync": {
+              "description": "cursor_expired only: where the client can rebuild from. Never starts a new turn.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "turn"
+              ],
+              "properties": {
+                "turn": {
+                  "type": "string"
+                },
+                "conversation": {
+                  "type": "string"
+                }
+              }
+            },
+            "served": {
+              "description": "wrong_vault only: the vault being served.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "uuid",
+                "name"
+              ],
+              "properties": {
+                "uuid": {
+                  "$ref": "#/$defs/uuid"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

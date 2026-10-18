@@ -4,7 +4,7 @@ end-to-end tests of clients (the Obsidian plugin's, WP01 M3) and for trying a cl
     uv run --locked python nuru/tests/scripted_serve.py --dir <scratch> [--port 0] [--answer-seconds 10]
 
 It makes <scratch>/NuruPluginTestVault (plugin_test_vault.py), its databases and a client token under <scratch>, then
-prints one JSON line: {"port", "token", "vault", "vault_id"}. A turn's text picks its scenario (SCENARIOS);
+prints one JSON line: {"port", "token", "vault", "vault_id", "vault_uuid"}. A turn's text picks its scenario (SCENARIOS);
 any other text is echoed back. Stop it with SIGTERM or Ctrl-C.
 """
 
@@ -188,8 +188,10 @@ def start(directory: Path, port: int = 0, answer_seconds: float | None = None):
     credentials = Credentials(directory / "service")
     token = credentials.add("obsidian")
     session = ScenarioSession()
+    from core.vault_identity import Registry
     service = Service(ServiceStore(directory / "service.db"), ConversationStore(directory / "conversation.db"),
-                      lambda conversation_id: session, vault, answer_seconds=answer_seconds)
+                      lambda conversation_id: session, vault, answer_seconds=answer_seconds,
+                      vault_uuid=Registry(directory / "vaults").identify(vault))
     return NuruServer(service, credentials, port, keepalive_seconds=1), service, token
 
 
@@ -202,7 +204,7 @@ def main(argv=None):
     args.dir.mkdir(parents=True, exist_ok=True)
     server, service, token = start(args.dir, args.port, args.answer_seconds)
     print(json.dumps({"port": server.server_port, "token": token, "vault": str(service.vault),
-                      "vault_id": service.vault_id}), flush=True)
+                      "vault_id": service.vault_id, "vault_uuid": service.vault_uuid}), flush=True)
     stopped = threading.Event()
 
     def stop(*_):

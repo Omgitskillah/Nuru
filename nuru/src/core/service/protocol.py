@@ -45,6 +45,8 @@ ERRORS = {
     "cursor_expired": 410, "payload_too_large": 413, "queue_full": 429, "internal": 500,
     "model_unavailable": 503, "shutting_down": 503,
 }
+# Protocol v2's error codes: v1's and one more (protocol-v2.md). A v1 answer never carries it.
+ERRORS_V2 = {**ERRORS, "wrong_vault": 409}
 OPERATIONS = ("create_conversation", "submit_turn", "answer_question", "cancel_turn")
 
 SCHEMA_PATH = Path(__file__).with_name("protocol-v1.schema.json")

@@ -8,7 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { NuruClient, NuruError } = require("../lib/client");
-const { connect, vaultId, ConnectionProblem } = require("../lib/connection");
+const { connect, vaultId, vaultUuid, ConnectionProblem } = require("../lib/connection");
 
 const json = (status, value) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 
@@ -54,20 +54,52 @@ function home(token) {
   return dir;
 }
 
-test("connecting says why it can't", async () => {
+const OWN = "5f0c7f4e-8a43-4f53-9a51-2a1b2c3d4e5f";
+
+function idVault(id = OWN) {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-vault-"));
-  const status = (id) => async () => json(200, { v: 1, service: "nuru", version: "0.1.0", vault: { id, name: "v" }, ready: {} });
+  if (id) {
+    fs.mkdirSync(path.join(vault, ".nuru"));
+    fs.writeFileSync(path.join(vault, ".nuru", "vault-id"), `${id}\n`);
+  }
+  return vault;
+}
+
+test("connecting says why it can't", async () => {
+  const vault = idVault();
+  const urls = [];
+  const status = (uuid) => async (url) => {
+    urls.push(url);
+    return json(200, { v: 2, service: "nuru", version: "0.1.0", vault: { uuid, name: "v" }, ready: {} });
+  };
   const cases = [
     [{ home: home() }, "no-token"],
     [{ home: home("t"), fetch: async () => { throw new TypeError("refused"); } }, "no-service"],
     [{ home: home("t"), fetch: async () => json(401, { v: 1, error: { code: "unauthorized", message: "no" } }) }, "unauthorized"],
-    [{ home: home("t"), fetch: status("0".repeat(32)) }, "wrong-vault"],
+    [{ home: home("t"), fetch: status("00000000-0000-4000-8000-000000000000") }, "wrong-vault"],
   ];
   for (const [options, kind] of cases) {
     await assert.rejects(connect({ vaultPath: vault, ...options }), (e) => e instanceof ConnectionProblem && e.kind === kind, kind);
   }
-  const { client } = await connect({ vaultPath: vault, home: home("t\n"), fetch: status(vaultId(vault)) });
+  const { client } = await connect({ vaultPath: vault, home: home("t\n"), fetch: status(OWN) });
   assert.equal(client.token, "t");
+  assert.ok(urls.every((url) => url.endsWith("/v2/status")));
+});
+
+test("a Nuru that speaks only protocol v1 asks to be updated, and the path hash is never compared", async () => {
+  const vault = idVault();
+  const old = async () => json(400, { v: 1, error: { code: "unsupported_version", message: "this service speaks protocol version 1" } });
+  await assert.rejects(connect({ vaultPath: vault, home: home("t"), fetch: old }),
+    (e) => e instanceof ConnectionProblem && e.kind === "old-service" && /git pull/.test(e.message));
+  const hashOnly = async () => json(200, { v: 2, service: "nuru", version: "0", vault: { uuid: undefined, id: vaultId(vault), name: "v" }, ready: {} });
+  await assert.rejects(connect({ vaultPath: vault, home: home("t"), fetch: hashOnly }), (e) => e.kind === "wrong-vault");
+});
+
+test("a vault Nuru has never served has no ID, so it never matches", async () => {
+  const vault = idVault(null);
+  assert.equal(vaultUuid(vault), null);
+  const someone = async () => json(200, { v: 2, service: "nuru", version: "0", vault: { uuid: OWN, name: "Other" }, ready: {} });
+  await assert.rejects(connect({ vaultPath: vault, home: home("t"), fetch: someone }), (e) => e.kind === "wrong-vault");
 });
 
 test("the vault ID follows symlinks to the real folder", () => {

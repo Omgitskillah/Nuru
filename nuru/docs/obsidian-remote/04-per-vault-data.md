@@ -51,7 +51,10 @@ Deleting a vault leaves its data on the computer until `nuru-serve vault forget`
     are added. An old plugin keeps working against a new service, including its own same-vault check.
   - **`/v2/status`** gives `vault: {uuid, name}` and drops the path hash. It adds an error `wrong_vault`,
     409, carrying `{served: {uuid, name}}`, which M4 uses. `protocol-v2.md` and its schema are written
-    in this milestone. Only the changed parts are new; everything else is v1's, under `/v2/`.
+    in this milestone. Only the changed parts are new: `GET /v2/status`, and the error. Everything
+    else stays at `/v1/…`, which a v2 service serves unchanged. Copying all of v1 under `/v2/` would
+    have rewritten every body's `v` and the stored events for no change in meaning. *(Built in M1 this
+    way; see protocol-v2.md.)*
   - **The plugin moves to v2.** It reads its own `.nuru/vault-id` and compares UUIDs. Against a service
     that answers `/v2/` with `unsupported_version`, which is today's answer to any other version, it
     says "Update Nuru: this plugin needs a newer Nuru (`git pull` in the Nuru folder)". It never falls

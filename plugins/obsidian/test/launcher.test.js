@@ -119,3 +119,26 @@ test("a service started outside Obsidian has no managed.json, so it isn't stoppe
     fetch: async () => assert.fail("asked to stop") });
   await assert.rejects(launcher.stopOther(), (error) => error.kind === "not-managed");
 });
+
+test("turned off while pairing, it starts nothing", async () => {
+  const { dir } = home({ token: false });
+  let paired;
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => assert.fail("spawned"),
+    execFile: (command, args, options, done) => { paired = done; }, connect: async () => assert.fail("connected") });
+  const starting = launcher.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  launcher.release();
+  paired(null);
+  await assert.rejects(starting, (error) => error.kind === "released");
+});
+
+test("turned off while waiting for it to answer, the service it spawned is told to stop", async () => {
+  const { dir } = home();
+  const child = fakeChild();
+  let launcher;
+  launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => child,
+    connect: async () => { launcher.release(); throw new ConnectionProblem("no-service"); } });
+  await assert.rejects(launcher.start(), (error) => error.kind === "released");
+  assert.ok(child.stdin.ended, "its stdin closed, so it stops");
+  assert.ok(!launcher.running());
+});

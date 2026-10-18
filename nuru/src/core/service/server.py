@@ -376,8 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         key = self.json_body(1024).get("stop_key")
         if not isinstance(key, str) or not hmac.compare_digest(key.encode(), self.server.stop_key.encode()):
             raise ProtocolError("forbidden", "wrong stop key")
-        queue = self.server.service.status()["ready"]["queue"]
-        if queue["active"] or queue["waiting"]:
+        if not self.server.service.close_if_idle():  # from here no turn is accepted
             raise ProtocolError("conflict", "Nuru is busy with a turn in this vault")
         self.answer(202, {"stopping": True})
         print("nuru-serve: stopping, as another vault asked", file=sys.stderr)

@@ -34,6 +34,7 @@ const PROBLEMS = {
   "not-managed": "Nuru was started outside Obsidian, so it can't be switched from here: stop it where it runs.",
   busy: "Nuru is busy with a turn in that vault: try again when it finishes.",
   "not-stopped": "Nuru didn't stop in time.",
+  released: "The plugin was turned off while Nuru was starting.",
 };
 
 class LaunchProblem extends Error {
@@ -72,6 +73,7 @@ class Launcher {
     Object.assign(this, { vaultPath, port, connect, home, spawn, execFile, fetch, pollMs });
     this.child = null; // the service this plugin started, while it runs
     this.starting = null; // a start under way: a second panel or click waits for it
+    this.generation = 0; // release() moves it on, so a start under way gives up
   }
 
   running() {
@@ -96,8 +98,11 @@ class Launcher {
   }
 
   async startOnce() {
+    const generation = this.generation;
+    const released = () => generation !== this.generation;
     const { nuru, uv } = readInstall(this.home);
     await this.pair();
+    if (released()) throw new LaunchProblem("released"); // turned off while pairing: start nothing
     if (!this.running()) {
       fs.mkdirSync(serviceDir(this.home), { recursive: true, mode: 0o700 });
       const log = fs.openSync(logPath(this.home), "a", 0o600);
@@ -113,11 +118,14 @@ class Launcher {
     const child = this.child;
     const deadline = Date.now() + START_SECONDS * 1000;
     while (Date.now() < deadline) {
+      let connected;
       try {
-        return await this.connect();
+        connected = await this.connect();
       } catch (error) {
         if (!(error instanceof ConnectionProblem) || error.kind !== "no-service") throw error;
       }
+      if (released()) throw new LaunchProblem("released"); // release() has closed its pipe
+      if (connected) return connected;
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new LaunchProblem("exited", `From ${logPath(this.home)}:\n${lastLines(logPath(this.home), LOG_LINES)}`);
       }
@@ -155,7 +163,9 @@ class Launcher {
   }
 
   // The plugin is going: a service it started stops with it (it sees its stdin close).
+  // A start under way gives up, and closes the pipe of a service it goes on to spawn.
   release() {
+    this.generation += 1;
     if (this.child?.stdin && !this.child.stdin.destroyed) this.child.stdin.end();
     this.child = null;
   }

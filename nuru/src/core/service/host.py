@@ -158,6 +158,15 @@ class Service:
 
             self._emit(live, report)
 
+    def close_if_idle(self) -> bool:
+        """Stop taking work if no turn is running or waiting, in the same step as the check, so none can be
+        accepted in between. False, with nothing changed, if one is. close() still has to follow."""
+        with self._lock:
+            if self._active or self._queue:
+                return False
+            self._closing = True
+            return True
+
     def close(self, timeout: float = 30) -> bool:
         """Stop taking work, cancel the queued turns and the running one, and wait for the worker. The
         Session is closed, never shut down: the Ollama server and its models may be someone else's.

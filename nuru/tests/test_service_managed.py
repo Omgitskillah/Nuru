@@ -15,7 +15,8 @@ from core.service.host import Service
 from core.service import server as nuru_serve
 from core.service.server import NuruServer
 from core.service.store import ServiceStore
-from test_service_host import ScriptedSession, reply
+from core.service.protocol import ProtocolError
+from test_service_host import Harness, ScriptedSession, held, reply
 from test_service_server import Client
 
 
@@ -68,12 +69,30 @@ def test_managed_json_is_private_and_only_its_key_stops_an_idle_service(running)
     pipe.close()
 
 
-def test_a_busy_service_refuses_to_stop(running, monkeypatch):
+def test_a_busy_service_refuses_to_stop_and_keeps_its_turn(tmp_path):
+    gate = threading.Event()
+    h = Harness(tmp_path, [held(gate, "working")])
+    turn = h.submit(h.conversation())[1]["turn_id"]
+    assert not h.service.close_if_idle()
+    gate.set()
+    assert h.finished(turn)[-1]["type"] == "completed", "the turn wasn't cancelled"
+    assert h.service.close_if_idle(), "idle now"
+    h.close()
+
+
+def test_once_stopping_is_agreed_no_turn_is_accepted(tmp_path):
+    h = Harness(tmp_path, [reply("never")])
+    conversation = h.conversation()
+    assert h.service.close_if_idle()
+    with pytest.raises(ProtocolError, match="shutting down"):
+        h.submit(conversation)
+    h.close()
+
+
+def test_the_stop_request_answers_409_while_busy(running, monkeypatch):
     server, client, thread, path = running
     pipe = manage(server, path)
-    status = server.service.status()
-    status["ready"]["queue"] = {**status["ready"]["queue"], "active": 1}
-    monkeypatch.setattr(server.service, "status", lambda: status)
+    monkeypatch.setattr(server.service, "close_if_idle", lambda: False)
     code, body, _ = client.call("POST", "/v1/service/stop", {"stop_key": server.stop_key})
     assert code == 409 and body["error"]["code"] == "conflict"
     assert thread.is_alive()

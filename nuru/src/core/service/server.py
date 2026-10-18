@@ -547,20 +547,24 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     credentials = Credentials()
     if not credentials.clients():
         print("nuru-serve: no clients can sign in yet; add one with `uv run nuru-serve token add obsidian`", file=sys.stderr)
-    try:
-        store = ServiceStore(session.DB_PATH.with_name("service.db"))  # owns the database before recovering it
-    except ServiceBusy as error:
-        sys.exit(f"nuru-serve: {error}")
     vault = _vault().resolve()
+    from core import vault_data
     from core.vault_identity import Registry, RegistryError, VaultConflict
     try:
         vault_uuid = Registry().identify(vault)
+        db_path, _ = session.data_paths(vault)  # this vault's own, on this computer (core.vault_data)
     except (VaultConflict, RegistryError, ValueError) as error:
-        store.close()
         sys.exit(f"nuru-serve: {error}")
+    try:
+        store = ServiceStore(db_path.with_name("service.db"))  # owns the database before recovering it
+    except ServiceBusy as error:
+        sys.exit(f"nuru-serve: {error}")
+    if session.DB_PATH is None and vault_data.legacy_waiting():
+        print("nuru-serve: conversations from before vaults had their own history are still in the Nuru folder; "
+              "to move them into a vault, stop Nuru and run `uv run nuru-serve vault adopt-legacy <vault>`", file=sys.stderr)
     from core import main_models
     default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
-    service = Service(store, ConversationStore(session.DB_PATH), _session_factory(vault), vault, queue_limit=queue_limit,
+    service = Service(store, ConversationStore(db_path), _session_factory(vault), vault, queue_limit=queue_limit,
                       models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
@@ -655,8 +659,9 @@ def main(argv: list[str] | None = None) -> None:
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
     vault_command = commands.add_parser("vault", help="vault IDs on this computer: list, or settle a copied vault")
-    vault_command.add_argument("action", choices=["list", "rebind", "clone"])
-    vault_command.add_argument("vault", nargs="?", help="the vault to rebind (keep its ID) or clone (give it a new one)")
+    vault_command.add_argument("action", choices=["list", "rebind", "clone", "adopt-legacy"])
+    vault_command.add_argument("vault", nargs="?", help="the vault to rebind (keep its ID), clone (give it a new one), "
+                               "or move the conversations from before WP04 into (adopt-legacy)")
     vault_command.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     token = commands.add_parser("token", help="add, remove or list the clients that may sign in")
     token.add_argument("action", choices=["add", "remove", "list"])
@@ -730,10 +735,21 @@ def vault_command_run(args, parser):
     vault = Path(args.vault).expanduser().resolve()
     if not vault.is_dir():
         parser.error(f"no folder at {vault}")
-    what = (f"Keep {vault} as the vault with this ID and its history; the other copy is treated as old."
-            if args.action == "rebind" else f"Give {vault} a new ID: a separate vault, starting with no history.")
+    what = {"rebind": f"Keep {vault} as the vault with this ID and its history; the other copy is treated as old.",
+            "clone": f"Give {vault} a new ID: a separate vault, starting with no history.",
+            "adopt-legacy": f"Move every conversation from before vaults had their own history into {vault}'s. "
+                            "Do it with Nuru stopped; the old files are kept as *.pre-wp04."}[args.action]
     if not args.yes and input(f"{what} Go ahead? [y/N] ").strip().lower() not in {"y", "yes"}:
         print("Nothing changed.")
+        return
+    if args.action == "adopt-legacy":
+        from core import vault_data
+        try:
+            moved = vault_data.adopt_legacy(registry.identify(vault))
+        except (vault_data.MigrationError, ValueError, RuntimeError) as error:
+            sys.exit(f"nuru-serve: nothing moved: {error}")
+        print(f"{vault}: moved {moved['conversations']} conversations and {moved['logs']} log files. "
+              f"The old files are kept as {', '.join(moved['kept'])}; delete them once you're happy.")
         return
     try:
         vault_uuid = registry.rebind(vault) if args.action == "rebind" else registry.clone(vault)

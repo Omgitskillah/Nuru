@@ -113,6 +113,7 @@ def test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger(mo
     """nuru-serve names its vault. The notes server doesn't inherit this process's VAULT_PATH, so
     without it the server would take .env.obsidian's vault while the ledger took VAULT_PATH's."""
     served, elsewhere = tmp_path / "served", tmp_path / "elsewhere"
+    served.mkdir()
     monkeypatch.setenv("VAULT_PATH", str(elsewhere))
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
     monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
@@ -145,12 +146,16 @@ def test_a_served_vault_never_gets_another_vaults_semantic_index(monkeypatch, tm
     given = []
     monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: given.extend(server_params) or FakeMCPTools())
 
-    for vault, index in ((tmp_path / "served", tmp_path / "served" / ".obsidian-mcp-semantic.sqlite3"),
-                         (tmp_path / "real", tmp_path / "real.sqlite3")):
+    from core import vault_identity
+    (tmp_path / "served").mkdir()
+    (tmp_path / "real").mkdir()
+    own = lambda: tmp_path / "vaults" / vault_identity.read(tmp_path / "served") / "semantic.sqlite3"  # noqa: E731
+    for vault, index in ((tmp_path / "served", own), (tmp_path / "real", lambda: tmp_path / "real.sqlite3")):
         given.clear()
         Session.start(vault=vault).close()
         obsidian = next(p for p in given if p.args == ["run", "obsidian-mcp"])
-        assert obsidian.env["OBSIDIAN_SEMANTIC_DB"] == str(index.resolve())
+        assert obsidian.env["OBSIDIAN_SEMANTIC_DB"] == str(index().resolve())
+    assert not any((tmp_path / "served").glob("*.sqlite3")), "the served vault's own, outside it"
 
 
 def test_each_conversation_keeps_its_own_evidence_when_the_session_switches(monkeypatch):

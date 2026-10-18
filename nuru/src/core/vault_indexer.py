@@ -52,16 +52,19 @@ def _paths_line(result: semantic.RefreshResult) -> str:
 
 def semantic_db(vault: Path) -> str:
     """The semantic index for `vault`: OBSIDIAN_SEMANTIC_DB from this process's environment if set;
-    .env.obsidian's only when `vault` is .env.obsidian's own vault; otherwise the notes server's default,
-    inside `vault`. Never another vault's index: a refresh would drop that vault's notes from it, and
-    search would answer from them."""
+    .env.obsidian's only when `vault` is .env.obsidian's own vault; otherwise the vault's own, on this
+    computer (~/.nuru/vaults/<uuid>/semantic.sqlite3, core.vault_data), never inside the vault. Never
+    another vault's index: a refresh would drop that vault's notes from it, and search would answer
+    from them."""
     if os.environ.get("OBSIDIAN_SEMANTIC_DB"):
         return os.environ["OBSIDIAN_SEMANTIC_DB"]
     configured = dotenv_values(OBSIDIAN_ENV)
     if configured.get("OBSIDIAN_SEMANTIC_DB") and configured.get("VAULT_PATH") \
             and Path(configured["VAULT_PATH"]).expanduser().resolve() == Path(vault).resolve():
         return configured["OBSIDIAN_SEMANTIC_DB"]
-    return str(Path(vault).resolve() / semantic.DB_NAME)
+    from core import vault_data
+    from core.vault_identity import Registry
+    return str(vault_data.data_dir(Registry().identify(Path(vault))) / "semantic.sqlite3")
 
 
 class VaultIndexer:

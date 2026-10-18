@@ -226,11 +226,12 @@ def test_an_error_inside_session_fails_the_turn_without_details(harness):
     assert h.finished(h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"])[-1]["type"] == "completed"
 
 
-def test_a_model_that_cant_start_fails_the_turn_and_is_retried_next_time(harness):
+def test_a_model_that_cant_start_fails_the_turn_and_is_retried_next_time(harness, capsys):
     h = harness([reply("back")], factory_error=OSError("no ollama"))
     conversation = h.conversation()
     events = h.finished(h.submit(conversation, request_id="req-turn-00000001")[1]["turn_id"])
     assert events[-1]["data"]["code"] == "model_unavailable"
+    assert "couldn't start the model and tools: OSError: no ollama" in capsys.readouterr().err, "the reason is logged"
     assert h.service.status()["ready"]["chat"] == "unavailable"
     h.factory_error = None
     assert h.finished(h.submit(conversation, request_id="req-turn-00000002")[1]["turn_id"])[-1]["type"] == "completed"

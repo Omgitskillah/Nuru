@@ -565,7 +565,10 @@ class Service:
             return
         try:
             session = self._ensure_session(live.store_id)
-        except Exception:
+        except Exception as error:
+            # The client only hears "couldn't start": the reason goes to the log (serve.log when managed).
+            print(f"nuru-serve: couldn't start the model and tools: {type(error).__name__}: {error}", file=sys.stderr)
+            traceback.print_exc(limit=8, file=sys.stderr)
             with self._lock:
                 if not self._unsafe:
                     self._emit(live, lambda s: s.emit("failed", {"code": "model_unavailable",

@@ -44,7 +44,8 @@ class LaunchProblem extends Error {
   }
 }
 
-// {nuru, uv}: the Nuru folder and the uv that install.js found.
+// {nuru, uv, path}: the Nuru folder, the uv that install.js found, and the PATH Nuru's tools are found
+// on: the installing shell's, else uv's folder in front of Obsidian's own (an older install.json).
 function readInstall(home) {
   let recorded;
   try {
@@ -52,11 +53,12 @@ function readInstall(home) {
   } catch {
     throw new LaunchProblem("not-installed");
   }
-  const { nuru, uv } = recorded || {};
+  const { nuru, uv, path: searchPath } = recorded || {};
   if (![nuru, uv].every((p) => typeof p === "string" && path.isAbsolute(p) && fs.existsSync(p))) {
     throw new LaunchProblem("not-installed");
   }
-  return { nuru, uv };
+  const fallback = [path.dirname(uv), process.env.PATH].filter(Boolean).join(path.delimiter);
+  return { nuru, uv, path: typeof searchPath === "string" && searchPath ? searchPath : fallback };
 }
 
 function lastLines(file, n) {
@@ -83,10 +85,10 @@ class Launcher {
   // The plugin's token, made the way `nuru-serve token add obsidian` makes it, if there's none yet.
   async pair() {
     if (fs.existsSync(tokenPath(this.home))) return;
-    const { nuru, uv } = readInstall(this.home);
+    const { nuru, uv, path: searchPath } = readInstall(this.home);
     await new Promise((resolve, reject) => {
       this.execFile(uv, ["run", "--directory", nuru, "nuru-serve", "token", "add", "obsidian"],
-        { cwd: nuru, timeout: START_SECONDS * 1000, windowsHide: true },
+        { cwd: nuru, env: { ...process.env, PATH: searchPath }, timeout: START_SECONDS * 1000, windowsHide: true },
         (error) => (error ? reject(new LaunchProblem("no-pairing", error.message)) : resolve()));
     });
   }
@@ -100,7 +102,7 @@ class Launcher {
   async startOnce() {
     const generation = this.generation;
     const released = () => generation !== this.generation;
-    const { nuru, uv } = readInstall(this.home);
+    const { nuru, uv, path: searchPath } = readInstall(this.home);
     await this.pair();
     if (released()) throw new LaunchProblem("released"); // turned off while pairing: start nothing
     if (!this.running()) {
@@ -108,7 +110,8 @@ class Launcher {
       const log = fs.openSync(logPath(this.home), "a", 0o600);
       try {
         this.child = this.spawn(uv, ["run", "--directory", nuru, "nuru-serve", "--managed", "--port", String(this.port)], {
-          cwd: nuru, env: { ...process.env, VAULT_PATH: this.vaultPath }, stdio: ["pipe", log, log], windowsHide: true,
+          cwd: nuru, env: { ...process.env, PATH: searchPath, VAULT_PATH: this.vaultPath }, stdio: ["pipe", log, log],
+          windowsHide: true,
         });
       } finally {
         fs.closeSync(log);

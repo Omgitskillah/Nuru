@@ -80,14 +80,15 @@ function findUv(env = process.env, home = os.homedir()) {
   return dirs.filter(Boolean).map((dir) => path.join(dir, name)).find((p) => fs.statSync(p, { throwIfNoEntry: false })?.isFile()) || null;
 }
 
-// ~/.nuru/install.json: the Nuru folder and uv, for the plugin to start nuru-serve with. Outside every
-// vault, so a vault can't change what the plugin runs.
-function recordInstall({ nuru, uv, home = os.homedir() }) {
+// ~/.nuru/install.json: the Nuru folder, uv and the installing shell's PATH, for the plugin to start
+// nuru-serve with: Obsidian started from the Dock gets only /usr/bin:/bin:/usr/sbin:/sbin, and Nuru's
+// tools run through uv and cargo. Outside every vault, so a vault can't change what the plugin runs.
+function recordInstall({ nuru, uv, path: searchPath = process.env.PATH || "", home = os.homedir() }) {
   const dir = path.join(home, ".nuru");
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, "install.json");
   const temporary = `${file}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify({ nuru: fs.realpathSync(nuru), uv }, null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(temporary, `${JSON.stringify({ nuru: fs.realpathSync(nuru), uv, path: searchPath }, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(temporary, file);
   return file;
 }

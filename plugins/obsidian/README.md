@@ -55,7 +55,9 @@ Needs Node 24 and npm, `uv`, and desktop Obsidian.
    `<vault>/.obsidian/plugins/nuru/`. It checks every path first, refuses symlinks, and swaps the files in
    only once all of them are copied. It never enables the plugin, and leaves the plugin's settings
    (`data.json`), the vault's other settings and its notes alone. It also records the Nuru folder and
-   `uv` in `~/.nuru/install.json`, outside every vault, for the plugin to start Nuru with.
+   `uv` in `~/.nuru/install.json`, outside every vault, for the plugin to start Nuru with, along with
+   this shell's `PATH`: Obsidian opened from the Dock gets only the system folders, and Nuru's tools run
+   through `uv` and `cargo`. So run it from a terminal where `uv` and `cargo` work.
 2. **Enable it**: in Obsidian, Settings → Community plugins, refresh the list and turn on **Nuru**. The
    lantern in the ribbon opens the chat.
 
@@ -90,7 +92,10 @@ Leave Obsidian open and `nuru-serve` running.
    ```
 
    It prints `Installed: <vault>/.obsidian/plugins/nuru`. Obsidian keeps running the old version until
-   you reload the plugin.
+   you reload the plugin. It also rewrites `~/.nuru/install.json` with this shell's `PATH`. **An install
+   from before that was recorded must run this step again**, from a terminal where `uv` and `cargo`
+   work. Otherwise a Nuru started from Obsidian can't find `cargo`, and the first message fails with
+   "Nuru couldn't start its model and tools" (`~/.nuru/service/serve.log` says why).
 3. Reload it: in Obsidian, Settings → Community plugins, turn **Nuru** off, then on again. Restarting
    Obsidian does the same.
 4. Check: Settings → Community plugins shows the new version under **Nuru**. Open the chat from the

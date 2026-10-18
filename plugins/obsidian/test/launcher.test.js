@@ -10,7 +10,7 @@ const { EventEmitter } = require("node:events");
 const { ConnectionProblem } = require("../lib/connection");
 const { Launcher, LaunchProblem, logPath } = require("../lib/launcher");
 
-function home({ installed = true, token = true } = {}) {
+function home({ installed = true, token = true, searchPath = "/Users/me/.local/bin:/Users/me/.cargo/bin:/usr/bin" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-launch-"));
   const nuru = path.join(dir, "Nuru");
   const uv = path.join(dir, "uv");
@@ -18,7 +18,7 @@ function home({ installed = true, token = true } = {}) {
   fs.writeFileSync(uv, "");
   if (installed) {
     fs.mkdirSync(path.join(dir, ".nuru"));
-    fs.writeFileSync(path.join(dir, ".nuru", "install.json"), JSON.stringify({ nuru, uv }));
+    fs.writeFileSync(path.join(dir, ".nuru", "install.json"), JSON.stringify({ nuru, uv, path: searchPath }));
   }
   if (token) {
     fs.mkdirSync(path.join(dir, ".nuru", "service", "clients"), { recursive: true });
@@ -54,6 +54,7 @@ test("it starts nuru-serve --managed for this vault, from the recorded Nuru fold
   assert.equal(command, uv);
   assert.deepEqual(args, ["run", "--directory", nuru, "nuru-serve", "--managed", "--port", "27125"]);
   assert.equal(options.env.VAULT_PATH, "/vaults/Here");
+  assert.equal(options.env.PATH, "/Users/me/.local/bin:/Users/me/.cargo/bin:/usr/bin", "the shell's PATH: uv and cargo are found");
   assert.equal(options.stdio[0], "pipe", "its stdin is the pipe that stops it");
   assert.ok(fs.existsSync(logPath(dir)));
   assert.ok(launcher.running());
@@ -141,4 +142,13 @@ test("turned off while waiting for it to answer, the service it spawned is told 
   await assert.rejects(launcher.start(), (error) => error.kind === "released");
   assert.ok(child.stdin.ended, "its stdin closed, so it stops");
   assert.ok(!launcher.running());
+});
+
+test("an install.json from before PATH was recorded still finds uv's folder", async () => {
+  const { dir, uv } = home({ searchPath: "" });
+  let env;
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1,
+    spawn: (command, args, options) => { env = options.env; return fakeChild(); }, connect: async () => ({}) });
+  await launcher.start();
+  assert.equal(env.PATH.split(path.delimiter)[0], path.dirname(uv));
 });

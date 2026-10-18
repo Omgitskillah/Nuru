@@ -142,8 +142,8 @@ test("install.json records the Nuru folder and uv outside the vault, owner-only"
   fs.writeFileSync(path.join(bin, process.platform === "win32" ? "uv.exe" : "uv"), "");
   const uv = findUv({ PATH: bin }, home);
   assert.equal(uv, path.join(bin, process.platform === "win32" ? "uv.exe" : "uv"));
-  const file = recordInstall({ nuru: bin, uv, home });
+  const file = recordInstall({ nuru: bin, uv, path: `${bin}:/usr/bin`, home });
   assert.equal(file, path.join(home, ".nuru", "install.json"));
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { nuru: fs.realpathSync(bin), uv });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { nuru: fs.realpathSync(bin), uv, path: `${bin}:/usr/bin` });
   if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });

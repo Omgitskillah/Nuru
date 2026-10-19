@@ -58,6 +58,11 @@ def isolate_conversation_files(monkeypatch, tmp_path):
     """Every Session test uses scratch history/logs, including executor tests."""
     monkeypatch.setattr(session, "LOG_DIR", tmp_path)
     monkeypatch.setattr(session, "DB_PATH", tmp_path / "conversation.db")
+    monkeypatch.setenv("NURU_VAULTS_DIR", str(tmp_path / "vaults"))  # vault IDs and data: never ~/.nuru
+    # A Session started without a vault serves VAULT_PATH, else .env.obsidian's: the developer's real
+    # vault, which would be given a .nuru/vault-id. A test that wants one sets VAULT_PATH itself.
+    (tmp_path / "test-vault").mkdir(exist_ok=True)
+    monkeypatch.setenv("VAULT_PATH", str(tmp_path / "test-vault"))
 
 
 @pytest.fixture(autouse=True)

@@ -190,8 +190,34 @@ if _decision_config := os.environ.get("NURU_DECISION_CONFIG"):
     _laya_env["NURU_DECISION_CONFIG"] = _decision_config
 LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
 
-LOG_DIR = Path(os.environ.get("NURU_LOG_DIR", Path(__file__).resolve().parents[2] / ".logs"))
-DB_PATH = Path(os.environ.get("NURU_DB_PATH", Path(__file__).resolve().parents[2] / ".db" / "conversation.db"))
+# Set only to override (tests, evals): otherwise each vault's own, in ~/.nuru/vaults/<uuid>/ (core.vault_data).
+LOG_DIR = Path(os.environ["NURU_LOG_DIR"]) if os.environ.get("NURU_LOG_DIR") else None
+DB_PATH = Path(os.environ["NURU_DB_PATH"]) if os.environ.get("NURU_DB_PATH") else None
+
+
+def data_paths(vault: Path, *, recover: bool = True) -> tuple[Path, Path]:
+    """(the conversation database, the log folder) for `vault`: NURU_DB_PATH / NURU_LOG_DIR if set,
+    else the vault's own folder on this computer (core.vault_data), after finishing or undoing an
+    interrupted move (recover=False: the caller has done that, under the migration lock). Gives the
+    vault its ID if it has none."""
+    if DB_PATH is not None and LOG_DIR is not None:
+        return DB_PATH, LOG_DIR
+    from core import vault_data
+    from core.vault_identity import Registry
+    vault_uuid = Registry().identify(vault)
+    if recover:
+        vault_data.recover(vault_uuid)
+    return (DB_PATH or vault_data.db_dir(vault_uuid) / "conversation.db",
+            LOG_DIR or vault_data.logs_dir(vault_uuid))
+
+
+def configured_vault() -> Path:
+    """The vault this process serves when none is named: VAULT_PATH, else .env.obsidian's; ValueError if
+    neither names one (never the current folder, which would be given a vault ID and data folder)."""
+    named = os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH")
+    if not named:
+        raise ValueError("no vault is configured: set VAULT_PATH, or VAULT_PATH in .env.obsidian")
+    return Path(named).expanduser().resolve()
 
 DEFAULT_NUM_CTX = 8192
 # Ceiling on the context window nuru asks Ollama to allocate. Ollama sizes the KV
@@ -446,6 +472,7 @@ class Session:
         self._shown_call: str | None = None  # the call_id of the ToolCall last shown, until it runs
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
+        self._in_use = None  # the shared lock on this vault's history (core.vault_data.hold_history)
         self.link_auditor: VaultLinkAuditor | None = None
         self.steward: VaultSteward | None = None
         self.model_info: dict | None = None
@@ -481,7 +508,24 @@ class Session:
 
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
 
+        served = vault if vault is not None else configured_vault()
+        in_use = None
+        if DB_PATH is None:
+            from core import vault_data
+            from core.vault_identity import Registry
+            # Recovered, and this history held for the whole session, under the migration lock: no
+            # move can start in between, or replace the database while the session has it open.
+            with vault_data.opening(Registry().identify(served)):
+                db_path, log_dir = data_paths(served, recover=False)
+                in_use = vault_data.hold_history(db_path)
+        else:
+            db_path, log_dir = data_paths(served)
+        if LOG_DIR is None:
+            claude_provider.LOG_DIR = log_dir  # Claude's request log goes with the vault's other logs
+
         with ExitStack() as opened:
+            if in_use is not None:
+                opened.callback(in_use.close)
             python_server = python_server_params()
             obsidian, deep_think = OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS
             if vault is not None:
@@ -489,6 +533,9 @@ class Session:
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault),
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(vault)}})
                 deep_think = deep_think.model_copy(update={"env": {**deep_think.env, "DEEP_THINK_BASE_DIR": str(vault)}})
+            else:  # the background indexer's index, which semantic_search must read
+                obsidian = obsidian.model_copy(update={"env": {**obsidian.env,
+                                                               "OBSIDIAN_SEMANTIC_DB": semantic_db(configured_vault())}})
             laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
             laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
             tools = MCPTools(
@@ -502,13 +549,13 @@ class Session:
             tool_definitions = _hide_injected_args(server_tools)
 
             logger = CLILogger(
-                LOG_DIR,
+                log_dir,
                 model=MODEL,
                 think=THINK,
                 server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp"
                 + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
-            store = ConversationStore(DB_PATH)
+            store = ConversationStore(db_path)
             opened.callback(store.close)
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
@@ -549,6 +596,7 @@ class Session:
                 session.steward.on_change = logger.stewardship
                 session.steward.start()
                 opened.callback(session.steward.stop)
+            session._in_use = in_use
             opened.pop_all()  # it worked, so the session owns them now
         return session
 
@@ -1683,5 +1731,8 @@ class Session:
             self.steward.stop()
         self.tools.close()
         self.store.close()
+        if self._in_use is not None:
+            self._in_use.close()  # a move may now replace this history
+            self._in_use = None
         if self.shadow:
             self.shadow.close()

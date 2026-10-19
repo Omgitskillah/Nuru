@@ -4,7 +4,7 @@ import time
 import pytest
 from obsidian_mcp import semantic
 
-from core import vault_indexer
+from core import vault_identity, vault_indexer
 from core.vault_indexer import VaultIndexer
 
 
@@ -63,9 +63,12 @@ def test_another_vaults_index_is_never_used(clean_env, monkeypatch, tmp_path):
     monkeypatch.setattr(vault_indexer, "OBSIDIAN_ENV", env_file)
 
     assert VaultIndexer.from_env().config.db_path == tmp_path / "configured.sqlite3"
+    other.mkdir()
     monkeypatch.setenv("VAULT_PATH", str(other))
-    assert VaultIndexer.from_env().config.db_path == other.resolve() / semantic.DB_NAME
-    assert vault_indexer.semantic_db(other) == str(other.resolve() / semantic.DB_NAME)
+    indexed = VaultIndexer.from_env().config.db_path
+    assert indexed == tmp_path / "vaults" / vault_identity.read(other) / "semantic.sqlite3", "the vault's own, on this computer"
+    assert not any(other.glob("*.sqlite3")), "never inside the vault"
+    assert vault_indexer.semantic_db(other) == str(indexed)
     monkeypatch.setenv("OBSIDIAN_SEMANTIC_DB", str(tmp_path / "chosen.sqlite3"))
     assert VaultIndexer.from_env().config.db_path == tmp_path / "chosen.sqlite3"
 

@@ -91,19 +91,26 @@ Deleting a vault leaves its data on the computer until `nuru-serve vault forget`
      and say so. The plugin's auto-start waits on the lock.
   2. **Checkpoint.** Run `PRAGMA wal_checkpoint(TRUNCATE)` on the old `conversation.db` and `service.db`,
      so every committed row is in the main files.
-  3. **Stage.** Copy both, with SQLite's backup API, into `~/.nuru/vaults/<uuid>/.staging/`. Rewrite the
-     request keys and `captures.vault_id` from the path hash to the UUID there, in one transaction on
-     the staged `service.db`.
-  4. **Check together.** Run `PRAGMA integrity_check` on both staged files. Row counts must match the
-     old files. Every service-store conversation must point at a conversation that exists in the staged
-     conversation store. Any failure deletes `.staging/` and leaves the old files untouched.
-  5. **Activate.** Write `migration.json`, `{"state": "staged", …}`, fsync it, then rename `.staging/`
-     to the live names. Update it to `{"state": "active"}`, and only then rename the old files to
-     `*.pre-wp04`. Logs are copied last; a failure there doesn't undo the move.
-  6. **Restart rules.** A service only opens a vault folder whose `migration.json` says `active`, or has
-     none, as a new vault does. `staged` with `.staging/` still present means the move never
-     activated: `.staging/` is discarded and the old files are used as before. `active` with the old
-     files not yet renamed means the move finished but the cleanup didn't: the rename is completed.
+  3. **Stage.** Copy both, with SQLite's backup API, into `~/.nuru/vaults/<uuid>/db.staging/`. The
+     request keys and `captures.vault_id` keep v1's path hash: the vault's path hasn't changed, and
+     moving them to the UUID belongs with M4's device binding.
+  4. **Check together.** Run `PRAGMA integrity_check` on both staged files. Every table's row count must
+     match the old file's. Every service-store conversation must point at a conversation that exists in
+     the staged conversation store. Any failure leaves the old files untouched.
+  5. **Activate with one rename.** Both databases live together in `<uuid>/db/`, so there is never a
+     mix of old and new files:
+     1. Write `migration.json` = `staged`, and fsync it.
+     2. If an empty `db/` exists (a new-layout service ran first), move it aside to `db.replaced`.
+     3. Rename `db.staging` → `db`. This is the one step that puts the move in place.
+     4. Write `active`, remove `db.replaced`, and retire the old files to `*.pre-wp04`.
+     5. Copy the logs last; a failure there doesn't undo the move.
+  6. **Restart rules.** `recover()` runs before any service opens `db/`:
+     - a staging copy with nothing recorded is discarded;
+     - `staged` with `db.staging` still present means the rename never happened: the copy is discarded,
+       `db.replaced` is put back, and the old files are used as before;
+     - `staged` with `db.staging` gone means the rename happened: it's recorded as `active`;
+     - `active` retires any old file not yet retired.
+
      A half-moved vault is never opened.
 - **Done when:**
   - after the move, every existing conversation opens with its turns and events;

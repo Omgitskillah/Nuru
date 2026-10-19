@@ -76,6 +76,14 @@ loads it.
 - **The plugin's settings** show the port (27125 unless you change it), where the token is read from,
   this vault's ID (`.nuru/vault-id`, which Nuru writes the first time it serves the vault, and which
   stays the same if you move or rename the vault), and **Check and reconnect**.
+- **Nuru's own settings** are there too, under **Nuru**: the default model (from the models Nuru can
+  run), how long the local model stays loaded, and the Claude API key. They're read from and written to
+  the env files in the Nuru folder (`NURU_BASE_MODEL`, `NURU_MAIN_MODEL` and `NURU_KEEP_ALIVE` in
+  `.env.nuru`, `CLAUDE_API_KEY` in `.env.deep-think`), the same lines Nuru reads, so editing a file works
+  as well; a change rewrites only that line. Nothing goes into `data.json`, which syncs with the vault.
+  The key is shown only as a fingerprint, and checked with Anthropic's free model list. **Restart Nuru**
+  applies a change (for a Nuru the plugin started; restart one from a terminal there). Every other
+  setting stays in the files.
 - **A copied vault**: Nuru won't serve a copy of a vault while the original still exists, since both
   would claim the same history. Settle it in the Nuru folder: `uv run nuru-serve vault rebind <vault>`
   if this copy is the one to keep, or `uv run nuru-serve vault clone <vault>` to make it a separate vault.

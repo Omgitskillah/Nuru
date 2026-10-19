@@ -121,6 +121,58 @@ test("a service started outside Obsidian has no managed.json, so it isn't stoppe
   await assert.rejects(launcher.stopOther(), (error) => error.kind === "not-managed");
 });
 
+test("restarting stops the service it started, waits for it to exit, and starts a new one", async () => {
+  const { dir } = home();
+  const managed = path.join(dir, ".nuru", "service", "managed.json");
+  const children = [];
+  let up = false;
+  const launcher = new Launcher({ vaultPath: "/v", port: 27125, home: dir, pollMs: 1,
+    spawn: () => {
+      const child = fakeChild();
+      children.push(child);
+      fs.writeFileSync(managed, JSON.stringify({ pid: 1, port: 27125, stop_key: "key" }));
+      up = true;
+      return child;
+    },
+    connect: async () => {
+      if (!up) throw new ConnectionProblem("no-service");
+      return { status: "status" };
+    },
+    fetch: async (url) => {
+      if (url.endsWith("/v1/service/stop")) {
+        up = false;
+        fs.rmSync(managed);
+        setTimeout(() => { children.at(-1).exitCode = 0; children.at(-1).emit("exit", 0); }, 5); // exits a little later
+        return { status: 202 };
+      }
+      if (!up) throw new TypeError("fetch failed");
+      return { status: 200 };
+    } });
+  await launcher.start();
+  assert.deepEqual(await launcher.restart(), { status: "status" });
+  assert.equal(children.length, 2, "a new service, not the one on its way out");
+  assert.equal(children[0].exitCode, 0);
+  assert.ok(launcher.running());
+});
+
+test("restarting with nothing running starts it; one started outside Obsidian is left alone", async () => {
+  const { dir } = home();
+  let spawned = 0;
+  let up = false;
+  const launcher = new Launcher({ vaultPath: "/v", port: 27125, home: dir, pollMs: 1,
+    spawn: () => { spawned += 1; up = true; return fakeChild(); },
+    connect: async () => {
+      if (!up) throw new ConnectionProblem("no-service");
+      return { status: "status" };
+    },
+    fetch: async () => assert.fail("asked to stop") });
+  assert.deepEqual(await launcher.restart(), { status: "status" });
+  assert.equal(spawned, 1);
+  launcher.release();
+  await assert.rejects(launcher.restart(), (error) => error.kind === "not-managed", "it answers, with no stop key");
+  assert.equal(spawned, 1);
+});
+
 test("turned off while pairing, it starts nothing", async () => {
   const { dir } = home({ token: false });
   let paired;

@@ -31,7 +31,7 @@ const PROBLEMS = {
   "no-pairing": "Nuru couldn't make this plugin's token.",
   exited: "Nuru stopped while starting.",
   slow: "Nuru didn't answer within two minutes of starting.",
-  "not-managed": "Nuru was started outside Obsidian, so it can't be switched from here: stop it where it runs.",
+  "not-managed": "Nuru was started outside Obsidian, so it can't be switched or restarted from here: do that where it runs.",
   busy: "Nuru is busy with a turn in that vault: try again when it finishes.",
   "not-stopped": "Nuru didn't stop in time.",
   released: "The plugin was turned off while Nuru was starting.",
@@ -163,6 +163,31 @@ class Launcher {
       await new Promise((resolve) => setTimeout(resolve, this.pollMs));
     }
     throw new LaunchProblem("not-stopped");
+  }
+
+  // Stop the service Obsidian started and start it for this vault again, so it reads its settings
+  // (the env files) again. One started from a terminal is left alone: restart it there.
+  async restart() {
+    const child = this.running() ? this.child : null;
+    const exited = child && new Promise((resolve) => child.once("exit", resolve));
+    try {
+      await this.stopOther();
+    } catch (error) {
+      if (await this.answering()) throw error; // busy, or started from a terminal
+      return this.start(); // nothing runs (managed.json is missing, or left by one that crashed): start it
+    }
+    if (exited) await exited; // so start() spawns a new one rather than waiting on this one
+    return this.start();
+  }
+
+  // Whether any service answers on the port, for this vault or not.
+  async answering() {
+    try {
+      await this.connect();
+      return true;
+    } catch (error) {
+      return !(error instanceof ConnectionProblem && error.kind === "no-service");
+    }
   }
 
   // The plugin is going: a service it started stops with it (it sees its stdin close).

@@ -74,6 +74,23 @@ test("the Claude key shows only its fingerprint, and goes to Anthropic only when
   assert.equal(asked.at(-1), "sk-ant-api03-new");
 });
 
+test("a check that answers after another key is saved shows nothing for the new key", async (t) => {
+  let answer;
+  obsidian.requestUrl.handler = () => new Promise((resolve) => { answer = resolve; });
+  t.after(() => { obsidian.requestUrl.handler = async () => ({ status: 200 }); });
+  const { settingTab } = tab();
+  settingTab.display();
+  const key = row(settingTab, "Claude API key");
+  const button = (text) => [...key.querySelectorAll("button")].find((b) => b.textContent === text);
+  button("Check").click();
+  await until(() => answer);
+  change(key.querySelector("input"), "sk-ant-api03-new");
+  button("Save").click();
+  answer({ status: 401 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.doesNotMatch(key.textContent, /rejects it|Checking/);
+});
+
 test("the default model is chosen from the models Nuru lists, and written to .env.nuru", async () => {
   const { settingTab, nuru } = tab();
   settingTab.display();

@@ -145,8 +145,10 @@ class NuruSettingTab extends PluginSettingTab {
       const saved = settings.get("CLAUDE_API_KEY");
       if (!saved) return describe();
       describe(" Checking…");
+      const result = await checkClaudeKey(saved);
+      if (settings.get("CLAUDE_API_KEY") !== saved) return; // another key was saved meanwhile: this says nothing about it
       describe({ valid: " Anthropic accepts it.", rejected: " Anthropic rejects it: paste a new one.",
-        unreachable: " Couldn't reach Anthropic to check it." }[await checkClaudeKey(saved)]);
+        unreachable: " Couldn't reach Anthropic to check it." }[result]);
     };
     let typed = "";
     key.addText((text) => {

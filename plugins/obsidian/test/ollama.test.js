@@ -11,8 +11,8 @@ const { CHAT_MODEL, EMBEDDING_MODEL, check, pull } = require("../lib/ollama");
 const ROOT = path.join(__dirname, "..", "..", "..");
 
 // A stand-in Ollama on 127.0.0.1: its version, its models, and /api/pull answering with `pullLines`
-// (streamed one per line) or `pullStatus`.
-async function ollama(t, { models = [], pullLines = [], pullStatus = 200, stall = false } = {}) {
+// (streamed one per line, then `tail` as is) or `pullStatus`.
+async function ollama(t, { models = [], pullLines = [], pullStatus = 200, tail = "", stall = false } = {}) {
   const pulls = [];
   const srv = http.createServer((request, response) => {
     if (stall) return undefined;
@@ -24,7 +24,7 @@ async function ollama(t, { models = [], pullLines = [], pullStatus = 200, stall 
       pulls.push(JSON.parse(body));
       response.writeHead(pullStatus);
       for (const line of pullLines) response.write(`${JSON.stringify(line)}\n`);
-      return response.end(pullStatus === 200 ? "" : '{"error":"something broke"}');
+      return response.end(pullStatus === 200 ? tail : '{"error":"something broke"}');
     });
     return undefined;
   });
@@ -61,6 +61,20 @@ test("a pull Ollama reports an error in, or answers with a failure, is refused",
   const broken = await ollama(t, { pullStatus: 500 });
   await assert.rejects(pull("nope", () => {}, { base: broken.base }), /Ollama answered 500: {"error":"something broke"}/);
   await assert.rejects(pull("nope", () => {}, { base: "http://127.0.0.1:1" }), /ECONNREFUSED/);
+});
+
+test("a pull is done only on Ollama's success line, read even without its final newline", async (t) => {
+  const progress = [];
+  const unterminated = await ollama(t, { pullLines: [{ status: "pulling manifest" }], tail: '{"status":"success"}' });
+  await pull("m", (text) => progress.push(text), { base: unterminated.base });
+  assert.deepEqual(progress, ["m: pulling manifest", "m: success"]);
+
+  const diskFull = await ollama(t, { pullLines: [{ status: "pulling 1a2b", total: 10, completed: 5 }], tail: '{"error":"disk full"}' });
+  await assert.rejects(pull("m", () => {}, { base: diskFull.base }), /^Error: disk full$/);
+  const cut = await ollama(t, { pullLines: [{ status: "pulling 1a2b", total: 10, completed: 5 }] });
+  await assert.rejects(pull("m", () => {}, { base: cut.base }), /downloading m stopped before Ollama finished it/);
+  const garbled = await ollama(t, { pullLines: [{ status: "pulling manifest" }], tail: '{"status":' });
+  await assert.rejects(pull("m", () => {}, { base: garbled.base }), SyntaxError);
 });
 
 test("a stalled pull or a failing tags list is an error", async (t) => {

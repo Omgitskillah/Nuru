@@ -9,7 +9,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, run, setUp, thisSystem } = require("../lib/setup");
+const { SetupProblem, download, restoreInstall, run, setUp, thisSystem } = require("../lib/setup");
 const { tarGz, zip } = require("./helpers/archives");
 
 const POSIX = process.platform !== "win32";
@@ -100,7 +100,7 @@ async function firstSetup(t, system) {
 
   const generation = path.join(dir, ".nuru", "app", "0.1.0", "1");
   const exe = system.startsWith("win32") ? ".exe" : "";
-  assert.deepEqual(result, { version: "0.1.0", nuru: generation });
+  assert.deepEqual(result, { version: "0.1.0", nuru: generation, previous: null });
   assert.deepEqual(installJson(dir), { nuru: generation, uv: path.join(generation, "uv", `uv${exe}`), version: "0.1.0" });
   assert.equal(fs.readFileSync(path.join(generation, "pyproject.toml"), "utf8"), "[tool.uv.workspace]\n");
   const calculator = path.join(generation, "servers", "math-4-llms", "bin", `math-mcp${exe}`);
@@ -118,7 +118,8 @@ async function firstSetup(t, system) {
   assert.ok(asked.includes("/redirect/2/nuru-0.1.0.zip") && asked.includes("/assets/nuru-0.1.0.zip"), "the bundle came through two redirects");
   assert.deepEqual(steps, ["Downloading Nuru…", "Downloading uv…", "Downloading the calculator…", "Unpacking…",
     "Installing Python and Nuru's packages (the first time takes a few minutes)…", "Checking the new install…"]);
-  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru")).sort(), ["app", "install.json"], "no lock or temporary file is left");
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru")).sort(), ["app", "install.json", "setup-locks"]);
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "setup-locks")), [], "no lock or temporary file is left");
 }
 
 test("an install.json naming nothing usable, from an old or broken install, is replaced", async (t) => {
@@ -212,7 +213,7 @@ test("a failure anywhere before the switch leaves the Nuru in use as it was", as
       assert.equal(fs.readFileSync(path.join(dir, ".nuru", "install.json"), "utf8"), before);
       assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "app", "0.1.0")), ["1"], "the failed generation is gone");
       assert.ok(fs.existsSync(good.nuru));
-      assert.ok(!fs.existsSync(path.join(dir, ".nuru", "setup.lock")));
+      assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "setup-locks")), []);
     });
   }
 });
@@ -224,7 +225,8 @@ test("a download that isn't the file the release names stops the setup before an
 
   await assert.rejects(setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner }),
     /Couldn't download uv-.*: it isn't the file this release names/);
-  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru")), []);
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru")), ["setup-locks"]);
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "setup-locks")), []);
 });
 
 test("downloads only follow redirects to allowed hosts and protocols, and only so far", async (t) => {
@@ -258,28 +260,78 @@ test("a stalled connection and a broken response are reported", async (t) => {
   await assert.rejects(download(`http://127.0.0.1:${breaks.address().port}/x`, local({ sha256: "" })), /Couldn't download x: (aborted|socket hang up)/);
 });
 
-test("one setup at a time: a live holder of the lock stops a second, a gone one's lock is taken over", async (t) => {
+test("a setup goes on only when no other live setup holds the lock, and clears the entries of ended ones", async (t) => {
   const dir = home(t);
   const { facts } = await release(t);
-  const lockFile = path.join(dir, ".nuru", "setup.lock");
-  fs.mkdirSync(path.dirname(lockFile));
-  fs.writeFileSync(lockFile, String(process.pid));
+  const locks = path.join(dir, ".nuru", "setup-locks");
+  fs.mkdirSync(locks, { recursive: true });
+  const other = path.join(locks, `${process.pid}-another-window`);
+  fs.writeFileSync(other, "");
   await assert.rejects(setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner }),
     /Nuru is already being set up, in another Obsidian window/);
-  assert.ok(fs.existsSync(lockFile), "someone else's lock is left alone");
-
-  const gone = childProcess.spawnSync(process.execPath, ["-e", "0"]).pid;
-  fs.writeFileSync(lockFile, String(gone));
-  assert.equal((await setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner })).version, "0.1.0");
-  assert.ok(!fs.existsSync(lockFile));
-
+  assert.deepEqual(fs.readdirSync(locks), [path.basename(other)], "the other setup's entry stays, this one's goes");
   if (POSIX) {
-    fs.writeFileSync(lockFile, "1"); // launchd or init: running, but not ours to signal
+    fs.renameSync(other, path.join(locks, "1-launchd")); // running, but not ours to signal
     await assert.rejects(setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner }), /already being set up/);
+    fs.rmSync(path.join(locks, "1-launchd"));
   }
 
-  fs.writeFileSync(lockFile, "not a pid");
+  const gone = childProcess.spawnSync(process.execPath, ["-e", "0"]).pid;
+  const old = path.join(locks, `${process.pid}-left-hours-ago`);
+  for (const entry of [path.join(locks, `${gone}-quit-mid-setup`), path.join(locks, "not-a-pid"), old]) fs.writeFileSync(entry, "");
+  const hoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(old, hoursAgo, hoursAgo);
   assert.equal((await setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner })).version, "0.1.0");
+  assert.deepEqual(fs.readdirSync(locks), []);
+});
+
+test("two processes taking the lock together never both hold it", async (t) => {
+  const dir = home(t);
+  const log = path.join(dir, "log");
+  const script = `
+    const fs = require("node:fs");
+    const { lock } = require(${JSON.stringify(require.resolve("../lib/setup"))});
+    let held = 0;
+    for (let i = 0; i < 200; i++) {
+      let unlock;
+      try { unlock = lock(${JSON.stringify(dir)}); } catch { continue; }
+      fs.appendFileSync(${JSON.stringify(log)}, "in\\n");
+      const until = Date.now() + 2; while (Date.now() < until);
+      fs.appendFileSync(${JSON.stringify(log)}, "out\\n");
+      unlock();
+      held++;
+    }
+    console.log(held);`;
+  const run2 = () => new Promise((resolve) => {
+    const child = childProcess.spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+    let out = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.on("close", () => resolve(Number(out)));
+  });
+
+  const held = await Promise.all([run2(), run2()]);
+
+  const lines = fs.readFileSync(log, "utf8").trim().split("\n");
+  assert.equal(lines.length, 2 * (held[0] + held[1]));
+  lines.forEach((line, i) => assert.equal(line, i % 2 ? "out" : "in", `line ${i}: one holder at a time`));
+  assert.ok(held[0] + held[1] > 0);
+  assert.deepEqual(fs.readdirSync(path.join(dir, "setup-locks")), []);
+});
+
+test("restoreInstall puts back the install.json a setup replaced", async (t) => {
+  const dir = home(t);
+  const { facts } = await release(t);
+  const options = { home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner };
+  const first = await setUp(options);
+  assert.equal(first.previous, null, "a first setup has nothing to go back to");
+  const before = fs.readFileSync(path.join(dir, ".nuru", "install.json"), "utf8");
+  const second = await setUp(options);
+  assert.equal(second.previous, before);
+
+  restoreInstall(dir, second.previous);
+
+  assert.equal(installJson(dir).nuru, first.nuru);
+  assert.ok(fs.existsSync(first.nuru), "the generation it names was kept");
 });
 
 test("a plugin not built for a release, or a computer with no release, says so and changes nothing", async (t) => {

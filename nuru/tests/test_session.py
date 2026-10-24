@@ -1,5 +1,6 @@
 from core.modelfile import render_modelfile
 import json
+import os
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -968,7 +969,30 @@ def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp", "laya-mcp"]
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp", "laya-mcp"]  # this checkout: cargo
+
+
+def test_a_release_install_runs_its_prebuilt_calculator_and_never_asks_for_rust(monkeypatch, tmp_path):
+    """A release install has servers/math-4-llms/bin/math-mcp and no .git: Nuru runs that binary. Without
+    the binary it doesn't start, and says how to repair it, rather than fall back to cargo."""
+    seen = {}
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
+    monkeypatch.setattr(session, "MCPTools", lambda params, **kwargs: seen.setdefault("params", params) and FakeMCPTools())
+    monkeypatch.setattr(session, "python_server_params", lambda: None)
+    monkeypatch.setattr(session, "ENV_DIR", tmp_path)  # a tree with no .git, as a release unpacks
+    binary = tmp_path / "bin" / ("math-mcp.exe" if os.name == "nt" else "math-mcp")
+    monkeypatch.setattr(session, "MATH_BINARY", binary)
+
+    with pytest.raises(RuntimeError, match="calculator is missing.*install Nuru again"):
+        Session.start()
+    assert "params" not in seen
+
+    binary.parent.mkdir()
+    binary.write_bytes(b"")
+    Session.start()
+    assert seen["params"][1].command == str(binary) and seen["params"][1].args == []
+    assert all(p.command != "cargo" for p in seen["params"])
 
 
 def test_start_adds_the_python_server_when_it_can_run(monkeypatch):

@@ -147,9 +147,21 @@ def expert_api_key() -> str | None:
 
 
 MATH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "math-4-llms")
-MATH_SERVER_PARAMS = StdioServerParameters(
-    command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"], cwd=MATH_DIR
-)
+# Where a release install puts the prebuilt calculator (the math-4-llms release for this system).
+MATH_BINARY = Path(MATH_DIR) / "bin" / ("math-mcp.exe" if os.name == "nt" else "math-mcp")
+
+
+def math_server_params() -> StdioServerParameters:
+    """The calculator: the prebuilt math-mcp of a release install; in a git checkout without one (where
+    Nuru is developed), built and run with cargo. A release install without it is broken, and says so
+    rather than send someone off to install Rust."""
+    if MATH_BINARY.is_file():
+        return StdioServerParameters(command=str(MATH_BINARY), args=[], cwd=MATH_DIR)
+    if (ENV_DIR / ".git").exists():
+        return StdioServerParameters(
+            command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"],
+            cwd=MATH_DIR)
+    raise RuntimeError(f"Nuru's calculator is missing ({MATH_BINARY}): install Nuru again to repair it")
 
 PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "python-4-llms")
 
@@ -525,10 +537,11 @@ class Session:
             else:  # the background indexer's index, which semantic_search must read
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env,
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(configured_vault())}})
+            math = math_server_params()
             laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
             laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
             tools = MCPTools(
-                [obsidian, MATH_SERVER_PARAMS, *laya,
+                [obsidian, math, *laya,
                  *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
@@ -541,7 +554,7 @@ class Session:
                 log_dir,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; cargo run --bin math-mcp"
+                server_command=f"uv run obsidian-mcp; {' '.join([math.command, *math.args])}"
                 + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             store = ConversationStore(db_path)

@@ -12,8 +12,15 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
 
@@ -39,7 +46,7 @@ jobs:
 
       - name: Run tests
         env:
-          VAULT_PATH: /tmp/ci-vault
+          VAULT_PATH: ${{ runner.temp }}/ci-vault
           OBSIDIAN_SEMANTIC_DB: ''
           NURU_STEWARD_ENABLED: '0'
         run: uv run --locked pytest -v nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing

@@ -37,7 +37,12 @@ test.before(async () => {
   ({ conversation_id: conversation } = await client.createConversation("e2e"));
 });
 
-test.after(() => new Promise((resolve) => { server.once("exit", resolve); server.kill("SIGTERM"); }));
+// On Windows killing uv leaves its python running, holding our pipe open, so the run never ends: kill the tree.
+test.after(() => new Promise((resolve) => {
+  server.once("exit", resolve);
+  if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(server.pid), "/t", "/f"], { stdio: "ignore" });
+  else server.kill("SIGTERM");
+}), { timeout: 30000 });
 
 // Sends `text` and follows the turn; `during(runner)` runs alongside, to answer or stop it.
 async function turn(text, during = async () => {}) {
@@ -55,7 +60,7 @@ test("Python's vault ID and Display are the plugin's", () => {
   const python = JSON.parse(execFileSync("uv", ["run", "--locked", "python", "-c", `
 import dataclasses, json
 from core.service.protocol import Display
-streams = json.load(open("nuru/tests/fixtures/protocol_v1.json"))["streams"]
+streams = json.load(open("nuru/tests/fixtures/protocol_v1.json", encoding="utf-8"))["streams"]
 out = {}
 for name, events in streams.items():
     shown = Display()

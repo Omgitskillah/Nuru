@@ -1,7 +1,9 @@
 name: Tests
 
 on:
+  # Once per change: a pull request's branch, then main when it merges. Runs cost minutes.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -9,13 +11,22 @@ on:
         description: Run model-free 1K/10K stewardship scale evaluation
         type: boolean
         default: false
+      windows_run:
+        description: "Short Windows-only run of one command, e.g. 'uv run --locked pytest -v nuru/tests/test_x.py' or 'cd plugins/obsidian && npm ci && npm run test:e2e'; empty runs everything"
+        type: string
+        default: ''
+
+# A newer push to the same branch or pull request makes the older run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tests:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(inputs.windows_run && '["windows-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30  # Windows takes about 8 min for Python alone
     defaults:
@@ -49,6 +60,7 @@ jobs:
         run: uvx ruff@0.17.2 check --preview --select PLW1514 nuru/src packages/claude-access/src servers/deep-think/src servers/laya/src servers/obsidian/src
 
       - name: Run tests
+        if: ${{ !inputs.windows_run }}
         env:
           VAULT_PATH: ${{ runner.temp }}/ci-vault
           OBSIDIAN_SEMANTIC_DB: ''
@@ -64,7 +76,18 @@ jobs:
           cache: npm
           cache-dependency-path: plugins/obsidian/package-lock.json
 
+      - name: Run only the chosen command
+        if: inputs.windows_run
+        env:
+          VAULT_PATH: ${{ runner.temp }}/ci-vault
+          OBSIDIAN_SEMANTIC_DB: ''
+          NURU_STEWARD_ENABLED: '0'
+          PYTHONFAULTHANDLER: '1'
+          COMMAND: ${{ inputs.windows_run }}
+        run: timeout 600 bash -c "$COMMAND"
+
       - name: Obsidian plugin
+        if: ${{ !inputs.windows_run }}
         working-directory: plugins/obsidian
         run: |
           npm ci
@@ -73,7 +96,7 @@ jobs:
           npm run build
 
       - name: Coverage summary
-        if: always()
+        if: always() && !inputs.windows_run
         run: uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
 
       - name: Model-free stewardship scale evaluation

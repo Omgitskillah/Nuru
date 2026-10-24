@@ -53,7 +53,7 @@ jobs:
           VAULT_PATH: ${{ runner.temp }}/ci-vault
           OBSIDIAN_SEMANTIC_DB: ''
           NURU_STEWARD_ENABLED: '0'
-        run: uv run --locked pytest -v nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing
+        run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing
 
       # The Obsidian plugin: unit tests, then end to end against the real nuru-serve over scripted
       # scenarios (nuru/tests/scripted_serve.py, run with the uv environment above), then the bundle.

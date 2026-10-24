@@ -49,7 +49,7 @@ class ModelProfile:
 
 
 def for_model(model: str, path: Path = PROFILES) -> ModelProfile:
-    profiles = yaml.safe_load(path.read_text())
+    profiles = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(profiles, dict):
         raise ValueError(f"{path}: expected a mapping of model families")
     entry = profiles.get(family(model))

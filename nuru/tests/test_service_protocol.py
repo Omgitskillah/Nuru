@@ -11,7 +11,7 @@ from core import questions, session
 from core.service import protocol
 from core.service.protocol import Display, ProtocolError, TurnStream
 
-FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "protocol_v1.json").read_text())
+FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "protocol_v1.json").read_text(encoding="utf-8"))
 STREAMS = FIXTURES["streams"]
 
 

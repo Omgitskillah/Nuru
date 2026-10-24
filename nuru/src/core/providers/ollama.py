@@ -70,7 +70,7 @@ def create_model(model: str, base_model: str, modelfile_path: Path) -> str:
     `ollama create` step. Returns the exact rendering baked into the model.
     """
     rendered = render_modelfile(modelfile_path, base_model)
-    with tempfile.NamedTemporaryFile("w", suffix=".Modelfile", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".Modelfile", delete=False) as f:
         f.write(rendered)
         rendered_path = f.name
     try:

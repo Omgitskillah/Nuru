@@ -52,7 +52,7 @@ def permitted(capabilities: Collection[str], operation: str, *, active: bool,
 
 @cache
 def _validator(kind: str) -> jsonschema.Draft202012Validator:
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     return jsonschema.Draft202012Validator({**schema, "$ref": f"#/$defs/{kind}"})
 
 

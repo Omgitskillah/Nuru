@@ -20,7 +20,7 @@ from core.vault_identity import ID_FILE, Registry, RegistryError, VaultConflict
 from test_service_host import ScriptedSession, reply
 from test_service_server import Client
 
-V2_SCHEMA = json.loads((Path(protocol.__file__).with_name("protocol-v2.schema.json")).read_text())
+V2_SCHEMA = json.loads((Path(protocol.__file__).with_name("protocol-v2.schema.json")).read_text(encoding="utf-8"))
 
 
 @pytest.fixture

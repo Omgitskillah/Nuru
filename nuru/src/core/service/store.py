@@ -107,7 +107,7 @@ class ServiceBusy(RuntimeError):
 def _lock(path: Path):
     """An open file holding an exclusive lock on `path`, released when the process ends or the file is
     closed; ServiceBusy if someone else holds it."""
-    handle = open(path, "a+")
+    handle = open(path, "a+", encoding="utf-8")
     try:
         if os.name == "nt":
             import msvcrt

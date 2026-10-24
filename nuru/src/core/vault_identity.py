@@ -52,7 +52,7 @@ class VaultConflict(RuntimeError):
 def read(vault: Path) -> str | None:
     """The vault's UUID, or None if it has none (never served) or the file isn't a UUID."""
     try:
-        text = (Path(vault) / ID_FILE).read_text().strip()
+        text = (Path(vault) / ID_FILE).read_text(encoding="utf-8").strip()
         return str(uuidlib.UUID(text)) if len(text) == 36 else None
     except (OSError, ValueError):
         return None
@@ -63,10 +63,10 @@ def _write(vault: Path, vault_uuid: str, *, replace: bool) -> None:
     path.parent.mkdir(exist_ok=True)
     if replace:
         temporary = path.with_name(path.name + ".tmp")
-        temporary.write_text(vault_uuid + "\n")
+        temporary.write_text(vault_uuid + "\n", encoding="utf-8")
         os.replace(temporary, path)
         return
-    with open(path, "x") as file:  # never over an ID another process has just written
+    with open(path, "x", encoding="utf-8") as file:  # never over an ID another process has just written
         file.write(vault_uuid + "\n")
 
 
@@ -75,7 +75,7 @@ def _exclusive(path: Path, seconds: float = LOCK_SECONDS, busy: Exception | None
     """Hold an exclusive lock on `path`, waiting up to `seconds` for another process to let go, then
     raising `busy` (a RegistryError by default). The OS releases it if the holder dies."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    handle = open(path, "a+")
+    handle = open(path, "a+", encoding="utf-8")
     deadline = time.monotonic() + seconds
     try:
         while True:
@@ -105,7 +105,7 @@ class Registry:
     def entries(self) -> dict[str, str]:
         """{uuid: last-seen path}. Empty only when there's no registry yet; RegistryError otherwise."""
         try:
-            data = json.loads(self.path.read_text())
+            data = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
         except (OSError, ValueError) as error:

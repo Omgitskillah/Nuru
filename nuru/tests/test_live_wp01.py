@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parents[1] / "evals" / "obsidian_remote"
 spec = importlib.util.spec_from_file_location("live_wp01_test", HERE / "live_wp01.py")
 live = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(live)
-CASES = {c["id"]: c for c in json.loads((HERE / "live_cases.json").read_text())["cases"]}
+CASES = {c["id"]: c for c in json.loads((HERE / "live_cases.json").read_text(encoding="utf-8"))["cases"]}
 NONE = {"added": [], "changed": [], "removed": []}
 PLAN = {"added": [], "changed": ["shared/Plan.md"], "removed": []}
 

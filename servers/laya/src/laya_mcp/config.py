@@ -149,5 +149,5 @@ class DecisionConfig(_Strict):
 
 
 def load_config(path: Path = CONFIG_PATH) -> DecisionConfig:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return DecisionConfig.model_validate(yaml.safe_load(f))

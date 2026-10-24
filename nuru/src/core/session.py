@@ -491,7 +491,7 @@ class Session:
         .env.obsidian), and the notes server, which doesn't get this process's VAULT_PATH, may find
         another."""
         if CLAUDE:  # no Modelfile: the same system.md goes out with each request instead
-            system_text = render_system((MODELFILES_DIR / "system.md").read_text())
+            system_text = render_system((MODELFILES_DIR / "system.md").read_text(encoding="utf-8"))
         else:
             rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
             system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
@@ -657,7 +657,7 @@ class Session:
                 name = claude_provider.model_id(target)
                 main = {"id": target, "model": name, "claude": True, "profile": model_profile.for_model(name),
                         "chat": claude_provider.chat}
-                system = render_system((MODELFILES_DIR / "system.md").read_text())
+                system = render_system((MODELFILES_DIR / "system.md").read_text(encoding="utf-8"))
             else:
                 alias = "nuru-" + re.sub(r"[^a-z0-9._-]+", "-", target.lower())
                 rendered = create_model(alias, target, _modelfile_for(target))

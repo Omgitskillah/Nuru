@@ -642,7 +642,7 @@ def _manage(server: "NuruServer", path: Path, stdin) -> None:
 def _forget_managed(path: Path) -> None:
     """Remove managed.json if it's still this process's: a newer service may have replaced it."""
     try:
-        if json.loads(path.read_text()).get("pid") == os.getpid():
+        if json.loads(path.read_text(encoding="utf-8")).get("pid") == os.getpid():
             path.unlink()
     except (OSError, ValueError):
         pass
@@ -770,7 +770,7 @@ def device_command(args, parser):
             parser.error("--import-legacy requires shortcut")
         payload["legacy_token"] = getpass.getpass("Existing capture token (hidden): ")
     try:
-        token = (Credentials().directory / "clients" / (args.local_client + ".token")).read_text().strip()
+        token = (Credentials().directory / "clients" / (args.local_client + ".token")).read_text(encoding="utf-8").strip()
         connection = http.client.HTTPConnection("127.0.0.1", args.port, timeout=10)
         connection.request("POST", "/v1/devices", json.dumps(payload),
                            {"Authorization": "Bearer " + token, "Content-Type": "application/json"})

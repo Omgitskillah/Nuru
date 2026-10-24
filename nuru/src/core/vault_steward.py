@@ -41,7 +41,7 @@ class VaultSteward:
 
     def run_once(self):
         with self._pass_lock:
-            config = json.loads(self.config_path.read_text())
+            config = json.loads(self.config_path.read_text(encoding="utf-8"))
             if config != self._config or self._runner is None:
                 self._runner = Steward(self.vault, config, state_path=self.state_path, should_stop=self._stop.is_set)
                 self._config = config

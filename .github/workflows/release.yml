@@ -17,15 +17,15 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  # Runs the pull request's own build code, so it can't write to the repository.
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
@@ -60,8 +60,36 @@ jobs:
           uv sync --locked
           uv run --locked nuru-serve --help
 
-      - name: Publish
+      - name: Keep the release's files
         if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: out/
+          retention-days: 1
+
+  # A tag only: publishes exactly the files built and checked above, and runs none of their code.
+  publish:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release
+          path: out
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" out/* --title "Nuru $VERSION" --notes-file release/NOTES.md
+          VERSION: ${{ github.ref_name }}
+        run: |
+          (cd out && sha256sum --check SHA256SUMS)
+          ls out | sort > found
+          printf '%s\n' SHA256SUMS main.js manifest.json "nuru-$VERSION.zip" styles.css | sort > expected
+          diff expected found
+          gh api "repos/$GITHUB_REPOSITORY/contents/release/NOTES.md?ref=$GITHUB_SHA" --jq .content | base64 -d > notes.md
+          gh release create "$VERSION" out/* --repo "$GITHUB_REPOSITORY" --title "Nuru $VERSION" --notes-file notes.md

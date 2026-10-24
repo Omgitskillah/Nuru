@@ -10,8 +10,6 @@ def load_cases(path: Path) -> dict[int, dict]:
         int(key)
         if not isinstance(case, dict) or not isinstance(case.get("turns"), list) or not case["turns"]:
             raise ValueError(f"case {key}: expected a nonempty turns list")
-        if "plan" in case and (not isinstance(case["plan"], dict) or not isinstance(case["plan"].get("steps"), list)):
-            raise ValueError(f"case {key}: plan must have steps")
         for turn in case["turns"]:
             if not isinstance(turn.get("prompt"), str) or not turn["prompt"].strip():
                 raise ValueError(f"case {key}: expected a nonempty prompt")

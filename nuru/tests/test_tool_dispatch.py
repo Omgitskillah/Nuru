@@ -52,8 +52,7 @@ def test_json_note_with_ok_false_is_note_content():
     assert outcome.success and outcome.text == text
 
 
-@pytest.mark.parametrize('planned', [False, True])
-def test_lost_write_response_blocks_dependents_and_fresh_turns(monkeypatch, planned):
+def test_lost_write_response_blocks_dependents_and_fresh_turns(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)
     invocations = []
     def lost_response(name, args):
@@ -64,9 +63,7 @@ def test_lost_write_response_blocks_dependents_and_fresh_turns(monkeypatch, plan
                                       tool_call('write_note', {'note': 'nuru/b.md', 'content': 'other'})]}]])
     s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(responses)))
     s.shadow = None  # Safety must not depend on Laya or shadow state.
-    plan = {'steps': [{'step': 's1', 'tool': 'write_note', 'with': {'note': 'nuru/a.md', 'content': 'line'}},
-                      {'step': 's2', 'tool': 'write_note', 'with': {'note': 'nuru/b.md', 'content': '$s1'}}]}
-    events = list(s.run_plan('append line', plan) if planned else s.ask('append line'))
+    events = list(s.ask('append line'))
     assert isinstance(events[-1], Failure) and 'uncertain' in events[-1].message
     assert len(invocations) == 1
     pending = s.store.pending_writes(s._vault_scope)
@@ -99,19 +96,17 @@ def test_crash_marker_survives_reopen(tmp_path):
     store.close()
 
 
-@pytest.mark.parametrize('planned', [False, True])
-def test_model_failure_after_successful_write_preserves_partial_turn(monkeypatch, planned):
+def test_model_failure_after_successful_write_preserves_partial_turn(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS, tool_results={'write_note': '{"done":"appended","path":"nuru/a.md"}'})
     calls = []
     def chat(*a, **k):
         calls.append(True)
-        if not planned and len(calls) == 1:
+        if len(calls) == 1:
             yield {'tool_calls': [tool_call('write_note', {'note': 'nuru/a.md', 'content': 'line'})]}
         else:
             raise session.requests.exceptions.ReadTimeout('model timed out')
     s = start_session(monkeypatch, tools=tools, chat=chat)
-    plan = {'steps': [{'step': 's1', 'tool': 'write_note', 'with': {'note': 'nuru/a.md', 'content': 'line'}}]}
-    list(s.run_plan('append', plan) if planned else s.ask('append'))
+    list(s.ask('append'))
     rows = s.store.get_messages(s.conversation_id)
     assert [r['role'] for r in rows] == ['user', 'nuru']
     assert 'confirmed completed' in rows[-1]['content'] and 'nuru/a.md' in rows[-1]['content']
@@ -181,16 +176,6 @@ def test_python_partial_output_is_failure_in_logs_and_shadow(monkeypatch):
     entries = [json.loads(l) for p in session.LOG_DIR.glob('*.jsonl') for l in p.read_text().splitlines()]
     logged = [e for e in entries if e['event'] == 'tool_call'][-1]
     assert logged['status'] == 'error' and logged['error_kind'] == 'domain' and logged['completion_certainty'] == 'failed'
-
-
-def test_plan_literal_arguments_can_be_corrected(monkeypatch):
-    tools = FakeMCPTools(tools=TOOLS, tool_results={'calculate': '{"ok":true,"result":"4"}'})
-    replies = iter(['{"expression":"2+2"}', '4'])
-    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(replies)]))
-    plan = {'steps': [{'step': 's1', 'tool': 'calculate', 'with': {'expression': 4}}]}
-    assert list(s.run_plan('calculate', plan))[-1] == Text('4')
-    assert tools.calls == [('calculate', {'expression': '2+2'})]
-
 
 def test_dispatched_mutation_error_is_never_repairable():
     outcome = tool_dispatch.classify('write_note', ToolResult('write failed after replacing bytes', True))
@@ -325,16 +310,6 @@ def test_recovery_read_failure_does_not_unlock_rejected_write(monkeypatch):
     assert list(s.ask('write'))[-1] == Text('Missing evidence; no write retried.')
     assert [n for n, _ in tools.calls] == ['write_note', 'read_note']
 
-
-def test_planned_second_correction_can_succeed(monkeypatch):
-    tools = FakeMCPTools(tools=TOOLS)
-    responses = iter(['{"expression":2}', '{"expression":"2+2"}', '4'])
-    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(responses)]))
-    plan = {'steps': [{'step': 's1', 'tool': 'calculate', 'with': {'expression': 1}}]}
-    assert list(s.run_plan('calculate', plan))[-1] == Text('4')
-    assert tools.calls == [('calculate', {'expression': '2+2'})]
-
-
 def test_mcp_sdk_prefixed_rejection_receipt_is_recognized():
     raw = rejected()
     result = ToolResult('Error executing tool write_note: ' + raw.text, True)
@@ -342,17 +317,6 @@ def test_mcp_sdk_prefixed_rejection_receipt_is_recognized():
     assert outcome.certainty == 'not_completed' and outcome.repairable
     wrong = ToolResult('Error executing tool rename_or_move_file: ' + raw.text, True)
     assert tool_dispatch.classify('write_note', wrong).certainty == 'uncertain'
-
-
-def test_failed_recovery_in_plan_stops_dependent_writes_after_two_corrections(monkeypatch):
-    tools = FakeMCPTools(tools=TOOLS)
-    responses = iter(['{"expression":2}', '{"expression":3}', 'computation failed; no note written'])
-    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter([next(responses)]))
-    plan = {'steps': [{'step': 's1', 'tool': 'calculate', 'with': {'expression': 1}},
-                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
-    assert list(s.run_plan('calculate and save', plan))[-1] == Text('computation failed; no note written')
-    assert not tools.calls
-
 
 def test_recovery_exhaustion_rejects_hallucinated_tool_without_step_enforcement(monkeypatch):
     tools = FakeMCPTools(tools=TOOLS)

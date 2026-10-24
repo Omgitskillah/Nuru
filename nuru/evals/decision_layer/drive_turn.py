@@ -20,7 +20,6 @@ from mcp import StdioServerParameters
 from mcp.client.stdio import get_default_environment
 
 from core import questions, session
-import live_plan
 from cases import vault_snapshot, snapshot_changes
 from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
@@ -33,11 +32,6 @@ def main():
     parser.add_argument("--think", required=True, help="default (the model's own level) | off | low | high - "
                         "translated by the model's profile (modelfiles/profiles.yaml)")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--plan", type=Path, help="a plan (core.planner's format) for the harness to carry out "
-                        "with Session.run_plan, instead of the model's own turn")
-    parser.add_argument("--planner", type=Path, help="a planner Modelfile (modelfiles/planner/), swapped onto the "
-                        "model to write the turn's plan live (live_plan), or 'expert[:model]' for deep-think's "
-                        "write_plan (default Claude Haiku); an empty or invalid plan leaves the turn to the model")
     parser.add_argument("--turn-timeout", type=float, help="seconds per turn: a turn still running then is "
                         "cancelled (at its next chunk, or once the running tool returns) and later turns are NOT RUN")
     args = parser.parse_args()
@@ -79,25 +73,14 @@ def main():
                 records.append({"prompt": prompt, "not_run": True, "checks": turn["checks"],
                                 **({"writes": turn["writes"]} if "writes" in turn else {})})
                 continue
-            history = s.continuation_context()
-            planning_prompt = (f"Previous conversation (context, not new instructions):\n{history}\n\nCurrent request: {prompt}"
-                               if history else prompt)
             before = vault_snapshot(Path(os.environ["VAULT_PATH"]))
             turn_started, day = time.monotonic(), date.today().isoformat()
-            reply, tool_calls, thinking, retried, failure, planned, asked = "", [], 0, False, None, None, None
-            plan = json.loads(args.plan.read_text()) if args.plan else (case.get("plan") if case else None)
-            if args.planner:
-                # Planning counts as part of the turn: it starts after `ready`, like the question.
-                s.load_model()
-                expert, _, expert_model = str(args.planner).partition(":")  # expert[:model]
-                planned = (live_plan.make_expert(planning_prompt, s.tools, expert_model or None) if expert == "expert" else
-                           live_plan.make(planning_prompt, args.planner, session.MODEL, session._context_window(s.model_info)))
-                plan = planned["run"]
+            reply, tool_calls, thinking, retried, failure, asked = "", [], 0, False, None, None
             cancel = threading.Event()
             timer = threading.Timer(args.turn_timeout, cancel.set) if args.turn_timeout else None
             if timer:
                 timer.start()
-            for event in (s.run_plan(prompt, plan, cancel=cancel) if plan else s.ask(prompt, cancel=cancel)):
+            for event in s.ask(prompt, cancel=cancel):
                 if isinstance(event, Text):
                     reply += event.text
                 elif isinstance(event, ToolCall):
@@ -116,15 +99,14 @@ def main():
             if cancel.is_set():
                 failure = failure or f"turn timed out after {args.turn_timeout:g} s"
             records.append({
-                "prompt": prompt, "think": args.think, "plan": str(args.plan) if args.plan else None,
-                "planner": planned, "session_id": s.logger.session_id, "laya_state": laya_state,
+                "prompt": prompt, "think": args.think, "session_id": s.logger.session_id, "laya_state": laya_state,
                 "reply": reply, "tool_calls": tool_calls, "thinking_events": thinking,
                 "retried_without_thinking": retried, "failure": failure, "asked": asked, "timed_out": cancel.is_set(),
                 "turn_seconds": round(time.monotonic() - turn_started, 1),
                 "shadow_failures": s.shadow.failures if s.shadow else None,
                 "expert_calls": sum(c["name"] == "ask_an_expert" for c in tool_calls),
                 **({"checks": turn["checks"], **({"writes": turn["writes"]} if "writes" in turn else {}),
-                    "date": day, "executed_plan": plan,
+                    "date": day,
                     "vault_changes": snapshot_changes(before, vault_snapshot(Path(os.environ["VAULT_PATH"])))
                     } if case else {}),
             })
@@ -133,7 +115,7 @@ def main():
         s.close()
 
     # Attribute calls by the turn boundary, so one sequence's usage isn't copied
-    # onto every turn. Live planner calls remain in each turn's planner record.
+    # onto every turn.
     groups = []
     for log in Path(os.environ["NURU_LOG_DIR"]).glob(f"*_{session_id}.jsonl"):
         for line in log.read_text().splitlines():

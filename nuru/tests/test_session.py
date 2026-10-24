@@ -173,31 +173,6 @@ def test_each_conversation_keeps_its_own_evidence_when_the_session_switches(monk
     assert (s.shadow.known_ids, s.shadow.last_search_ids) == ({"id-b"}, ["id-b"])
     s.close()
 
-
-def test_plan_turn_uses_the_planners_profile_and_sampling(monkeypatch):
-    profile = session.model_profile.for_model("qwen3.5")
-    monkeypatch.setattr(session, "PLANNER_PROFILE", profile)
-    monkeypatch.setattr(session, "PLANNER_THINK", profile.think("off"))
-    seen = []
-
-    def plan_chat(model, messages, **kwargs):
-        seen.append((model, kwargs))
-        return iter(['{"steps": [{"step": "s1", "tool": "calculate", "with": {"expression": "7 * 8"}}]}'])
-
-    tools = FakeMCPTools(tools=[{"type": "function", "function": {
-        "name": "calculate", "parameters": {"type": "object", "properties": {"expression": {"type": "string"}},
-                                               "required": ["expression"]}}}])
-    s = start_session(monkeypatch, chat=plan_chat, tools=tools)
-    try:
-        list(s._plan_turn("PLAN: Calculate 7 * 8"))
-    finally:
-        s.close()
-    assert len(seen) == 1
-    assert seen[0][0] == session.PLANNER_MODEL
-    assert seen[0][1]["think"] is False
-    assert seen[0][1]["options"] == profile.options(False)["options"]
-
-
 # --- _modelfile_for ---
 
 
@@ -1095,28 +1070,6 @@ def test_continuation_evicts_complete_old_exchange_and_keeps_tool_pair(monkeypat
     assert [m["role"] for m in calls[1]] == ["user", "assistant", "tool"]
     assert calls[1][1]["tool_calls"][0]["function"]["name"] == "read_note"
     assert calls[1][2]["content"] == "x" * 12000
-
-
-def test_plan_request_receives_prior_conversation(monkeypatch):
-    sent = []
-    def chat(model, messages, **kwargs):
-        sent.append(messages)
-        yield "Juniper" if len(sent) == 1 else '{"steps": []}'
-    s = start_session(monkeypatch, chat=chat)
-    list(s.ask("The codeword is Juniper"))
-    list(s.ask("PLAN: Tell me that codeword"))
-    assert [m["role"] for m in sent[1]][:3] == ["system", "user", "assistant"]
-    assert sent[1][2]["content"] == "Juniper"
-
-
-def test_plan_admission_uses_independent_planners_actual_window(monkeypatch):
-    s = start_session(monkeypatch, model_info={"context_window": 32768})
-    monkeypatch.setattr(session, "PLANNER_MODEL", "qwen3.5:4b")
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: {"context_window": 200 if model == "qwen3.5:4b" else 32768})
-    events = list(s.ask("PLAN: Say hello"))
-    assert isinstance(events[-1], Failure)
-    assert "context budget" in events[-1].message
-
 
 def test_system_budget_uses_exact_build_rendering_without_reading_again(monkeypatch):
     monkeypatch.setattr(session, "create_model", lambda *args: 'FROM test\nSYSTEM """startup prompt"""\n')

@@ -268,36 +268,6 @@ def _claude_session_with_real_conversion(monkeypatch, fake, *responses):
     provider = fake(*responses)
     return start_session(monkeypatch, chat=claude.chat), provider
 
-
-def test_an_executor_call_runs_under_its_own_instructions(claude_session, monkeypatch, fake):
-    from core import executor
-
-    s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": "{}"}))
-    messages = executor.pick_messages("find the backoff cap", "the right note", {"Search results": "a, b"})
-    list(s._chat(session.MODEL, messages, num_ctx=8192, think=False))
-    (request,) = provider.requests
-    assert request["model"] == "claude-haiku-5-5"
-    assert request["system"][0]["text"] == executor.PICK_SYSTEM
-    assert s._system_text() not in json.dumps(request["system"])  # the base prompt doesn't come along
-    assert all(m["role"] != "system" for m in request["messages"])
-
-
-def test_a_planning_call_runs_under_the_planners_instructions(claude_session, monkeypatch, fake):
-    from core import planner
-
-    plan = json.dumps({"steps": []})
-    s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": plan}))
-
-    def chat_json(messages, schema, think):
-        return "".join(x for x in s._chat(session.MODEL, messages, num_ctx=8192, think=think, fmt=schema)
-                       if isinstance(x, str))
-
-    planner.make_plan("what is the backoff cap?", s.tool_definitions, chat_json, False, repairs=0)
-    request = provider.requests[0]
-    assert request["system"][0]["text"] == planner.system_prompt(s.tool_definitions)
-    assert request["output_config"]["format"]["type"] == "json_schema"
-
-
 def test_an_ordinary_turn_runs_under_the_base_prompt(claude_session, monkeypatch, fake):
     s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": "Hello."}))
     list(s.ask("hi"))

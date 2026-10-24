@@ -24,7 +24,6 @@ MODEL=nuru
 
 - `NURU_BASE_MODEL` - the plain Ollama model to build Nuru's custom model from (must already be pulled).
 - `MODEL` - the model actually loaded and chatted with. On every startup, `Session.start()` runs `ollama create $MODEL -f modelfiles/<family>.Modelfile` from `NURU_BASE_MODEL`, so `MODEL` should be a distinct, derived tag (default `nuru`) rather than `NURU_BASE_MODEL`'s own name - setting them to the same value makes `ollama create` try to rebuild a model from itself.
-- `NURU_PLANNER_MODEL` / `NURU_PLANNER_THINK` - the model that writes plans in [plan mode](#plan-mode-a-test), and whether it thinks. Default: `MODEL`, thinking off.
 
 Switching models is changing `NURU_BASE_MODEL`: everything else that has to change with it comes from the family's files (see [the model's settings](#the-custom-model-and-its-settings)), including how much it thinks - there is no `THINK` setting any more.
 
@@ -102,15 +101,6 @@ History is scoped to one conversation per run of `nuru` - each launch starts a n
    - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
    - **check_claim** - the reply is held until checked against what ran; a false claim is written again once, then shown with a warning.
 
-## Plan mode (a test)
-
-A message starting with `PLAN:` gets a plan back instead of an answer: the steps that would carry the request out, as JSON. Nothing in it runs. It is the first half of a plan-then-act structure, where the harness runs the tool steps and the model only fills in narrow `pick` / `draft` steps; the second half (the executor) isn't built.
-
-- **Format** - `{"steps": [...]}`; a tool step is `{"step", "tool", "with"}`, a think step `{"step", "think": "pick" | "draft", "uses", "want"}`, and `"$sN"` in an argument stands for step sN's output. The harness adds the final `answer` step itself.
-- **How it's written** ([`planner.py`](src/core/planner.py)) - one call to `NURU_PLANNER_MODEL` with no tools offered and Ollama's `format` forcing the plan's schema, so the model can only plan. Code then checks what the schema can't (references point back, each tool gets its own arguments, `calculate` gets arithmetic), and a plan with problems goes back to the model once. The reply is the plan plus anything code still found wrong.
-- **Which model** - see [`evals/plan-mode-check-2026-10-03.md`](evals/plan-mode-check-2026-10-03.md). On its test prompt `qwen3:8b` and `mistral-nemo:12b` planned correctly 5/5 and `qwen3.5:4b` 2/5; Granite 3B, and every other model under 8B, 0/5. Asked to plan inside the normal turn, with tools offered, Granite calls them instead.
-- Ollama writes a `format` schema's keys in alphabetical order, whatever order the schema gives, so the key names are chosen to sort into reading order.
-
 ## Reviewing the decision layer
 
 ```bash
@@ -153,8 +143,6 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
 
 `core.model_profile` - [profiles](#the-custom-model-and-its-settings): a family's thinking translation, default level and sampling, from `modelfiles/profiles.yaml`.
-
-`core.planner` - [plan mode](#plan-mode-a-test): the planner prompt and schema, `check_plan`, and `make_plan`.
 
 `core.providers.ollama` - a thin client for Ollama's REST API, with no dependency on the CLI:
 

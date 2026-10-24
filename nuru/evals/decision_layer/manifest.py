@@ -65,9 +65,6 @@ def build(args: dict, decision_config: Path) -> dict:
     from core import session  # the same settings and Modelfile choice Nuru itself uses
 
     modelfile = session._modelfile_for(session.BASE_MODEL)
-    planner = args.get("planner")
-    planner_file = (Path(session.MODELFILES_DIR) / "planner" / "expert-planner.Modelfile"
-                    if planner and planner.startswith("expert") else Path(planner) if planner else None)
     dirty = _git("status", "--porcelain")
     obsidian = {**dotenv_values(REPO / ".env.obsidian"), **os.environ}
     semantic = load_semantic_config(DUMMY_VAULT, obsidian)
@@ -88,8 +85,6 @@ def build(args: dict, decision_config: Path) -> dict:
                               "sampling": session.PROFILE.sampling},
                   "max_num_ctx": session.MAX_NUM_CTX},
         "tools": sorted(session.MODEL_TOOLS),
-        "planner": {"arg": planner, "file": str(planner_file.relative_to(REPO)) if planner_file else None,
-                    "sha256": _sha256(planner_file) if planner_file else None},
         "cases_sha256": _sha256(Path(args["cases"])) if args.get("cases") else None,
         "scorer_sha256": _sha256(Path(__file__).with_name("score_runs.py")),
         "decision_config_sha256": _decision_config_sha256(decision_config),

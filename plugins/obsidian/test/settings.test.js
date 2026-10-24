@@ -41,28 +41,37 @@ function tab({ connect } = {}) {
 const row = (settingTab, name) => [...settingTab.containerEl.children].find((el) => el.firstChild?.textContent === name);
 const change = (el, value) => { el.value = value; el.dispatchEvent(new window.Event(el.tagName === "SELECT" ? "change" : "input")); };
 
-test("the Claude key shows only its fingerprint, and Anthropic is asked whether it still works", async (t) => {
+test("the Claude key shows only its fingerprint, and goes to Anthropic only when Check is clicked", async (t) => {
   const asked = [];
   obsidian.requestUrl.handler = async (request) => { asked.push(request.headers["x-api-key"]); return { status: 401 }; };
   t.after(() => { obsidian.requestUrl.handler = async () => ({ status: 200 }); });
   const { settingTab, nuru } = tab();
   settingTab.display();
-  await settingTab.checked;
   const key = row(settingTab, "Claude API key");
-  assert.match(key.textContent, /fingerprint [0-9a-f]{8}\)\. Anthropic rejects it: paste a new one/);
+  const button = (text) => [...key.querySelectorAll("button")].find((b) => b.textContent === text);
+  assert.match(key.textContent, /fingerprint [0-9a-f]{8}\)\./);
   assert.ok(!settingTab.containerEl.innerHTML.includes(KEY), "the key itself is never on the page");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(asked, [], "opening the tab sends nothing");
+
+  button("Check").click();
+  await until(() => /Anthropic rejects it: paste a new one/.test(key.textContent));
   assert.deepEqual(asked, [KEY]);
 
   obsidian.requestUrl.handler = async (request) => { asked.push(request.headers["x-api-key"]); return { status: 200 }; };
   const input = key.querySelector("input");
   assert.equal(input.type, "password");
   change(input, " sk-ant-api03-new ");
-  key.querySelector("button").click();
-  await until(() => /accepts it/.test(key.textContent));
+  button("Save").click();
   assert.equal(readEnv(path.join(nuru, ".env.deep-think")).CLAUDE_API_KEY, "sk-ant-api03-new");
   assert.equal(input.value, "", "the field is cleared once it's saved");
-  assert.equal(asked.at(-1), "sk-ant-api03-new");
+  assert.doesNotMatch(key.textContent, /rejects it/, "the old key's result goes with it");
+  assert.equal(asked.length, 1, "saving sends nothing");
   assert.match(row(settingTab, "Apply changes").textContent, /restart Nuru to use it/);
+
+  button("Check").click();
+  await until(() => /accepts it/.test(key.textContent));
+  assert.equal(asked.at(-1), "sk-ant-api03-new");
 });
 
 test("the default model is chosen from the models Nuru lists, and written to .env.nuru", async () => {

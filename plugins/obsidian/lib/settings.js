@@ -158,11 +158,12 @@ class NuruSettingTab extends PluginSettingTab {
         typed = "";
         text.setValue("");
         changed();
-        await check();
+        describe();
       }));
     });
+    // Only on request: the saved key goes to Anthropic when Check is clicked, never by itself.
+    key.addButton((button) => button.setButtonText("Check").onClick(check));
     describe();
-    this.checked = check(); // a test waits on it
   }
 }
 

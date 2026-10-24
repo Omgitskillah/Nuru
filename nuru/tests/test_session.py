@@ -22,6 +22,9 @@ def _isolate_model_settings(monkeypatch):
     # THINK comes from the developer's own .env via load_dotenv, so without this the
     # thinking-mode tests pass or fail depending on what the machine is set up to run.
     monkeypatch.setattr(session, "THINK", True)
+    # A developer may have a released calculator in servers/math-4-llms/bin; the start tests
+    # expect this checkout's cargo fallback, and the release tests set their own binary.
+    monkeypatch.setattr(session, "MATH_BINARY", session.MATH_BINARY.with_name("not-installed"))
 
 
 def fake_chat(chunks):
@@ -1003,6 +1006,21 @@ def test_a_release_install_runs_its_prebuilt_calculator_and_never_asks_for_rust(
     Session.start()
     assert seen["params"][1].command == str(binary) and seen["params"][1].args == []
     assert all(p.command != "cargo" for p in seen["params"])
+
+
+def test_on_a_computer_with_no_released_calculator_nuru_says_so_and_windows_on_arm_uses_x64(monkeypatch, tmp_path):
+    binary = tmp_path / "math-mcp"
+    binary.write_bytes(b"x64 calculator")
+    monkeypatch.setattr(session, "MATH_BINARY", binary)
+    monkeypatch.setattr(session, "DEPENDENCIES", tmp_path / "dependencies.json")
+    session.DEPENDENCIES.write_text(json.dumps({"math-mcp": {"version": "v1.0.0", "systems": {
+        "win32-x64": {"sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}}}}), encoding="utf-8")
+    monkeypatch.setattr(session, "this_system", lambda: "win32-arm64")
+    assert session.math_server_params().command == str(binary)
+    monkeypatch.setattr(session, "this_system", lambda: "linux-x64")
+    with pytest.raises(RuntimeError, match=r"no calculator for this computer \(linux-x64\)") as refused:
+        session.math_server_params()
+    assert "install Nuru again" not in str(refused.value)
 
 
 def test_the_pinned_calculator_release_covers_every_system_nuru_ships_on():

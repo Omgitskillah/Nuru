@@ -167,7 +167,10 @@ def math_server_params() -> StdioServerParameters:
     rather than send someone off to install Rust."""
     if MATH_BINARY.is_file():
         release = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))["math-mcp"]
-        expected = release["systems"].get(this_system(), {}).get("sha256")
+        system = "win32-x64" if this_system() == "win32-arm64" else this_system()  # Windows on ARM runs x64 programs
+        if system not in release["systems"]:  # reinstalling wouldn't help
+            raise RuntimeError(f"Nuru has no calculator for this computer ({this_system()}): it runs on Windows and macOS")
+        expected = release["systems"][system]["sha256"]
         if hashlib.sha256(MATH_BINARY.read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"Nuru's calculator ({MATH_BINARY}) isn't math-mcp {release['version']} for this "
                                "computer: install Nuru again to repair it")

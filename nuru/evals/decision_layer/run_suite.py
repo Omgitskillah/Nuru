@@ -85,8 +85,7 @@ def copy_vault(destination: Path) -> None:
     shutil.copytree(DUMMY_VAULT, destination, symlinks=True, ignore=shutil.ignore_patterns(".obsidian-mcp-*"))
 
 
-def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan: Path | None = None,
-             planner: str | None = None, case: dict | None = None) -> dict:
+def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, case: dict | None = None) -> dict:
     case_path = batch / "case.json"
     if case:
         case_path.write_text(json.dumps(case))
@@ -109,7 +108,7 @@ def run_turn(batch: Path, env: dict, prompt: str, think: str, timeout: int, plan
     with open(batch / "turn.stdout", "w") as stdout, open(batch / "turn.stderr", "w") as stderr:
         proc = subprocess.Popen(
             [sys.executable, str(HERE / "drive_turn.py"), *(["--case", str(case_path)] if case else ["--prompt", prompt]), "--think", think, "--out", str(out),
-             *(["--plan", str(plan)] if plan else []), *(["--planner", planner] if planner else []), *turn_timeout],
+             *turn_timeout],
             env=env, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO,
         )
         try:
@@ -169,11 +168,6 @@ def main():
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--label", default="run")
     parser.add_argument("--timeout", type=int, default=600, help="seconds per test, or per turn of a sequence case")
-    parser.add_argument("--plans", type=Path, help="a folder of plans, <test>.json each: every turn is then the "
-                        "harness carrying out the test's plan (Session.run_plan) instead of the model's own turn")
-    parser.add_argument("--planner", help="a planner Modelfile (modelfiles/planner/), swapped onto the model to write "
-                        "each turn's plan live (live_plan.py); the harness carries it out, or the model takes the turn "
-                        "if the plan is empty or invalid")
     parser.add_argument("--allow-cloud", action="store_true", help="required when NURU_MAIN_MODEL is a Claude "
                         "model (anthropic:...): the batch then calls the paid Claude API, and the notes it reads "
                         "leave the machine")
@@ -191,12 +185,6 @@ def main():
     unknown = set(tests) - (set(prompts) | set(cases))
     if unknown:
         sys.exit(f"unknown test IDs: {sorted(unknown)}")
-    if args.plans and any(t in cases for t in tests):
-        sys.exit("static plans support single-prompt cases only; use --planner for sequences")
-    if args.plans:
-        missing = [t for t in tests if not (args.plans / f"{t}.json").exists()]
-        if missing:
-            sys.exit(f"no plan in {args.plans} for test(s) {missing}")
     batch = RUNS / f"suite-{args.label}-{datetime.now():%Y%m%d-%H%M%S}"
     vault, index, pristine_index = batch / "vault", batch / "semantic.sqlite3", batch / "semantic.pristine.sqlite3"
     batch.mkdir(parents=True)
@@ -240,10 +228,9 @@ def main():
                     copy_vault(vault)
                     shutil.copy2(pristine_index, index)
                     started, day = time.monotonic(), date.today().isoformat()
-                    plan = args.plans / f"{test}.json" if args.plans else None
                     prompt = prompts.get(test, cases.get(test, {}).get("turns", [{}])[0].get("prompt", ""))
                     case_env = {**env, "NURU_DB_PATH": str(batch / "history" / f"test-{test}-{think}-{repeat}.sqlite3")}
-                    record = run_turn(batch, case_env, prompt, think, args.timeout, plan, args.planner, cases.get(test))
+                    record = run_turn(batch, case_env, prompt, think, args.timeout, cases.get(test))
                     record.update({"test": test, "tier": think, "repeat": repeat, "prompt": prompt, "date": day,
                                    "wall_seconds": round(time.monotonic() - started, 1),
                                    "vault_changes": vault_changes(vault)})

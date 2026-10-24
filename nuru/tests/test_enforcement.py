@@ -577,17 +577,6 @@ def test_automatic_first_read_exception_uses_bounded_recovery(setup):
     assert list(s.ask(REQUEST))[-1] == Text('Found Priya.')
     assert attempts == ['search', 'search']
 
-
-def test_planned_write_honors_the_same_confirmation_gate(setup):
-    s, seen, tools = setup(['gate_write'], [['I could not write it.']],
-        script={**DEFAULT_SCRIPT, 'verdict': {'confirm': 0.95}})
-    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 'Priya'}},
-                      {'step': 's2', 'tool': 'write_note', 'with': {'note': PRIYA, 'content': 'line'}}]}
-    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not write it.')
-    assert [name for name, _ in tools.calls] == ['search']
-    assert not s.store.pending_writes(s._vault_scope)
-
-
 def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
     s, seen, tools = setup(['gate_write', 'step_cap'],
         [[call('write_note', {'note': INVENTED, 'content': 'line'})], ['I could not write it.']],
@@ -595,11 +584,3 @@ def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
     assert list(s.ask(REQUEST))[-1] == Text('I could not write it.')
     assert len(seen) == 2 and not tools.calls
     assert not any(call['fmt'] for call in seen)
-
-
-def test_plan_repair_respects_the_remaining_step_budget(setup):
-    s, seen, tools = setup(['step_cap'], [['I could not search.']], tool_gate={'step_cap': 1})
-    plan = {'steps': [{'step': 's1', 'tool': 'search', 'with': {'query': 5}},
-                      {'step': 's2', 'tool': 'write_note', 'with': {'content': '$s1'}}]}
-    assert list(s.run_plan(REQUEST, plan))[-1] == Text('I could not search.')
-    assert len(seen) == 1 and not tools.calls

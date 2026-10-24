@@ -1,5 +1,7 @@
 # Plan-then-act vs Nuru's own turn, 2026-10-03
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 Does Nuru get faster or more accurate if the harness carries out a plan, instead of Granite deciding every step itself?
 
 **The two setups:**

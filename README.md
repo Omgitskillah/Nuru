@@ -11,7 +11,7 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 |---|---|---|
 | `.env.nuru` | Nuru (`nuru-serve`, CLI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`, or `NURU_MAIN_MODEL` for Claude), context size |
 | `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
-| `.env.deep-think` | deep-think (`write_plan`), Nuru's expert tier, and Claude as the main model ([claude-access](packages/claude-access)) | `CLAUDE_API_KEY` |
+| `.env.deep-think` | Nuru's expert tier and Claude as the main model ([claude-access](packages/claude-access)) | `CLAUDE_API_KEY` |
 
 A variable already set in the environment always wins over the file. Nuru hands its servers only what they need, since MCP servers start with a stripped-down environment.
 

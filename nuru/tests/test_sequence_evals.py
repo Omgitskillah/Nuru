@@ -66,8 +66,7 @@ def test_sequence_snapshot_catches_created_changed_and_deleted_files(modules, tm
     assert [c["path"] for c in cases.snapshot_changes(before, cases.vault_snapshot(tmp_path))] == ["new.md", "old.md"]
 
 
-@pytest.mark.parametrize("planned", [False, True])
-def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modules, monkeypatch, tmp_path, planned):
+def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modules, monkeypatch, tmp_path):
     from types import SimpleNamespace
     _, _, _, driver = modules
     prompts, starts = [], []
@@ -80,9 +79,6 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
         def ask(self, prompt, cancel=None):
             prompts.append(prompt)
             yield driver.Text("answer")
-        def run_plan(self, prompt, plan, cancel=None):
-            assert plan == {"steps": []}
-            yield from self.ask(prompt)
         def close(self):
             pass
     def start():
@@ -94,8 +90,6 @@ def test_driver_keeps_one_session_for_sequence_and_records_numeric_failures(modu
     monkeypatch.setenv("OBSIDIAN_EMBED_MODEL", "nomic-embed-text-v2-moe")
     case = tmp_path / "case.json"
     fixture = {"turns": [{"prompt": p, "checks": {"answered": "answer"}} for p in ("first", "follow up")]}
-    if planned:
-        fixture["plan"] = {"steps": []}
     case.write_text(json.dumps(fixture))
     out = tmp_path / "out.json"
     monkeypatch.setattr("sys.argv", ["drive_turn", "--case", str(case), "--think", "off", "--out", str(out)])

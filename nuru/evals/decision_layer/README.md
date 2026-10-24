@@ -57,21 +57,21 @@ caffeinate -i uv run python run_suite.py --tests quick --label quick
 
 ## Multi-turn memory cases
 
-The default `--tests 1-34` preserves the original 34-prompt baseline (/170). Explicit `--tests all` includes additional numbered cases from [`cases.json`](cases.json); `--tests 35` runs the three-turn follow-up memory case; `--tests 36` runs the same turns through a fixed answer-only plan. Use `--cases path.json` to supply additional fixtures with unique numeric IDs. Each case has a `name`, an optional `plan` shared by its turns, and a nonempty `turns` list; each turn contains a `prompt` and a `checks` mapping of labels to regular expressions. A turn meant to write adds `writes`, labels to regular expressions each matched against one changed file read as its path, a newline, then its new text; they replace that turn's "no vault changes" check, and the case's. `--tests 37` asks for two tasks in today's daily note and checks each is a checkbox list item (`- [ ] …`) there. Fixtures and scorer hashes are recorded in the manifest.
+The default `--tests 1-34` preserves the original 34-prompt baseline (/170). Explicit `--tests all` includes additional numbered cases from [`cases.json`](cases.json); `--tests 35` runs the three-turn follow-up memory case. Use `--cases path.json` to supply additional fixtures with unique numeric IDs. Each case has a `name` and a nonempty `turns` list; each turn contains a `prompt` and a `checks` mapping of labels to regular expressions. A turn meant to write adds `writes`, labels to regular expressions each matched against one changed file read as its path, a newline, then its new text; they replace that turn's "no vault changes" check, and the case's. `--tests 37` asks for two tasks in today's daily note and checks each is a checkbox list item (`- [ ] …`) there. Fixtures and scorer hashes are recorded in the manifest.
 
 ```bash
-MODEL=nuru-pr2-eval NURU_PLANNER_MODEL=nuru-pr2-eval uv run python run_suite.py --tests 35 --tiers off --label memory
+MODEL=nuru-pr2-eval uv run python run_suite.py --tests 35 --tiers off --label memory
 ```
 
 Single-prompt result records keep their existing format. Sequence records contain `turns`, with each turn's prompt, reply, regex checks, failure, model usage and vault diff. `score_runs.load_results()` adds per-turn scores and executed calls; `score()` also returns an aggregate score on the existing 0–5 scale. Each memory turn must answer successfully and leave the scratch vault unchanged. `load_results()` also records `acceptance_passed`: every check must pass, even if the aggregate reaches the legacy pass threshold. A timeout or crash fails the whole case.
 
 For an explicit rubric correction, `load_results(batch, cases_path=Path("cases.json"))` re-scores saved replies without model calls. It requires the same prompt sequence, records the replacement fixture hash, and leaves raw runtime records untouched. Omitting `cases_path` retains the collected rubric.
 
-For live planned sequences, use `--planner <Modelfile>`: live planning receives bounded conversation context and each executor call independently receives complete prior exchanges. Static `--plans` fixtures support only single-prompt cases. Legacy decision autolabelling skips sequence cases because its intent rules are specific to the original 34 prompts.
+Legacy decision autolabelling skips sequence cases because its intent rules are specific to the original 34 prompts.
 
 ## Current limitations
 
-Live acceptance requires installed local models, embedding models, Laya checkpoints and scratch fixtures. Expert planning (`--planner expert[:model]`) can make paid calls. Context estimates are heuristic, and passing a short memory case does not prove arbitrary long conversations fit. The executor's existing per-input character clipping remains explicit in its prompts.
+Live acceptance requires installed local models, embedding models, Laya checkpoints and scratch fixtures. Context estimates are heuristic, and passing a short memory case does not prove arbitrary long conversations fit.
 
 ## Matching the baseline environment
 

@@ -317,7 +317,7 @@ vm.runInNewContext(data.script, {response: data.response, alert: text => message
 process.stdout.write(JSON.stringify(messages));"""
     result = subprocess.run([node, "-e", harness], input=json.dumps({"script": shortcut["codeOnFailure"],
                             "response": {"statusCode": status} if status else None}), text=True,
-                            capture_output=True, check=True, timeout=5)
+                            capture_output=True, check=True, timeout=60)  # a cold Node start on Windows CI took over 5 s
     messages = json.loads(result.stdout)
     assert len(messages) == 1
     if status == 401:

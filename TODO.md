@@ -70,6 +70,12 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - **The plugin's JavaScript isn't measured yet:** add `node --test --experimental-test-coverage`, or c8.
   - Code going away anyway (F10 Laya, F11 expert, F12 adopt-legacy) needs no new tests.
   - **Done when:** coverage on the Mac and on Windows, combined, meets both bars, and the plugin's coverage is measured and meets them too.
+  - **Scope (user, 2026-10-25):** until then, each PR is held to the bars only for the files it touches. This catch-up is a separate series before the release, and adds a CI check that fails any module under the bar.
+- [ ] **F14** Discuss other ways to give a release install the Python tool (`run_python`). Today it needs Docker, a `.env.python`, and Rust to build `python-mcp` when it starts, so a friend's install has none of it. Options to weigh:
+  - a prebuilt `python-mcp` release, like the calculator;
+  - starting Docker, and the image, from the setup;
+  - a sandbox that needs no Docker: Pyodide/WebAssembly, macOS `sandbox-exec`, or a Windows AppContainer.
+  - **Done when:** a choice is made, with the user, and either done or recorded as not worth it.
 
 ## Standing reminders (R)
 

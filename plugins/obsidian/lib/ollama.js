@@ -34,7 +34,13 @@ function request(method, path, { body, base = OLLAMA, timeoutMs = 5000, onLine }
       });
       response.on("end", () => {
         if (response.statusCode !== 200) return reject(new Error(`Ollama answered ${response.statusCode}${text ? `: ${text.trim()}` : ""}`));
-        resolve(onLine ? null : JSON.parse(text));
+        if (!onLine) return resolve(JSON.parse(text));
+        try {
+          if (text.trim()) onLine(JSON.parse(text)); // a last line without its newline
+          resolve(null);
+        } catch (error) {
+          reject(error);
+        }
       });
     });
     req.on("timeout", () => req.destroy(new Error("Ollama didn't answer")));
@@ -57,15 +63,18 @@ async function check(needed, options = {}) {
   return { running: true, version, missing: needed.filter((name) => !have.has(tagged(name))) };
 }
 
-// Downloads `name` into Ollama, calling onProgress(text) as it goes. Models are gigabytes, so there is
-// no time limit beyond Ollama's own between its progress lines.
+// Downloads `name` into Ollama, calling onProgress(text) as it goes; done only when Ollama's last line
+// says "success". Models are gigabytes, so there is no time limit beyond one between progress lines.
 async function pull(name, onProgress = () => {}, options = {}) {
+  let finished = false;
   await request("POST", "/api/pull", { ...options, timeoutMs: options.timeoutMs ?? 120 * 1000, body: { model: name, stream: true },
     onLine: (line) => {
       if (line.error) throw new Error(line.error);
+      finished = line.status === "success";
       const share = line.total ? ` ${Math.floor((100 * (line.completed || 0)) / line.total)}%` : "";
       onProgress(`${name}: ${line.status}${share}`);
     } });
+  if (!finished) throw new Error(`downloading ${name} stopped before Ollama finished it`);
 }
 
 module.exports = { CHAT_MODEL, DOWNLOAD, EMBEDDING_MODEL, OLLAMA, check, pull };

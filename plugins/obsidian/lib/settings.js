@@ -135,7 +135,11 @@ class NuruSettingTab extends PluginSettingTab {
         missing = found.missing;
         download.setDisabled(!found.running || !missing.length);
         if (!found.running) {
-          say(`Ollama isn't running. Install it from ${this.ollama.DOWNLOAD}, open it, then click Check.`);
+          say(createFragment((text) => {
+            text.appendText("Ollama isn't running. Install it from ");
+            text.createEl("a", { text: this.ollama.DOWNLOAD, attr: { href: this.ollama.DOWNLOAD } });
+            text.appendText(", open it, then click Check.");
+          }));
         } else {
           say(missing.length ? `Ollama ${found.version} is running, but doesn't have ${missing.join(" and ")} yet: click Download (a few GB).`
             : `Ollama ${found.version} has the models Nuru needs: ${needed.join(" and ")}.`);

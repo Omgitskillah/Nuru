@@ -35,6 +35,12 @@ proto.addClass = function (...names) { this.classList.add(...names); };
 proto.removeClass = function (...names) { this.classList.remove(...names); };
 proto.toggleClass = function (name, on) { this.classList.toggle(name, on); };
 proto.setAttr = function (name, value) { this.setAttribute(name, value); };
+for (const name of ["createEl", "appendText"]) window.DocumentFragment.prototype[name] = proto[name];
+globalThis.createFragment = (build) => {
+  const fragment = window.document.createDocumentFragment();
+  if (build) build(fragment);
+  return fragment;
+};
 globalThis.createDiv = (options) => make("div", options);
 globalThis.createEl = (tag, options) => make(tag, options);
 
@@ -120,7 +126,12 @@ class Setting {
 
   setName(name) { this.settingEl.createDiv({ text: name }); return this; }
 
-  setDesc(desc) { (this.descEl ??= this.settingEl.createDiv()).setText(desc); return this; }
+  setDesc(desc) {
+    this.descEl ??= this.settingEl.createDiv();
+    if (typeof desc === "string") this.descEl.setText(desc);
+    else this.descEl.replaceChildren(desc);
+    return this;
+  }
 
   setHeading() { return this; }
 

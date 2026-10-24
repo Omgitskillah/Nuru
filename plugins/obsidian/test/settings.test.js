@@ -231,6 +231,8 @@ test("with Claude as the default only the embedding model is needed, and a stopp
   assert.deepEqual(settingTab.ollama.asked, [["nomic-embed-text:v1.5"]]);
   assert.match(row(settingTab, "Ollama").textContent,
     /Ollama isn't running\. Install it from https:\/\/ollama\.com\/download, open it, then click Check\./);
+  const link = row(settingTab, "Ollama").querySelector("a");
+  assert.equal(link.getAttribute("href"), "https://ollama.com/download", "the installer is a link");
 
   settingTab.ollama.have = ["nomic-embed-text:v1.5"];
   [...row(settingTab, "Ollama").querySelectorAll("button")].find((b) => b.textContent === "Check").click();

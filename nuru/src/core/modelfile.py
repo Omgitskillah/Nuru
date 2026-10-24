@@ -35,11 +35,11 @@ def render_system(source: str) -> str:
 
 def render_modelfile(path: Path, base_model: str) -> str:
     """Resolve shared SYSTEM text and FROM; standalone inline prompts also work."""
-    template = path.read_text()
+    template = path.read_text(encoding="utf-8")
     if SYSTEM_PLACEHOLDER in template:
         if template.count(SYSTEM_PLACEHOLDER) != 1 or f'SYSTEM """{SYSTEM_PLACEHOLDER}"""' not in template:
             raise ValueError(f'{path}: use SYSTEM """{SYSTEM_PLACEHOLDER}""" exactly once')
-        system = render_system((path.parent / "system.md").read_text())
+        system = render_system((path.parent / "system.md").read_text(encoding="utf-8"))
         template = template.replace(SYSTEM_PLACEHOLDER, system)
     elif 'SYSTEM """' in template:
         # Older inline assistant files must not bypass retired-name validation.

@@ -195,6 +195,7 @@ def children(pid):
     return [int(child) for child in found] + [grandchild for child in found for grandchild in children(int(child))]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="finds the notes server with pgrep")
 def test_a_notes_server_that_dies_mid_turn_leaves_its_write_uncertain_and_the_service_answering(route):
     """MCP disconnect: the notes server is killed between the model's read and its write. The write is
     reported uncertain and never retried, the vault is untouched, and status still answers."""

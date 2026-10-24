@@ -46,7 +46,7 @@ class Credentials:
 
     def _clients(self) -> dict:
         try:
-            return json.loads(self._file.read_text())["clients"]
+            return json.loads(self._file.read_text(encoding="utf-8"))["clients"]
         except FileNotFoundError:
             return {}
 

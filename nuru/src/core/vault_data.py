@@ -31,6 +31,7 @@ LEGACY_ROOT = Path(__file__).resolve().parents[2]  # the nuru/ folder
 LEGACY_DB = LEGACY_ROOT / ".db"
 LEGACY_LOGS = LEGACY_ROOT / ".logs"
 DB_FILES = ("conversation.db", "service.db")
+_WINDOWS = os.name == "nt"
 LEGACY_SUFFIX = ".pre-wp04"
 
 
@@ -61,7 +62,7 @@ class MigrationError(RuntimeError):
 
 def _state(directory: Path) -> dict:
     try:
-        return json.loads((directory / "migration.json").read_text())
+        return json.loads((directory / "migration.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -69,7 +70,7 @@ def _state(directory: Path) -> dict:
 def _set_state(directory: Path, **state) -> None:
     path = directory / "migration.json"
     temporary = path.with_name(path.name + ".tmp")
-    with open(temporary, "w") as file:
+    with open(temporary, "w", encoding="utf-8") as file:
         json.dump(state, file)
         file.flush()
         os.fsync(file.fileno())
@@ -155,7 +156,7 @@ def _history_lock(db_path: Path, shared: bool):
     from core.service.store import ServiceBusy
 
     path = db_path.with_name(db_path.name + ".inuse")
-    handle = open(path, "a+")
+    handle = open(path, "a+", encoding="utf-8")
     try:
         if os.name == "nt":
             import msvcrt
@@ -273,6 +274,8 @@ def adopt_legacy(vault_uuid: str) -> dict:
     safely, with the old layout still working."""
     from core.service.store import ServiceBusy, _lock
 
+    if _WINDOWS:  # it renames db/ while holding a lock file inside, which Windows refuses
+        raise MigrationError("moving history from before WP04 isn't supported on Windows; the old files are untouched")
     legacy_db = LEGACY_DB  # read now, so tests can point it elsewhere
     directory = data_dir(vault_uuid)
     with _migration_lock(0):

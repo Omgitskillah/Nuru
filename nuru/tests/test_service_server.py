@@ -67,6 +67,7 @@ class Client:
         return response.status, (json.loads(payload) if kind == "application/json" else payload), response
 
 
+@pytest.mark.skipif(os.name == "nt", reason="phone capture is off on Windows")
 def test_capture_http_is_model_free_and_preserves_legacy_receipt(served):
     client, service, credentials, built = served
     headers = {"Content-Type": "application/json"}
@@ -101,6 +102,7 @@ def test_capture_http_rejects_bad_requests_without_vault_effect(served):
     assert not list((service.vault / "Inbox").glob("*.md"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="phone capture is off on Windows")
 def test_recreated_client_name_cannot_read_prior_device_capture(served):
     client, service, credentials, _ = served
     payload = {"request_id": "phone-capture-0001", "content": "saved"}
@@ -116,6 +118,7 @@ def test_recreated_client_name_cannot_read_prior_device_capture(served):
         "ok": False, "error": "not_found"}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="phone capture is off on Windows")
 def test_disconnected_capture_client_recovers_original_receipt(served, monkeypatch):
     client, service, _, built = served
     entered, release = threading.Event(), threading.Event()
@@ -314,9 +317,9 @@ def test_token_commands_keep_only_a_hash_and_files_private(tmp_path, monkeypatch
     directory = tmp_path / "service"
     token = (directory / "clients" / "obsidian.token").read_text()
     assert token not in (directory / "tokens.json").read_text()
-    assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
+    assert os.name == "nt" or stat.S_IMODE(os.stat(directory).st_mode) == 0o700
     for path in (directory / "tokens.json", directory / "clients" / "obsidian.token"):
-        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert os.name == "nt" or stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert Credentials().check(token) == ("operator", "obsidian")
     main(["token", "list"])
     main(["token", "remove", "obsidian"])
@@ -385,4 +388,4 @@ def test_the_scripted_server_runs_scenarios_end_to_end(tmp_path):
         assert [r["path"] for r in (e["data"] for e in events if e["type"] == "write_receipt")] == ["nuru/summary.md"]
     finally:
         process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=10) == 0
+        assert process.wait(timeout=10) == (1 if os.name == "nt" else 0)  # Windows' SIGTERM is TerminateProcess

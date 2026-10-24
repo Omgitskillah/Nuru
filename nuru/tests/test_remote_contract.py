@@ -9,7 +9,7 @@ import jsonschema
 
 from core.service import remote_contract as contract
 
-FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "wp02_capture_v1.json").read_text())
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "wp02_capture_v1.json").read_text(encoding="utf-8"))
 
 
 def test_pinned_legacy_receivers_keep_the_public_capture_shape_and_exact_content():

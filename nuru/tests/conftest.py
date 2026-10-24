@@ -1,8 +1,26 @@
+import pathlib
+import sys
+
 from core.modelfile import render_modelfile
 import pytest
 
 from core import session
 from core.model_profile import ModelProfile
+
+
+_write_text, _read_text = pathlib.Path.write_text, pathlib.Path.read_text
+
+
+@pytest.fixture(autouse=True)
+def utf8_files_on_windows(monkeypatch):
+    """A test's own write_text/read_text that names no encoding is UTF-8 with \\n line ends, as on
+    macOS and Linux, not Windows' code page and \\r\\n. Nuru's code names its encoding itself (CI checks
+    it with ruff's PLW1514)."""
+    if sys.platform == "win32":
+        monkeypatch.setattr(pathlib.Path, "write_text", lambda self, data, encoding=None, errors=None, newline=None:
+                            _write_text(self, data, encoding or "utf-8", errors, "\n" if newline is None else newline))
+        monkeypatch.setattr(pathlib.Path, "read_text", lambda self, encoding=None, errors=None, newline=None:
+                            _read_text(self, encoding or "utf-8", errors, newline))
 
 
 class _NoIndexer:

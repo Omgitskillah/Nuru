@@ -167,7 +167,7 @@ def _log(entry: dict) -> None:
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         path = LOG_DIR / f"claude-requests-{datetime.now():%Y-%m-%d}.jsonl"
-        with path.open("a") as f:
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), **entry}, ensure_ascii=False) + "\n")
     except OSError:
         pass  # the log must never stop a turn

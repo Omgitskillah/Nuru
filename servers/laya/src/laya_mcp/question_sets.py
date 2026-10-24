@@ -100,7 +100,7 @@ def load_question_sets(directory: Path = QUESTIONS_DIR) -> dict[str, QuestionSet
     """Every question set in `directory`, keyed by name. Raises on the first invalid file."""
     sets = {}
     for path in sorted(directory.glob("*.yaml")):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             try:
                 qset = QuestionSet.model_validate(yaml.safe_load(f))
             except ValueError as e:

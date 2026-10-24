@@ -57,7 +57,7 @@ def test_managed_json_is_private_and_only_its_key_stops_an_idle_service(running)
     pipe = manage(server, path)
     saved = json.loads(path.read_text())
     assert saved == {"pid": os.getpid(), "port": server.server_port, "stop_key": server.stop_key}
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE(path.stat().st_mode) == 0o600
 
     assert client.call("POST", "/v1/service/stop", {"stop_key": "wrong"})[0] == 403
     assert client.call("POST", "/v1/service/stop", {"stop_key": saved["stop_key"]}, token="other")[0] == 401

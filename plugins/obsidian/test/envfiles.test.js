@@ -8,6 +8,9 @@ const path = require("node:path");
 
 const { NuruSettings, fingerprint, readEnv, setEnv } = require("../lib/envfiles");
 
+// Windows modes have no group or other bits (a file is 0o666 or read-only); the user folder is private there.
+const POSIX = process.platform !== "win32";
+
 function folder(files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-env-"));
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text, { mode: 0o600 });
@@ -31,7 +34,7 @@ test("a write changes only the active line, keeping comments, alternatives, expo
   setEnv(file, "NEW", 'say "hi"');
   assert.equal(fs.readFileSync(file, "utf8"), '# The model\n# M=old\nM="b c" # mine\nexport N=2\nM2=z\nNEW="say \\"hi\\""\n');
   assert.deepEqual(readEnv(file), { M: "b c", N: "2", M2: "z", NEW: 'say "hi"' });
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600, "it keeps its permissions");
+  if (POSIX) assert.equal(fs.statSync(file).mode & 0o777, 0o600, "it keeps its permissions");
   assert.deepEqual(fs.readdirSync(dir), [".env"], "no temporary file left");
 });
 
@@ -40,7 +43,7 @@ test("a write makes a missing file private, and refuses a line break", () => {
   const file = path.join(dir, ".env.deep-think");
   setEnv(file, "CLAUDE_API_KEY", "sk-ant-new");
   assert.equal(fs.readFileSync(file, "utf8"), "CLAUDE_API_KEY=sk-ant-new\n");
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (POSIX) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.throws(() => setEnv(file, "CLAUDE_API_KEY", "a\nINJECTED=1"), /line break/);
   assert.deepEqual(readEnv(file), { CLAUDE_API_KEY: "sk-ant-new" });
 });
@@ -51,9 +54,9 @@ test("saving the Claude key leaves .env.deep-think readable by its owner only, e
   fs.chmodSync(path.join(dir, ".env.nuru"), 0o644);
   const settings = new NuruSettings(dir, {});
   settings.set("CLAUDE_API_KEY", "sk-ant-new");
-  assert.equal(fs.statSync(path.join(dir, ".env.deep-think")).mode & 0o777, 0o600);
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, ".env.deep-think")).mode & 0o777, 0o600);
   settings.set("NURU_KEEP_ALIVE", "30m");
-  assert.equal(fs.statSync(path.join(dir, ".env.nuru")).mode & 0o777, 0o644, "a file with no secret keeps its mode");
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, ".env.nuru")).mode & 0o777, 0o644, "a file with no secret keeps its mode");
 });
 
 test("each setting is in the file Nuru reads it from", () => {

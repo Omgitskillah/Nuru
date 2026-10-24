@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 import platform
-import resource
 import statistics
 import subprocess
 import tempfile
@@ -86,6 +85,7 @@ def timing(size, repeats):
 
 
 def main():
+    import resource  # POSIX only, and only for the run; tests import this module on Windows too
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sizes', default='1000,10000')
     parser.add_argument('--repeats', type=int, default=5)

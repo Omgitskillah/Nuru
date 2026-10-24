@@ -218,7 +218,7 @@ class DecisionLog:
         rows = self._conn.execute(
             "SELECT * FROM decisions WHERE label IS NOT NULL ORDER BY id"
         ).fetchall()
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             for row in rows:
                 f.write(
                     canonical(

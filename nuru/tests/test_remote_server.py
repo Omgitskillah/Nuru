@@ -4,7 +4,11 @@ import json
 import socket
 import threading
 
+import sys
+
 import pytest
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="remote access waits for a later release on Windows (phone capture there is off)")
 
 from core.service.remote_credentials import COOKIE, RemoteCredentials, csrf
 from core.service.server import NuruServer

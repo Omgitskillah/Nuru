@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="phone capture is off on Windows: it pins directories by descriptor (dir_fd)")
+
 from core.service.capture import CaptureError, CaptureWriter
 from core.service import capture
 from core.service import remote_contract

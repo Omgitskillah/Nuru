@@ -5,6 +5,7 @@ half done (core.vault_data)."""
 import json
 import os
 import sqlite3
+import sys
 
 import pytest
 
@@ -17,6 +18,8 @@ from core.vault_identity import Registry
 @pytest.fixture
 def legacy(tmp_path, monkeypatch):
     """Today's layout: one conversation in the Nuru folder's .db, a log in .logs."""
+    if sys.platform == "win32":  # Windows won't rename a folder holding an open lock file
+        pytest.skip("moving pre-WP04 history is for installs that had it, on macOS")
     db, logs = tmp_path / "nuru" / ".db", tmp_path / "nuru" / ".logs"
     db.mkdir(parents=True)
     logs.mkdir()

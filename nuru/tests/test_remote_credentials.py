@@ -1,5 +1,6 @@
 """No providers: lifecycle, durable revocation, bounded onboarding and scope checks."""
 import concurrent.futures
+import os
 import stat
 
 import pytest
@@ -80,8 +81,9 @@ def test_restart_keeps_hashes_and_revocation_but_drops_onboarding(tmp_path):
     store.close()
     assert token.encode() not in (tmp_path / "devices.db").read_bytes()
     assert session.encode() not in (tmp_path / "devices.db").read_bytes()
-    assert stat.S_IMODE((tmp_path / "devices.db").stat().st_mode) == 0o600
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    if os.name != "nt":  # Windows modes have no group or other bits; the user folder is private there
+        assert stat.S_IMODE((tmp_path / "devices.db").stat().st_mode) == 0o600
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
     store = RemoteCredentials(tmp_path)
     assert store.authenticate(token, "shortcut")
     assert store.authenticate(session, "browser")

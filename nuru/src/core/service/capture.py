@@ -64,6 +64,9 @@ class CaptureWriter:
     def _probe_links(self) -> None:
         if self._link_available is not None:
             return
+        if os.name == "nt":  # publishing pins directories by descriptor (dir_fd), which Windows lacks:
+            self._link_available = False  # no capture is accepted, so none is ever left to recover
+            return
         name = f".nuru-link-probe-{secrets.token_hex(8)}"
         stage = name + ".tmp"
         try:

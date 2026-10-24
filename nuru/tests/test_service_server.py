@@ -314,9 +314,9 @@ def test_token_commands_keep_only_a_hash_and_files_private(tmp_path, monkeypatch
     directory = tmp_path / "service"
     token = (directory / "clients" / "obsidian.token").read_text()
     assert token not in (directory / "tokens.json").read_text()
-    assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
+    assert os.name == "nt" or stat.S_IMODE(os.stat(directory).st_mode) == 0o700
     for path in (directory / "tokens.json", directory / "clients" / "obsidian.token"):
-        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert os.name == "nt" or stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert Credentials().check(token) == ("operator", "obsidian")
     main(["token", "list"])
     main(["token", "remove", "obsidian"])

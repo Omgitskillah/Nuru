@@ -34,17 +34,22 @@ jobs:
           cache: npm
           cache-dependency-path: plugins/obsidian/package-lock.json
 
-      - name: Build the plugin
+      - name: Plugin dependencies
         working-directory: plugins/obsidian
-        run: npm ci && npm audit --audit-level=high && npm run build
+        run: npm ci && npm audit --audit-level=high
 
-      - name: Build the bundle and checksums
+      # Bundle, then the plugin with the bundle's sha256 compiled in (what "Set up Nuru" checks
+      # downloads against), then checksums of all five.
+      - name: Build the bundle, the plugin and checksums
         run: |
           version="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
           version="${version:-$(jq -r .version plugins/obsidian/manifest.json)}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          mkdir out && cp plugins/obsidian/dist/{main.js,manifest.json,styles.css} out/
-          python3 release/build.py "$version" out
+          python3 release/build.py bundle "$version" out
+          (cd plugins/obsidian && NURU_BUNDLE="$GITHUB_WORKSPACE/out/nuru-$version.zip" npm run build)
+          cp plugins/obsidian/dist/{main.js,manifest.json,styles.css} out/
+          grep -q "nuru-$version.zip" out/main.js
+          python3 release/build.py checksums out
           cat out/SHA256SUMS
 
       - name: Install uv

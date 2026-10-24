@@ -40,7 +40,20 @@ What it does:
   Obsidian's renderer: raw HTML shows as text, and images and embeds show as links, so nothing in a reply
   runs or loads. Callouts, math and embeds therefore show as their text.
 
-## Install
+## Install from a release
+
+Needs only desktop Obsidian, on Windows or macOS.
+
+1. Install the BRAT plugin, and add the beta plugin `Omgitskillah/Nuru`.
+2. Turn Nuru on under Community plugins, open its settings and click **Set up Nuru**.
+   - It downloads this release's Nuru, uv and calculator, and checks each against the sha256 built into the plugin.
+   - It installs them into `~/.nuru/app/<version>/<n>/`, then installs Python and Nuru's packages there.
+   - It switches `~/.nuru/install.json` to the new install only once that install starts.
+3. **Repair** in the same place installs again, beside the install in use.
+   - Settings (`.env.*`) carry over.
+   - The previous install is kept, to roll back to.
+
+## Install from a checkout
 
 Needs Node 24 and npm, `uv`, and desktop Obsidian.
 

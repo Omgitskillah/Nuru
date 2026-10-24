@@ -14,7 +14,7 @@ const { until } = require("./helpers/setup");
 
 const KEY = "sk-ant-api03-old";
 
-function tab({ connect } = {}) {
+function tab({ connect, running = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nuru-settings-"));
   const nuru = path.join(home, "Nuru");
   const uv = path.join(home, "uv");
@@ -28,14 +28,14 @@ function tab({ connect } = {}) {
   const reconnects = [];
   const plugin = {
     settings: { port: 27125, autoStart: true }, remember: async () => {}, vaultPath: () => home,
-    launcher: { home, restart: async () => { restarts.push(1); return {}; } },
+    launcher: { home, running: () => running, restart: async () => { restarts.push(1); return {}; } },
     views: () => [{ reconnect: async () => reconnects.push(1) }],
     connect: connect || (async () => ({ status: { models: { default: "qwen3.5:4b", choices: [
       { id: "qwen3.5:4b", label: "qwen3.5:4b", cloud: false }, { id: "granite4.2:3b", label: "granite4.2:3b", cloud: false },
       { id: "anthropic:claude-haiku-5-5", label: "Claude Haiku 5.5", cloud: true }] } } })),
   };
   const settingTab = new NuruSettingTab({}, plugin);
-  return { settingTab, nuru, restarts, reconnects };
+  return { settingTab, nuru, home, restarts, reconnects };
 }
 
 const row = (settingTab, name) => [...settingTab.containerEl.children].find((el) => el.firstChild?.textContent === name);
@@ -119,4 +119,61 @@ test("without Nuru running the current model still shows; keep-alive and restart
   apply.querySelector("button").click();
   await until(() => /Restarted/.test(apply.textContent));
   assert.deepEqual([restarts.length, reconnects.length], [1, 1]);
+});
+
+const { SetupProblem } = require("../lib/setup");
+const { LaunchProblem } = require("../lib/launcher");
+
+test("with Nuru not set up, Set up Nuru installs it, and the tab then shows Nuru's settings", async () => {
+  const { settingTab, home, nuru, restarts } = tab();
+  fs.rmSync(path.join(home, ".nuru", "install.json"));
+  const calls = [];
+  settingTab.setUp = async (options) => {
+    calls.push(options.home);
+    options.step("Downloading Nuru…");
+    fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv") }));
+    return { version: "0.1.0", nuru };
+  };
+  settingTab.display();
+  assert.equal(row(settingTab, "Default model"), undefined);
+  const setup = row(settingTab, "Set up Nuru");
+  assert.match(setup.textContent, /Downloads Nuru and what it needs .* Your notes aren't touched/);
+
+  setup.querySelector("button").click();
+  await until(() => row(settingTab, "Repair or update Nuru"));
+
+  assert.deepEqual(calls, [home]);
+  assert.match(row(settingTab, "Repair or update Nuru").textContent, /Nuru 0\.1\.0 is set up\./);
+  assert.ok(row(settingTab, "Default model"), "Nuru's own settings are shown now");
+  assert.deepEqual(restarts, [], "nothing was running, so nothing restarts");
+  settingTab.display();
+  assert.doesNotMatch(row(settingTab, "Repair or update Nuru").textContent, /is set up/, "the news is shown once");
+});
+
+test("a repair while Nuru runs restarts it on the new install and reconnects the chat", async () => {
+  const { settingTab, restarts, reconnects } = tab({ running: true });
+  settingTab.setUp = async () => ({ version: "0.1.0" });
+  settingTab.display();
+
+  row(settingTab, "Repair or update Nuru").querySelector("button").click();
+  await until(() => restarts.length && /is set up/.test(row(settingTab, "Repair or update Nuru").textContent));
+
+  assert.deepEqual([restarts.length, reconnects.length], [1, 1]);
+});
+
+test("what went wrong in a setup, or in the restart after it, is said in the tab", async () => {
+  const cases = [
+    [async () => { throw new SetupProblem("Couldn't download uv: the server answered 404"); }, false,
+      "Couldn't download uv: the server answered 404"],
+    [async () => { throw new Error("EACCES"); }, false, "Setting Nuru up failed: EACCES"],
+    [async () => ({ version: "0.1.0" }), true, "Nuru 0.1.0 is set up. Restarting it failed: Nuru stopped while starting."],
+  ];
+  for (const [setUp, running, said] of cases) {
+    const { settingTab } = tab({ running });
+    settingTab.plugin.launcher.restart = async () => { throw new LaunchProblem("exited"); };
+    settingTab.setUp = setUp;
+    settingTab.display();
+    row(settingTab, "Repair or update Nuru").querySelector("button").click();
+    await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
+  }
 });

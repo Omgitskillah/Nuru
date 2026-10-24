@@ -147,7 +147,8 @@ class Setting {
 
   addButton(build) {
     const button = this.settingEl.createEl("button");
-    build({ setButtonText(t) { button.textContent = t; return this; }, onClick(f) { button.addEventListener("click", f); return this; } });
+    build({ setButtonText(t) { button.textContent = t; return this; }, onClick(f) { button.addEventListener("click", f); return this; },
+      setDisabled(d) { button.disabled = d; return this; } });
     return this;
   }
 }

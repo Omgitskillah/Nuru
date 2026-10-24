@@ -56,7 +56,8 @@ def test_the_bundle_holds_the_tagged_commit_and_each_pinned_server_and_the_check
     out.mkdir()
     (out / "main.js").write_text("plugin", encoding="utf-8")
 
-    assert build.main(["0.2.0", str(out)], root=nuru) == 0
+    assert build.main(["bundle", "0.2.0", str(out)], root=nuru) == 0
+    assert build.main(["checksums", str(out)]) == 0
 
     with zipfile.ZipFile(out / "nuru-0.2.0.zip") as bundle:
         contents = {info.filename: (info.external_attr >> 16, bundle.read(info)) for info in bundle.infolist()}
@@ -72,7 +73,7 @@ def test_the_bundle_holds_the_tagged_commit_and_each_pinned_server_and_the_check
 
 def test_the_same_commit_builds_the_same_bundle(nuru, tmp_path):
     for out in ("a", "b"):
-        assert build.main(["0.2.0", str(tmp_path / out)], root=nuru) == 0
+        assert build.main(["bundle", "0.2.0", str(tmp_path / out)], root=nuru) == 0
     assert (tmp_path / "a/nuru-0.2.0.zip").read_bytes() == (tmp_path / "b/nuru-0.2.0.zip").read_bytes()
 
 
@@ -80,7 +81,7 @@ def test_a_tag_that_isnt_every_files_version_builds_nothing(nuru, tmp_path, caps
     write(nuru / "plugins/obsidian/package.json", json.dumps({"version": "0.2.1"}))
     git(nuru, "commit", "-am", "bump only the package")
 
-    assert build.main(["0.2.1", str(tmp_path / "out")], root=nuru) == 1
+    assert build.main(["bundle", "0.2.1", str(tmp_path / "out")], root=nuru) == 1
 
     assert capsys.readouterr().err.strip() == ("Releasing 0.2.1, but plugins/obsidian/manifest.json says 0.2.0, "
                                                "nuru/pyproject.toml says 0.2.0")
@@ -92,4 +93,4 @@ def test_run_without_a_version_and_folder_it_says_how_to_run_it(monkeypatch, cap
     with pytest.raises(SystemExit) as exited:
         runpy.run_path(_spec.origin, run_name="__main__")
     assert exited.value.code == 2
-    assert "python release/build.py <version> <out folder>" in capsys.readouterr().err
+    assert "python release/build.py bundle <version> <out folder>" in capsys.readouterr().err

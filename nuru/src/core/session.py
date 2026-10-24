@@ -5,8 +5,10 @@ reply, running the tool calls the model makes, logging and saving as it goes) an
 down again. A turn is a generator of events, so cli.py prints them and the service streams them.
 """
 
+import hashlib
 import json
 import os
+import platform
 import re
 import secrets
 import subprocess
@@ -147,8 +149,16 @@ def expert_api_key() -> str | None:
 
 
 MATH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "math-4-llms")
-# Where a release install puts the prebuilt calculator (the math-4-llms release for this system).
-MATH_BINARY = Path(MATH_DIR) / "bin" / ("math-mcp.exe" if os.name == "nt" else "math-mcp")
+# Where a release install puts the prebuilt calculator (the math-4-llms release for this system), and the
+# release each system's binary must match (release/dependencies.json, read by the plugin's setup too).
+MATH_BINARY = Path(MATH_DIR).resolve() / "bin" / ("math-mcp.exe" if os.name == "nt" else "math-mcp")
+DEPENDENCIES = ENV_DIR / "release" / "dependencies.json"
+
+
+def this_system() -> str:
+    """This computer as release/dependencies.json names systems, the way Node does: darwin-arm64, win32-x64..."""
+    machine = platform.machine().lower()
+    return f"{sys.platform}-{ {'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}.get(machine, machine)}"
 
 
 def math_server_params() -> StdioServerParameters:
@@ -156,6 +166,11 @@ def math_server_params() -> StdioServerParameters:
     Nuru is developed), built and run with cargo. A release install without it is broken, and says so
     rather than send someone off to install Rust."""
     if MATH_BINARY.is_file():
+        release = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))["math-mcp"]
+        expected = release["systems"].get(this_system(), {}).get("sha256")
+        if hashlib.sha256(MATH_BINARY.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Nuru's calculator ({MATH_BINARY}) isn't math-mcp {release['version']} for this "
+                               "computer: install Nuru again to repair it")
         return StdioServerParameters(command=str(MATH_BINARY), args=[], cwd=MATH_DIR)
     if (ENV_DIR / ".git").exists():
         return StdioServerParameters(

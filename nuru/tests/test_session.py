@@ -1,4 +1,5 @@
 from core.modelfile import render_modelfile
+import hashlib
 import json
 import os
 import threading
@@ -989,10 +990,30 @@ def test_a_release_install_runs_its_prebuilt_calculator_and_never_asks_for_rust(
     assert "params" not in seen
 
     binary.parent.mkdir()
-    binary.write_bytes(b"")
+    binary.write_bytes(b"not the released calculator")
+    released = {"math-mcp": {"version": "v1.0.0", "systems": {session.this_system(): {"sha256": "0" * 64}}}}
+    monkeypatch.setattr(session, "DEPENDENCIES", tmp_path / "dependencies.json")
+    session.DEPENDENCIES.write_text(json.dumps(released), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="isn't math-mcp v1.0.0 for this computer: install Nuru again"):
+        Session.start()
+    assert "params" not in seen
+
+    released["math-mcp"]["systems"][session.this_system()]["sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    session.DEPENDENCIES.write_text(json.dumps(released), encoding="utf-8")
     Session.start()
     assert seen["params"][1].command == str(binary) and seen["params"][1].args == []
     assert all(p.command != "cargo" for p in seen["params"])
+
+
+def test_the_pinned_calculator_release_covers_every_system_nuru_ships_on():
+    """release/dependencies.json, which the session and the plugin's setup read: each system's asset and
+    its sha256 from the release's SHA256SUMS."""
+    release = json.loads(session.DEPENDENCIES.read_text(encoding="utf-8"))["math-mcp"]
+    assert release["url"] == f"https://github.com/Omgitskillah/math-4-llms/releases/download/{release['version']}/"
+    assert set(release["systems"]) == {"darwin-arm64", "darwin-x64", "win32-x64"}
+    for system in release["systems"].values():
+        assert set(system) == {"asset", "sha256"} and len(system["sha256"]) == 64 and int(system["sha256"], 16) >= 0
+    assert release["systems"]["win32-x64"]["asset"].endswith(".exe")
 
 
 def test_start_adds_the_python_server_when_it_can_run(monkeypatch):

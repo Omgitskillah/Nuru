@@ -120,11 +120,28 @@ class Setting {
 
   setName(name) { this.settingEl.createDiv({ text: name }); return this; }
 
-  setDesc(desc) { this.settingEl.createDiv({ text: desc }); return this; }
+  setDesc(desc) { (this.descEl ??= this.settingEl.createDiv()).setText(desc); return this; }
+
+  setHeading() { return this; }
 
   addText(build) {
     const input = this.settingEl.createEl("input");
-    build({ setValue(v) { input.value = v; return this; }, onChange(f) { input.addEventListener("input", () => f(input.value)); return this; } });
+    build({ inputEl: input, setValue(v) { input.value = v; return this; }, setPlaceholder(p) { input.placeholder = p; return this; },
+      onChange(f) { input.addEventListener("input", () => f(input.value)); return this; } });
+    return this;
+  }
+
+  addToggle(build) {
+    const input = this.settingEl.createEl("input");
+    input.type = "checkbox";
+    build({ setValue(v) { input.checked = v; return this; }, onChange(f) { input.addEventListener("change", () => f(input.checked)); return this; } });
+    return this;
+  }
+
+  addDropdown(build) {
+    const select = this.settingEl.createEl("select");
+    build({ selectEl: select, addOption(value, text) { select.createEl("option", { text, value }); return this; },
+      setValue(v) { select.value = v; return this; }, onChange(f) { select.addEventListener("change", () => f(select.value)); return this; } });
     return this;
   }
 
@@ -163,5 +180,9 @@ function setIcon(el, name) { el.empty(); el.dataset.icon = name; }
 
 const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event.ctrlKey)) };
 
-module.exports = { Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
+// Obsidian's requestUrl; a test sets obsidian.requestUrl.handler to answer it.
+async function requestUrl(request) { return requestUrl.handler(request); }
+requestUrl.handler = async () => ({ status: 200 });
+
+module.exports = { requestUrl, Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
   window };

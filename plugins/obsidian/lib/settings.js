@@ -1,10 +1,29 @@
-// Settings: the service's port, and whether the plugin can reach it for this vault.
+// Settings: the service's port, whether the plugin can reach it for this vault, and Nuru's own settings,
+// which live in the env files in the Nuru folder (lib/envfiles.js), never in plugin data.
 "use strict";
 
-const { PluginSettingTab, Setting } = require("obsidian");
+const obsidian = require("obsidian");
 
+const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
-const { logPath } = require("./launcher");
+const { LaunchProblem, logPath, readInstall } = require("./launcher");
+
+const { PluginSettingTab, Setting } = obsidian;
+
+const KEEP_ALIVE = { "5m": "5 minutes", "30m": "30 minutes", "1h": "1 hour", "-1": "Until Ollama stops" };
+const DEFAULT_KEEP_ALIVE = "30m"; // Nuru's own when NURU_KEEP_ALIVE isn't set (core/providers/ollama.py)
+
+// "valid", "rejected" or "unreachable": Anthropic's model list, which costs nothing.
+async function checkClaudeKey(key) {
+  try {
+    const response = await obsidian.requestUrl({ url: "https://api.anthropic.com/v1/models", throw: false,
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" } });
+    if (response.status === 200) return "valid";
+    return response.status === 401 || response.status === 403 ? "rejected" : "unreachable";
+  } catch {
+    return "unreachable";
+  }
+}
 
 class NuruSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -50,7 +69,104 @@ class NuruSettingTab extends PluginSettingTab {
           result.setText(error instanceof ConnectionProblem ? error.message : `Couldn't connect: ${error.message}`);
         }
       }));
+    this.displayNuru(containerEl);
+  }
+
+  // Nuru's settings, read from and written to its env files; Nuru reads them when it starts.
+  displayNuru(containerEl) {
+    new Setting(containerEl).setName("Nuru").setHeading();
+    let settings;
+    try {
+      settings = new NuruSettings(readInstall(this.plugin.launcher.home).nuru);
+    } catch (error) {
+      new Setting(containerEl).setDesc(error.message);
+      return;
+    }
+    const overridden = (key) => {
+      const name = settings.overridden(key);
+      return name ? ` Obsidian's environment sets ${name}, which Nuru uses instead.` : "";
+    };
+    const apply = new Setting(containerEl).setName("Apply changes");
+    const applied = (text) => apply.setDesc(text);
+    applied(`Saved in .env.nuru and .env.deep-think in ${settings.nuru}, where Nuru reads them when it starts: ` +
+      "editing those files works too.");
+    const changed = () => applied("Changed: restart Nuru to use it.");
+    apply.addButton((button) => button.setButtonText("Restart Nuru").onClick(async () => {
+      applied("Restarting…");
+      try {
+        await this.plugin.launcher.restart();
+        for (const view of this.plugin.views()) await view.reconnect();
+        applied("Restarted with these settings.");
+      } catch (error) {
+        applied(error instanceof LaunchProblem || error instanceof ConnectionProblem ? error.message
+          : `Couldn't restart Nuru: ${error.message}`);
+      }
+    }));
+
+    const current = settings.defaultModel();
+    const model = new Setting(containerEl).setName("Default model")
+      .setDesc("New conversations start on it; each conversation can still pick another." +
+        overridden(current?.startsWith("anthropic:") ? "NURU_MAIN_MODEL" : "NURU_BASE_MODEL"));
+    model.addDropdown((dropdown) => {
+      if (current) dropdown.addOption(current, current);
+      dropdown.setValue(current || "");
+      dropdown.onChange((id) => {
+        settings.setDefaultModel(id);
+        changed();
+      });
+      // The models a conversation can pick, as Nuru lists them: what its profiles support, Claude with a key.
+      this.plugin.connect().then(({ status }) => {
+        for (const choice of status.models?.choices || []) {
+          if (choice.id !== current) dropdown.addOption(choice.id, choice.label + (choice.cloud ? " (cloud)" : ""));
+        }
+        dropdown.setValue(current || "");
+      }).catch(() => model.setDesc("Start Nuru to choose from the models it can run."));
+    });
+
+    const keepAlive = settings.get("NURU_KEEP_ALIVE") || DEFAULT_KEEP_ALIVE;
+    new Setting(containerEl).setName("Keep the local model loaded")
+      .setDesc("After each reply, so the next starts quickly; its memory stays in use as long." + overridden("NURU_KEEP_ALIVE"))
+      .addDropdown((dropdown) => {
+        for (const [value, label] of Object.entries(KEEP_ALIVE)) dropdown.addOption(value, label);
+        if (!(keepAlive in KEEP_ALIVE)) dropdown.addOption(keepAlive, keepAlive);
+        dropdown.setValue(keepAlive).onChange((value) => {
+          settings.set("NURU_KEEP_ALIVE", value);
+          changed();
+        });
+      });
+
+    const key = new Setting(containerEl).setName("Claude API key");
+    const describe = (state = "") => {
+      const saved = settings.get("CLAUDE_API_KEY");
+      key.setDesc((saved ? `Saved in .env.deep-think (fingerprint ${fingerprint(saved)}).${state}`
+        : "None saved: Claude Haiku and Sonnet aren't offered.") + overridden("CLAUDE_API_KEY"));
+    };
+    const check = async () => {
+      const saved = settings.get("CLAUDE_API_KEY");
+      if (!saved) return describe();
+      describe(" Checking…");
+      const result = await checkClaudeKey(saved);
+      if (settings.get("CLAUDE_API_KEY") !== saved) return; // another key was saved meanwhile: this says nothing about it
+      describe({ valid: " Anthropic accepts it.", rejected: " Anthropic rejects it: paste a new one.",
+        unreachable: " Couldn't reach Anthropic to check it." }[result]);
+    };
+    let typed = "";
+    key.addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Paste a new key").onChange((value) => { typed = value.trim(); });
+      key.addButton((button) => button.setButtonText("Save").onClick(async () => {
+        if (!typed) return;
+        settings.set("CLAUDE_API_KEY", typed);
+        typed = "";
+        text.setValue("");
+        changed();
+        describe();
+      }));
+    });
+    // Only on request: the saved key goes to Anthropic when Check is clicked, never by itself.
+    key.addButton((button) => button.setButtonText("Check").onClick(check));
+    describe();
   }
 }
 
-module.exports = { NuruSettingTab };
+module.exports = { NuruSettingTab, checkClaudeKey };

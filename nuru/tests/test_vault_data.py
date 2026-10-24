@@ -15,11 +15,14 @@ from core.service.store import ServiceStore, _lock
 from core.vault_identity import Registry
 
 
+# The move renames db/ while holding a lock file inside it, which Windows refuses: it runs on POSIX, and
+# on Windows adopt_legacy refuses before touching anything (the one test below that runs there).
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="moving pre-WP04 history refuses on Windows")
+
+
 @pytest.fixture
 def legacy(tmp_path, monkeypatch):
     """Today's layout: one conversation in the Nuru folder's .db, a log in .logs."""
-    if sys.platform == "win32":  # Windows won't rename a folder holding an open lock file
-        pytest.skip("moving pre-WP04 history is for installs that had it, on macOS")
     db, logs = tmp_path / "nuru" / ".db", tmp_path / "nuru" / ".logs"
     db.mkdir(parents=True)
     logs.mkdir()
@@ -76,6 +79,7 @@ def test_without_a_configured_vault_nothing_is_given_an_id(monkeypatch):
         session.configured_vault()
 
 
+@posix_only
 def test_adopting_moves_the_old_history_and_keeps_the_old_files(legacy, vault_uuid, tmp_path):
     moved = vault_data.adopt_legacy(vault_uuid)
     live = tmp_path / "vaults" / vault_uuid / "db"
@@ -98,6 +102,7 @@ def test_on_windows_it_refuses_and_leaves_the_old_files(legacy, vault_uuid, tmp_
     assert not (tmp_path / "vaults" / vault_uuid / "migration.json").exists()
 
 
+@posix_only
 def test_it_refuses_while_nuru_is_running(legacy, vault_uuid):
     holder = _lock(legacy / "service.db.lock")
     try:
@@ -108,6 +113,7 @@ def test_it_refuses_while_nuru_is_running(legacy, vault_uuid):
     assert (legacy / "conversation.db").exists(), "nothing changed"
 
 
+@posix_only
 def test_it_never_mixes_two_histories(legacy, vault_uuid, tmp_path):
     db, _ = vault_data.db_dir(vault_uuid), None
     conversations = ConversationStore(db / "conversation.db")
@@ -118,6 +124,7 @@ def test_it_never_mixes_two_histories(legacy, vault_uuid, tmp_path):
     assert titles(db / "conversation.db") == ["Already here"] and (legacy / "conversation.db").exists()
 
 
+@posix_only
 def test_an_empty_history_made_before_the_move_is_replaced(legacy, vault_uuid):
     db = vault_data.db_dir(vault_uuid)
     ConversationStore(db / "conversation.db").close()
@@ -168,6 +175,7 @@ def new_layout_is_complete(legacy, vault_uuid, tmp_path):
     ("active", "new"),             # renamed, not yet recorded as active
     ("retire", "new"),             # active, an old file not yet retired
 ])
+@posix_only
 def test_a_crash_at_any_step_leaves_the_old_layout_or_the_new_one(legacy, vault_uuid, tmp_path, monkeypatch, point, outcome):
     db = vault_data.db_dir(vault_uuid)
     ConversationStore(db / "conversation.db").close()  # an empty history a new-layout service made
@@ -190,6 +198,7 @@ def test_a_crash_at_any_step_leaves_the_old_layout_or_the_new_one(legacy, vault_
 
 
 # --------------------------------------------------------------------------- a move and a starting Nuru
+@posix_only
 def test_a_starting_nuru_never_touches_a_move_under_way(legacy, vault_uuid, tmp_path, monkeypatch):
     """Astra's reproduction: a staging copy being written, and the move's lock held."""
     monkeypatch.setattr(vault_data, "MIGRATE_WAIT_SECONDS", 0.2)
@@ -208,6 +217,7 @@ def test_a_starting_nuru_never_touches_a_move_under_way(legacy, vault_uuid, tmp_
     assert not staging.exists()
 
 
+@posix_only
 def test_a_move_cant_start_while_a_nuru_opens_its_history(legacy, vault_uuid):
     with vault_data.opening(vault_uuid):  # a service starting: recovered, now opening its databases
         with pytest.raises(vault_data.MigrationBusy):
@@ -215,6 +225,7 @@ def test_a_move_cant_start_while_a_nuru_opens_its_history(legacy, vault_uuid):
     assert (legacy / "conversation.db").exists()
 
 
+@posix_only
 def test_an_interrupted_log_copy_is_finished_by_running_the_move_again(legacy, vault_uuid, tmp_path, monkeypatch):
     real_copy = vault_data.shutil.copy2
     copied = []
@@ -240,6 +251,7 @@ def test_an_interrupted_log_copy_is_finished_by_running_the_move_again(legacy, v
     assert vault_data.adopt_legacy(vault_uuid)["logs"] == 0, "and a third time does nothing"
 
 
+@posix_only
 def test_a_log_cut_off_midway_is_copied_again(legacy, vault_uuid, tmp_path, monkeypatch):
     real_replace = vault_data.os.replace
 
@@ -260,6 +272,7 @@ def test_a_log_cut_off_midway_is_copied_again(legacy, vault_uuid, tmp_path, monk
 
 
 # --------------------------------------------------------------------------- a standalone Nuru session
+@posix_only
 def test_a_move_waits_for_every_session_using_the_history_to_close(legacy, vault_uuid, tmp_path, monkeypatch):
     """Astra's reproduction: the nuru app's Session holds a new-layout history open (no service lock)."""
     from test_session import start_session

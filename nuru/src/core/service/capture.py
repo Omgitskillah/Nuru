@@ -265,6 +265,8 @@ class CaptureWriter:
                     return 201, record["receipt"]
                 if record["state"] == "gone":
                     raise CaptureError(410, "gone")
+                if _WINDOWS:  # pending from another computer: as status() says
+                    raise CaptureError(503, "capture_unavailable")
                 if record["state"] == "uncertain":
                     return 202, {"v": 1, "request_id": request_id, "state": "uncertain",
                                  "status": f"/v1/captures/requests/{request_id}"}

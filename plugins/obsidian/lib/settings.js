@@ -7,7 +7,7 @@ const obsidian = require("obsidian");
 const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
-const { RELEASE, SetupProblem, setUp } = require("./setup");
+const { RELEASE, SetupProblem, restoreInstall, setUp } = require("./setup");
 const ollama = require("./ollama");
 
 const { PluginSettingTab, Setting } = obsidian;
@@ -88,16 +88,30 @@ class NuruSettingTab extends PluginSettingTab {
     this.setupNews = "";
     row.addButton((button) => button.setButtonText(installed ? "Repair" : "Set up Nuru").onClick(async () => {
       button.setDisabled(true);
+      const { launcher } = this.plugin;
+      const restart = async () => {
+        await launcher.restart();
+        for (const view of this.plugin.views()) await view.reconnect();
+      };
       try {
-        const { version } = await this.setUp({ home: this.plugin.launcher.home, step: say });
+        const { version, previous } = await this.setUp({ home: launcher.home, step: say });
         this.setupNews = `Nuru ${version} is set up.`;
-        if (this.plugin.launcher.running()) {
+        if (launcher.running()) {
           say("Restarting Nuru on the new install…");
           try {
-            await this.plugin.launcher.restart();
-            for (const view of this.plugin.views()) await view.reconnect();
+            await restart();
           } catch (error) {
-            this.setupNews += ` Restarting it failed: ${error.message}`;
+            // The new install doesn't start: go back to the one before it, which setUp kept.
+            this.setupNews = `Nuru ${version} was set up, but it didn't start: ${error.message}`;
+            if (previous) {
+              try {
+                restoreInstall(launcher.home, previous);
+                await restart();
+                this.setupNews += " Nuru is back on the install it had before.";
+              } catch (back) {
+                this.setupNews += ` Going back to the install it had before failed too: ${back.message}`;
+              }
+            }
           }
         }
       } catch (error) {

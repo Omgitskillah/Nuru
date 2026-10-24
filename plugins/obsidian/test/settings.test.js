@@ -182,7 +182,7 @@ test("what went wrong in a setup, or in the restart after it, is said in the tab
     [async () => { throw new SetupProblem("Couldn't download uv: the server answered 404"); }, false,
       "Couldn't download uv: the server answered 404"],
     [async () => { throw new Error("EACCES"); }, false, "Setting Nuru up failed: EACCES"],
-    [async () => ({ version: "0.1.0" }), true, "Nuru 0.1.0 is set up. Restarting it failed: Nuru stopped while starting."],
+    [async () => ({ version: "0.1.0", previous: null }), true, "Nuru 0.1.0 was set up, but it didn't start: Nuru stopped while starting."],
   ];
   for (const [setUp, running, said] of cases) {
     const { settingTab } = tab({ running });
@@ -251,4 +251,33 @@ test("a failed download or check is said, and Download can be tried again", asyn
   settingTab.ollama.check = async () => { throw new Error("Ollama answered 500"); };
   [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Check").click();
   await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(ollama.textContent));
+});
+
+test("a new install that doesn't start is rolled back: install.json and the running Nuru go back to the previous one", async () => {
+  for (const [failures, said] of [
+    [1, "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Nuru is back on the install it had before."],
+    [2, "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Going back to the install it had before failed too: Nuru stopped while starting."],
+  ]) {
+    const { settingTab, home } = tab({ running: true });
+    const file = path.join(home, ".nuru", "install.json");
+    const previous = fs.readFileSync(file, "utf8");
+    const installedAtRestart = [];
+    let left = failures;
+    settingTab.plugin.launcher.restart = async () => {
+      installedAtRestart.push(JSON.parse(fs.readFileSync(file, "utf8")).nuru);
+      if (left-- > 0) throw new LaunchProblem("exited");
+      return {};
+    };
+    settingTab.setUp = async () => {
+      fs.writeFileSync(file, JSON.stringify({ nuru: path.join(home, "new generation"), uv: path.join(home, "uv") }));
+      return { version: "0.2.0", previous };
+    };
+    settingTab.display();
+    row(settingTab, "Repair or update Nuru").querySelector("button").click();
+    await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
+
+    assert.equal(fs.readFileSync(file, "utf8"), previous, "install.json names the previous install again");
+    assert.deepEqual(installedAtRestart, [path.join(home, "new generation"), JSON.parse(previous).nuru],
+      "the new install was tried, then the previous one started");
+  }
 });

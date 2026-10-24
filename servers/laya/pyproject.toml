@@ -12,10 +12,14 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "access-logging",
     "obsidian-mcp",
-    "laya==0.3.21",
     "pydantic>=2.13.5",
     "pyyaml>=6.0.3",
 ]
+
+# Laya's model (torch and transformers, about 720 MB) only for running Laya, which is off on main:
+# `uv sync --extra model` (or `uv sync --all-extras`) installs it.
+[project.optional-dependencies]
+model = ["laya==0.3.21"]
 
 [project.scripts]
 laya-mcp = "laya_mcp:main"

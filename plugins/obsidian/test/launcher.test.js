@@ -155,6 +155,35 @@ test("restarting stops the service it started, waits for it to exit, and starts 
   assert.ok(launcher.running());
 });
 
+test("restarting gives up with an error when the stopped service never exits", async () => {
+  const { dir } = home();
+  const managed = path.join(dir, ".nuru", "service", "managed.json");
+  let spawned = 0;
+  let up = false;
+  const launcher = new Launcher({ vaultPath: "/v", port: 27125, home: dir, pollMs: 1, stopSeconds: 0.05,
+    spawn: () => {
+      spawned += 1;
+      fs.writeFileSync(managed, JSON.stringify({ pid: 1, port: 27125, stop_key: "key" }));
+      up = true;
+      return fakeChild();
+    },
+    connect: async () => {
+      if (!up) throw new ConnectionProblem("no-service");
+      return { status: "status" };
+    },
+    fetch: async (url) => {
+      if (url.endsWith("/v1/service/stop")) {
+        up = false; // stops answering, but the process never exits
+        return { status: 202 };
+      }
+      if (!up) throw new TypeError("fetch failed");
+      return { status: 200 };
+    } });
+  await launcher.start();
+  await assert.rejects(launcher.restart(), (error) => error.kind === "not-stopped");
+  assert.equal(spawned, 1, "nothing new is started beside it");
+});
+
 test("restarting with nothing running starts it; one started outside Obsidian is left alone", async () => {
   const { dir } = home();
   let spawned = 0;

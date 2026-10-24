@@ -54,8 +54,9 @@ function readEnv(file) {
 }
 
 // Set KEY in `file`: its last active line is rewritten (keeping an `export` and a trailing comment),
-// or the line is added. The file is replaced in one step and keeps its permissions; a new one is 0600.
-function setEnv(file, key, value) {
+// or the line is added. The file is replaced in one step and keeps its permissions (a new one is 0600);
+// a `secret` leaves it readable by its owner only, whatever it was.
+function setEnv(file, key, value, { secret = false } = {}) {
   if (/[\r\n]/.test(value)) throw new Error(`${key} can't hold a line break`);
   const all = lines(file);
   const at = all.findLastIndex((line) => LINE.exec(line)?.[2] === key);
@@ -66,7 +67,7 @@ function setEnv(file, key, value) {
     if (all.length && all.at(-1) === "") all.pop();
     all.push(`${key}=${formatValue(value)}`, "");
   }
-  const mode = fs.statSync(file, { throwIfNoEntry: false })?.mode & 0o777 || 0o600;
+  const mode = secret ? 0o600 : fs.statSync(file, { throwIfNoEntry: false })?.mode & 0o777 || 0o600;
   const temporary = `${file}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(temporary, all.join("\n"), { mode });
@@ -93,7 +94,7 @@ class NuruSettings {
   }
 
   set(key, value) {
-    setEnv(this.file(key), key, value);
+    setEnv(this.file(key), key, value, { secret: key === "CLAUDE_API_KEY" });
   }
 
   // Set in Obsidian's own environment, which Nuru started from here inherits and prefers over the file.

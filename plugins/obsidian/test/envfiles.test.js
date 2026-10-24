@@ -45,6 +45,17 @@ test("a write makes a missing file private, and refuses a line break", () => {
   assert.deepEqual(readEnv(file), { CLAUDE_API_KEY: "sk-ant-new" });
 });
 
+test("saving the Claude key leaves .env.deep-think readable by its owner only, even if it was world-readable", () => {
+  const dir = folder({ ".env.deep-think": "CLAUDE_API_KEY=old\n", ".env.nuru": "NURU_KEEP_ALIVE=5m\n" });
+  fs.chmodSync(path.join(dir, ".env.deep-think"), 0o644);
+  fs.chmodSync(path.join(dir, ".env.nuru"), 0o644);
+  const settings = new NuruSettings(dir, {});
+  settings.set("CLAUDE_API_KEY", "sk-ant-new");
+  assert.equal(fs.statSync(path.join(dir, ".env.deep-think")).mode & 0o777, 0o600);
+  settings.set("NURU_KEEP_ALIVE", "30m");
+  assert.equal(fs.statSync(path.join(dir, ".env.nuru")).mode & 0o777, 0o644, "a file with no secret keeps its mode");
+});
+
 test("each setting is in the file Nuru reads it from", () => {
   const dir = folder({ ".env.nuru": "NURU_BASE_MODEL=qwen3.5:4b\n", ".env.deep-think": "CLAUDE_API_KEY=k\n" });
   const settings = new NuruSettings(dir, {});

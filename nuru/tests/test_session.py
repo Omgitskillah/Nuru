@@ -124,9 +124,8 @@ def test_start_with_a_vault_gives_it_to_the_notes_server_and_the_write_ledger(mo
     s = Session.start(vault=served)
 
     obsidian = next(p for p in given if p.args == ["run", "obsidian-mcp"])
-    deep_think = next(p for p in given if p.args == ["run", "deep-think-mcp"])
     assert obsidian.env["VAULT_PATH"] == str(served.resolve()) and obsidian.env["OBSIDIAN_PROTECT_USER_AUTHORED"] == "1"
-    assert deep_think.env["DEEP_THINK_BASE_DIR"] == str(served.resolve())
+    assert "deep-think-mcp" not in [p.args[-1] for p in given]  # write_plan has no caller since plan mode went
     assert s._vault_scope == str(served.resolve())
     assert session.OBSIDIAN_SERVER_PARAMS.env == default  # the shared default is untouched
     s.close()
@@ -955,7 +954,7 @@ def test_a_tool_that_returns_an_error_is_logged_as_an_error(monkeypatch, tmp_pat
     assert call["status"] == "error" and "no note 'x'" in call["error"]
 
 
-def test_start_connects_the_obsidian_deep_think_math_and_laya_servers(monkeypatch):
+def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
@@ -969,7 +968,7 @@ def test_start_connects_the_obsidian_deep_think_math_and_laya_servers(monkeypatc
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "deep-think-mcp", "math-mcp", "laya-mcp"]
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp", "laya-mcp"]
 
 
 def test_start_adds_the_python_server_when_it_can_run(monkeypatch):

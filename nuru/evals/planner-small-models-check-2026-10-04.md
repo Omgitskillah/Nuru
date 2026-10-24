@@ -1,5 +1,7 @@
 # Small planner models check, 2026-10-04
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 Can Granite 4 (350M, 1B) or Qwen3.5 (0.8B, 2B), set up only as planners, reliably break a request into a JSON plan of steps?
 
 **Short answer: no.** None of the four is reliable.

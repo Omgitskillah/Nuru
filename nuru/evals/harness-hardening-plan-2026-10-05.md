@@ -1,5 +1,7 @@
 # Harness hardening: assessment and implementation plan
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 Reviewed on 2026-10-05 against `plan-executor` at
 `30e3f9e7754dc6934858ff8d4a02fae72ed38ab6`.
 Review branch: `review/harness-hardening`, created directly from that commit.

@@ -139,10 +139,6 @@ OBSIDIAN_SERVER_PARAMS = StdioServerParameters(
     command="uv", args=["run", "obsidian-mcp"], cwd=OBSIDIAN_DIR, env={**get_default_environment(), **OBSIDIAN_ENV}
 )
 
-DEEP_THINK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "deep-think")
-DEEP_THINK_SERVER_PARAMS = StdioServerParameters(
-    command="uv", args=["run", "deep-think-mcp"], cwd=DEEP_THINK_DIR, env=get_default_environment()
-)
 
 def expert_api_key() -> str | None:
     """The Anthropic API key, for the expert planner and Claude as the main model alike: one key, read
@@ -521,19 +517,18 @@ class Session:
             if in_use is not None:
                 opened.callback(in_use.close)
             python_server = python_server_params()
-            obsidian, deep_think = OBSIDIAN_SERVER_PARAMS, DEEP_THINK_SERVER_PARAMS
+            obsidian = OBSIDIAN_SERVER_PARAMS
             if vault is not None:
                 vault = Path(vault).resolve()
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env, "VAULT_PATH": str(vault),
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(vault)}})
-                deep_think = deep_think.model_copy(update={"env": {**deep_think.env, "DEEP_THINK_BASE_DIR": str(vault)}})
             else:  # the background indexer's index, which semantic_search must read
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env,
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(configured_vault())}})
             laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
             laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
             tools = MCPTools(
-                [obsidian, deep_think, MATH_SERVER_PARAMS, *laya,
+                [obsidian, MATH_SERVER_PARAMS, *laya,
                  *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
@@ -546,7 +541,7 @@ class Session:
                 log_dir,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; uv run deep-think-mcp; cargo run --bin math-mcp"
+                server_command="uv run obsidian-mcp; cargo run --bin math-mcp"
                 + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             store = ConversationStore(db_path)

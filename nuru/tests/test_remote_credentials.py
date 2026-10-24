@@ -179,6 +179,28 @@ def test_session_scope_guard_precedes_write_checks(monkeypatch, name, args):
     session.close()
 
 
+def test_a_write_from_a_device_without_notes_write_is_never_dispatched_in_a_turn(monkeypatch, credentials):
+    """A whole ordinary turn: a device that may chat and read but not write gets its search, never its
+    write_note, and the write ledger stays empty."""
+    from core.service.server import remote_tool_allowed
+    from test_session import FakeMCPTools, start_session, tool_call
+    from test_tool_dispatch import TOOLS
+    store, _ = credentials
+    device = store.authenticate(store.redeem(store.issue("phone", "browser", {"chat:use", "notes:read"})), "browser")
+    tools = FakeMCPTools(tools=TOOLS, tool_results={"search": '{"query": "x", "matches": []}'})
+    script = iter([[{"tool_calls": [tool_call("search", {"query": "March budget"})]}],
+                   [{"tool_calls": [tool_call("write_note", {"note": "nuru/march.md", "content": "- total: 42"})]}],
+                   ["I could not write it."]])
+    s = start_session(monkeypatch, tools=tools, chat=lambda *a, **k: iter(next(script)))
+    s.authorize_tool = lambda name: remote_tool_allowed(store, device, name)
+
+    list(s.ask("Write my March total into a note."))
+
+    assert [name for name, _ in tools.calls] == ["search"]
+    assert not s.store.pending_writes(s._vault_scope)
+    s.close()
+
+
 def test_request_quota_survives_rotation_and_expires(credentials):
     store, now = credentials
     token = store.issue("phone", "shortcut", {"capture:create"})

@@ -1,7 +1,7 @@
 """The model's tool contract, shared by prompt validation and MCP discovery."""
 
 # A server's new tools reach the model only after being added here. Harness tools
-# (Laya's decisions and deep-think's write_plan) are deliberately excluded.
+# (Laya's decisions) are deliberately excluded.
 MODEL_TOOLS = frozenset(
     {
         "browse", "find_in_notes", "note_info", "read_note", "search", "tags",

@@ -1,5 +1,7 @@
 # Plan mode check, 2026-10-03
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 Can Nuru break a request into a plan of steps rather than start carrying it out?
 
 The test prompt:

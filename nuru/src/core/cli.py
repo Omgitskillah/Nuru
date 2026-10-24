@@ -1,5 +1,5 @@
 """Terminal CLI that sends whatever text you type to a local Ollama model,
-giving it access to the tools exposed by the obsidian and deep-think MCP
+giving it access to the tools exposed by the obsidian and math MCP
 servers."""
 
 import json

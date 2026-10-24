@@ -1,5 +1,7 @@
 # Test 17 with multilingual embeddings, 2026-10-05
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 **The change:** the semantic index now uses `nomic-embed-text-v2-moe`, swapped in for `nomic-embed-text:v1.5` with no code change.
 - **Model:** 475M parameters, F16, 768 dimensions (the same as v1.5), a 512-token input limit, about 100 languages.
 - **Same task prefixes as v1.5,** so the server code didn't change.

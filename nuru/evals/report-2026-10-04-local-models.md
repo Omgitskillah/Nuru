@@ -1,5 +1,7 @@
 # Nuru on small local models: what we tried, what we measured, what went wrong
 
+> **Historical record.** Plan mode was removed on 2026-10-24 (PR #37). The planner, executor, planner Modelfiles and `planner_check/` files this page links to no longer exist on main; they are at commit [7c2c345](https://github.com/Omgitskillah/Nuru/tree/7c2c3458657409a6be66fa88036c09f01cd7a500).
+
 Status report, 2026-10-01 to 2026-10-04. Branch `plan-executor`, which builds on `main` (the tools purge and the Obsidian submodule are merged there). All numbers below are from runs on a 16 GB Apple-silicon Mac against a synthetic Obsidian vault ("dummyVault"). Every run uses a fresh scratch copy of that vault and a deterministic scorer.
 
 The detailed per-experiment notes this report draws on are in this folder:

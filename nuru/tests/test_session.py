@@ -22,6 +22,9 @@ def _isolate_model_settings(monkeypatch):
     # THINK comes from the developer's own .env via load_dotenv, so without this the
     # thinking-mode tests pass or fail depending on what the machine is set up to run.
     monkeypatch.setattr(session, "THINK", True)
+    # A developer may have a released calculator in servers/math-4-llms/bin; the start tests
+    # expect this checkout's cargo fallback, and the release tests set their own binary.
+    monkeypatch.setattr(session, "MATH_BINARY", session.MATH_BINARY.with_name("not-installed"))
 
 
 def fake_chat(chunks):

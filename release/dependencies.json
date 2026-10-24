@@ -1,11 +1,11 @@
 {
   "math-mcp": {
-    "version": "v1.0.0",
-    "url": "https://github.com/Omgitskillah/math-4-llms/releases/download/v1.0.0/",
+    "version": "v1.0.1",
+    "url": "https://github.com/Omgitskillah/math-4-llms/releases/download/v1.0.1/",
     "systems": {
-      "darwin-arm64": {"asset": "math-mcp-aarch64-apple-darwin", "sha256": "9d9d1b6010b48075492866a2a44545daa12951569b02a91a95d54312a974477f"},
-      "darwin-x64": {"asset": "math-mcp-x86_64-apple-darwin", "sha256": "025e00abd746eb1ca5d74d4e779a3deaec4c7b04c12ef957e548e61839633e5d"},
-      "win32-x64": {"asset": "math-mcp-x86_64-pc-windows-msvc.exe", "sha256": "3626e9705afc914fc94548bed6a1d30efe0a4384718cf7069496d2ddfbb3b1ca"}
+      "darwin-arm64": {"asset": "math-mcp-aarch64-apple-darwin", "sha256": "9d919f73c596bc4e3903a0d1f26e2ecaaa0d1627cad811e8403cb787732d5527"},
+      "darwin-x64": {"asset": "math-mcp-x86_64-apple-darwin", "sha256": "bc4571dff01e08cb906196403763cb56db02889cfb757238d458c3b793e7475a"},
+      "win32-x64": {"asset": "math-mcp-x86_64-pc-windows-msvc.exe", "sha256": "327077f2eac7ab1e55eeec3c4026f9449ce76ae28a488501ef69c295513548c6"}
     }
   }
 }

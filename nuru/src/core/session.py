@@ -5,8 +5,10 @@ reply, running the tool calls the model makes, logging and saving as it goes) an
 down again. A turn is a generator of events, so cli.py prints them and the service streams them.
 """
 
+import hashlib
 import json
 import os
+import platform
 import re
 import secrets
 import subprocess
@@ -147,9 +149,34 @@ def expert_api_key() -> str | None:
 
 
 MATH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "math-4-llms")
-MATH_SERVER_PARAMS = StdioServerParameters(
-    command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"], cwd=MATH_DIR
-)
+# Where a release install puts the prebuilt calculator (the math-4-llms release for this system), and the
+# release each system's binary must match (release/dependencies.json, read by the plugin's setup too).
+MATH_BINARY = Path(MATH_DIR).resolve() / "bin" / ("math-mcp.exe" if os.name == "nt" else "math-mcp")
+DEPENDENCIES = ENV_DIR / "release" / "dependencies.json"
+
+
+def this_system() -> str:
+    """This computer as release/dependencies.json names systems, the way Node does: darwin-arm64, win32-x64..."""
+    machine = platform.machine().lower()
+    return f"{sys.platform}-{ {'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}.get(machine, machine)}"
+
+
+def math_server_params() -> StdioServerParameters:
+    """The calculator: the prebuilt math-mcp of a release install; in a git checkout without one (where
+    Nuru is developed), built and run with cargo. A release install without it is broken, and says so
+    rather than send someone off to install Rust."""
+    if MATH_BINARY.is_file():
+        release = json.loads(DEPENDENCIES.read_text(encoding="utf-8"))["math-mcp"]
+        expected = release["systems"].get(this_system(), {}).get("sha256")
+        if hashlib.sha256(MATH_BINARY.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Nuru's calculator ({MATH_BINARY}) isn't math-mcp {release['version']} for this "
+                               "computer: install Nuru again to repair it")
+        return StdioServerParameters(command=str(MATH_BINARY), args=[], cwd=MATH_DIR)
+    if (ENV_DIR / ".git").exists():
+        return StdioServerParameters(
+            command="cargo", args=["run", "--quiet", "--release", "--locked", "--features", "mcp", "--bin", "math-mcp"],
+            cwd=MATH_DIR)
+    raise RuntimeError(f"Nuru's calculator is missing ({MATH_BINARY}): install Nuru again to repair it")
 
 PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "python-4-llms")
 
@@ -525,10 +552,11 @@ class Session:
             else:  # the background indexer's index, which semantic_search must read
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env,
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(configured_vault())}})
+            math = math_server_params()
             laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
             laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
             tools = MCPTools(
-                [obsidian, MATH_SERVER_PARAMS, *laya,
+                [obsidian, math, *laya,
                  *([python_server] if python_server else [])],
                 model_tools=MODEL_TOOLS,
             )
@@ -541,7 +569,7 @@ class Session:
                 log_dir,
                 model=MODEL,
                 think=THINK,
-                server_command="uv run obsidian-mcp; cargo run --bin math-mcp"
+                server_command=f"uv run obsidian-mcp; {' '.join([math.command, *math.args])}"
                 + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             store = ConversationStore(db_path)

@@ -18,7 +18,7 @@ def main():
     python = session.python_server_params()
     if python is None:
         raise SystemExit('Python sandbox unavailable; contract coverage requires it.')
-    tools = MCPTools([session.MATH_SERVER_PARAMS, python], frozenset({'calculate', 'statistics', 'run_python'}))
+    tools = MCPTools([session.math_server_params(), python], frozenset({'calculate', 'statistics', 'run_python'}))
     tools.connect()
     records = []
     try:

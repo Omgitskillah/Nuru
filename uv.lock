@@ -838,12 +838,16 @@ version = "0.1.0"
 source = { editable = "servers/laya" }
 dependencies = [
     { name = "access-logging" },
-    { name = "laya" },
     { name = "mcp" },
     { name = "obsidian-mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+model = [
+    { name = "laya" },
 ]
 
 [package.dev-dependencies]
@@ -854,13 +858,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "access-logging", directory = "servers/obsidian/vendor/access-logging" },
-    { name = "laya", specifier = "==0.3.21" },
+    { name = "laya", marker = "extra == 'model'", specifier = "==0.3.21" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "obsidian-mcp", editable = "servers/obsidian" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
+provides-extras = ["model"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]

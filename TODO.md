@@ -59,6 +59,8 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 - [ ] **F7** Calibrate `note_type`.
 - [ ] **F8** Fix model habits: false "done" claims, mixing up created and appended, moving notes out of the archive.
 - [ ] **F9** A reply with text before and after a tool call glues the pieces without a space, sometimes repeating the answer (1 turn in 5 to 1 in 8 in the WP01 live lane runs, direct and plugin alike). Seen in `nuru/evals/obsidian_remote/results-2026-10-11-m5/live-runs.jsonl.gz`.
+- [ ] **F10** Remove Laya's remaining code. Since its `laya` dependency became the optional `model` extra (about 720 MB, mostly torch), what's left is kilobytes and never runs while every Laya point is `off`. That covers `servers/laya` (server, predictor, decisions, question sets), Laya's hooks in `core/decision_shadow.py`, `core/label_cli.py` (`nuru label`/`export`), the Laya thresholds in `config/decision_layer.yaml`, and the Laya-only scripts in `nuru/evals/decision_layer/`. First move what the session uses with Laya off into `core`: `checks.check_write` (write_checks), the watch, step-cap and tier settings, and the decision log. **Done when:** `laya_mcp` is gone and write_checks, watch_thinking and step_cap behave the same.
+- [ ] **F11** Remove the Opus expert planner (`core/expert.py`, `ExpertSettings`, the expert columns of the decision log) if it stays off. It has been off since 2026-10-05 (`at_step_cap: false`); see F4.
 
 ## Standing reminders (R)
 

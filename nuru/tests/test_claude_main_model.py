@@ -5,7 +5,7 @@ provider is faked."""
 import json
 
 import anthropic
-import httpx
+import httpx2
 import pytest
 import requests
 
@@ -151,7 +151,7 @@ def test_every_request_is_logged_locally_with_what_was_sent_and_the_usage(fake, 
 
 
 def test_an_api_error_is_a_request_exception_and_is_logged(fake, tmp_path, monkeypatch):
-    error = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    error = anthropic.APIConnectionError(request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
 
     def failing(**request):
         raise error

@@ -6,8 +6,10 @@ The split of work: **Laya returns probabilities, the config and the code own the
 
 ## Setup
 
+Laya is off on main, so a plain `uv sync` leaves its model runtime out. To run it:
+
 ```bash
-uv sync
+uv sync --all-extras              # adds the `model` extra: laya, with torch (~720 MB)
 uv run laya-mcp-fetch             # once: downloads the pinned checkpoints (~1.5 GB)
 uv run laya-mcp                   # stdio server; Nuru starts it itself
 ```
@@ -94,7 +96,7 @@ Laya runs in this process on this machine. Nothing here calls a network service 
 
 ## Dependencies
 
-- **`laya`** (0.3.21, pinned; Apache-2.0) - the decision model runtime. Installed without extras: its `mcp`, `serve`, LangChain/LangGraph, CrewAI and LlamaIndex extras are not used. It brings, and cannot run without:
+- **`laya`** (0.3.21, pinned; Apache-2.0), in the optional `model` extra - the decision model runtime. Installed without its own extras: its `mcp`, `serve`, LangChain/LangGraph, CrewAI and LlamaIndex extras are not used. It brings, and cannot run without:
   - **`torch`** (~560 MB) - runs the model. There is no torch-free path: `laya.common` imports torch at module level, so even Laya's ONNX runtime needs it.
   - **`transformers`** (~58 MB) - the ModernBERT / mmBERT encoders and their tokenizers (with **`tokenizers`**).
   - **`safetensors`** - reads the weights without executing any code in them.

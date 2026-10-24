@@ -1,6 +1,6 @@
 # nuru
 
-A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal CLI (`nuru-cli`) or a desktop window (`nuru-ui`). Type a line, hit enter, and it's sent straight to the model; the reply streams back live - prefixed with `[nuru]` in the CLI, drawn as markdown in the UI.
+A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal CLI (`nuru-cli`) or the Obsidian plugin's service (`nuru-serve`). Type a line, hit enter, and it's sent straight to the model; the reply streams back live, prefixed with `[nuru]` in the CLI.
 
 ## Setup
 
@@ -59,12 +59,11 @@ A missing or unsupported profile fails with a named error instead of sending an 
 
 `core.providers.ollama.create_model(model, base_model, modelfile_path)` resolves the shared SYSTEM text and `__BASE_MODEL__`, validates tool references, and runs `ollama create` with a temporary rendered file. `Session.start()` calls this on every startup before connecting to any MCP server. Eval manifests include the rendered Modelfile's hash, so edits to the shared source change the recorded prompt identity.
 
-Install dependencies and run either front end:
+Install dependencies and run the CLI:
 
 ```bash
 uv sync
-uv run nuru-cli   # in the terminal
-uv run nuru-ui    # in a window
+uv run nuru-cli
 ```
 
 (`nuru-cli` is what `nuru` used to be called.)
@@ -137,24 +136,9 @@ Anything you type that isn't one of the commands below is sent to the model as a
 
 Ctrl-D (EOF) exits the loop without unloading the model or stopping the server - use `/exit` (or one of its aliases) for a clean shutdown. Ctrl-C is not currently handled and will raise a `KeyboardInterrupt` traceback.
 
-## Desktop UI
-
-`uv run nuru-ui` opens the same chat in a window (PyQt6). It runs on the same `core.session` as the CLI - same model, tools, history and logging - so only the display differs.
-
-- **One bubble per reply.** Where the CLI prints `[nuru]`, `[thinking]` and `[tool]` labels, the UI keeps a whole turn in a single reply bubble and separates its pieces with markdown breaks (`---`). Your own message stays in its own bubble.
-- **Nuru's working folds away.** A small card above each reply says "Thinking…" while it streams, with its working listed under it as it happens: the tool calls first, kept together however they arrived - `tool: ` then the name and arguments, cut off at 80 characters - and below them `thinking: ` and what the model reasoned, wrapped in full. When the reply lands the card shuts itself and says what was done ("Used 2 tools", or "Thought about it" when no tool was called); clicking the line opens it again. A reply with no working behind it loses the card altogether.
-- **Starting up.** The window opens straight away with the lantern rocking beside "Starting Nuru…" and no input box. Building the model, connecting the MCP servers and loading the model happen in the background; when they finish, the lantern settles, the greeting replaces the loading text, and the input box appears. If that fails, the reason is shown in the window and the input stays off.
-- **Stop.** The send button becomes a stop button while a reply streams. Stopping keeps what had been said so far as the reply, both in the window and in the saved history.
-- **Closing the window** is `/exit`: it unloads all models and stops the Ollama server if the UI started it.
-- There are no slash commands and no context-usage indicator; those are CLI only.
-
-The app icon is the same lantern, centred on a white tile shaped the way macOS shapes app icons - a rounded square filling 824 of the 1024-point canvas - so it doesn't disappear into a dark Dock.
-
-Links in a reply only open if they go to a web page (`http`, `https`) or a mail client (`mailto`).
-
 ## Module reference
 
-`core.session` - what the CLI and the UI share, with no dependency on either:
+`core.session` - what the CLI and `nuru-serve` share, with no dependency on either:
 
 - **`Session.start()`** - Builds the custom model, connects the MCP servers, opens the log and the database, loads the model, and returns the `Session`. If a later step fails, whatever was already opened is closed again.
 - **`session.ask(text, cancel=None)`** - A generator for one turn. Yields `Text` chunks of the reply, a `Thinking` for what each model call reasoned (once that call is done, so it follows the text it was reasoning towards) and a `ToolCall` for each tool the model calls (before it runs), then a `Failure` if the turn couldn't be completed (an oversized message, or a failed request - a failed initial admission is not saved; a context-budget failure after a turn starts preserves its request and limitation). Setting the `threading.Event` passed as `cancel` stops the turn at the next chunk, or once a running tool call returns, and keeps what was said so far as the reply.
@@ -172,8 +156,6 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 
 `core.planner` - [plan mode](#plan-mode-a-test): the planner prompt and schema, `check_plan`, and `make_plan`.
 
-`core.reply_markdown` - Qt-free helpers for the UI: `Reply` folds a turn's events into one markdown document, and `split_fences` separates fenced code from the prose around it.
-
 `core.providers.ollama` - a thin client for Ollama's REST API, with no dependency on the CLI:
 
 - **`create_model(model, base_model, modelfile_path)`** - Renders `modelfile_path`'s `__BASE_MODEL__` placeholder to `base_model` and runs `ollama create model -f <rendered file>`. Safe to call every startup - `ollama create` overwrites an existing model of the same name.
@@ -190,7 +172,7 @@ Links in a reply only open if they go to a web page (`http`, `https`) or a mail 
 uv run pytest
 ```
 
-No live Ollama server is required - the tests fake out `requests` so they run standalone. The UI tests run headless on Qt's `offscreen` platform (no display needed); if the machine's Qt libraries can't be loaded, that file is skipped rather than failed. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.
+No live Ollama server is required - the tests fake out `requests` so they run standalone. See the [servers README](../servers/README.md) for the pattern this repo generally follows for organizing and testing standalone apps like this one.
 
 
 ## Validated tool dispatch and uncertain writes
@@ -215,8 +197,7 @@ After stopping other sessions on the vault and inspecting its actual state, use
 `/writes` in the CLI to inspect pending attempts, then `/resolve-write ID completed`
 or `/resolve-write ID not_completed` to record a verified conclusion. Neither command
 executes a write; the model cannot resolve attempts. Leave uncertainty unresolved if
-you cannot establish what happened. The UI also offers reconciliation through its
-Pending writes dialog while idle. Separate conversation databases do not share the
+you cannot establish what happened. Separate conversation databases do not share the
 journal; canonical authorization and target provenance remain the next work package.
 See [PR 3 findings](evals/validated-dispatch-pr3-2026-10-06.md) for coverage and limits.
 

@@ -2,7 +2,7 @@
 
 A `Session` brings up the model and its MCP tools, runs one turn at a time (streaming the
 reply, running the tool calls the model makes, logging and saving as it goes) and shuts it all
-down again. A turn is a generator of events, so cli.py prints them and ui.py renders them.
+down again. A turn is a generator of events, so cli.py prints them and the service streams them.
 """
 
 import json

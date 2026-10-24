@@ -9,7 +9,7 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 
 | File | Read by | Holds |
 |---|---|---|
-| `.env.nuru` | Nuru (CLI, UI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`, or `NURU_MAIN_MODEL` for Claude), context size |
+| `.env.nuru` | Nuru (`nuru-serve`, CLI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`, or `NURU_MAIN_MODEL` for Claude), context size |
 | `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
 | `.env.deep-think` | deep-think (`write_plan`), Nuru's expert tier, and Claude as the main model ([claude-access](packages/claude-access)) | `CLAUDE_API_KEY` |
 
@@ -21,7 +21,7 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 
 | Path | Written by | What it holds | Override |
 |---|---|---|---|
-| `nuru/.db/conversation.db` | Nuru (CLI and UI) | Every conversation and message | `NURU_DB_PATH` |
+| `nuru/.db/conversation.db` | Nuru (`nuru-serve` and CLI) | Every conversation and message | `NURU_DB_PATH` |
 | `nuru/.db/decisions.sqlite3` (+ `-wal`, `-shm`) | laya-mcp and Nuru's harness | Laya's decisions with their state text, the tools the harness ran, labels, the classify cache | `database` in [`config/decision_layer.yaml`](config/decision_layer.yaml) |
 | `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes. With Claude as the main model, also `claude-requests-<date>.jsonl`: every request whole, as sent (the notes it carried included), with its usage | `NURU_LOG_DIR` |
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |

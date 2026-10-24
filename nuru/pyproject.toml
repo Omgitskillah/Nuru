@@ -1,7 +1,7 @@
 [project]
 name = "core"
 version = "0.1.0"
-description = "Terminal CLI and desktop UI for chatting with a local Ollama model."
+description = "Nuru: the chat service the Obsidian plugin talks to, and a terminal CLI."
 readme = "README.md"
 requires-python = ">=3.14.7"
 dependencies = [
@@ -10,7 +10,6 @@ dependencies = [
     "mcp>=2.2.0",
     "jsonschema>=4.26.0",
     "anyio>=4",
-    "PyQt6>=6.11.0",
     "obsidian-mcp",
     "laya-mcp",
     "claude-access",
@@ -18,7 +17,6 @@ dependencies = [
 
 [project.scripts]
 nuru-cli = "core.cli:main"
-nuru-ui = "core.ui:main"
 nuru = "core.label_cli:main"
 nuru-vault-links = "core.vault_link_auditor:main"
 nuru-vault-steward = "core.vault_steward:main"

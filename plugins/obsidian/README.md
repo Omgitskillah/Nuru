@@ -50,7 +50,7 @@ Needs only desktop Obsidian, on Windows or macOS.
    - It installs them into `~/.nuru/app/<version>/<n>/`, then installs Python and Nuru's packages there.
    - It switches `~/.nuru/install.json` to the new install only once that install starts.
 3. **Ollama**, in the same settings, says whether Ollama is running and has the models Nuru needs.
-   - Those are the chosen chat model (`granite4.2:3b` unless changed) and `nomic-embed-text:v1.5`, for search.
+   - Those are the chosen chat model (`qwen3.5:4b` unless changed) and `nomic-embed-text:v1.5`, for search.
    - **Download** fetches missing models through Ollama.
    - Ollama itself comes from https://ollama.com/download.
 4. **Repair** in the same place installs again, beside the install in use.

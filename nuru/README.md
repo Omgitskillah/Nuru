@@ -7,7 +7,7 @@ A chat app backed by a local [Ollama](https://ollama.com) model, as a terminal C
 Requires [Ollama](https://ollama.com) installed (`ollama` on your `PATH`) and at least one model pulled, e.g.:
 
 ```bash
-ollama pull granite4.2:3b
+ollama pull qwen3.5:4b
 ```
 
 Nuru's settings live in `.env.nuru` in the repo root (see [Settings](../README.md#settings)). From the root, copy the template and adjust if you want a different default model:
@@ -17,8 +17,8 @@ cp .env.nuru.example .env.nuru
 ```
 
 ```
-NURU_BASE_MODEL=granite4.2:3b
-# NURU_BASE_MODEL=qwen3.5:4b
+NURU_BASE_MODEL=qwen3.5:4b
+# NURU_BASE_MODEL=granite4.2:3b
 MODEL=nuru
 ```
 

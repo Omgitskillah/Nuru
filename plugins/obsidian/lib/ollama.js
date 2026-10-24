@@ -9,7 +9,7 @@ const OLLAMA = "http://127.0.0.1:11434";
 const DOWNLOAD = "https://ollama.com/download";
 // Nuru's own defaults, for an install with no .env.nuru: core/session.py's BASE_MODEL, and the notes
 // server's embedding model (servers/obsidian semantic.py's DEFAULT_MODEL), which every install needs.
-const CHAT_MODEL = "granite4.2:3b";
+const CHAT_MODEL = "qwen3.5:4b";
 const EMBEDDING_MODEL = "nomic-embed-text:v1.5";
 
 // "name" and "name:latest" are one model to Ollama.

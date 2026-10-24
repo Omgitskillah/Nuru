@@ -211,14 +211,14 @@ test("missing models download through Ollama with progress, then the check runs 
   settingTab.display();
   await settingTab.ollamaChecked;
   const ollama = row(settingTab, "Ollama");
-  assert.match(ollama.textContent, /doesn't have granite4\.2:3b and nomic-embed-text:v1\.5 yet: click Download/);
+  assert.match(ollama.textContent, /doesn't have qwen3\.5:4b and nomic-embed-text:v1\.5 yet: click Download/);
   const download = [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download");
   assert.equal(download.disabled, false);
 
   download.click();
   await until(() => /has the models Nuru needs/.test(ollama.textContent));
 
-  assert.deepEqual(settingTab.ollama.pulled, ["granite4.2:3b", "nomic-embed-text:v1.5"]);
+  assert.deepEqual(settingTab.ollama.pulled, ["qwen3.5:4b", "nomic-embed-text:v1.5"]);
   assert.equal(download.disabled, true);
 });
 

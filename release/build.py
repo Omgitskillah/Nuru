@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def git(root: Path, *args: str) -> bytes:
-    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
+    # The files as committed: a machine's core.autocrlf (on in Windows' git) would turn \n into \r\n.
+    return subprocess.run(["git", "-c", "core.autocrlf=false", *args], cwd=root, check=True, capture_output=True).stdout
 
 
 def versions(root: Path) -> dict[str, str]:

@@ -1005,6 +1005,21 @@ def test_a_release_install_runs_its_prebuilt_calculator_and_never_asks_for_rust(
     assert all(p.command != "cargo" for p in seen["params"])
 
 
+def test_on_a_computer_with_no_released_calculator_nuru_says_so_and_windows_on_arm_uses_x64(monkeypatch, tmp_path):
+    binary = tmp_path / "math-mcp"
+    binary.write_bytes(b"x64 calculator")
+    monkeypatch.setattr(session, "MATH_BINARY", binary)
+    monkeypatch.setattr(session, "DEPENDENCIES", tmp_path / "dependencies.json")
+    session.DEPENDENCIES.write_text(json.dumps({"math-mcp": {"version": "v1.0.0", "systems": {
+        "win32-x64": {"sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}}}}), encoding="utf-8")
+    monkeypatch.setattr(session, "this_system", lambda: "win32-arm64")
+    assert session.math_server_params().command == str(binary)
+    monkeypatch.setattr(session, "this_system", lambda: "linux-x64")
+    with pytest.raises(RuntimeError, match=r"no calculator for this computer \(linux-x64\)") as refused:
+        session.math_server_params()
+    assert "install Nuru again" not in str(refused.value)
+
+
 def test_the_pinned_calculator_release_covers_every_system_nuru_ships_on():
     """release/dependencies.json, which the session and the plugin's setup read: each system's asset and
     its sha256 from the release's SHA256SUMS."""

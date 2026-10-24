@@ -1,0 +1,67 @@
+name: Release
+
+# A version tag (0.1.0) publishes Nuru: the Obsidian plugin's files, which BRAT installs, and the Nuru
+# bundle the plugin's setup downloads (release/build.py). The tag must be the plugin's and Nuru's version.
+# A pull request that changes how a release is built does everything but publish.
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'release/**', 'plugins/obsidian/build.js', 'plugins/obsidian/package*.json']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: plugins/obsidian/package-lock.json
+
+      - name: Build the plugin
+        working-directory: plugins/obsidian
+        run: npm ci && npm run build
+
+      - name: Build the bundle and checksums
+        run: |
+          version="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          version="${version:-$(jq -r .version plugins/obsidian/manifest.json)}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          mkdir out && cp plugins/obsidian/dist/{main.js,manifest.json,styles.css} out/
+          python3 release/build.py "$version" out
+          cat out/SHA256SUMS
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+
+      # The bundle on its own, as the setup installs it: every file Nuru needs is in it.
+      - name: The bundle installs and starts
+        run: |
+          (cd out && sha256sum --check SHA256SUMS)
+          unzip -q "out/nuru-$VERSION.zip" -d "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/nuru-$VERSION"
+          test ! -e .git
+          uv sync --locked
+          uv run --locked nuru-serve --help
+
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" out/* --title "Nuru $VERSION" --notes-file release/NOTES.md

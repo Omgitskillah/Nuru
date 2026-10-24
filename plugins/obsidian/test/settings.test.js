@@ -35,7 +35,23 @@ function tab({ connect, running = false } = {}) {
       { id: "anthropic:claude-haiku-5-5", label: "Claude Haiku 5.5", cloud: true }] } } })),
   };
   const settingTab = new NuruSettingTab({}, plugin);
+  settingTab.ollama = fakeOllama();
   return { settingTab, nuru, home, restarts, reconnects };
+}
+
+// Stands in for lib/ollama.js: `have` are the models it has, null when Ollama isn't running.
+function fakeOllama({ have = ["qwen3.5:4b", "nomic-embed-text:v1.5"], pull } = {}) {
+  const real = require("../lib/ollama");
+  const fake = {
+    ...real, have, asked: [], pulled: [],
+    check: async (needed) => {
+      fake.asked.push(needed);
+      return fake.have ? { running: true, version: "0.40.4", missing: needed.filter((m) => !fake.have.includes(m)) }
+        : { running: false, version: null, missing: needed };
+    },
+    pull: pull || (async (name, onProgress) => { onProgress(`${name}: pulling 50%`); fake.pulled.push(name); fake.have.push(name); }),
+  };
+  return fake;
 }
 
 const row = (settingTab, name) => [...settingTab.containerEl.children].find((el) => el.firstChild?.textContent === name);
@@ -176,4 +192,63 @@ test("what went wrong in a setup, or in the restart after it, is said in the tab
     row(settingTab, "Repair or update Nuru").querySelector("button").click();
     await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
   }
+});
+
+test("Ollama with the chosen model and the embedding model says so, and Download stays off", async () => {
+  const { settingTab } = tab();
+  settingTab.display();
+  await settingTab.ollamaChecked;
+  const ollama = row(settingTab, "Ollama");
+  assert.match(ollama.textContent, /Ollama 0\.40\.4 has the models Nuru needs: qwen3\.5:4b and nomic-embed-text:v1\.5\./);
+  assert.deepEqual(settingTab.ollama.asked, [["qwen3.5:4b", "nomic-embed-text:v1.5"]]);
+  assert.equal([...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download").disabled, true);
+});
+
+test("missing models download through Ollama with progress, then the check runs again", async () => {
+  const { settingTab, home } = tab();
+  fs.rmSync(path.join(home, ".nuru", "install.json")); // not set up: Nuru's default chat model
+  settingTab.ollama = fakeOllama({ have: [] });
+  settingTab.display();
+  await settingTab.ollamaChecked;
+  const ollama = row(settingTab, "Ollama");
+  assert.match(ollama.textContent, /doesn't have granite4\.2:3b and nomic-embed-text:v1\.5 yet: click Download/);
+  const download = [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download");
+  assert.equal(download.disabled, false);
+
+  download.click();
+  await until(() => /has the models Nuru needs/.test(ollama.textContent));
+
+  assert.deepEqual(settingTab.ollama.pulled, ["granite4.2:3b", "nomic-embed-text:v1.5"]);
+  assert.equal(download.disabled, true);
+});
+
+test("with Claude as the default only the embedding model is needed, and a stopped Ollama is explained", async () => {
+  const { settingTab, nuru } = tab();
+  fs.writeFileSync(path.join(nuru, ".env.nuru"), "NURU_MAIN_MODEL=anthropic:claude-haiku-5-5\n");
+  settingTab.ollama = fakeOllama({ have: null });
+  settingTab.display();
+  await settingTab.ollamaChecked;
+  assert.deepEqual(settingTab.ollama.asked, [["nomic-embed-text:v1.5"]]);
+  assert.match(row(settingTab, "Ollama").textContent,
+    /Ollama isn't running\. Install it from https:\/\/ollama\.com\/download, open it, then click Check\./);
+
+  settingTab.ollama.have = ["nomic-embed-text:v1.5"];
+  [...row(settingTab, "Ollama").querySelectorAll("button")].find((b) => b.textContent === "Check").click();
+  await until(() => /has the models Nuru needs: nomic-embed-text:v1\.5\./.test(row(settingTab, "Ollama").textContent));
+});
+
+test("a failed download or check is said, and Download can be tried again", async () => {
+  const { settingTab } = tab();
+  settingTab.ollama = fakeOllama({ have: ["nomic-embed-text:v1.5"], pull: async () => { throw new Error("no space left"); } });
+  settingTab.display();
+  await settingTab.ollamaChecked;
+  const ollama = row(settingTab, "Ollama");
+  const download = [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download");
+  download.click();
+  await until(() => /Downloading failed: no space left/.test(ollama.textContent));
+  assert.equal(download.disabled, false);
+
+  settingTab.ollama.check = async () => { throw new Error("Ollama answered 500"); };
+  [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Check").click();
+  await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(ollama.textContent));
 });

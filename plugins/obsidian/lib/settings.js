@@ -8,6 +8,7 @@ const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
 const { RELEASE, SetupProblem, setUp } = require("./setup");
+const ollama = require("./ollama");
 
 const { PluginSettingTab, Setting } = obsidian;
 
@@ -31,6 +32,7 @@ class NuruSettingTab extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
     this.setUp = setUp;
+    this.ollama = ollama;
     this.setupNews = "";
   }
 
@@ -105,6 +107,46 @@ class NuruSettingTab extends PluginSettingTab {
     }));
   }
 
+  // Ollama and the models Nuru needs from it: the chat model (none when Claude is the default) and the
+  // notes' embedding model. Missing models download through Ollama; Ollama itself, from its installer.
+  displayOllama(containerEl, chatModel) {
+    const needed = [chatModel, this.ollama.EMBEDDING_MODEL].filter(Boolean);
+    const row = new Setting(containerEl).setName("Ollama");
+    const say = (text) => row.setDesc(text);
+    let missing = [];
+    const check = async () => {
+      say("Checking…");
+      try {
+        const found = await this.ollama.check(needed);
+        missing = found.missing;
+        download.setDisabled(!found.running || !missing.length);
+        if (!found.running) {
+          say(`Ollama isn't running. Install it from ${this.ollama.DOWNLOAD}, open it, then click Check.`);
+        } else {
+          say(missing.length ? `Ollama ${found.version} is running, but doesn't have ${missing.join(" and ")} yet: click Download (a few GB).`
+            : `Ollama ${found.version} has the models Nuru needs: ${needed.join(" and ")}.`);
+        }
+      } catch (error) {
+        say(`Couldn't ask Ollama about its models: ${error.message}`);
+      }
+    };
+    let download;
+    row.addButton((button) => button.setButtonText("Check").onClick(check));
+    row.addButton((button) => {
+      download = button.setButtonText("Download").setDisabled(true).onClick(async () => {
+        download.setDisabled(true);
+        try {
+          for (const name of missing) await this.ollama.pull(name, say);
+          await check();
+        } catch (error) {
+          say(`Downloading failed: ${error.message}`);
+          download.setDisabled(false);
+        }
+      });
+    });
+    this.ollamaChecked = check();
+  }
+
   // Nuru's settings, read from and written to its env files; Nuru reads them when it starts.
   displayNuru(containerEl) {
     new Setting(containerEl).setName("Nuru").setHeading();
@@ -113,9 +155,12 @@ class NuruSettingTab extends PluginSettingTab {
       settings = new NuruSettings(readInstall(this.plugin.launcher.home).nuru);
     } catch {
       this.displaySetup(containerEl, false);
+      this.displayOllama(containerEl, ollama.CHAT_MODEL);
       return;
     }
     this.displaySetup(containerEl, true);
+    const chosen = settings.defaultModel() || ollama.CHAT_MODEL;
+    this.displayOllama(containerEl, chosen.startsWith("anthropic:") ? null : chosen);
     const overridden = (key) => {
       const name = settings.overridden(key);
       return name ? ` Obsidian's environment sets ${name}, which Nuru uses instead.` : "";

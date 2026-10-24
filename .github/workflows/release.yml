@@ -48,7 +48,7 @@ jobs:
           python3 release/build.py bundle "$version" out
           (cd plugins/obsidian && NURU_BUNDLE="$GITHUB_WORKSPACE/out/nuru-$version.zip" npm run build)
           cp plugins/obsidian/dist/{main.js,manifest.json,styles.css} out/
-          grep -q "nuru-$version.zip" out/main.js
+          grep -q "$(sha256sum "out/nuru-$version.zip" | cut -c1-64)" out/main.js  # the bundle digest Set up Nuru checks
           python3 release/build.py checksums out
           cat out/SHA256SUMS
 

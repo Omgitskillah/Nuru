@@ -93,15 +93,33 @@ function lastLines(text, n = 5) {
   return text.trimEnd().split(/\r?\n/).slice(-n).join("\n");
 }
 
-// One setup at a time, across Obsidian windows: a lock file naming the process holding it. A lock left
-// by a process that has gone (Obsidian quit mid-setup) is taken over.
+// One setup at a time, across Obsidian windows. Each setup adds its own entry to ~/.nuru/setup-locks/,
+// named after its process, and goes on only if no other live entry is there; otherwise it removes its
+// own and stops. Of two setups starting together, at least the second to look sees the first, so two
+// never both go on. An entry is only ever removed by its own setup, or once its process has ended or it
+// is older than any setup runs (Obsidian quit mid-setup): never another live setup's.
+const LOCK_MS = 2 * 60 * 60 * 1000; // downloads stop at 10 minutes each, uv at 20
+
 function lock(dir) {
-  const file = path.join(dir, "setup.lock");
-  const holder = Number(fs.existsSync(file) && fs.readFileSync(file, "utf8"));
-  if (holder > 0 && alive(holder)) throw new SetupProblem("Nuru is already being set up, in another Obsidian window.");
-  fs.rmSync(file, { force: true });
-  fs.writeFileSync(file, String(process.pid), { flag: "wx" });
-  return () => fs.rmSync(file, { force: true });
+  const locks = path.join(dir, "setup-locks");
+  fs.mkdirSync(locks, { recursive: true });
+  const mine = path.join(locks, `${process.pid}-${crypto.randomUUID()}`);
+  fs.writeFileSync(mine, "", { flag: "wx" });
+  const others = fs.readdirSync(locks).map((name) => path.join(locks, name)).filter((entry) => entry !== mine && !ended(entry));
+  if (others.length) {
+    fs.rmSync(mine, { force: true });
+    throw new SetupProblem("Nuru is already being set up, in another Obsidian window.");
+  }
+  return () => fs.rmSync(mine, { force: true });
+}
+
+// Whether a lock entry's setup has ended, removing the entry if so.
+function ended(entry) {
+  const pid = Number(path.basename(entry).split("-")[0]);
+  const stat = fs.statSync(entry, { throwIfNoEntry: false });
+  if (stat && Date.now() - stat.mtimeMs < LOCK_MS && pid > 0 && alive(pid)) return false;
+  fs.rmSync(entry, { force: true });
+  return true;
 }
 
 function alive(pid) {
@@ -131,12 +149,12 @@ function newGeneration(versionDir) {
   return dir;
 }
 
-// install.json, replaced in one rename after its contents are on disk.
-function switchInstall(file, record) {
+// install.json, replaced in one rename after its contents (`text`) are on disk.
+function switchInstall(file, text) {
   const temporary = `${file}.tmp`;
   const fd = fs.openSync(temporary, "w", 0o600);
   try {
-    fs.writeSync(fd, `${JSON.stringify(record, null, 2)}\n`);
+    fs.writeSync(fd, text);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -198,6 +216,7 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
     writeEntries([{ parts: [path.basename(calculatorFile)], executable: true, data: calculator }], path.dirname(calculatorFile));
     const installFile = path.join(nuruDir, "install.json");
     const previous = previousInstall(installFile);
+    const previousText = previous && fs.readFileSync(installFile, "utf8");
     for (const name of previous ? fs.readdirSync(previous).filter((n) => ENV_FILE.test(n)) : []) {
       fs.copyFileSync(path.join(previous, name), path.join(generation, name), fs.constants.COPYFILE_EXCL);
     }
@@ -216,15 +235,21 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
       throw new SetupProblem("The calculator changed after it was saved: an antivirus program may have removed or altered it.");
     }
 
-    switchInstall(installFile, { nuru: generation, uv, version: release.version });
+    switchInstall(installFile, `${JSON.stringify({ nuru: generation, uv, version: release.version }, null, 2)}\n`);
     const installed = generation;
     generation = null;
     prune(appDir, [installed, ...(previous ? [previous] : [])]);
-    return { version: release.version, nuru: installed };
+    return { version: release.version, nuru: installed, previous: previousText };
   } finally {
     if (generation) fs.rmSync(generation, { recursive: true, force: true, maxRetries: 2 });
     unlock();
   }
 }
 
-module.exports = { HOSTS, RELEASE, SetupProblem, download, run, setUp, thisSystem };
+// Puts back the install.json a setup replaced (setUp's `previous`), for when the new install doesn't
+// start: the previous generation is still there, kept as the rollback.
+function restoreInstall(home, previous) {
+  switchInstall(path.join(home, ".nuru", "install.json"), previous);
+}
+
+module.exports = { HOSTS, RELEASE, SetupProblem, download, lock, restoreInstall, run, setUp, thisSystem };

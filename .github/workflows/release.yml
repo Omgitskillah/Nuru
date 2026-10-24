@@ -36,7 +36,7 @@ jobs:
 
       - name: Build the plugin
         working-directory: plugins/obsidian
-        run: npm ci && npm run build
+        run: npm ci && npm audit --audit-level=high && npm run build
 
       - name: Build the bundle and checksums
         run: |

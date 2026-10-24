@@ -24,6 +24,9 @@ MAX_DEVICE_RECORDS = 20_000
 PER_DEVICE_PER_MINUTE = 60
 MAX_IN_FLIGHT = 8
 RECEIPT_DAYS = 30
+# Publishing pins directories by descriptor (dir_fd), which Windows lacks: there no capture is accepted,
+# and one left pending by another computer (a moved database) is left as it is and reported unavailable.
+_WINDOWS = os.name == "nt"
 
 
 class CaptureError(Exception):
@@ -64,8 +67,8 @@ class CaptureWriter:
     def _probe_links(self) -> None:
         if self._link_available is not None:
             return
-        if os.name == "nt":  # publishing pins directories by descriptor (dir_fd), which Windows lacks:
-            self._link_available = False  # no capture is accepted, so none is ever left to recover
+        if _WINDOWS:
+            self._link_available = False
             return
         name = f".nuru-link-probe-{secrets.token_hex(8)}"
         stage = name + ".tmp"
@@ -219,7 +222,7 @@ class CaptureWriter:
     def recover(self) -> None:
         with self.lock:
             self._probe_links()
-            for key in self.store.pending_captures():
+            for key in [] if _WINDOWS else self.store.pending_captures():
                 with self.store.transaction():
                     record = self._reconcile(key, self.store.capture(key))
                 if record["state"] == "completed":
@@ -235,6 +238,8 @@ class CaptureWriter:
             if record is None:
                 raise CaptureError(404, "not_found")
             state = record["state"]
+            if _WINDOWS and state not in {"completed", "gone"}:
+                raise CaptureError(503, "capture_unavailable")
             if state == "staging":
                 state = "running" if key in self._active else "accepted"
             body = {"v": 1, "request_id": request_id, "state": state}

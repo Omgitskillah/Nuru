@@ -89,6 +89,15 @@ def test_adopting_moves_the_old_history_and_keeps_the_old_files(legacy, vault_uu
     store.close()
 
 
+def test_on_windows_it_refuses_and_leaves_the_old_files(legacy, vault_uuid, tmp_path, monkeypatch):
+    monkeypatch.setattr(vault_data, "_WINDOWS", True)
+    before = {path: path.read_bytes() for path in legacy.iterdir()}
+    with pytest.raises(vault_data.MigrationError, match="Windows"):
+        vault_data.adopt_legacy(vault_uuid)
+    assert {path: path.read_bytes() for path in legacy.iterdir()} == before
+    assert not (tmp_path / "vaults" / vault_uuid / "migration.json").exists()
+
+
 def test_it_refuses_while_nuru_is_running(legacy, vault_uuid):
     holder = _lock(legacy / "service.db.lock")
     try:

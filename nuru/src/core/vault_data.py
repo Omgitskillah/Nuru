@@ -31,6 +31,7 @@ LEGACY_ROOT = Path(__file__).resolve().parents[2]  # the nuru/ folder
 LEGACY_DB = LEGACY_ROOT / ".db"
 LEGACY_LOGS = LEGACY_ROOT / ".logs"
 DB_FILES = ("conversation.db", "service.db")
+_WINDOWS = os.name == "nt"
 LEGACY_SUFFIX = ".pre-wp04"
 
 
@@ -273,6 +274,8 @@ def adopt_legacy(vault_uuid: str) -> dict:
     safely, with the old layout still working."""
     from core.service.store import ServiceBusy, _lock
 
+    if _WINDOWS:  # it renames db/ while holding a lock file inside, which Windows refuses
+        raise MigrationError("moving history from before WP04 isn't supported on Windows; the old files are untouched")
     legacy_db = LEGACY_DB  # read now, so tests can point it elsewhere
     directory = data_dir(vault_uuid)
     with _migration_lock(0):

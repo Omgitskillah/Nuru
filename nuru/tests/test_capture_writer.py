@@ -28,6 +28,24 @@ def writer(tmp_path):
     store.close()
 
 
+def test_on_windows_a_capture_left_pending_elsewhere_is_left_alone_and_reported_unavailable(writer, monkeypatch):
+    """A service database moved from a Mac with a capture still pending: Windows can't publish it."""
+    key = remote_contract.capture_key("phone", "vault-test", "phone-capture-0001")
+    with writer.store.transaction():
+        writer.store.add_capture(key, "phone", "vault-test", "phone-capture-0001", remote_contract.capture_hash("idea"),
+                                 "01JUID", "Inbox/01JUID.md", "0" * 64, legacy=False)
+        writer.store.set_capture(key, "staging")
+    monkeypatch.setattr(capture, "_WINDOWS", True)
+    writer.recover()
+    assert writer.store.capture(key)["state"] == "staging"
+    assert not (writer.vault / "Inbox").exists()
+    for call in (lambda: writer.status("phone", "phone-capture-0001"),
+                 lambda: writer.create("phone", {"request_id": "phone-capture-0001", "content": "idea"})):
+        with pytest.raises(CaptureError) as error:
+            call()
+        assert (error.value.status, error.value.code) == (503, "capture_unavailable")
+
+
 def test_parallel_retries_and_body_fidelity(writer):
     payload = {"request_id": "phone-capture-0001", "content": "# idea\r\n'quoted' ☃\n---\n"}
     with ThreadPoolExecutor(max_workers=32) as pool:

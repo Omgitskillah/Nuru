@@ -84,6 +84,21 @@ test("only model names Ollama itself would write become commands; anything else 
   assert.ok(!shown.join("\n").includes("UNRELATED") && !shown.join("\n").includes("rm -rf"));
 
   fs.writeFileSync(path.join(dir, ".nuru", "added.json"), JSON.stringify({ ollama: "/Users/me/Projects; rm -rf ~", models: [42] }));
-  assert.deepEqual(steps(dir, "darwin"), ["Nuru's record names other models it can't show: see `ollama list` for what to delete"],
-    "an app anywhere but where Nuru installs it isn't named");
+  assert.deepEqual(steps(dir, "darwin"), [], "an app anywhere but where Nuru installs it isn't named, and 42 isn't a model name");
+});
+
+test("a record of another shape reads as nothing, so the steps and new records still work", (t) => {
+  const dir = home(t);
+  fs.mkdirSync(path.join(dir, ".nuru"));
+  const file = path.join(dir, ".nuru", "added.json");
+  for (const text of ['{"models":null}', '{"models":"qwen3.5:4b"}', '{"models":{"a":1}}', '{"ollama":7,"models":[]}', "null", "[]", '"x"', "3"]) {
+    fs.writeFileSync(file, text);
+    assert.deepEqual(added(dir), { ollama: null, models: [] }, text);
+    assert.deepEqual(steps(dir, "darwin"), [], text);
+  }
+  fs.writeFileSync(file, '{"models":["qwen3.5:4b",42,null]}');
+  assert.deepEqual(added(dir).models, ["qwen3.5:4b"], "only the names in a list");
+  fs.writeFileSync(file, '{"models":null}');
+  remember(dir, { model: "qwen3.5:4b" });
+  assert.deepEqual(added(dir), { ollama: null, models: ["qwen3.5:4b"] });
 });

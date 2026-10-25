@@ -480,6 +480,11 @@ test("Remove Nuru asks first, saying which files go and how to remove what Nuru 
   const plain = removable();
   assert.doesNotMatch(openRemove(plain.settingTab), /Nuru doesn't remove other programs/, "no steps when Nuru added nothing to Ollama");
   dialogButton("Cancel").click();
+
+  const malformed = removable();
+  fs.writeFileSync(path.join(malformed.home, ".nuru", "added.json"), '{"models":null}');
+  assert.match(openRemove(malformed.settingTab), /Delete Nuru's files|Remove Nuru/, "a malformed record still opens the dialog");
+  dialogButton("Cancel").click();
 });
 
 test("Keep them removes only the plugin; Delete Nuru's files stops Nuru, deletes them, then removes the plugin, with the steps left", async () => {

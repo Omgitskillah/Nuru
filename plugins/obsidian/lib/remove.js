@@ -11,14 +11,19 @@ const path = require("node:path");
 
 const addedPath = (home) => path.join(home, ".nuru", "added.json");
 
-// {ollama, models}: the Ollama app Nuru installed (its path, or null) and the models it downloaded.
+// {ollama, models}: the Ollama app Nuru installed (its path, or null) and the models it downloaded. The file
+// can be edited, so anything of another shape reads as nothing: a path that isn't a string, models that
+// aren't strings in a list.
 function added(home = os.homedir()) {
+  let record;
   try {
-    const { ollama: app = null, models = [] } = JSON.parse(fs.readFileSync(addedPath(home), "utf8"));
-    return { ollama: app, models };
+    record = JSON.parse(fs.readFileSync(addedPath(home), "utf8"));
   } catch {
-    return { ollama: null, models: [] };
+    record = null;
   }
+  const { ollama, models } = record && typeof record === "object" ? record : {};
+  return { ollama: typeof ollama === "string" ? ollama : null,
+    models: Array.isArray(models) ? models.filter((name) => typeof name === "string") : [] };
 }
 
 // Records that Nuru installed Ollama at `app`, or downloaded `model`.
@@ -38,7 +43,7 @@ const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*(:
 // named only where Nuru installs it on macOS; on Windows, Settings finds it.
 function steps(home = os.homedir(), platform = process.platform) {
   const { ollama, models } = added(home);
-  const names = models.filter((name) => typeof name === "string" && name.length <= 200 && MODEL_NAME.test(name));
+  const names = models.filter((name) => name.length <= 200 && MODEL_NAME.test(name));
   const list = [];
   if (names.length) list.push(`Delete the models Nuru downloaded, in a terminal: ${names.map((name) => `ollama rm ${name}`).join(", then ")}`);
   if (names.length < models.length) list.push("Nuru's record names other models it can't show: see `ollama list` for what to delete");

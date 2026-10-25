@@ -50,14 +50,13 @@ test("check finds Ollama not running when nothing answers, or it doesn't answer 
   assert.deepEqual(await check(["a"], { base, timeoutMs: 100 }), { running: false, version: null, missing: ["a"] });
 });
 
-test("pull streams Ollama's progress, as a share once it knows the size", async (t) => {
+test("pull streams how many bytes of each part Ollama has, and 0 of 0 while it does something else", async (t) => {
   const { base, pulls } = await ollama(t, { pullLines: [{ status: "pulling manifest" },
     { status: "pulling 1a2b", total: 200, completed: 50 }, { status: "pulling 1a2b", total: 200 }, { status: "success" }] });
   const progress = [];
-  await pull("granite4.2:3b", (text) => progress.push(text), { base });
+  await pull("granite4.2:3b", (...bytes) => progress.push(bytes), { base });
   assert.deepEqual(pulls, [{ model: "granite4.2:3b", stream: true }]);
-  assert.deepEqual(progress, ["granite4.2:3b: pulling manifest", "granite4.2:3b: pulling 1a2b 25%",
-    "granite4.2:3b: pulling 1a2b 0%", "granite4.2:3b: success"]);
+  assert.deepEqual(progress, [[0, 0], [50, 200], [0, 200], [0, 0]]);
 });
 
 test("a pull Ollama reports an error in, or answers with a failure, is refused", async (t) => {
@@ -71,8 +70,8 @@ test("a pull Ollama reports an error in, or answers with a failure, is refused",
 test("a pull is done only on Ollama's success line, read even without its final newline", async (t) => {
   const progress = [];
   const unterminated = await ollama(t, { pullLines: [{ status: "pulling manifest" }], tail: '{"status":"success"}' });
-  await pull("m", (text) => progress.push(text), { base: unterminated.base });
-  assert.deepEqual(progress, ["m: pulling manifest", "m: success"]);
+  await pull("m", (...bytes) => progress.push(bytes), { base: unterminated.base });
+  assert.deepEqual(progress, [[0, 0], [0, 0]], "both lines, the last without its newline");
 
   const diskFull = await ollama(t, { pullLines: [{ status: "pulling 1a2b", total: 10, completed: 5 }], tail: '{"error":"disk full"}' });
   await assert.rejects(pull("m", () => {}, { base: diskFull.base }), /^Error: disk full$/);

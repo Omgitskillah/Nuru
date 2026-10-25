@@ -49,3 +49,5 @@
 .nuru-send.nuru-stop, .nuru-send.nuru-stop:hover { background: var(--color-red); color: var(--text-on-accent); }
 .nuru-attachments { display: flex; gap: var(--size-4-1); flex-wrap: wrap; }
 .nuru-chip { display: flex; align-items: center; gap: var(--size-4-1); background: var(--background-secondary); border-radius: var(--radius-s); padding: 0 var(--size-4-1); font-size: var(--font-ui-small); }
+/* Settings: how far a setup step is. */
+.nuru-progress { width: 100%; margin-top: var(--size-4-1); }

@@ -7,7 +7,7 @@ const obsidian = require("obsidian");
 const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
-const { RELEASE, SetupProblem, setUp, thisSystem } = require("./setup");
+const { RELEASE, SetupProblem, progress: downloading, setUp, thisSystem } = require("./setup");
 const ollama = require("./ollama");
 
 const { PluginSettingTab, Setting } = obsidian;
@@ -83,7 +83,8 @@ class NuruSettingTab extends PluginSettingTab {
   // this plugin came with (lib/setup.js); 2 Ollama, at the version the release pins or newer, installed,
   // updated or started from here (lib/ollama.js); 3 the models Nuru needs from it (the chat model, none
   // when Claude is the default, and the notes' embedding model); 4 ready. "Set up everything" runs the
-  // steps still to do, in order. When it's done, this tab is shown again, saying how it went.
+  // steps still to do, in order. When it's done, this tab is shown again, saying how it went. A step at
+  // work shows a bar under its text: filled as far as a download is, or moving when how long isn't known.
   displaySteps(containerEl, installed, chatModel) {
     new Setting(containerEl).setName("Set up").setHeading();
     const { launcher } = this.plugin;
@@ -95,6 +96,13 @@ class NuruSettingTab extends PluginSettingTab {
     this.setupNews = "";
     const rows = {};
     const buttons = {};
+    const bars = {};
+    const progress = (key) => (text, share) => {
+      rows[key].setDesc(text);
+      bars[key] ??= rows[key].infoEl.createEl("progress", { cls: "nuru-progress" });
+      if (share === undefined) bars[key].removeAttribute("value");
+      else bars[key].value = share;
+    };
     const row = (key, name) => { rows[key] = new Setting(containerEl).setName(name); };
     const button = (key, text, action, on = key) => rows[on].addButton((b) => {
       buttons[key] = b.setButtonText(text).onClick(async () => {
@@ -115,7 +123,7 @@ class NuruSettingTab extends PluginSettingTab {
         for (const view of this.plugin.views()) await view.reconnect();
       };
       try {
-        const result = await this.setUp({ home: launcher.home, step: (text) => rows.nuru.setDesc(text), start: launcher.running() ? restart : null });
+        const result = await this.setUp({ home: launcher.home, step: progress("nuru"), start: launcher.running() ? restart : null });
         this.setupNews = `Nuru ${result.version} is set up.`;
         if (result.startError) {
           this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
@@ -135,10 +143,12 @@ class NuruSettingTab extends PluginSettingTab {
       return state.app ? "Start Ollama" : "Install Ollama";
     };
     const fixOllama = async () => {
-      const say = (text) => rows.ollama.setDesc(text);
+      const say = progress("ollama");
       try {
-        if (ollamaAction() === "Start Ollama") await this.ollama.start(state.app);
-        else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
+        if (ollamaAction() === "Start Ollama") {
+          say("Starting Ollama…");
+          await this.ollama.start(state.app);
+        } else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
         return true;
       } catch (error) {
         news.ollama = `${ollamaAction()} failed: ${error.message}`;
@@ -153,7 +163,12 @@ class NuruSettingTab extends PluginSettingTab {
           news.models = "Ollama isn't at the version Nuru needs yet: finish step 2 first.";
           return false;
         }
-        for (const name of found.missing) await this.ollama.pull(name, (text) => rows.models.setDesc(text));
+        const say = progress("models");
+        for (const [i, name] of found.missing.entries()) {
+          const text = `Downloading model ${i + 1} of ${found.missing.length}…`;
+          say(text, 0);
+          await this.ollama.pull(name, downloading(say, text));
+        }
         return true;
       } catch (error) {
         news.models = `Downloading failed: ${error.message}`;
@@ -169,6 +184,10 @@ class NuruSettingTab extends PluginSettingTab {
       } catch (error) {
         Object.assign(state, { running: false, ok: false });
         news.ollama ||= `Couldn't ask Ollama about its models: ${error.message}`;
+      }
+      for (const key of Object.keys(bars)) {
+        bars[key].remove();
+        delete bars[key];
       }
       const action = ollamaAction();
       rows.nuru.setDesc(news.nuru || (installed

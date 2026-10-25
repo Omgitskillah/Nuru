@@ -9,7 +9,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, fileSha256, run, setUp, thisSystem } = require("../lib/setup");
+const { SetupProblem, amount, download, fileSha256, progress, run, setUp, thisSystem } = require("../lib/setup");
 const { tarGz, zip } = require("./helpers/archives");
 const { until } = require("./helpers/setup");
 
@@ -17,7 +17,7 @@ const POSIX = process.platform !== "win32";
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
 
 // A web server on 127.0.0.1: /assets/<name> serves `files`, and /redirect/<n>/<name> redirects n times
-// before getting there. `stall` never answers.
+// before getting there, saying each file's size as GitHub does. `stall` never answers.
 async function server(t, files) {
   const asked = [];
   const srv = http.createServer((request, response) => {
@@ -34,7 +34,7 @@ async function server(t, files) {
       response.writeHead(404);
       return response.end();
     }
-    response.writeHead(200);
+    response.writeHead(200, { "content-length": Buffer.byteLength(files[name]) });
     return response.end(files[name]);
   });
   await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
@@ -97,7 +97,7 @@ async function firstSetup(t, system) {
   const uv = fakeUv();
   const steps = [];
 
-  const result = await setUp({ home: dir, release: facts, system, fetch: fetchLocal, runner: uv.runner, step: (s) => steps.push(s) });
+  const result = await setUp({ home: dir, release: facts, system, fetch: fetchLocal, runner: uv.runner, step: (...s) => steps.push(s) });
 
   const generation = path.join(dir, ".nuru", "app", "0.1.0", "1");
   const exe = system.startsWith("win32") ? ".exe" : "";
@@ -117,8 +117,9 @@ async function firstSetup(t, system) {
   assert.equal(uv.calls[0].env.PATH.split(path.delimiter)[0], path.join(generation, "uv"));
   assert.equal(uv.calls[0].env.VIRTUAL_ENV, undefined);
   assert.ok(asked.includes("/redirect/2/nuru-0.1.0.zip") && asked.includes("/assets/nuru-0.1.0.zip"), "the bundle came through two redirects");
-  assert.deepEqual(steps, ["Downloading Nuru…", "Downloading uv…", "Downloading the calculator…", "Unpacking…",
-    "Installing Python and Nuru's packages (the first time takes a few minutes)…", "Checking the new install…"]);
+  const done = (text) => [[text, 0], [`${text} 100% · 0.0 of 0.0 MB`, 1]]; // each test file arrives in one piece
+  assert.deepEqual(steps, [...done("Downloading 1 of 3…"), ...done("Downloading 2 of 3…"), ...done("Downloading 3 of 3…"), ["Unpacking…"],
+    ["Installing Python and Nuru's packages (the first time takes a few minutes)…"], ["Checking the new install…"]]);
   assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru")).sort(), ["app", "install.json", "setup-locks"]);
   assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "setup-locks")), [], "no lock or temporary file is left");
 }
@@ -241,6 +242,35 @@ test("downloads only follow redirects to allowed hosts and protocols, and only s
   await assert.rejects(download(`${url}/assets/file`, local({ sha256: ok, maxBytes: 3 })), /it is larger than expected/);
   await assert.rejects(download(`${url}/stall`, local({ sha256: ok, timeoutMs: 200 })), /Couldn't download stall: it took too long/);
   await assert.rejects(download("http://127.0.0.1:1/x", local({ sha256: ok })), /Couldn't download x: .*ECONNREFUSED/);
+});
+
+test("a download says how much has arrived, of its size when the server gives one", async (t) => {
+  const body = "p".repeat(200000);
+  const { url } = await server(t, { file: body });
+  const seen = [];
+  await download(`${url}/assets/file`, local({ sha256: sha256(body), onProgress: (...bytes) => seen.push(bytes) }));
+  assert.deepEqual(seen.at(-1), [200000, 200000]);
+  assert.ok(seen.every(([received, total], i) => total === 200000 && received > (seen[i - 1]?.[0] ?? 0)), "it only grows");
+
+  const unsized = http.createServer((request, response) => { response.write("ab"); response.end("c"); }); // chunked, no length
+  await new Promise((resolve) => unsized.listen(0, "127.0.0.1", resolve));
+  t.after(() => unsized.close());
+  const totals = [];
+  await download(`http://127.0.0.1:${unsized.address().port}/x`, local({ sha256: sha256("abc"), onProgress: (r, total) => totals.push(total) }));
+  assert.ok(totals.length && totals.every((total) => total === 0));
+});
+
+test("a step's progress says how far in percent and bytes, in MB or GB, and only the step before anything arrives", () => {
+  const said = [];
+  const step = progress((...s) => said.push(s), "Downloading…");
+  step(0, 0);
+  step(1.5e6, 0);
+  step(1.3e6, 2.6e6);
+  step(1.31e6, 2.6e6); // says the same
+  step(1.5e9, 3e9);
+  assert.deepEqual(said, [["Downloading…"], ["Downloading… 1.5 MB"], ["Downloading… 50% · 1.3 of 2.6 MB", 0.5],
+    ["Downloading… 50% · 1.5 of 3.0 GB", 0.5]]);
+  assert.equal(amount(2e9), "2.0 GB");
 });
 
 test("a large download is streamed to a file, kept only once its sha256 matches", async (t) => {

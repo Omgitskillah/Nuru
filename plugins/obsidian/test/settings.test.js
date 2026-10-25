@@ -52,7 +52,7 @@ function fakeOllama({ have = ["qwen3.5:4b", "nomic-embed-text:v1.5"], version = 
       return { running: Boolean(fake.version), version: fake.version, missing: needed.filter((m) => !fake.have.includes(m)) };
     },
     findApp: () => fake.app,
-    pull: pull || (async (name, onProgress) => { onProgress(`${name}: pulling 50%`); fake.pulled.push(name); fake.have.push(name); }),
+    pull: pull || (async (name, onProgress) => { onProgress(50, 100); fake.pulled.push(name); fake.have.push(name); }),
     install: install || (async (pin, system, { step }) => {
       step(`Installing Ollama ${pin.version}…`);
       fake.installed.push([pin.version, system]);
@@ -246,6 +246,59 @@ test("a missing Ollama is installed at the pinned version, then the models downl
   buttonOf(settingTab, "3. Models", "Download").click();
   await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")));
   assert.deepEqual(settingTab.ollama.pulled, ["qwen3.5:4b", "nomic-embed-text:v1.5"]);
+});
+
+test("a step at work shows how far it is: a filled bar with bytes for a download, a moving bar otherwise, gone once done", async () => {
+  const { settingTab, home, nuru } = tab();
+  fs.rmSync(path.join(home, ".nuru", "install.json"));
+  const bar = (name) => row(settingTab, name).querySelector("progress");
+  const gate = () => { let open; const shut = new Promise((resolve) => { open = resolve; }); return { shut, open }; };
+  const [downloaded, unpacked] = [gate(), gate()];
+  settingTab.setUp = async ({ step }) => {
+    step("Downloading 1 of 3…", 0);
+    step("Downloading 1 of 3… 50% · 1.3 of 2.6 MB", 0.5);
+    await downloaded.shut;
+    step("Unpacking…");
+    await unpacked.shut;
+    fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv") }));
+    return { version: "1.0.1" };
+  };
+  settingTab.display();
+  await shown(settingTab);
+  assert.equal(bar("1. Nuru"), null, "no bar before anything runs");
+  buttonOf(settingTab, "1. Nuru", "Set up Nuru").click();
+  await until(() => bar("1. Nuru"));
+  assert.match(said(settingTab, "1. Nuru"), /Downloading 1 of 3… 50% · 1\.3 of 2\.6 MB/);
+  assert.equal(bar("1. Nuru").value, 0.5);
+  downloaded.open();
+  await until(() => /Unpacking/.test(said(settingTab, "1. Nuru")));
+  assert.equal(bar("1. Nuru").hasAttribute("value"), false, "a step of unknown length moves");
+  unpacked.open();
+  await until(() => row(settingTab, "Default model"));
+  await shown(settingTab);
+  assert.equal(bar("1. Nuru"), null);
+
+  const [started, halfway] = [gate(), gate()];
+  settingTab.ollama = fakeOllama({ version: "0.40.4", have: ["nomic-embed-text:v1.5"], pull: async (name, onProgress) => {
+    onProgress(0, 0);
+    await started.shut;
+    onProgress(1.5e9, 3e9);
+    await halfway.shut;
+    settingTab.ollama.have.push(name);
+  } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => bar("3. Models"));
+  assert.match(said(settingTab, "3. Models"), /Downloading model 1 of 1…$/);
+  assert.equal(bar("3. Models").hasAttribute("value"), false, "nothing to count yet");
+  started.open();
+  await until(() => /50%/.test(said(settingTab, "3. Models")));
+  assert.match(said(settingTab, "3. Models"), /Downloading model 1 of 1… 50% · 1\.5 of 3\.0 GB/);
+  assert.equal(bar("3. Models").value, 0.5);
+  halfway.open();
+  await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")));
+  assert.equal(bar("3. Models"), null);
 });
 
 test("an installed Ollama that isn't running is started; an older one is updated on Windows, and pointed to its updater on macOS", async () => {

@@ -536,7 +536,7 @@ test("a model download that fails in Set up everything says why once the tab is 
   settingTab.display();
   await shown(settingTab);
   buttonOf(settingTab, "Set up everything", "Set up everything").click();
-  await until(() => /couldn't reach its model library/.test(said(settingTab, "3. Models")));
+  await until(() => /couldn't fetch the model's details from its library/.test(said(settingTab, "3. Models")));
   assert.match(said(settingTab, "3. Models"), /a VPN, proxy or security program may be blocking it\. Ollama said: pull model manifest: .*context deadline exceeded/);
   await shown(settingTab);
   settingTab.display();

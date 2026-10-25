@@ -264,8 +264,8 @@ class NuruSettingTab extends PluginSettingTab {
       } catch (error) {
         // Ollama asks its online library first; a network that blocks or holds it fails here, before any download.
         news.models = /pull model manifest|registry\.ollama\.ai/.test(error.message)
-          ? "Ollama couldn't reach its model library (registry.ollama.ai). Check the internet connection: a VPN, proxy " +
-            `or security program may be blocking it. Ollama said: ${error.message}`
+          ? "Ollama couldn't fetch the model's details from its library (registry.ollama.ai). Check the internet " +
+            `connection: a VPN, proxy or security program may be blocking it. Ollama said: ${error.message}`
           : `Downloading failed: ${error.message}`;
         return false;
       }

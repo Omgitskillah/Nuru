@@ -284,3 +284,33 @@ test("overlapping starts from two vault windows never clear each other's marks; 
   assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "service", "starts")), []);
   assert.equal(a.mayStartByItself("1.0.3"), true);
 });
+
+test("a connecting start clears every mark but another window's start still under way, across plugin reloads", async (t) => {
+  const { dir } = home();
+  const make = (connect) => new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(), connect });
+  const starts = path.join(dir, ".nuru", "service", "starts");
+
+  // The plugin reloaded in the same Obsidian: the old launcher's start failed, a new one's connects.
+  const before = make(async () => ({ client: "a", status: "s" }));
+  before.start = async () => { throw new Error("uv failed"); };
+  await assert.rejects(before.startMarked("1.0.3"), /uv failed/);
+  assert.equal(fs.readFileSync(path.join(starts, fs.readdirSync(starts)[0]), "utf8"), "failed");
+  const after = make(async () => ({ client: "b", status: "s" }));
+  fs.writeFileSync(path.join(starts, `${process.pid}-abandoned`), ""); // this Obsidian's, not running any more
+
+  // Another Obsidian window, still running: its start under way stays; its failed one, or one too old, goes.
+  const other = childProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => other.kill());
+  await new Promise((resolve) => other.once("spawn", resolve));
+  fs.writeFileSync(path.join(starts, `${other.pid}-pending`), "");
+  fs.writeFileSync(path.join(starts, `${other.pid}-failed`), "failed");
+  fs.writeFileSync(path.join(starts, `${other.pid}-old`), "");
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(path.join(starts, `${other.pid}-old`), old, old);
+
+  await after.startMarked("1.0.3");
+  assert.deepEqual(fs.readdirSync(starts), [`${other.pid}-pending`]);
+  assert.equal(after.mayStartByItself("1.0.3"), false, "held while the other window's start is under way");
+  fs.rmSync(path.join(starts, `${other.pid}-pending`));
+  assert.equal(after.mayStartByItself("1.0.3"), true);
+});

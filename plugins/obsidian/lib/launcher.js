@@ -28,6 +28,8 @@ const logPath = (home = os.homedir()) => path.join(serviceDir(home), "serve.log"
 const managedPath = (home) => path.join(serviceDir(home), "managed.json");
 const autoStartPath = (home) => path.join(serviceDir(home), "autostart.json");
 const startsDir = (home) => path.join(serviceDir(home), "starts");
+const RUNNING = Symbol.for("nuru.starts.running"); // this Obsidian's starts under way, across plugin reloads
+const MARK_MS = 3 * START_SECONDS * 1000; // longer than any start runs: pairing, then the service's start
 
 // Whether process `pid` is still running (on this computer; one that's someone else's counts).
 function alive(pid) {
@@ -94,7 +96,6 @@ class Launcher {
     this.child = null; // the service this plugin started, while it runs
     this.starting = null; // a start under way: a second panel or click waits for it
     this.generation = 0; // release() moves it on, so a start under way gives up
-    this.marks = new Set(); // this launcher's unfinished starts (startMarked)
   }
 
   running() {
@@ -128,21 +129,36 @@ class Launcher {
     return record?.version === version;
   }
 
-  // start(), with its own mark (above) until it connects. Then that mark goes, with this launcher's earlier
-  // ones and those of Obsidian windows that have ended (they never finished), never another live window's,
-  // and the record says this version has started Nuru. A start that fails keeps its mark.
+  // start(), with its own mark (above) until it connects; a start that fails writes "failed" in its mark and
+  // keeps it. A start that connects removes every mark but one whose start is still under way in another
+  // Obsidian window: failed ones, ones whose process has ended, ones older than any start can run (a process
+  // number since reused), and this Obsidian's own that aren't running (left by the plugin before a reload:
+  // the starts under way are kept on globalThis, which a reload doesn't reset). Then the record says this
+  // version has connected.
   async startMarked(version) {
     const dir = startsDir(this.home);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const mark = path.join(dir, `${process.pid}-${crypto.randomUUID()}`);
     fs.writeFileSync(mark, "", { flag: "wx" });
-    this.marks.add(mark);
-    const connected = await this.start();
+    const running = (globalThis[RUNNING] ??= new Set());
+    running.add(mark);
+    let connected;
+    try {
+      connected = await this.start();
+    } catch (error) {
+      fs.writeFileSync(mark, "failed");
+      throw error;
+    } finally {
+      running.delete(mark);
+    }
     for (const name of fs.readdirSync(dir)) {
       const entry = path.join(dir, name);
-      if (this.marks.has(entry) || !alive(Number(name.split("-")[0]))) fs.rmSync(entry, { force: true });
+      const pid = Number(name.split("-")[0]);
+      const stat = fs.statSync(entry, { throwIfNoEntry: false });
+      const underWay = stat && Date.now() - stat.mtimeMs < MARK_MS && fs.readFileSync(entry, "utf8") !== "failed" &&
+        (pid === process.pid ? running.has(entry) : alive(pid));
+      if (!underWay) fs.rmSync(entry, { force: true });
     }
-    this.marks.clear();
     fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version })}\n`);
     return connected;
   }

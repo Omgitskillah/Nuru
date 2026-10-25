@@ -123,7 +123,7 @@ class NuruSettingTab extends PluginSettingTab {
     const { home } = this.plugin.launcher;
     const vault = this.plugin.vaultPath();
     const { ollama: app, models } = this.removal.added(home);
-    const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")}), and uv's download cache`,
+    const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")})`,
       ...(models.length ? [`The models Nuru downloaded into Ollama: ${models.join(" and ")}`] : []),
       ...(app ? [`Ollama, which Nuru installed (${app})`] : []),
       `This vault's Nuru chats and search index (its .nuru folder)`];
@@ -133,8 +133,9 @@ class NuruSettingTab extends PluginSettingTab {
         .onClick(() => new RemoveModal(this.app, parts, (everything, say) => this.remove(everything, say, vault)).open()));
   }
 
-  // Deletes everything Nuru added, if asked, once Nuru has stopped; then removes the plugin. A Notice says
-  // how it went, since the settings go with the plugin.
+  // Deletes everything Nuru added, if asked, once Nuru has stopped; then removes the plugin, unless some of
+  // what Nuru added is still there: then the plugin stays, so Remove Nuru can finish it. A Notice says how it
+  // went, since the settings go with the plugin.
   async remove(everything, say, vault) {
     const { launcher, manifest } = this.plugin;
     let problems = [];
@@ -146,7 +147,13 @@ class NuruSettingTab extends PluginSettingTab {
         new Notice(`Nothing was removed: ${error.message}`, 0);
         return;
       }
-      problems = await this.removal.removeEverything({ home: launcher.home, vault, say });
+      let left;
+      ({ problems, left } = await this.removal.removeEverything({ home: launcher.home, vault, say }));
+      if (left) {
+        new Notice(`Some of what Nuru added is still there, so the plugin stays:\n${problems.join("\n")}\n` +
+          "Then click Remove Nuru again.", 0);
+        return;
+      }
     }
     say("Removing the plugin…");
     try {

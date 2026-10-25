@@ -81,6 +81,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - how a release stays one install: `release/build.py` bundles HEAD plus its submodules at their pinned commits, and the plugin's release pins the bundle by sha256;
   - where shared tests, CI and coverage gates (F13) live.
   - **Done when:** a split is agreed and done, with one-link setup and the release still working.
+- [ ] **F16** Give a release install its own uv cache and Python (`UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR` under `~/.nuru`), in setup and in the launcher alike, so Remove Nuru can delete them with Nuru. Today they're uv's shared defaults, which Remove Nuru leaves alone (the user: don't delete anything unrelated to Nuru). **Done when:** a fresh install puts no files in uv's default folders, and Remove Nuru deletes them.
 
 ## Standing reminders (R)
 

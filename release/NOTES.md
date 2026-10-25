@@ -1,4 +1,4 @@
-Nuru for Obsidian on Windows and macOS. Install it with the BRAT plugin from this repository, then use **Set up Nuru** in the plugin's settings.
+Nuru for Obsidian on Windows and macOS. Install it with the BRAT plugin from this repository, then use **Set up everything** in the plugin's settings. It installs Nuru and Ollama, and downloads the models.
 
 ## What this release holds
 

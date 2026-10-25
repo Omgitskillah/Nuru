@@ -28,10 +28,10 @@ test("a release build compiles the bundle's exact sha256 and every pin into the 
   const facts = build({ output: path.join(dir, "dist"), bundle });
 
   assert.deepEqual(facts, { version, url: `https://github.com/Omgitskillah/Nuru/releases/download/${version}/`,
-    bundle: { asset: `nuru-${version}.zip`, sha256: digest }, uv: PINS.uv, "math-mcp": PINS["math-mcp"] });
+    bundle: { asset: `nuru-${version}.zip`, sha256: digest }, uv: PINS.uv, "math-mcp": PINS["math-mcp"], ollama: PINS.ollama });
   const built = fs.readFileSync(path.join(dir, "dist", "main.js"), "utf8");
-  for (const value of [digest, facts.url, PINS.uv.url, PINS["math-mcp"].url,
-    ...[PINS.uv, PINS["math-mcp"]].flatMap((pin) => Object.values(pin.systems).flatMap((s) => [s.asset, s.sha256]))]) {
+  for (const value of [digest, facts.url, PINS.uv.url, PINS["math-mcp"].url, PINS.ollama.url,
+    ...[PINS.uv, PINS["math-mcp"], PINS.ollama].flatMap((pin) => Object.values(pin.systems).flatMap((s) => [s.asset, s.sha256]))]) {
     assert.ok(built.includes(JSON.stringify(value)), `${value} is in main.js`);
   }
   assert.deepEqual(fs.readdirSync(path.join(dir, "dist")).sort(), ["main.js", "manifest.json", "styles.css"]);

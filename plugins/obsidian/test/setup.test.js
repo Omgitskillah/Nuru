@@ -9,7 +9,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, run, setUp, thisSystem } = require("../lib/setup");
+const { SetupProblem, download, fileSha256, run, setUp, thisSystem } = require("../lib/setup");
 const { tarGz, zip } = require("./helpers/archives");
 const { until } = require("./helpers/setup");
 
@@ -243,6 +243,54 @@ test("downloads only follow redirects to allowed hosts and protocols, and only s
   await assert.rejects(download("http://127.0.0.1:1/x", local({ sha256: ok })), /Couldn't download x: .*ECONNREFUSED/);
 });
 
+test("a large download is streamed to a file, kept only once its sha256 matches", async (t) => {
+  const dir = home(t);
+  const { url } = await server(t, { big: "x".repeat(100000) });
+  const to = path.join(dir, "big.exe");
+
+  assert.equal(await download(`${url}/redirect/1/big`, local({ sha256: sha256("x".repeat(100000)), to })), to);
+  assert.equal(fs.readFileSync(to, "utf8"), "x".repeat(100000));
+  assert.deepEqual(fs.readdirSync(dir), ["big.exe"], "no .partial left");
+
+  fs.rmSync(to);
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: "0".repeat(64), to })), /it isn't the file this release names/);
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: sha256("x".repeat(100000)), to, maxBytes: 10 })), /larger than expected/);
+  await assert.rejects(download(`${url}/assets/missing`, local({ sha256: "", to })), /answered 404/);
+  assert.deepEqual(fs.readdirSync(dir), [], "a failed download leaves nothing");
+});
+
+test("two downloads to one file each write their own partial, and both end with the checked file", async (t) => {
+  const dir = home(t);
+  const body = "y".repeat(300000);
+  const { url } = await server(t, { big: body });
+  const to = path.join(dir, "OllamaSetup.exe");
+  const both = await Promise.all([1, 2].map(() => download(`${url}/assets/big`, local({ sha256: sha256(body), to }))));
+  assert.deepEqual(both, [to, to]);
+  assert.equal(fs.readFileSync(to, "utf8"), body);
+  assert.deepEqual(fs.readdirSync(dir), ["OllamaSetup.exe"]);
+});
+
+test("a file that can't be created, written or moved ends the download as a failure, leaving nothing", async (t) => {
+  const dir = home(t);
+  const { url } = await server(t, { big: "z".repeat(1000) });
+  const ok = sha256("z".repeat(1000));
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "missing", "big") })), /Couldn't download big: ENOENT/);
+
+  const write = fs.writeSync;
+  fs.writeSync = () => { throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }); };
+  try {
+    await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "big") })), /no space left on device/);
+  } finally {
+    fs.writeSync = write;
+  }
+  assert.deepEqual(fs.readdirSync(dir), []);
+
+  fs.mkdirSync(path.join(dir, "taken", "inside"), { recursive: true }); // a folder where the file goes
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "taken") })), /Couldn't download big:/);
+  assert.deepEqual(fs.readdirSync(dir), ["taken"]);
+  assert.equal(await fileSha256(path.join(__filename)), sha256(fs.readFileSync(__filename)));
+});
+
 test("a stalled connection and a broken response are reported", async (t) => {
   const stalls = (url, options, onResponse) => {
     const request = http.get(url, { ...options, timeout: 100 }, onResponse);
@@ -388,14 +436,14 @@ test("a plugin not built for a release, or a computer with no release, says so a
   assert.deepEqual(fs.readdirSync(dir), []);
 });
 
-test("this computer is named as release/dependencies.json names it, which pins uv and the calculator for each", () => {
+test("this computer is named as release/dependencies.json names it, which pins uv, the calculator and Ollama for each", () => {
   assert.equal(thisSystem("darwin", "arm64"), "darwin-arm64");
   assert.equal(thisSystem("win32", "x64"), "win32-x64");
   assert.equal(thisSystem("win32", "arm64"), "win32-x64", "Windows on ARM runs the x64 builds");
   const pins = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "release", "dependencies.json"), "utf8"));
-  for (const name of ["uv", "math-mcp"]) {
+  for (const name of ["uv", "math-mcp", "ollama"]) {
     assert.deepEqual(Object.keys(pins[name].systems).sort(), ["darwin-arm64", "darwin-x64", "win32-x64"]);
-    assert.ok(pins[name].url.startsWith("https://github.com/") && pins[name].url.endsWith(`/${pins[name].version}/`));
+    assert.match(pins[name].url, new RegExp(`^https://github\\.com/.*/v?${pins[name].version.replace(/\./g, "\\.")}/$`));
     for (const { sha256: digest } of Object.values(pins[name].systems)) assert.match(digest, /^[0-9a-f]{64}$/);
   }
   assert.ok(Object.values(pins.uv.systems).every(({ asset }) => /\.(zip|tar\.gz)$/.test(asset)));

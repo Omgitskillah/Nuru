@@ -30,13 +30,22 @@ function thisSystem(platform = process.platform, arch = process.arch) {
   return system === "win32-arm64" ? "win32-x64" : system;
 }
 
-// The file at `url`, if its sha256 is `sha256`. Redirects are followed only to `hosts`, over
-// `protocols`, at most `redirects` times; nothing is sent with a request.
-function download(url, { sha256, get = https.get, hosts = HOSTS, protocols = ["https:"], redirects = 5,
+// The file at `url`, if its sha256 is `sha256`: its bytes, or with `to`, the path it was saved at
+// (written to `to`.partial as it arrives, hashed as it goes, and renamed only once it matches; for
+// files too large to hold, like Ollama's Windows installer). Redirects are followed only to `hosts`,
+// over `protocols`, at most `redirects` times; nothing is sent with a request.
+function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, protocols = ["https:"], redirects = 5,
   maxBytes = MAX_BYTES, timeoutMs = 10 * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
     let request;
-    const fail = (message) => reject(new SetupProblem(`Couldn't download ${path.basename(new URL(url).pathname)}: ${message}`));
+    let fd = null;
+    const partial = to && `${to}.${crypto.randomUUID()}.partial`; // this download's own
+    const discard = () => {
+      if (fd !== null) fs.closeSync(fd);
+      fd = null;
+      if (partial) fs.rmSync(partial, { force: true });
+    };
+    const fail = (message) => { discard(); reject(new SetupProblem(`Couldn't download ${path.basename(new URL(url).pathname)}: ${message}`)); };
     const deadline = setTimeout(() => { request.destroy(); fail("it took too long"); }, timeoutMs);
     const done = (fn) => (value) => { clearTimeout(deadline); fn(value); };
     const fetch = (current, left) => {
@@ -52,21 +61,43 @@ function download(url, { sha256, get = https.get, hosts = HOSTS, protocols = ["h
           response.resume();
           return done(fail)(`the server answered ${statusCode}`);
         }
+        const hash = crypto.createHash("sha256");
         const chunks = [];
         let size = 0;
+        let failed = false;
+        // A disk that is full, or a file that can't be written or moved, ends the download as a failure.
+        const safely = (work) => {
+          try {
+            work();
+          } catch (error) {
+            failed = true;
+            request.destroy();
+            done(fail)(error.message);
+          }
+        };
+        if (partial) safely(() => { fd = fs.openSync(partial, "wx"); });
         response.on("data", (chunk) => {
+          if (failed) return;
           if ((size += chunk.length) > maxBytes) {
+            failed = true;
             request.destroy();
             done(fail)("it is larger than expected");
-          } else {
-            chunks.push(chunk);
+            return;
           }
+          hash.update(chunk);
+          if (partial) safely(() => fs.writeSync(fd, chunk));
+          else chunks.push(chunk);
         });
         response.on("end", () => {
-          if (size > maxBytes) return;
-          const data = Buffer.concat(chunks);
-          if (crypto.createHash("sha256").update(data).digest("hex") !== sha256) return done(fail)("it isn't the file this release names");
-          done(resolve)(data);
+          if (failed) return;
+          if (hash.digest("hex") !== sha256) return done(fail)("it isn't the file this release names");
+          if (!partial) return done(resolve)(Buffer.concat(chunks));
+          return safely(() => {
+            fs.closeSync(fd);
+            fd = null;
+            fs.renameSync(partial, to);
+            done(resolve)(to);
+          });
         });
         response.on("error", (error) => done(fail)(error.message));
       });
@@ -267,4 +298,11 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
   }
 }
 
-module.exports = { HOSTS, RELEASE, SetupProblem, download, lock, run, setUp, thisSystem };
+// The sha256 of the file at `file`, read as it is on disk now.
+async function fileSha256(file) {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+module.exports = { HOSTS, RELEASE, SetupProblem, download, fileSha256, lock, run, setUp, thisSystem };

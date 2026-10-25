@@ -248,7 +248,7 @@ test("a missing Ollama is installed at the pinned version, then the models downl
   buttonOf(settingTab, "3. Models", "Download").click();
   await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")));
   assert.deepEqual(settingTab.ollama.pulled, ["qwen3.5:4b", "nomic-embed-text:v1.5"]);
-  assert.deepEqual(added(home), { ollama: "/Users/me/Applications/Ollama.app", models: ["qwen3.5:4b", "nomic-embed-text:v1.5"] },
+  assert.deepEqual(added(home), { ollama: path.join(home, "Applications", "Ollama.app"), models: ["qwen3.5:4b", "nomic-embed-text:v1.5"] },
     "what Nuru added is recorded, so removing it can take them");
 });
 
@@ -440,7 +440,7 @@ test("Download checks Ollama's version afresh, and refuses one that went older s
 });
 
 // The tab of a plugin Obsidian can remove, with what removing everything would do stood in for.
-function removable({ stop = async () => {}, problems = [], left = null, uninstall = true } = {}) {
+function removable({ stop = async () => {}, problems = [], left = null, manual = [], uninstall = true } = {}) {
   const made = tab();
   const { settingTab } = made;
   const calls = [];
@@ -450,7 +450,7 @@ function removable({ stop = async () => {}, problems = [], left = null, uninstal
   settingTab.removal = { ...require("../lib/remove"), removeEverything: async (options) => {
     calls.push(["everything", options.home, options.vault]);
     options.say("Removing Ollama…");
-    return { problems: [...problems], left };
+    return { problems: [...problems], left, manual: [...manual] };
   } };
   return { ...made, calls };
 }
@@ -525,4 +525,17 @@ test("what can't be removed is said: a Nuru that won't stop stops it all; a part
   assert.deepEqual(unfinished.calls.slice(-1)[0][0], "everything", "the plugin stays, so Remove Nuru can finish");
   assert.equal(obsidian.Notice.shown.at(-1), "Some of what Nuru added is still there, so the plugin stays:\n" +
     "Ollama is still installed: it didn't quit\nThen click Remove Nuru again.");
+});
+
+test("on Windows the dialog says Ollama is uninstalled by hand, and the notice says it's still to do", async () => {
+  const { settingTab, home } = removable({ manual: ["Uninstall Ollama, which Nuru installed, in Windows Settings → Apps → Installed apps"] });
+  settingTab.system = "win32-x64";
+  remember(home, { app: "C:/Programs/Ollama/ollama app.exe" });
+  settingTab.display();
+  buttonOf(settingTab, "Remove Nuru", "Remove Nuru…").click();
+  assert.match(obsidian.Modal.shown.contentEl.textContent, /Ollama, which Nuru installed: you uninstall it yourself, in Windows Settings → Apps/);
+  dialogButton("Delete everything").click();
+  await until(() => obsidian.Modal.shown === null);
+  assert.equal(obsidian.Notice.shown.at(-1), "Nuru and what it added are removed.\nStill to do: Uninstall Ollama, which Nuru installed, " +
+    "in Windows Settings → Apps → Installed apps.");
 });

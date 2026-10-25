@@ -125,7 +125,8 @@ class NuruSettingTab extends PluginSettingTab {
     const { ollama: app, models } = this.removal.added(home);
     const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")})`,
       ...(models.length ? [`The models Nuru downloaded into Ollama: ${models.join(" and ")}`] : []),
-      ...(app ? [`Ollama, which Nuru installed (${app})`] : []),
+      ...(app ? [this.system.startsWith("win32") ? "Ollama, which Nuru installed: you uninstall it yourself, in Windows Settings → Apps"
+        : `Ollama, which Nuru installed (${app})`] : []),
       `This vault's Nuru chats and search index (its .nuru folder)`];
     new Setting(containerEl).setName("Remove Nuru")
       .setDesc("Removes this plugin. It asks first whether to delete what Nuru added to this computer too, or keep it for later.")
@@ -139,6 +140,7 @@ class NuruSettingTab extends PluginSettingTab {
   async remove(everything, say, vault) {
     const { launcher, manifest } = this.plugin;
     let problems = [];
+    let manual = [];
     if (everything) {
       say("Stopping Nuru…");
       try {
@@ -148,7 +150,7 @@ class NuruSettingTab extends PluginSettingTab {
         return;
       }
       let left;
-      ({ problems, left } = await this.removal.removeEverything({ home: launcher.home, vault, say }));
+      ({ problems, left, manual } = await this.removal.removeEverything({ home: launcher.home, vault, say }));
       if (left) {
         new Notice(`Some of what Nuru added is still there, so the plugin stays:\n${problems.join("\n")}\n` +
           "Then click Remove Nuru again.", 0);
@@ -162,7 +164,8 @@ class NuruSettingTab extends PluginSettingTab {
       problems.push("The plugin is still there: remove it in Settings → Community plugins");
     }
     const done = everything ? "Nuru and what it added are removed." : "The Nuru plugin is removed; what Nuru added is kept.";
-    new Notice(problems.length ? `${done} Except:\n${problems.join("\n")}` : done, problems.length ? 0 : undefined);
+    const still = manual.length ? `\nStill to do: ${manual.join("\n")}.` : "";
+    new Notice((problems.length ? `${done} Except:\n${problems.join("\n")}` : done) + still, problems.length || manual.length ? 0 : undefined);
   }
 
   // Setting Nuru up as numbered steps, each enabled once the one before is done: 1 Nuru, the release
@@ -236,7 +239,9 @@ class NuruSettingTab extends PluginSettingTab {
           say("Starting Ollama…");
           await this.ollama.start(state.app);
         } else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
-        if (installing) this.removal.remember(launcher.home, { app: this.ollama.findApp({ home: launcher.home }) });
+        // Where Nuru put it: on macOS always ~/Applications/Ollama.app, the only app Remove Nuru deletes.
+        if (installing) this.removal.remember(launcher.home, { app: windows ? this.ollama.findApp({ home: launcher.home })
+          : path.join(launcher.home, "Applications", "Ollama.app") });
         return true;
       } catch (error) {
         news.ollama = `${ollamaAction()} failed: ${error.message}`;

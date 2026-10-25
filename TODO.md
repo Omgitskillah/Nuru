@@ -76,6 +76,11 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - starting Docker, and the image, from the setup;
   - a sandbox that needs no Docker: Pyodide/WebAssembly, macOS `sandbox-exec`, or a Windows AppContainer.
   - **Done when:** a choice is made, with the user, and either done or recorded as not worth it.
+- [ ] **F15** Split Nuru into several repositories, so each feature is compartmentalised: its own code, tests, CI and releases. The tool servers already live apart as submodules (`servers/math-4-llms`, `servers/obsidian`, `servers/python-4-llms`). Candidates to move out: the Obsidian plugin (`plugins/obsidian`), `packages/claude-access`, Laya (or drop it, F10), and the evals (`nuru/evals`). To settle with the user and Astra first:
+  - which parts move, and how they depend on each other (pinned releases, like the calculator, or submodules);
+  - how a release stays one install: `release/build.py` bundles HEAD plus its submodules at their pinned commits, and the plugin's release pins the bundle by sha256;
+  - where shared tests, CI and coverage gates (F13) live.
+  - **Done when:** a split is agreed and done, with one-link setup and the release still working.
 
 ## Standing reminders (R)
 

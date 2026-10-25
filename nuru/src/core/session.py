@@ -73,7 +73,7 @@ load_dotenv(ENV_DIR / ".env.nuru")
 # the derived, custom model - built fresh from its family's Modelfile on every startup -
 # that actually gets loaded and chatted with, carrying the tool-use SYSTEM
 # prompt baked in.
-BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "granite4.2:3b")
+BASE_MODEL = os.environ.get("NURU_BASE_MODEL", "qwen3.5:4b")
 # NURU_MAIN_MODEL=anthropic:<id> (claude-haiku-5-5 or claude-sonnet-5-5) runs the turn on Claude through
 # the shared claude-access provider instead of Ollama; unset, or "ollama", keeps the local model. With
 # Claude, MODEL is the Claude model and no Modelfile is built - Ollama only serves the notes search's

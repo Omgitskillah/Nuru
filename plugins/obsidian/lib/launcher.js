@@ -169,16 +169,22 @@ class Launcher {
   // Stop the service Obsidian started and start it for this vault again, so it reads its settings
   // (the env files) again. One started from a terminal is left alone: restart it there.
   async restart() {
+    await this.stop();
+    return this.start();
+  }
+
+  // Stop the service Obsidian started, from this vault or another, and wait for one this plugin started
+  // to exit. Nothing running is fine; one that's busy, or started from a terminal, is an error.
+  async stop() {
     const child = this.running() ? this.child : null;
     const exited = child && new Promise((resolve) => child.once("exit", resolve));
     try {
       await this.stopOther();
     } catch (error) {
       if (await this.answering()) throw error; // busy, or started from a terminal
-      return this.start(); // nothing runs (managed.json is missing, or left by one that crashed): start it
+      return; // nothing runs (managed.json is missing, or left by one that crashed)
     }
-    if (exited) await this.exitedWithin(exited); // so start() spawns a new one rather than waiting on this one
-    return this.start();
+    if (exited) await this.exitedWithin(exited); // so a start after this spawns a new one rather than waiting on this one
   }
 
   // The stopped service's exit, or "not-stopped" if it hasn't exited within stopSeconds.

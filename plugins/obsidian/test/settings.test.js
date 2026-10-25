@@ -57,6 +57,7 @@ function fakeOllama({ have = ["qwen3.5:4b", "nomic-embed-text:v1.5"], version = 
       step(`Installing Ollama ${pin.version}…`);
       fake.installed.push([pin.version, system]);
       fake.version = pin.version;
+      fake.app = system.startsWith("win32") ? "C:/Programs/Ollama/ollama app.exe" : "/Users/me/Applications/Ollama.app";
     }),
     start: async (where) => { fake.started.push(where); fake.version = "0.40.4"; },
   };
@@ -150,6 +151,7 @@ test("without Nuru running the current model still shows; keep-alive and restart
 });
 
 const { SetupProblem } = require("../lib/setup");
+const { added, remember } = require("../lib/remove");
 const { LaunchProblem } = require("../lib/launcher");
 
 const buttonOf = (settingTab, name, text) => [...row(settingTab, name).querySelectorAll("button")].find((b) => b.textContent === text);
@@ -230,7 +232,7 @@ test("with Ollama at the pinned version and the models there, every step shows d
 });
 
 test("a missing Ollama is installed at the pinned version, then the models download, with progress", async () => {
-  const { settingTab } = tab();
+  const { settingTab, home } = tab();
   settingTab.ollama = fakeOllama({ version: null, have: [] });
   settingTab.display();
   await shown(settingTab);
@@ -246,6 +248,8 @@ test("a missing Ollama is installed at the pinned version, then the models downl
   buttonOf(settingTab, "3. Models", "Download").click();
   await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")));
   assert.deepEqual(settingTab.ollama.pulled, ["qwen3.5:4b", "nomic-embed-text:v1.5"]);
+  assert.deepEqual(added(home), { ollama: "/Users/me/Applications/Ollama.app", models: ["qwen3.5:4b", "nomic-embed-text:v1.5"] },
+    "what Nuru added is recorded, so removing it can take them");
 });
 
 test("a step at work shows how far it is: a filled bar with bytes for a download, a moving bar otherwise, gone once done", async () => {
@@ -302,7 +306,7 @@ test("a step at work shows how far it is: a filled bar with bytes for a download
 });
 
 test("an installed Ollama that isn't running is started; an older one is updated on Windows, and pointed to its updater on macOS", async () => {
-  const { settingTab } = tab();
+  const { settingTab, home } = tab();
   settingTab.ollama = fakeOllama({ version: null, app: "/Applications/Ollama.app" });
   settingTab.display();
   await shown(settingTab);
@@ -327,6 +331,7 @@ test("an installed Ollama that isn't running is started; an older one is updated
   await until(() => /✓ Ollama 0\.40\.4 is running/.test(said(settingTab, "2. Ollama")));
   assert.deepEqual(settingTab.ollama.installed, [["0.40.4", "win32-x64"]]);
   assert.match(said(settingTab, "3. Models"), /✓/);
+  assert.equal(added(home).ollama, null, "an Ollama that was there before, started or updated, isn't Nuru's to remove");
 });
 
 test("Set up everything runs each step still to do, in order, and stops at one that fails", async () => {
@@ -432,4 +437,83 @@ test("Download checks Ollama's version afresh, and refuses one that went older s
   buttonOf(settingTab, "3. Models", "Download").click();
   await until(() => /After step 2/.test(said(settingTab, "3. Models")));
   assert.deepEqual(settingTab.ollama.pulled, []);
+});
+
+// The tab of a plugin Obsidian can remove, with what removing everything would do stood in for.
+function removable({ stop = async () => {}, problems = [], uninstall = true } = {}) {
+  const made = tab();
+  const { settingTab } = made;
+  const calls = [];
+  settingTab.plugin.manifest = { id: "nuru" };
+  settingTab.plugin.launcher.stop = async () => { calls.push("stop"); return stop(); };
+  settingTab.app.plugins = uninstall ? { uninstallPlugin: async (id) => { calls.push(`uninstall ${id}`); } } : {};
+  settingTab.removal = { ...require("../lib/remove"), removeEverything: async (options) => {
+    calls.push(["everything", options.home, options.vault]);
+    options.say("Removing Ollama…");
+    return [...problems];
+  } };
+  return { ...made, calls };
+}
+
+const dialogButton = (text) => [...obsidian.Modal.shown.contentEl.querySelectorAll("button")].find((b) => b.textContent === text);
+
+test("Remove Nuru asks first, saying what deleting everything takes; Cancel removes nothing", async () => {
+  const { settingTab, home, calls } = removable();
+  remember(home, { app: "/Users/me/Applications/Ollama.app", model: "qwen3.5:4b" });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "Remove Nuru", "Remove Nuru…").click();
+  const dialog = obsidian.Modal.shown.contentEl.textContent;
+  assert.match(dialog, new RegExp(`Nuru's install, logs and tokens \\(${path.join(home, ".nuru").replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`));
+  assert.match(dialog, /The models Nuru downloaded into Ollama: qwen3\.5:4b/);
+  assert.match(dialog, /Ollama, which Nuru installed \(\/Users\/me\/Applications\/Ollama\.app\)/);
+  assert.match(dialog, /This vault's Nuru chats and search index/);
+  assert.match(dialog, /Your notes are never touched/);
+  assert.ok(dialogButton("Delete everything").classList.contains("mod-warning"));
+  dialogButton("Cancel").click();
+  assert.equal(obsidian.Modal.shown, null);
+  assert.deepEqual(calls, []);
+
+  const plain = removable();
+  plain.settingTab.display();
+  buttonOf(plain.settingTab, "Remove Nuru", "Remove Nuru…").click();
+  assert.doesNotMatch(obsidian.Modal.shown.contentEl.textContent, /models Nuru downloaded|which Nuru installed/, "only what Nuru added");
+  dialogButton("Cancel").click();
+});
+
+test("Keep them removes only the plugin; Delete everything stops Nuru, deletes what it added, then removes the plugin", async () => {
+  const { settingTab, calls } = removable();
+  const before = obsidian.Notice.shown.length;
+  settingTab.display();
+  buttonOf(settingTab, "Remove Nuru", "Remove Nuru…").click();
+  dialogButton("Keep them").click();
+  await until(() => obsidian.Modal.shown === null);
+  assert.deepEqual(calls, ["uninstall nuru"]);
+  assert.deepEqual(obsidian.Notice.shown.slice(before), ["The Nuru plugin is removed; what Nuru added is kept."]);
+
+  const all = removable();
+  all.settingTab.display();
+  buttonOf(all.settingTab, "Remove Nuru", "Remove Nuru…").click();
+  dialogButton("Delete everything").click();
+  assert.ok(dialogButton("Keep them").disabled, "one choice at a time");
+  await until(() => obsidian.Modal.shown === null);
+  assert.deepEqual(all.calls, ["stop", ["everything", all.home, all.home], "uninstall nuru"]);
+  assert.equal(obsidian.Notice.shown.at(-1), "Nuru and what it added are removed.");
+});
+
+test("what can't be removed is said: a Nuru that won't stop stops it all; a part left, or a plugin Obsidian won't remove, is listed", async () => {
+  const stuck = removable({ stop: async () => { throw new LaunchProblem("busy"); } });
+  stuck.settingTab.display();
+  buttonOf(stuck.settingTab, "Remove Nuru", "Remove Nuru…").click();
+  dialogButton("Delete everything").click();
+  await until(() => /^Nothing was removed: Nuru is busy/.test(obsidian.Notice.shown.at(-1)));
+  assert.deepEqual(stuck.calls, ["stop"]);
+
+  const partly = removable({ problems: ["Ollama is still installed: it didn't quit"], uninstall: false });
+  partly.settingTab.display();
+  buttonOf(partly.settingTab, "Remove Nuru", "Remove Nuru…").click();
+  dialogButton("Delete everything").click();
+  await until(() => obsidian.Modal.shown === null);
+  assert.equal(obsidian.Notice.shown.at(-1), "Nuru and what it added are removed. Except:\nOllama is still installed: it didn't quit\n" +
+    "The plugin is still there: remove it in Settings → Community plugins");
 });

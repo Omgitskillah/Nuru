@@ -161,10 +161,22 @@ class Setting {
   addButton(build) {
     const button = this.settingEl.createEl("button");
     build({ setButtonText(t) { button.textContent = t; return this; }, onClick(f) { button.addEventListener("click", f); return this; },
-      setDisabled(d) { button.disabled = d; return this; } });
+      setDisabled(d) { button.disabled = d; return this; }, setWarning() { button.classList.add("mod-warning"); return this; } });
     return this;
   }
 }
+
+// Obsidian's dialog: here open() and close() run its hooks, and Modal.shown is the one open.
+class Modal {
+  constructor(app) { this.app = app; this.contentEl = make("div"); this.title = ""; }
+
+  setTitle(title) { this.title = title; return this; }
+
+  open() { Modal.shown = this; this.onOpen(); }
+
+  close() { if (Modal.shown === this) Modal.shown = null; this.onClose(); }
+}
+Modal.shown = null;
 
 class Notice {
   constructor(message) { Notice.shown.push(message); }
@@ -198,5 +210,5 @@ const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event
 async function requestUrl(request) { return requestUrl.handler(request); }
 requestUrl.handler = async () => ({ status: 200 });
 
-module.exports = { requestUrl, Component, ItemView, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
+module.exports = { requestUrl, Component, ItemView, Modal, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
   window };

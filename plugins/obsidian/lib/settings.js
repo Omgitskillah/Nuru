@@ -2,6 +2,8 @@
 // which live in the env files in the Nuru folder (lib/envfiles.js), never in plugin data.
 "use strict";
 
+const path = require("node:path");
+
 const obsidian = require("obsidian");
 
 const { NuruSettings, fingerprint } = require("./envfiles");
@@ -9,11 +11,44 @@ const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
 const { RELEASE, SetupProblem, progress: downloading, setUp, thisSystem } = require("./setup");
 const ollama = require("./ollama");
+const removal = require("./remove");
 
-const { PluginSettingTab, Setting } = obsidian;
+const { Modal, Notice, PluginSettingTab, Setting } = obsidian;
 
 const KEEP_ALIVE = { "5m": "5 minutes", "30m": "30 minutes", "1h": "1 hour", "-1": "Until Ollama stops" };
 const DEFAULT_KEEP_ALIVE = "30m"; // Nuru's own when NURU_KEEP_ALIVE isn't set (core/providers/ollama.py)
+
+// Asks how to remove Nuru: keep what it added for later, or delete all of it (`parts` lists that), then
+// runs `remove(everything, say)`, showing what it's doing until it's done.
+class RemoveModal extends Modal {
+  constructor(app, parts, remove) {
+    super(app);
+    Object.assign(this, { parts, remove });
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    this.setTitle("Remove Nuru");
+    contentEl.createEl("p", { text: "This removes the Nuru plugin. Should it delete what Nuru added to this computer too?" });
+    const list = contentEl.createEl("ul");
+    for (const part of this.parts) list.createEl("li", { text: part });
+    contentEl.createEl("p", { text: "Your notes are never touched. Ollama and models you had before Nuru stay." });
+    const status = contentEl.createEl("p", { cls: "nuru-remove-status" });
+    const buttons = new Setting(contentEl);
+    const choose = (everything) => async () => {
+      for (const button of contentEl.querySelectorAll("button")) button.disabled = true;
+      await this.remove(everything, (text) => status.setText(text));
+      this.close();
+    };
+    buttons.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+    buttons.addButton((b) => b.setButtonText("Keep them").onClick(choose(false)));
+    buttons.addButton((b) => b.setButtonText("Delete everything").setWarning().onClick(choose(true)));
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
 
 // "valid", "rejected" or "unreachable": Anthropic's model list, which costs nothing.
 async function checkClaudeKey(key) {
@@ -33,6 +68,7 @@ class NuruSettingTab extends PluginSettingTab {
     this.plugin = plugin;
     this.setUp = setUp;
     this.ollama = ollama;
+    this.removal = removal;
     this.release = RELEASE;
     this.system = thisSystem();
     this.setupNews = "";
@@ -77,6 +113,49 @@ class NuruSettingTab extends PluginSettingTab {
         }
       }));
     this.displayNuru(containerEl);
+    this.displayRemove(containerEl);
+  }
+
+  // Removing the plugin, and on request what Nuru added: Obsidian doesn't tell a plugin it's being
+  // removed (only that it's unloaded, as when Obsidian quits), so it's asked here, and the plugin removes itself.
+  displayRemove(containerEl) {
+    new Setting(containerEl).setName("Remove").setHeading();
+    const { home } = this.plugin.launcher;
+    const vault = this.plugin.vaultPath();
+    const { ollama: app, models } = this.removal.added(home);
+    const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")}), and uv's download cache`,
+      ...(models.length ? [`The models Nuru downloaded into Ollama: ${models.join(" and ")}`] : []),
+      ...(app ? [`Ollama, which Nuru installed (${app})`] : []),
+      `This vault's Nuru chats and search index (its .nuru folder)`];
+    new Setting(containerEl).setName("Remove Nuru")
+      .setDesc("Removes this plugin. It asks first whether to delete what Nuru added to this computer too, or keep it for later.")
+      .addButton((button) => button.setButtonText("Remove Nuru…").setWarning()
+        .onClick(() => new RemoveModal(this.app, parts, (everything, say) => this.remove(everything, say, vault)).open()));
+  }
+
+  // Deletes everything Nuru added, if asked, once Nuru has stopped; then removes the plugin. A Notice says
+  // how it went, since the settings go with the plugin.
+  async remove(everything, say, vault) {
+    const { launcher, manifest } = this.plugin;
+    let problems = [];
+    if (everything) {
+      say("Stopping Nuru…");
+      try {
+        await launcher.stop();
+      } catch (error) {
+        new Notice(`Nothing was removed: ${error.message}`, 0);
+        return;
+      }
+      problems = await this.removal.removeEverything({ home: launcher.home, vault, say });
+    }
+    say("Removing the plugin…");
+    try {
+      await this.app.plugins.uninstallPlugin(manifest.id); // Obsidian's own, not in its published API
+    } catch {
+      problems.push("The plugin is still there: remove it in Settings → Community plugins");
+    }
+    const done = everything ? "Nuru and what it added are removed." : "The Nuru plugin is removed; what Nuru added is kept.";
+    new Notice(problems.length ? `${done} Except:\n${problems.join("\n")}` : done, problems.length ? 0 : undefined);
   }
 
   // Setting Nuru up as numbered steps, each enabled once the one before is done: 1 Nuru, the release
@@ -144,11 +223,13 @@ class NuruSettingTab extends PluginSettingTab {
     };
     const fixOllama = async () => {
       const say = progress("ollama");
+      const installing = ollamaAction() === "Install Ollama"; // none was there, so Nuru adds it
       try {
         if (ollamaAction() === "Start Ollama") {
           say("Starting Ollama…");
           await this.ollama.start(state.app);
         } else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
+        if (installing) this.removal.remember(launcher.home, { app: this.ollama.findApp({ home: launcher.home }) });
         return true;
       } catch (error) {
         news.ollama = `${ollamaAction()} failed: ${error.message}`;
@@ -168,6 +249,7 @@ class NuruSettingTab extends PluginSettingTab {
           const text = `Downloading model ${i + 1} of ${found.missing.length}…`;
           say(text, 0);
           await this.ollama.pull(name, downloading(say, text));
+          this.removal.remember(launcher.home, { model: name });
         }
         return true;
       } catch (error) {

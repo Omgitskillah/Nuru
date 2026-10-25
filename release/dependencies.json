@@ -7,5 +7,14 @@
       "darwin-x64": {"asset": "math-mcp-x86_64-apple-darwin", "sha256": "bc4571dff01e08cb906196403763cb56db02889cfb757238d458c3b793e7475a"},
       "win32-x64": {"asset": "math-mcp-x86_64-pc-windows-msvc.exe", "sha256": "327077f2eac7ab1e55eeec3c4026f9449ce76ae28a488501ef69c295513548c6"}
     }
+  },
+  "uv": {
+    "version": "0.12.13",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/",
+    "systems": {
+      "darwin-arm64": {"asset": "uv-aarch64-apple-darwin.tar.gz", "sha256": "7e6ddb9316acc00f2296c82ff4d99977870ee34b2f0ddcae9444d714db9364ed"},
+      "darwin-x64": {"asset": "uv-x86_64-apple-darwin.tar.gz", "sha256": "5e287ef61cb6a9b61b3a83fef124fd143e400468a7dac794230147a810e17119"},
+      "win32-x64": {"asset": "uv-x86_64-pc-windows-msvc.zip", "sha256": "a86c9dc7bad9b03f388583b7187c05fe9951c2e0d392217e8fd43d97787f6ec2"}
+    }
   }
 }

@@ -7,6 +7,7 @@ const obsidian = require("obsidian");
 const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
+const { RELEASE, SetupProblem, setUp } = require("./setup");
 
 const { PluginSettingTab, Setting } = obsidian;
 
@@ -29,6 +30,8 @@ class NuruSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    this.setUp = setUp;
+    this.setupNews = "";
   }
 
   display() {
@@ -72,16 +75,48 @@ class NuruSettingTab extends PluginSettingTab {
     this.displayNuru(containerEl);
   }
 
+  // "Set up Nuru", or repair or update it: the release this plugin came with (lib/setup.js). Nuru in
+  // use is restarted on the new install; this tab is then shown again, saying how it went.
+  displaySetup(containerEl, installed) {
+    const row = new Setting(containerEl).setName(installed ? "Repair or update Nuru" : "Set up Nuru");
+    const say = (text) => row.setDesc(text);
+    say(this.setupNews || (installed
+      ? `Installs Nuru ${RELEASE?.version ?? ""} again beside the one in use, and switches to it once it works.`
+      : "Downloads Nuru and what it needs (a few hundred MB) into a .nuru folder in your home folder. Your notes aren't touched."));
+    this.setupNews = "";
+    row.addButton((button) => button.setButtonText(installed ? "Repair" : "Set up Nuru").onClick(async () => {
+      button.setDisabled(true);
+      const { launcher } = this.plugin;
+      const restart = async () => {
+        await launcher.restart();
+        for (const view of this.plugin.views()) await view.reconnect();
+      };
+      try {
+        const result = await this.setUp({ home: launcher.home, step: say, start: launcher.running() ? restart : null });
+        this.setupNews = `Nuru ${result.version} is set up.`;
+        if (result.startError) {
+          this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
+          if (result.rolledBack) this.setupNews += " Nuru is back on the install it had before.";
+          if (result.rollbackError) this.setupNews += ` Going back to the install it had before failed too: ${result.rollbackError.message}`;
+        }
+      } catch (error) {
+        this.setupNews = error instanceof SetupProblem ? error.message : `Setting Nuru up failed: ${error.message}`;
+      }
+      this.display();
+    }));
+  }
+
   // Nuru's settings, read from and written to its env files; Nuru reads them when it starts.
   displayNuru(containerEl) {
     new Setting(containerEl).setName("Nuru").setHeading();
     let settings;
     try {
       settings = new NuruSettings(readInstall(this.plugin.launcher.home).nuru);
-    } catch (error) {
-      new Setting(containerEl).setDesc(error.message);
+    } catch {
+      this.displaySetup(containerEl, false);
       return;
     }
+    this.displaySetup(containerEl, true);
     const overridden = (key) => {
       const name = settings.overridden(key);
       return name ? ` Obsidian's environment sets ${name}, which Nuru uses instead.` : "";

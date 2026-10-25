@@ -1,8 +1,10 @@
 """Builds Nuru's release bundle, nuru-<version>.zip: this commit's files, and each server repository's at
-the commit this one pins, under one nuru-<version>/ folder. Then SHA256SUMS for every file in the out
-folder, which the release workflow has already put the plugin's main.js, manifest.json and styles.css in.
+the commit this one pins, under one nuru-<version>/ folder. Then, once the release workflow has built the
+plugin with the bundle's sha256 in it and put its main.js, manifest.json and styles.css beside it,
+SHA256SUMS for every file in the out folder.
 
-    python release/build.py <version> <out folder>
+    python release/build.py bundle <version> <out folder>
+    python release/build.py checksums <out folder>
 
 The version is the release tag, and the plugin's manifest.json and package.json and nuru/pyproject.toml
 must all say it. Everything is read from commits, never the working tree, so what is released is
@@ -69,17 +71,19 @@ def checksums(out: Path) -> Path:
 
 
 def main(argv: list[str], root: Path = ROOT) -> int:
-    if len(argv) != 2:
+    if argv[:1] == ["checksums"] and len(argv) == 2:
+        print(checksums(Path(argv[1])))
+        return 0
+    if argv[:1] != ["bundle"] or len(argv) != 3:
         print(__doc__, file=sys.stderr)
         return 2
-    version, out = argv[0], Path(argv[1])
+    version, out = argv[1], Path(argv[2])
     wrong = {path: found for path, found in versions(root).items() if found != version}
     if wrong:
         print(f"Releasing {version}, but " + ", ".join(f"{p} says {v}" for p, v in wrong.items()), file=sys.stderr)
         return 1
     out.mkdir(parents=True, exist_ok=True)
     print(bundle(root, version, out))
-    print(checksums(out))
     return 0
 
 

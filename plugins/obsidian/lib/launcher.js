@@ -27,7 +27,7 @@ const logPath = (home = os.homedir()) => path.join(serviceDir(home), "serve.log"
 const managedPath = (home) => path.join(serviceDir(home), "managed.json");
 
 const PROBLEMS = {
-  "not-installed": "Nuru can't be started from here: the Nuru folder isn't recorded. Run `node plugins/obsidian/install.js <vault>` in it again.",
+  "not-installed": "Nuru isn't set up on this computer yet: click Set up Nuru in this plugin's settings.",
   "no-pairing": "Nuru couldn't make this plugin's token.",
   exited: "Nuru stopped while starting.",
   slow: "Nuru didn't answer within two minutes of starting.",

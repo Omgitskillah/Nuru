@@ -233,3 +233,25 @@ test("an install.json from before PATH was recorded still finds uv's folder", as
   await launcher.start();
   assert.equal(env.PATH.split(path.delimiter)[0], path.dirname(uv));
 });
+
+test("Nuru starts by itself only once this version has started it, and never after a start that didn't finish", async () => {
+  const { dir } = home();
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),
+    connect: async () => ({ client: "c", status: "s" }) });
+  assert.equal(launcher.mayStartByItself("1.0.3"), false, "never started on this computer");
+  assert.deepEqual(await launcher.startMarked("1.0.3"), { client: "c", status: "s" });
+  assert.equal(launcher.mayStartByItself("1.0.3"), true);
+  assert.equal(launcher.mayStartByItself("1.0.4"), false, "the first time after an update");
+
+  const mark = path.join(dir, ".nuru", "service", "autostart.json");
+  fs.writeFileSync(mark, JSON.stringify({ version: "1.0.3", pending: true })); // Obsidian closed mid-start
+  assert.equal(launcher.mayStartByItself("1.0.3"), false);
+  launcher.start = async () => {
+    assert.deepEqual(JSON.parse(fs.readFileSync(mark, "utf8")), { version: "1.0.3", pending: true }, "marked before it starts");
+    throw new Error("uv failed");
+  };
+  await assert.rejects(launcher.startMarked("1.0.3"), /uv failed/);
+  assert.equal(launcher.mayStartByItself("1.0.3"), true, "a start that ended, even in an error, finished");
+  fs.writeFileSync(mark, "{broken");
+  assert.equal(launcher.mayStartByItself("1.0.3"), false);
+});

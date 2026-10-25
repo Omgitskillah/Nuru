@@ -57,8 +57,11 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     on: () => ({ off() {} }),
     openLinkText: (...args) => opened.push(args), getLeavesOfType: () => [],
   } };
+  // A launcher stand-in may start by itself, through start(), unless the test says otherwise.
+  if (launcher) Object.assign(launcher, { mayStartByItself: () => true, startMarked: () => launcher.start(), ...launcher });
   const plugin = {
     settings: { port: 1, conversationId, autoStart },
+    manifest: { version: "1.0.3" },
     launcher,
     vaultPath: () => "/vault",
     remember: async (changes) => Object.assign(plugin.settings, changes),
@@ -266,6 +269,23 @@ test("opening the panel starts Nuru for this vault when it isn't running", async
   await until(() => client.calls.some((c) => c[0] === "conversation"));
   assert.equal(launcher.starts, 1);
   assert.equal(view.statusEl.textContent, "");
+  await view.close();
+});
+
+test("a start that may not happen by itself waits for Start: after an update, or a start that never finished", async () => {
+  const client = fakeClient();
+  let up = false;
+  const asked = [];
+  const launcher = { mayStartByItself: (version) => { asked.push(version); return false; },
+    startMarked: async (version) => { asked.push(`started ${version}`); up = true; return { client, status: { ready: { chat: "idle" } } }; } };
+  const { view } = await open({ client, launcher, connectError: () => (up ? null : new ConnectionProblem("no-service")) });
+  assert.ok(!up, "nothing started by itself");
+  assert.match(view.statusEl.textContent, /doesn't start by itself the first time after it's installed or updated, or after a start that didn't finish/);
+  const button = view.statusEl.querySelector(".nuru-status-action");
+  assert.equal(button.textContent, "Start Nuru");
+  button.click();
+  await until(() => client.calls.some((c) => c[0] === "conversation"));
+  assert.deepEqual(asked, ["1.0.3", "started 1.0.3"], "a click starts it, marked with this plugin's version");
   await view.close();
 });
 

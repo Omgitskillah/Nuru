@@ -25,6 +25,7 @@ const serviceDir = (home) => path.join(home, ".nuru", "service");
 const installPath = (home = os.homedir()) => path.join(home, ".nuru", "install.json");
 const logPath = (home = os.homedir()) => path.join(serviceDir(home), "serve.log");
 const managedPath = (home) => path.join(serviceDir(home), "managed.json");
+const autoStartPath = (home) => path.join(serviceDir(home), "autostart.json");
 
 const PROBLEMS = {
   "not-installed": "Nuru isn't set up on this computer yet: click Set up Nuru in this plugin's settings.",
@@ -35,6 +36,9 @@ const PROBLEMS = {
   busy: "Nuru is busy with a turn in that vault: try again when it finishes.",
   "not-stopped": "Nuru didn't stop in time.",
   released: "The plugin was turned off while Nuru was starting.",
+  held: "Nuru doesn't start by itself the first time after it's installed or updated, or after a start that didn't finish " +
+    "(Obsidian was closed or stopped responding while it started).",
+
 };
 
 class LaunchProblem extends Error {
@@ -92,6 +96,33 @@ class Launcher {
         { cwd: nuru, env: { ...process.env, PATH: searchPath }, timeout: START_SECONDS * 1000, windowsHide: true },
         (error) => (error ? reject(new LaunchProblem("no-pairing", error.message)) : resolve()));
     });
+  }
+
+  // Whether Nuru may start by itself when a panel opens: only once this version of the plugin has started it
+  // on this computer, and only if that start finished. A start that never finished (Obsidian closed, or stopped
+  // responding, while it started: a security program holding uv can do that) leaves its mark, so the next launch
+  // waits for a click instead of doing it again. The mark is in ~/.nuru/service, outside the vault, which syncs.
+  mayStartByItself(version) {
+    try {
+      const { version: started, pending } = JSON.parse(fs.readFileSync(autoStartPath(this.home), "utf8"));
+      return started === version && pending === false;
+    } catch {
+      return false;
+    }
+  }
+
+  // start(), marked as under way until it ends, either way, for mayStartByItself.
+  async startMarked(version) {
+    const mark = (pending) => {
+      fs.mkdirSync(serviceDir(this.home), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version, pending })}\n`);
+    };
+    mark(true);
+    try {
+      return await this.start();
+    } finally {
+      mark(false);
+    }
   }
 
   // Start the service for this vault and wait until it answers; {client, status} as connect() gives.

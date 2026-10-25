@@ -119,8 +119,8 @@ class ChatView extends ItemView {
 
   // ------------------------------------------------------------------ connection and conversations
   // Connect, starting the service for this vault first if it isn't running and `start` says so (the
-  // setting, or the Start button).
-  async reconnect({ start = this.plugin.settings.autoStart !== false } = {}) {
+  // setting, or the Start button: `clicked`). By itself it starts only when the launcher says it may.
+  async reconnect({ start = this.plugin.settings.autoStart !== false, clicked = false } = {}) {
     const generation = ++this.generation;
     this.client = null;
     this.setStatus("Connecting to Nuru…");
@@ -133,9 +133,14 @@ class ChatView extends ItemView {
         this.showProblem(error);
         return;
       }
+      const { launcher, manifest } = this.plugin;
+      if (!clicked && !launcher.mayStartByItself(manifest.version)) {
+        this.showProblem(new LaunchProblem("held"));
+        return;
+      }
       this.setStatus("Starting Nuru…");
       try {
-        ({ client, status } = await this.plugin.launcher.start());
+        ({ client, status } = await launcher.startMarked(manifest.version));
       } catch (failure) {
         if (generation === this.generation) this.showProblem(failure);
         return;
@@ -805,7 +810,8 @@ class ChatView extends ItemView {
     }
     this.otherVault = error.kind === "wrong-vault" ? error.vaultName : error.kind === "busy" ? this.otherVault : null;
     const action = error.kind === "wrong-vault" || error.kind === "busy" ? ["Switch Nuru to this vault", () => this.switchHere()]
-      : ["no-service", "no-token", "exited", "slow", "not-stopped"].includes(error.kind) ? ["Start Nuru", () => this.reconnect({ start: true })]
+      : ["no-service", "no-token", "exited", "slow", "not-stopped", "held"].includes(error.kind)
+        ? ["Start Nuru", () => this.reconnect({ start: true, clicked: true })]
         : null;
     if (!action) return;
     const button = this.statusEl.createEl("button", { cls: "nuru-status-action", text: action[0] });
@@ -821,7 +827,7 @@ class ChatView extends ItemView {
       if (generation === this.generation) this.showProblem(error);
       return;
     }
-    if (generation === this.generation) await this.reconnect({ start: true });
+    if (generation === this.generation) await this.reconnect({ start: true, clicked: true });
   }
 }
 

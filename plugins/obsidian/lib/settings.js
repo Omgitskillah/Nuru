@@ -356,7 +356,7 @@ class NuruSettingTab extends PluginSettingTab {
       return name ? ` Obsidian's environment sets ${name}, which Nuru uses instead.` : "";
     };
     const apply = new Setting(containerEl).setName("Apply changes");
-    const applied = (text) => apply.setDesc(text);
+    const applied = (text) => { apply.setDesc(text); }; // returns nothing: a Setting must never reach a promise
     applied(`Saved in .env.nuru and .env.deep-think in ${settings.nuru}, where Nuru reads them when it starts: ` +
       "editing those files works too.");
     const changed = () => applied("Changed: restart Nuru to use it.");
@@ -389,7 +389,11 @@ class NuruSettingTab extends PluginSettingTab {
           if (choice.id !== current) dropdown.addOption(choice.id, choice.label + (choice.cloud ? " (cloud)" : ""));
         }
         dropdown.setValue(current || "");
-      }).catch(() => model.setDesc("Start Nuru to choose from the models it can run."));
+      }).catch(() => {
+        // Not `=> model.setDesc(…)`: a Setting has a then() (Obsidian's), so a promise that resolves with one
+        // waits on it again and again, and Obsidian freezes.
+        model.setDesc("Start Nuru to choose from the models it can run.");
+      });
     });
 
     const keepAlive = settings.get("NURU_KEEP_ALIVE") || DEFAULT_KEEP_ALIVE;

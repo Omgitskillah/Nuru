@@ -198,7 +198,9 @@ class NuruSettingTab extends PluginSettingTab {
     };
 
     row("all", "Set up everything");
-    rows.all.setDesc("Runs the steps below that are still to do, in order.");
+    // Clicking it is the user's go-ahead for all of it, Ollama included, so it says what that is first.
+    rows.all.setDesc(`Runs the steps below that are still to do, in order: it installs Nuru, installs or updates Ollama ` +
+      `(a separate app, ${windows ? "1.5 GB" : "200 MB"}) if needed, and downloads the models (a few GB).`);
     button("all", "Set up everything", async () => {
       if (!installed && !(await setUpNuru())) return this.display();
       installed = true;

@@ -292,6 +292,9 @@ test("Set up everything runs each step still to do, in order, and stops at one t
   settingTab.display();
   await shown(settingTab);
 
+  assert.match(said(settingTab, "Set up everything"),
+    /installs Nuru, installs or updates Ollama \(a separate app, 200 MB\) if needed, and downloads the models \(a few GB\)/,
+    "the click is the go-ahead for Ollama too, so it says so first");
   buttonOf(settingTab, "Set up everything", "Set up everything").click();
   await until(() => order.length === 4 && row(settingTab, "Default model"));
   await shown(settingTab);

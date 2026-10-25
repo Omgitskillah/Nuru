@@ -10,6 +10,7 @@
 "use strict";
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -26,6 +27,18 @@ const installPath = (home = os.homedir()) => path.join(home, ".nuru", "install.j
 const logPath = (home = os.homedir()) => path.join(serviceDir(home), "serve.log");
 const managedPath = (home) => path.join(serviceDir(home), "managed.json");
 const autoStartPath = (home) => path.join(serviceDir(home), "autostart.json");
+const startsDir = (home) => path.join(serviceDir(home), "starts");
+
+// Whether process `pid` is still running (on this computer; one that's someone else's counts).
+function alive(pid) {
+  if (!(pid > 0)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
 
 const PROBLEMS = {
   "not-installed": "Nuru isn't set up on this computer yet: click Set up Nuru in this plugin's settings.",
@@ -81,6 +94,7 @@ class Launcher {
     this.child = null; // the service this plugin started, while it runs
     this.starting = null; // a start under way: a second panel or click waits for it
     this.generation = 0; // release() moves it on, so a start under way gives up
+    this.marks = new Set(); // this launcher's unfinished starts (startMarked)
   }
 
   running() {
@@ -99,30 +113,38 @@ class Launcher {
   }
 
   // Whether Nuru may start by itself when a panel opens: only once this version of the plugin has started it
-  // on this computer, and only if that start finished. A start that never finished (Obsidian closed, or stopped
-  // responding, while it started: a security program holding uv can do that) leaves its mark, so the next launch
-  // waits for a click instead of doing it again. The mark is in ~/.nuru/service, outside the vault, which syncs.
+  // on this computer, and only while no start is unfinished. Each start leaves its own mark in
+  // ~/.nuru/service/starts (outside the vault, which syncs) until it connects; a start that failed, or never
+  // ended (Obsidian closed, or stopped responding, while it started), keeps its mark, so later launches wait
+  // for a click instead of trying again. One computer-wide rule: any vault's unfinished start holds them all.
   mayStartByItself(version) {
+    let record;
     try {
-      const { version: started, pending } = JSON.parse(fs.readFileSync(autoStartPath(this.home), "utf8"));
-      return started === version && pending === false;
-    } catch {
-      return false;
+      record = JSON.parse(fs.readFileSync(autoStartPath(this.home), "utf8"));
+      if (fs.readdirSync(startsDir(this.home)).length) return false;
+    } catch (error) {
+      if (error.code !== "ENOENT" || !record) return false; // no record, or one that can't be read
     }
+    return record?.version === version;
   }
 
-  // start(), marked as under way until it ends, either way, for mayStartByItself.
+  // start(), with its own mark (above) until it connects. Then that mark goes, with this launcher's earlier
+  // ones and those of Obsidian windows that have ended (they never finished), never another live window's,
+  // and the record says this version has started Nuru. A start that fails keeps its mark.
   async startMarked(version) {
-    const mark = (pending) => {
-      fs.mkdirSync(serviceDir(this.home), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version, pending })}\n`);
-    };
-    mark(true);
-    try {
-      return await this.start();
-    } finally {
-      mark(false);
+    const dir = startsDir(this.home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const mark = path.join(dir, `${process.pid}-${crypto.randomUUID()}`);
+    fs.writeFileSync(mark, "", { flag: "wx" });
+    this.marks.add(mark);
+    const connected = await this.start();
+    for (const name of fs.readdirSync(dir)) {
+      const entry = path.join(dir, name);
+      if (this.marks.has(entry) || !alive(Number(name.split("-")[0]))) fs.rmSync(entry, { force: true });
     }
+    this.marks.clear();
+    fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version })}\n`);
+    return connected;
   }
 
   // Start the service for this vault and wait until it answers; {client, status} as connect() gives.

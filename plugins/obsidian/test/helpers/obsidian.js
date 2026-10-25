@@ -124,6 +124,8 @@ class PluginSettingTab {
 class Setting {
   constructor(containerEl) { this.settingEl = containerEl.createDiv(); }
 
+  get infoEl() { return this.settingEl; }
+
   setName(name) { this.settingEl.createDiv({ text: name }); return this; }
 
   setDesc(desc) {

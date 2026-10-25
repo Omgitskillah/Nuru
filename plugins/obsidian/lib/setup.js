@@ -33,9 +33,10 @@ function thisSystem(platform = process.platform, arch = process.arch) {
 // The file at `url`, if its sha256 is `sha256`: its bytes, or with `to`, the path it was saved at
 // (written to `to`.partial as it arrives, hashed as it goes, and renamed only once it matches; for
 // files too large to hold, like Ollama's Windows installer). Redirects are followed only to `hosts`,
-// over `protocols`, at most `redirects` times; nothing is sent with a request.
+// over `protocols`, at most `redirects` times; nothing is sent with a request. `onProgress(received, total)`
+// is called as it arrives; total is 0 when the server doesn't say.
 function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, protocols = ["https:"], redirects = 5,
-  maxBytes = MAX_BYTES, timeoutMs = 10 * 60 * 1000 } = {}) {
+  maxBytes = MAX_BYTES, timeoutMs = 10 * 60 * 1000, onProgress = () => {} } = {}) {
   return new Promise((resolve, reject) => {
     let request;
     let fd = null;
@@ -62,6 +63,7 @@ function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, prot
           return done(fail)(`the server answered ${statusCode}`);
         }
         const hash = crypto.createHash("sha256");
+        const total = Number(headers["content-length"]) || 0;
         const chunks = [];
         let size = 0;
         let failed = false;
@@ -87,6 +89,7 @@ function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, prot
           hash.update(chunk);
           if (partial) safely(() => fs.writeSync(fd, chunk));
           else chunks.push(chunk);
+          if (!failed) onProgress(size, total);
         });
         response.on("end", () => {
           if (failed) return;
@@ -118,6 +121,28 @@ function run(command, args, { cwd, env, timeoutMs = RUN_MS } = {}) {
     child.on("error", (error) => { output += error.message; });
     child.on("close", (code) => { clearTimeout(timer); resolve({ code, output }); });
   });
+}
+
+// "1.2 of 3.4 GB": how much of a download has arrived, or "1.2 GB" when its size isn't known.
+function amount(received, total = 0) {
+  const [unit, name] = Math.max(received, total) >= 1e9 ? [1e9, "GB"] : [1e6, "MB"];
+  const at = (n) => (n / unit).toFixed(1);
+  return total ? `${at(received)} of ${at(total)} ${name}` : `${at(received)} ${name}`;
+}
+
+// What step(text, share) says as a download goes: `text`, how far in percent and bytes, and the share
+// that fills a progress bar (none when the size isn't known, and only `text` before anything arrives).
+// It says so only when what it says changes: a download arrives in thousands of pieces.
+function progress(step, text) {
+  let said = null;
+  return (received, total) => {
+    const now = total ? `${text} ${Math.floor((100 * received) / total)}% · ${amount(received, total)}`
+      : received ? `${text} ${amount(received)}` : text;
+    if (now === said) return;
+    said = now;
+    if (total) step(now, received / total);
+    else step(now);
+  };
 }
 
 function lastLines(text, n = 5) {
@@ -216,7 +241,8 @@ function prune(appDir, keep) {
 
 // `start`, when Nuru is running, restarts it on the new install. It runs under the setup lock, and so does
 // going back to the previous install when it fails: no other window's setup can switch install.json in
-// between, so a late rollback never undoes another setup. The result says how the start went.
+// between, so a late rollback never undoes another setup. The result says how the start went. `step(text,
+// share)` says what it's doing: share, from 0 to 1, is how far a download is; none for a step of unknown length.
 async function setUp({ home = os.homedir(), release = RELEASE, system = thisSystem(), fetch = download, runner = run,
   step = () => {}, start = null } = {}) {
   if (!release) {
@@ -231,12 +257,14 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
   const unlock = lock(nuruDir);
   let generation;
   try {
-    step("Downloading Nuru…");
-    const bundle = await fetch(release.url + release.bundle.asset, { sha256: release.bundle.sha256 });
-    step("Downloading uv…");
-    const uvArchive = await fetch(release.uv.url + uvPin.asset, { sha256: uvPin.sha256 });
-    step("Downloading the calculator…");
-    const calculator = await fetch(release["math-mcp"].url + mathPin.asset, { sha256: mathPin.sha256 });
+    const get = async (n, url, sha256) => {
+      const text = `Downloading ${n} of 3…`;
+      step(text, 0);
+      return fetch(url, { sha256, onProgress: progress(step, text) });
+    };
+    const bundle = await get(1, release.url + release.bundle.asset, release.bundle.sha256);
+    const uvArchive = await get(2, release.uv.url + uvPin.asset, uvPin.sha256);
+    const calculator = await get(3, release["math-mcp"].url + mathPin.asset, mathPin.sha256);
 
     step("Unpacking…");
     const appDir = path.join(nuruDir, "app");
@@ -305,4 +333,4 @@ async function fileSha256(file) {
   return hash.digest("hex");
 }
 
-module.exports = { HOSTS, RELEASE, SetupProblem, download, fileSha256, lock, run, setUp, thisSystem };
+module.exports = { HOSTS, RELEASE, SetupProblem, amount, download, fileSha256, lock, progress, run, setUp, thisSystem };

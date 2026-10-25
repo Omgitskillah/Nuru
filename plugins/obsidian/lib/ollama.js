@@ -11,7 +11,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, fileSha256, lock, run } = require("./setup");
+const { SetupProblem, download, fileSha256, lock, progress, run } = require("./setup");
 const { readZip, writeEntries } = require("./unpack");
 
 const OLLAMA = "http://127.0.0.1:11434";
@@ -82,12 +82,14 @@ async function install(pin, system, { home = os.homedir(), ...options } = {}) {
 
 async function installLocked(pin, asset, home, { fetch = download, runner = run, step = () => {}, platform = process.platform,
   spawn, waitMs, base }) {
-  step(`Downloading Ollama ${pin.version}…`);
+  const downloading = `Downloading Ollama ${pin.version}…`;
+  step(downloading, 0);
+  const onProgress = progress(step, downloading);
   if (platform === "win32") {
     const downloads = path.join(home, ".nuru", "downloads");
     fs.mkdirSync(downloads, { recursive: true });
     const installer = await fetch(pin.url + asset.asset, { sha256: asset.sha256, to: path.join(downloads, asset.asset),
-      maxBytes: INSTALL_BYTES, timeoutMs: 60 * 60 * 1000 });
+      maxBytes: INSTALL_BYTES, timeoutMs: 60 * 60 * 1000, onProgress });
     try {
       // The file run is the file checked: its bytes on disk, just before it runs.
       if ((await fileSha256(installer)) !== asset.sha256) throw new SetupProblem("Ollama's installer changed after it was downloaded.");
@@ -100,7 +102,7 @@ async function installLocked(pin, asset, home, { fetch = download, runner = run,
     step("Waiting for Ollama to start…");
     return answering(waitMs, { base });
   }
-  const zip = await fetch(pin.url + asset.asset, { sha256: asset.sha256, maxBytes: INSTALL_BYTES });
+  const zip = await fetch(pin.url + asset.asset, { sha256: asset.sha256, maxBytes: INSTALL_BYTES, onProgress });
   step(`Installing Ollama ${pin.version}…`);
   const applications = path.join(home, "Applications");
   const app = path.join(applications, "Ollama.app");
@@ -168,16 +170,16 @@ async function check(needed, options = {}) {
   return { running: true, version, missing: needed.filter((name) => !have.has(tagged(name))) };
 }
 
-// Downloads `name` into Ollama, calling onProgress(text) as it goes; done only when Ollama's last line
-// says "success". Models are gigabytes, so there is no time limit beyond one between progress lines.
+// Downloads `name` into Ollama, calling onProgress(completed, total) with the bytes of the part it's
+// pulling (total 0 while it does something else: the manifest, checking); done only when Ollama's last
+// line says "success". Models are gigabytes, so there is no time limit beyond one between progress lines.
 async function pull(name, onProgress = () => {}, options = {}) {
   let finished = false;
   await request("POST", "/api/pull", { ...options, timeoutMs: options.timeoutMs ?? 120 * 1000, body: { model: name, stream: true },
     onLine: (line) => {
       if (line.error) throw new Error(line.error);
       finished = line.status === "success";
-      const share = line.total ? ` ${Math.floor((100 * (line.completed || 0)) / line.total)}%` : "";
-      onProgress(`${name}: ${line.status}${share}`);
+      onProgress(line.completed || 0, line.total || 0);
     } });
   if (!finished) throw new Error(`downloading ${name} stopped before Ollama finished it`);
 }

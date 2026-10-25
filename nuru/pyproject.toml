@@ -1,6 +1,6 @@
 [project]
 name = "core"
-version = "1.0.1"
+version = "1.0.2"
 description = "Nuru: the chat service the Obsidian plugin talks to, and a terminal CLI."
 readme = "README.md"
 requires-python = ">=3.14.7"

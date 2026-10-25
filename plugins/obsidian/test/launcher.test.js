@@ -314,3 +314,28 @@ test("a connecting start clears every mark but another window's start still unde
   fs.rmSync(path.join(starts, `${other.pid}-pending`));
   assert.equal(after.mayStartByItself("1.0.3"), true);
 });
+
+test("a connecting start isn't upset by another window clearing its mark during the sweep", async (t) => {
+  const { dir } = home();
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),
+    connect: async () => ({ client: "c", status: "s" }) });
+  const starts = path.join(dir, ".nuru", "service", "starts");
+  const other = childProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => other.kill());
+  await new Promise((resolve) => other.once("spawn", resolve));
+  fs.mkdirSync(starts, { recursive: true });
+  const [gone, pending] = [path.join(starts, `${other.pid}-gone`), path.join(starts, `${other.pid}-pending`)];
+  fs.writeFileSync(gone, "");
+  fs.writeFileSync(pending, "");
+  // The other window's start connects and clears its mark after this sweep stats it, before it reads it.
+  const read = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (file, ...rest) => {
+    if (file === gone) fs.rmSync(gone, { force: true });
+    return read(file, ...rest);
+  });
+
+  assert.deepEqual(await launcher.startMarked("1.0.3"), { client: "c", status: "s" });
+  assert.deepEqual(fs.readdirSync(starts), [`${other.pid}-pending`]);
+  fs.rmSync(pending);
+  assert.equal(launcher.mayStartByItself("1.0.3"), true, "its success was recorded");
+});

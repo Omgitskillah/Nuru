@@ -154,9 +154,14 @@ class Launcher {
     for (const name of fs.readdirSync(dir)) {
       const entry = path.join(dir, name);
       const pid = Number(name.split("-")[0]);
-      const stat = fs.statSync(entry, { throwIfNoEntry: false });
-      const underWay = stat && Date.now() - stat.mtimeMs < MARK_MS && fs.readFileSync(entry, "utf8") !== "failed" &&
-        (pid === process.pid ? running.has(entry) : alive(pid));
+      let underWay;
+      try {
+        underWay = Date.now() - fs.statSync(entry).mtimeMs < MARK_MS && fs.readFileSync(entry, "utf8") !== "failed" &&
+          (pid === process.pid ? running.has(entry) : alive(pid));
+      } catch (error) {
+        if (error.code === "ENOENT") continue; // its window cleared it meanwhile
+        throw error;
+      }
       if (!underWay) fs.rmSync(entry, { force: true });
     }
     fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version })}\n`);

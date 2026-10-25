@@ -7,7 +7,7 @@ const obsidian = require("obsidian");
 const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
-const { RELEASE, SetupProblem, restoreInstall, setUp } = require("./setup");
+const { RELEASE, SetupProblem, setUp } = require("./setup");
 const ollama = require("./ollama");
 
 const { PluginSettingTab, Setting } = obsidian;
@@ -94,25 +94,12 @@ class NuruSettingTab extends PluginSettingTab {
         for (const view of this.plugin.views()) await view.reconnect();
       };
       try {
-        const { version, previous } = await this.setUp({ home: launcher.home, step: say });
-        this.setupNews = `Nuru ${version} is set up.`;
-        if (launcher.running()) {
-          say("Restarting Nuru on the new install…");
-          try {
-            await restart();
-          } catch (error) {
-            // The new install doesn't start: go back to the one before it, which setUp kept.
-            this.setupNews = `Nuru ${version} was set up, but it didn't start: ${error.message}`;
-            if (previous) {
-              try {
-                restoreInstall(launcher.home, previous);
-                await restart();
-                this.setupNews += " Nuru is back on the install it had before.";
-              } catch (back) {
-                this.setupNews += ` Going back to the install it had before failed too: ${back.message}`;
-              }
-            }
-          }
+        const result = await this.setUp({ home: launcher.home, step: say, start: launcher.running() ? restart : null });
+        this.setupNews = `Nuru ${result.version} is set up.`;
+        if (result.startError) {
+          this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
+          if (result.rolledBack) this.setupNews += " Nuru is back on the install it had before.";
+          if (result.rollbackError) this.setupNews += ` Going back to the install it had before failed too: ${result.rollbackError.message}`;
         }
       } catch (error) {
         this.setupNews = error instanceof SetupProblem ? error.message : `Setting Nuru up failed: ${error.message}`;

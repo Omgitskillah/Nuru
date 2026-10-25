@@ -168,7 +168,7 @@ test("with Nuru not set up, Set up Nuru installs it, and the tab then shows Nuru
 
 test("a repair while Nuru runs restarts it on the new install and reconnects the chat", async () => {
   const { settingTab, restarts, reconnects } = tab({ running: true });
-  settingTab.setUp = async () => ({ version: "0.1.0" });
+  settingTab.setUp = async ({ start }) => { await start(); return { version: "0.1.0" }; };
   settingTab.display();
 
   row(settingTab, "Repair or update Nuru").querySelector("button").click();
@@ -182,7 +182,6 @@ test("what went wrong in a setup, or in the restart after it, is said in the tab
     [async () => { throw new SetupProblem("Couldn't download uv: the server answered 404"); }, false,
       "Couldn't download uv: the server answered 404"],
     [async () => { throw new Error("EACCES"); }, false, "Setting Nuru up failed: EACCES"],
-    [async () => ({ version: "0.1.0", previous: null }), true, "Nuru 0.1.0 was set up, but it didn't start: Nuru stopped while starting."],
   ];
   for (const [setUp, running, said] of cases) {
     const { settingTab } = tab({ running });
@@ -255,31 +254,25 @@ test("a failed download or check is said, and Download can be tried again", asyn
   await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(ollama.textContent));
 });
 
-test("a new install that doesn't start is rolled back: install.json and the running Nuru go back to the previous one", async () => {
-  for (const [failures, said] of [
-    [1, "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Nuru is back on the install it had before."],
-    [2, "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Going back to the install it had before failed too: Nuru stopped while starting."],
+test("setUp restarts a running Nuru, and the tab says how a failed start and its rollback went", async () => {
+  for (const [running, result, said] of [
+    [true, { version: "0.2.0", rolledBack: true, startError: new LaunchProblem("exited") },
+      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Nuru is back on the install it had before."],
+    [true, { version: "0.2.0", startError: new LaunchProblem("exited"), rollbackError: new LaunchProblem("exited") },
+      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Going back to the install it had before failed too: Nuru stopped while starting."],
+    [false, { version: "0.2.0" }, "Nuru 0.2.0 is set up."],
   ]) {
-    const { settingTab, home } = tab({ running: true });
-    const file = path.join(home, ".nuru", "install.json");
-    const previous = fs.readFileSync(file, "utf8");
-    const installedAtRestart = [];
-    let left = failures;
-    settingTab.plugin.launcher.restart = async () => {
-      installedAtRestart.push(JSON.parse(fs.readFileSync(file, "utf8")).nuru);
-      if (left-- > 0) throw new LaunchProblem("exited");
-      return {};
-    };
-    settingTab.setUp = async () => {
-      fs.writeFileSync(file, JSON.stringify({ nuru: path.join(home, "new generation"), uv: path.join(home, "uv") }));
-      return { version: "0.2.0", previous };
+    const { settingTab, restarts, reconnects } = tab({ running });
+    let given;
+    settingTab.setUp = async (options) => {
+      given = options.start;
+      if (given) await given(); // what setUp does under its lock
+      return result;
     };
     settingTab.display();
     row(settingTab, "Repair or update Nuru").querySelector("button").click();
     await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
-
-    assert.equal(fs.readFileSync(file, "utf8"), previous, "install.json names the previous install again");
-    assert.deepEqual(installedAtRestart, [path.join(home, "new generation"), JSON.parse(previous).nuru],
-      "the new install was tried, then the previous one started");
+    assert.equal(Boolean(given), running, "a restart only when Nuru runs");
+    assert.deepEqual([restarts.length, reconnects.length], running ? [1, 1] : [0, 0]);
   }
 });

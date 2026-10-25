@@ -9,8 +9,9 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, restoreInstall, run, setUp, thisSystem } = require("../lib/setup");
+const { SetupProblem, download, run, setUp, thisSystem } = require("../lib/setup");
 const { tarGz, zip } = require("./helpers/archives");
+const { until } = require("./helpers/setup");
 
 const POSIX = process.platform !== "win32";
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
@@ -319,20 +320,63 @@ test("two processes taking the lock together never both hold it", async (t) => {
   assert.deepEqual(fs.readdirSync(path.join(dir, "setup-locks")), []);
 });
 
-test("restoreInstall puts back the install.json a setup replaced", async (t) => {
+test("a running Nuru restarts on the new install, and goes back to the previous one if it doesn't start", async (t) => {
+  for (const [failures, expect] of [[0, {}], [1, { rolledBack: true }], [2, { rollbackError: "exited" }]]) {
+    const dir = home(t);
+    const { facts } = await release(t);
+    const options = { home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner };
+    const first = await setUp(options);
+    const before = fs.readFileSync(path.join(dir, ".nuru", "install.json"), "utf8");
+    const started = [];
+    let left = failures;
+    const start = async () => {
+      started.push(installJson(dir).nuru);
+      assert.equal(fs.readdirSync(path.join(dir, ".nuru", "setup-locks")).length, 1, "the setup lock is held");
+      if (left-- > 0) throw new Error("exited");
+    };
+
+    const result = await setUp({ ...options, start });
+
+    assert.equal(result.previous, before);
+    assert.equal(result.startError?.message, failures ? "exited" : undefined);
+    assert.equal(result.rolledBack, expect.rolledBack);
+    assert.equal(result.rollbackError?.message, expect.rollbackError);
+    assert.deepEqual(started, failures ? [result.nuru, first.nuru] : [result.nuru]);
+    assert.equal(installJson(dir).nuru, failures ? first.nuru : result.nuru);
+    assert.ok(fs.existsSync(first.nuru) && fs.existsSync(result.nuru));
+  }
+});
+
+test("a first install that doesn't start has nothing to go back to, and stays selected", async (t) => {
+  const dir = home(t);
+  const { facts } = await release(t);
+  const result = await setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner,
+    start: async () => { throw new Error("exited"); } });
+  assert.equal(result.previous, null);
+  assert.equal(result.startError.message, "exited");
+  assert.equal(result.rolledBack, undefined);
+  assert.equal(installJson(dir).nuru, result.nuru);
+});
+
+test("another window's setup can't run while one restarts or rolls back, so a late rollback never undoes it", async (t) => {
   const dir = home(t);
   const { facts } = await release(t);
   const options = { home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner };
   const first = await setUp(options);
-  assert.equal(first.previous, null, "a first setup has nothing to go back to");
-  const before = fs.readFileSync(path.join(dir, ".nuru", "install.json"), "utf8");
-  const second = await setUp(options);
-  assert.equal(second.previous, before);
+  let fail;
+  const failed = new Promise((resolve) => { fail = resolve; });
+  let calls = 0;
+  const windowA = setUp({ ...options, start: async () => { if (calls++ === 0) { await failed; throw new Error("exited"); } } });
+  await until(() => calls === 1); // A has switched install.json and is restarting
 
-  restoreInstall(dir, second.previous);
-
+  await assert.rejects(setUp(options), /already being set up, in another Obsidian window/, "window B waits its turn");
+  fail();
+  const a = await windowA;
+  assert.equal(a.rolledBack, true);
   assert.equal(installJson(dir).nuru, first.nuru);
-  assert.ok(fs.existsSync(first.nuru), "the generation it names was kept");
+
+  const b = await setUp(options); // B, after A has finished
+  assert.equal(installJson(dir).nuru, b.nuru, "B's selection stands");
 });
 
 test("a plugin not built for a release, or a computer with no release, says so and changes nothing", async (t) => {

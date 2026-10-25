@@ -145,9 +145,15 @@ class NuruSettingTab extends PluginSettingTab {
         return false;
       }
     };
+    // Models go only into an Ollama confirmed, just now, to be at the pinned version or newer.
     const downloadModels = async () => {
       try {
-        for (const name of state.missing) await this.ollama.pull(name, (text) => rows.models.setDesc(text));
+        const found = await this.ollama.check(needed);
+        if (!found.running || (pin && !this.ollama.atLeast(found.version, pin.version))) {
+          news.models = "Ollama isn't at the version Nuru needs yet: finish step 2 first.";
+          return false;
+        }
+        for (const name of found.missing) await this.ollama.pull(name, (text) => rows.models.setDesc(text));
         return true;
       } catch (error) {
         news.models = `Downloading failed: ${error.message}`;
@@ -197,8 +203,12 @@ class NuruSettingTab extends PluginSettingTab {
       if (!installed && !(await setUpNuru())) return this.display();
       installed = true;
       await refresh();
-      if (!state.ok && (!ollamaAction() || !(await fixOllama()))) return this.display();
-      await refresh();
+      // Start, then update if what started is older: at most both, each once.
+      for (let tries = 0; !state.ok && tries < 2; tries++) {
+        if (!ollamaAction() || !(await fixOllama())) break;
+        await refresh();
+      }
+      if (!state.ok) return refresh(); // step 2 says why: what failed, or what to do
       if (state.missing.length) await downloadModels();
       return this.display();
     });

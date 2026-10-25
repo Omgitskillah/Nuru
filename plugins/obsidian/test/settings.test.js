@@ -344,3 +344,36 @@ test("a failed install, download or check is said, and can be tried again", asyn
   buttonOf(settingTab, "2. Ollama", "Check").click();
   await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(said(settingTab, "2. Ollama")));
 });
+
+test("Set up everything starts a stopped Ollama and then updates it if it is older, before any model download", async () => {
+  for (const [system, expect] of [["win32-x64", { installed: [["0.40.4", "win32-x64"]], pulled: ["qwen3.5:4b", "nomic-embed-text:v1.5"] }],
+    ["darwin-arm64", { installed: [], pulled: [] }]]) {
+    const { settingTab } = tab();
+    settingTab.system = system;
+    const fake = fakeOllama({ version: null, have: [], app: "C:/Ollama/ollama app.exe" });
+    fake.start = async (where) => { fake.started.push(where); fake.version = "0.38.2"; }; // what was installed is older
+    settingTab.ollama = fake;
+    settingTab.display();
+    await shown(settingTab);
+
+    buttonOf(settingTab, "Set up everything", "Set up everything").click();
+    await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")) || /older than Nuru needs/.test(said(settingTab, "2. Ollama")));
+    await shown(settingTab);
+
+    assert.deepEqual(fake.started, ["C:/Ollama/ollama app.exe"]);
+    assert.deepEqual(fake.installed, expect.installed);
+    assert.deepEqual(fake.pulled, expect.pulled, "models only into an Ollama at the pinned version");
+    if (!expect.pulled.length) assert.match(said(settingTab, "2. Ollama"), /0\.38\.2 is older than Nuru needs .* menu-bar icon/);
+  }
+});
+
+test("Download checks Ollama's version afresh, and refuses one that went older since the tab was drawn", async () => {
+  const { settingTab } = tab();
+  settingTab.ollama = fakeOllama({ have: ["nomic-embed-text:v1.5"] });
+  settingTab.display();
+  await shown(settingTab);
+  settingTab.ollama.version = "0.38.2"; // replaced by an older Ollama meanwhile
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => /After step 2/.test(said(settingTab, "3. Models")));
+  assert.deepEqual(settingTab.ollama.pulled, []);
+});

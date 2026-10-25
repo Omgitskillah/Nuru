@@ -9,7 +9,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, run, setUp, thisSystem } = require("../lib/setup");
+const { SetupProblem, download, fileSha256, run, setUp, thisSystem } = require("../lib/setup");
 const { tarGz, zip } = require("./helpers/archives");
 const { until } = require("./helpers/setup");
 
@@ -257,6 +257,38 @@ test("a large download is streamed to a file, kept only once its sha256 matches"
   await assert.rejects(download(`${url}/assets/big`, local({ sha256: sha256("x".repeat(100000)), to, maxBytes: 10 })), /larger than expected/);
   await assert.rejects(download(`${url}/assets/missing`, local({ sha256: "", to })), /answered 404/);
   assert.deepEqual(fs.readdirSync(dir), [], "a failed download leaves nothing");
+});
+
+test("two downloads to one file each write their own partial, and both end with the checked file", async (t) => {
+  const dir = home(t);
+  const body = "y".repeat(300000);
+  const { url } = await server(t, { big: body });
+  const to = path.join(dir, "OllamaSetup.exe");
+  const both = await Promise.all([1, 2].map(() => download(`${url}/assets/big`, local({ sha256: sha256(body), to }))));
+  assert.deepEqual(both, [to, to]);
+  assert.equal(fs.readFileSync(to, "utf8"), body);
+  assert.deepEqual(fs.readdirSync(dir), ["OllamaSetup.exe"]);
+});
+
+test("a file that can't be created, written or moved ends the download as a failure, leaving nothing", async (t) => {
+  const dir = home(t);
+  const { url } = await server(t, { big: "z".repeat(1000) });
+  const ok = sha256("z".repeat(1000));
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "missing", "big") })), /Couldn't download big: ENOENT/);
+
+  const write = fs.writeSync;
+  fs.writeSync = () => { throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }); };
+  try {
+    await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "big") })), /no space left on device/);
+  } finally {
+    fs.writeSync = write;
+  }
+  assert.deepEqual(fs.readdirSync(dir), []);
+
+  fs.mkdirSync(path.join(dir, "taken", "inside"), { recursive: true }); // a folder where the file goes
+  await assert.rejects(download(`${url}/assets/big`, local({ sha256: ok, to: path.join(dir, "taken") })), /Couldn't download big:/);
+  assert.deepEqual(fs.readdirSync(dir), ["taken"]);
+  assert.equal(await fileSha256(path.join(__filename)), sha256(fs.readFileSync(__filename)));
 });
 
 test("a stalled connection and a broken response are reported", async (t) => {

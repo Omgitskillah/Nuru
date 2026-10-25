@@ -39,7 +39,7 @@ function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, prot
   return new Promise((resolve, reject) => {
     let request;
     let fd = null;
-    const partial = to && `${to}.partial`;
+    const partial = to && `${to}.${crypto.randomUUID()}.partial`; // this download's own
     const discard = () => {
       if (fd !== null) fs.closeSync(fd);
       fd = null;
@@ -64,25 +64,40 @@ function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, prot
         const hash = crypto.createHash("sha256");
         const chunks = [];
         let size = 0;
-        if (partial) fd = fs.openSync(partial, "w");
-        response.on("data", (chunk) => {
-          if ((size += chunk.length) > maxBytes) {
+        let failed = false;
+        // A disk that is full, or a file that can't be written or moved, ends the download as a failure.
+        const safely = (work) => {
+          try {
+            work();
+          } catch (error) {
+            failed = true;
             request.destroy();
-            return done(fail)("it is larger than expected");
+            done(fail)(error.message);
+          }
+        };
+        if (partial) safely(() => { fd = fs.openSync(partial, "wx"); });
+        response.on("data", (chunk) => {
+          if (failed) return;
+          if ((size += chunk.length) > maxBytes) {
+            failed = true;
+            request.destroy();
+            done(fail)("it is larger than expected");
+            return;
           }
           hash.update(chunk);
-          if (partial) fs.writeSync(fd, chunk);
+          if (partial) safely(() => fs.writeSync(fd, chunk));
           else chunks.push(chunk);
-          return undefined;
         });
         response.on("end", () => {
-          if (size > maxBytes) return;
+          if (failed) return;
           if (hash.digest("hex") !== sha256) return done(fail)("it isn't the file this release names");
           if (!partial) return done(resolve)(Buffer.concat(chunks));
-          fs.closeSync(fd);
-          fd = null;
-          fs.renameSync(partial, to);
-          return done(resolve)(to);
+          return safely(() => {
+            fs.closeSync(fd);
+            fd = null;
+            fs.renameSync(partial, to);
+            done(resolve)(to);
+          });
         });
         response.on("error", (error) => done(fail)(error.message));
       });
@@ -283,4 +298,11 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
   }
 }
 
-module.exports = { HOSTS, RELEASE, SetupProblem, download, lock, run, setUp, thisSystem };
+// The sha256 of the file at `file`, read as it is on disk now.
+async function fileSha256(file) {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+module.exports = { HOSTS, RELEASE, SetupProblem, download, fileSha256, lock, run, setUp, thisSystem };

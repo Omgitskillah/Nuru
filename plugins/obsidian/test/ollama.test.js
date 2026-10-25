@@ -103,7 +103,7 @@ test("the plugin's default models are Nuru's own", () => {
 });
 
 const PIN = { version: "0.40.4", url: "https://github.com/ollama/ollama/releases/download/v0.40.4/",
-  systems: { "win32-x64": { asset: "OllamaSetup.exe", sha256: "b".repeat(64) }, "darwin-arm64": { asset: "Ollama-darwin.zip", sha256: "a".repeat(64) } } };
+  systems: { "win32-x64": { asset: "OllamaSetup.exe", sha256: "9095bdb859308b62acf04036ffd4adfe366d7f737d276eb6c46ae434f3816c9b" }, "darwin-arm64": { asset: "Ollama-darwin.zip", sha256: "a".repeat(64) } } };
 
 function home(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nuru ollama home "));
@@ -111,9 +111,13 @@ function home(t) {
   return dir;
 }
 
-const spawned = () => {
+// Stands in for child_process.spawn; with `error`, the child reports it the way a missing program does.
+const spawned = (error = null) => {
   const calls = [];
-  const spawn = (command, args, options) => { calls.push([command, args, options.shell]); return { unref() {} }; };
+  const spawn = (command, args, options) => {
+    calls.push([command, args, options.shell]);
+    return { unref() {}, on(event, handler) { if (event === "error" && error) setTimeout(() => handler(error), 10); } };
+  };
   return { calls, spawn };
 };
 
@@ -123,6 +127,9 @@ test("atLeast compares Ollama versions number by number, and never asks for a do
   assert.equal(atLeast("1.0.0", "0.40.4"), true);
   assert.equal(atLeast("0.38.2", "0.40.4"), false);
   assert.equal(atLeast("0.40.3-rc1", "0.40.4"), false);
+  assert.equal(atLeast("0.40.4-rc1", "0.40.4"), false, "a pre-release comes before its release");
+  assert.equal(atLeast("0.40.4-rc2", "0.40.4-rc1"), true);
+  assert.equal(atLeast("0.40.5-rc1", "0.40.4"), true);
   assert.equal(atLeast("0.0.0", "0.40.4"), false);
 });
 
@@ -156,7 +163,7 @@ test("on Windows, Ollama's installer is downloaded to a file, run silently witho
 
   assert.equal(version, "0.40.4");
   const installer = path.join(dir, ".nuru", "downloads", "OllamaSetup.exe");
-  assert.deepEqual(fetched, [[`${PIN.url}OllamaSetup.exe`, "b".repeat(64), 2 * 1024 ** 3]]);
+  assert.deepEqual(fetched, [[`${PIN.url}OllamaSetup.exe`, PIN.systems["win32-x64"].sha256, 2 * 1024 ** 3]]);
   assert.deepEqual(ran, [[installer, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], true]]);
   assert.ok(!fs.existsSync(installer), "the installer is removed");
   assert.deepEqual(steps, ["Downloading Ollama 0.40.4…", "Installing Ollama 0.40.4…", "Waiting for Ollama to start…"]);
@@ -204,4 +211,41 @@ test("start opens an installed Ollama and waits for it; one that never answers i
 
 test("a computer with no Ollama release in the pins is sent to Ollama's site", async () => {
   await assert.rejects(install(PIN, "linux-x64", {}), /Nuru can't install Ollama on this computer \(linux-x64\): get it from https:\/\/ollama\.com\/download/);
+});
+
+test("an installer that finishes but leaves no Ollama answering is reported", async (t) => {
+  const dir = home(t);
+  const fetch = async (url, options) => { fs.writeFileSync(options.to, "exe"); return options.to; };
+  await assert.rejects(install(PIN, "win32-x64", { home: dir, fetch, runner: async () => ({ code: 0 }), platform: "win32",
+    base: "http://127.0.0.1:1", waitMs: 1500 }), /Ollama didn't start: open it from your applications, then click Check\./);
+});
+
+test("an installer whose bytes changed on disk after the download isn't run", async (t) => {
+  const dir = home(t);
+  const ran = [];
+  const fetch = async (url, options) => { fs.writeFileSync(options.to, "swapped"); return options.to; };
+  await assert.rejects(install(PIN, "win32-x64", { home: dir, fetch, runner: async (c) => { ran.push(c); return { code: 0 }; }, platform: "win32" }),
+    /Ollama's installer changed after it was downloaded/);
+  assert.deepEqual(ran, []);
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "downloads")), []);
+});
+
+test("Ollama installs one at a time with Nuru's setup: another window holding the setup lock stops it", async (t) => {
+  const dir = home(t);
+  const locks = path.join(dir, ".nuru", "setup-locks");
+  fs.mkdirSync(locks, { recursive: true });
+  fs.writeFileSync(path.join(locks, `${process.pid}-other-window`), "");
+  let fetched = false;
+  await assert.rejects(install(PIN, "win32-x64", { home: dir, fetch: async () => { fetched = true; }, platform: "win32" }),
+    /already being set up, in another Obsidian window/);
+  assert.equal(fetched, false);
+});
+
+test("an app that can't be opened is reported at once, not after the wait", async (t) => {
+  const { calls, spawn } = spawned(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+  const began = Date.now();
+  await assert.rejects(start("C:/gone/ollama app.exe", { platform: "win32", spawn, base: "http://127.0.0.1:1", waitMs: 60000 }),
+    /Couldn't open Ollama: spawn ENOENT/);
+  assert.ok(Date.now() - began < 10000);
+  assert.equal(calls.length, 1);
 });

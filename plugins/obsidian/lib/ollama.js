@@ -11,7 +11,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const { SetupProblem, download, run } = require("./setup");
+const { SetupProblem, download, fileSha256, lock, run } = require("./setup");
 const { readZip, writeEntries } = require("./unpack");
 
 const OLLAMA = "http://127.0.0.1:11434";
@@ -24,12 +24,13 @@ const EMBEDDING_MODEL = "nomic-embed-text:v1.5";
 const INSTALL_BYTES = 2 * 1024 * 1024 * 1024; // OllamaSetup.exe is 1.5 GB: NVIDIA's libraries are in it
 const START_MS = 2 * 60 * 1000;
 
-// Whether Ollama `found` is `pinned` or newer: "0.40.4" style versions, compared number by number.
+// Whether Ollama `found` is `pinned` or newer: "0.40.4" style versions, compared number by number; a
+// pre-release ("0.40.4-rc1") comes before its release.
 function atLeast(found, pinned) {
   const numbers = (v) => String(v).split(/[.-]/).slice(0, 3).map((n) => parseInt(n, 10) || 0);
   const [a, b] = [numbers(found), numbers(pinned)];
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return true;
+  return !String(found).includes("-") || String(pinned).includes("-");
 }
 
 // Where Ollama's app is installed on this computer, or null.
@@ -40,12 +41,14 @@ function findApp({ platform = process.platform, home = os.homedir(), env = proce
   return places.find((place) => fs.existsSync(place)) || null;
 }
 
-// Waits until Ollama answers, for up to `ms`.
-async function answering(ms = START_MS, options = {}) {
+// Waits until Ollama answers, for up to `ms`; `failed()` gives an error that ends the wait early.
+async function answering(ms = START_MS, options = {}, failed = () => null) {
   for (const until = Date.now() + ms; ;) {
     try {
       return (await request("GET", "/api/version", options)).version;
     } catch {
+      const error = failed();
+      if (error) throw new SetupProblem(`Couldn't open Ollama: ${error.message}`);
       if (Date.now() > until) throw new SetupProblem("Ollama didn't start: open it from your applications, then click Check.");
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -55,23 +58,40 @@ async function answering(ms = START_MS, options = {}) {
 // Starts the installed app (`app`, from findApp) and waits for it to answer.
 async function start(app, { platform = process.platform, spawn = childProcess.spawn, waitMs, base } = {}) {
   const [command, args] = platform === "win32" ? [app, []] : ["/usr/bin/open", [app]];
-  spawn(command, args, { detached: true, stdio: "ignore", shell: false, windowsHide: false }).unref();
-  return answering(waitMs, { base });
+  let error = null;
+  const child = spawn(command, args, { detached: true, stdio: "ignore", shell: false, windowsHide: false });
+  child.on("error", (e) => { error = e; }); // gone before it started, say
+  child.unref();
+  return answering(waitMs, { base }, () => error);
 }
 
-// Installs or updates Ollama to `pin` (release/dependencies.json's ollama entry, for `system`).
-async function install(pin, system, { home = os.homedir(), fetch = download, runner = run, step = () => {},
-  platform = process.platform, spawn, waitMs, base } = {}) {
+// Installs or updates Ollama to `pin` (release/dependencies.json's ollama entry, for `system`), one
+// install or setup at a time (the setup lock, across Obsidian windows).
+async function install(pin, system, { home = os.homedir(), ...options } = {}) {
   const asset = pin.systems[system];
   if (!asset) throw new SetupProblem(`Nuru can't install Ollama on this computer (${system}): get it from ${DOWNLOAD}.`);
+  const nuruDir = path.join(home, ".nuru");
+  fs.mkdirSync(nuruDir, { recursive: true });
+  const unlock = lock(nuruDir);
+  try {
+    return await installLocked(pin, asset, home, options);
+  } finally {
+    unlock();
+  }
+}
+
+async function installLocked(pin, asset, home, { fetch = download, runner = run, step = () => {}, platform = process.platform,
+  spawn, waitMs, base }) {
   step(`Downloading Ollama ${pin.version}…`);
   if (platform === "win32") {
     const downloads = path.join(home, ".nuru", "downloads");
     fs.mkdirSync(downloads, { recursive: true });
     const installer = await fetch(pin.url + asset.asset, { sha256: asset.sha256, to: path.join(downloads, asset.asset),
       maxBytes: INSTALL_BYTES, timeoutMs: 60 * 60 * 1000 });
-    step(`Installing Ollama ${pin.version}…`);
     try {
+      // The file run is the file checked: its bytes on disk, just before it runs.
+      if ((await fileSha256(installer)) !== asset.sha256) throw new SetupProblem("Ollama's installer changed after it was downloaded.");
+      step(`Installing Ollama ${pin.version}…`);
       const result = await runner(installer, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], {});
       if (result.code !== 0) throw new SetupProblem(`Ollama's installer failed (exit ${result.code}).`);
     } finally {

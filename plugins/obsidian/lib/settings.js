@@ -77,6 +77,7 @@ class NuruSettingTab extends PluginSettingTab {
     this.release = RELEASE;
     this.system = thisSystem();
     this.setupNews = "";
+    this.modelsNews = ""; // like setupNews: what Set up everything says about the models, once the tab is shown again
   }
 
   display() {
@@ -176,8 +177,9 @@ class NuruSettingTab extends PluginSettingTab {
     const windows = this.system.startsWith("win32");
     const needed = [chatModel, this.ollama.EMBEDDING_MODEL].filter(Boolean);
     const state = { running: false, version: null, app: null, missing: needed, ok: false };
-    const news = { nuru: this.setupNews, ollama: "", models: "" }; // shown once, by these rows
+    const news = { nuru: this.setupNews, ollama: "", models: this.modelsNews }; // shown once, by these rows
     this.setupNews = "";
+    this.modelsNews = "";
     const rows = {};
     const buttons = {};
     const bars = {};
@@ -260,7 +262,11 @@ class NuruSettingTab extends PluginSettingTab {
         }
         return true;
       } catch (error) {
-        news.models = `Downloading failed: ${error.message}`;
+        // Ollama asks its online library first; a network that blocks or holds it fails here, before any download.
+        news.models = /pull model manifest|registry\.ollama\.ai/.test(error.message)
+          ? "Ollama couldn't fetch the model's details from its library (registry.ollama.ai). Check the internet " +
+            `connection: a VPN, proxy or security program may be blocking it. Ollama said: ${error.message}`
+          : `Downloading failed: ${error.message}`;
         return false;
       }
     };
@@ -319,7 +325,7 @@ class NuruSettingTab extends PluginSettingTab {
         await refresh();
       }
       if (!state.ok) return refresh(); // step 2 says why: what failed, or what to do
-      if (state.missing.length) await downloadModels();
+      if (state.missing.length && !(await downloadModels())) this.modelsNews = news.models; // the tab is shown again below
       return this.display();
     });
     row("nuru", "1. Nuru");

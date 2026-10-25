@@ -528,3 +528,24 @@ test("what can't be removed is said: a Nuru that won't stop stops it all; a fold
   assert.equal(obsidian.Notice.shown.at(-1), "Nuru was only partly removed:\nThis vault's .nuru is still there: EBUSY\n" +
     "The plugin is still there: remove it in Settings → Community plugins");
 });
+
+test("a model download that fails in Set up everything says why once the tab is shown again, naming a blocked network", async () => {
+  const { settingTab } = tab();
+  const manifest = 'pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b": context deadline exceeded';
+  settingTab.ollama = fakeOllama({ have: [], pull: async () => { throw new Error(manifest); } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "Set up everything", "Set up everything").click();
+  await until(() => /couldn't fetch the model's details from its library/.test(said(settingTab, "3. Models")));
+  assert.match(said(settingTab, "3. Models"), /a VPN, proxy or security program may be blocking it\. Ollama said: pull model manifest: .*context deadline exceeded/);
+  await shown(settingTab);
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "3. Models"), /click Download/, "said once");
+
+  settingTab.ollama = fakeOllama({ have: [], pull: async () => { throw new Error("disk full"); } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => /Downloading failed: disk full/.test(said(settingTab, "3. Models")));
+});

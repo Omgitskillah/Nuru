@@ -124,10 +124,7 @@ const tagged = (name) => (name.includes(":") ? name : `${name}:latest`);
 
 function request(method, path, { body, base = OLLAMA, timeoutMs = 5000, onLine } = {}) {
   return new Promise((resolve, reject) => {
-    const data = body ? JSON.stringify(body) : undefined;
-    // With its length, so Node sends a DELETE's body too (it doesn't chunk one).
-    const headers = data ? { "content-type": "application/json", "content-length": Buffer.byteLength(data) } : {};
-    const req = http.request(new URL(path, base), { method, timeout: timeoutMs, headers }, (response) => {
+    const req = http.request(new URL(path, base), { method, timeout: timeoutMs, headers: body ? { "content-type": "application/json" } : {} }, (response) => {
       let text = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => {
@@ -144,7 +141,7 @@ function request(method, path, { body, base = OLLAMA, timeoutMs = 5000, onLine }
       });
       response.on("end", () => {
         if (response.statusCode !== 200) return reject(new Error(`Ollama answered ${response.statusCode}${text ? `: ${text.trim()}` : ""}`));
-        if (!onLine) return resolve(text ? JSON.parse(text) : null); // /api/delete answers with nothing
+        if (!onLine) return resolve(JSON.parse(text));
         try {
           if (text.trim()) onLine(JSON.parse(text)); // a last line without its newline
           resolve(null);
@@ -155,7 +152,7 @@ function request(method, path, { body, base = OLLAMA, timeoutMs = 5000, onLine }
     });
     req.on("timeout", () => req.destroy(new Error("Ollama didn't answer")));
     req.on("error", reject);
-    req.end(data);
+    req.end(body ? JSON.stringify(body) : undefined);
   });
 }
 
@@ -187,13 +184,4 @@ async function pull(name, onProgress = () => {}, options = {}) {
   if (!finished) throw new Error(`downloading ${name} stopped before Ollama finished it`);
 }
 
-// Deletes `name` from Ollama; one it doesn't have is already gone.
-async function remove(name, options = {}) {
-  try {
-    await request("DELETE", "/api/delete", { ...options, body: { model: name } });
-  } catch (error) {
-    if (!/^Ollama answered 404/.test(error.message)) throw error;
-  }
-}
-
-module.exports = { CHAT_MODEL, DOWNLOAD, EMBEDDING_MODEL, OLLAMA, answering, atLeast, check, findApp, install, pull, remove, start };
+module.exports = { CHAT_MODEL, DOWNLOAD, EMBEDDING_MODEL, OLLAMA, atLeast, check, findApp, install, pull, start };

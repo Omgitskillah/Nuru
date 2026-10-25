@@ -18,21 +18,26 @@ const { Modal, Notice, PluginSettingTab, Setting } = obsidian;
 const KEEP_ALIVE = { "5m": "5 minutes", "30m": "30 minutes", "1h": "1 hour", "-1": "Until Ollama stops" };
 const DEFAULT_KEEP_ALIVE = "30m"; // Nuru's own when NURU_KEEP_ALIVE isn't set (core/providers/ollama.py)
 
-// Asks how to remove Nuru: keep what it added for later, or delete all of it (`parts` lists that), then
-// runs `remove(everything, say)`, showing what it's doing until it's done.
+// Asks how to remove Nuru: keep its files for later, or delete them (`parts` lists them; `steps` are what
+// the user removes afterwards), then runs `remove(everything, say)`, showing what it's doing until it's done.
 class RemoveModal extends Modal {
-  constructor(app, parts, remove) {
+  constructor(app, parts, steps, remove) {
     super(app);
-    Object.assign(this, { parts, remove });
+    Object.assign(this, { parts, steps, remove });
   }
 
   onOpen() {
     const { contentEl } = this;
     this.setTitle("Remove Nuru");
-    contentEl.createEl("p", { text: "This removes the Nuru plugin. Should it delete what Nuru added to this computer too?" });
+    contentEl.createEl("p", { text: "This removes the Nuru plugin. Should it delete Nuru's files on this computer too?" });
     const list = contentEl.createEl("ul");
     for (const part of this.parts) list.createEl("li", { text: part });
-    contentEl.createEl("p", { text: "Your notes are never touched. Ollama and models you had before Nuru stay." });
+    if (this.steps.length) {
+      contentEl.createEl("p", { text: "Nuru doesn't remove other programs or their files. To remove what Nuru added to them, afterwards:" });
+      const todo = contentEl.createEl("ul");
+      for (const step of this.steps) todo.createEl("li", { text: step });
+    }
+    contentEl.createEl("p", { text: "Your notes are never touched." });
     const status = contentEl.createEl("p", { cls: "nuru-remove-status" });
     const buttons = new Setting(contentEl);
     const choose = (everything) => async () => {
@@ -42,7 +47,7 @@ class RemoveModal extends Modal {
     };
     buttons.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
     buttons.addButton((b) => b.setButtonText("Keep them").onClick(choose(false)));
-    buttons.addButton((b) => b.setButtonText("Delete everything").setWarning().onClick(choose(true)));
+    buttons.addButton((b) => b.setButtonText("Delete Nuru's files").setWarning().onClick(choose(true)));
   }
 
   onClose() {
@@ -116,31 +121,25 @@ class NuruSettingTab extends PluginSettingTab {
     this.displayRemove(containerEl);
   }
 
-  // Removing the plugin, and on request what Nuru added: Obsidian doesn't tell a plugin it's being
-  // removed (only that it's unloaded, as when Obsidian quits), so it's asked here, and the plugin removes itself.
+  // Removing the plugin, and on request Nuru's files: Obsidian doesn't tell a plugin it's being removed
+  // (only that it's unloaded, as when Obsidian quits), so it's asked here, and the plugin removes itself.
   displayRemove(containerEl) {
     new Setting(containerEl).setName("Remove").setHeading();
     const { home } = this.plugin.launcher;
     const vault = this.plugin.vaultPath();
-    const { ollama: app, models } = this.removal.added(home);
-    const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")})`,
-      ...(models.length ? [`The models Nuru downloaded into Ollama: ${models.join(" and ")}`] : []),
-      ...(app ? [this.system.startsWith("win32") ? "Ollama, which Nuru installed: you uninstall it yourself, in Windows Settings → Apps"
-        : `Ollama, which Nuru installed (${app})`] : []),
-      `This vault's Nuru chats and search index (its .nuru folder)`];
+    const parts = [`Nuru's install, logs and tokens (${path.join(home, ".nuru")})`, "This vault's Nuru chats and search index (its .nuru folder)"];
+    const steps = this.removal.steps(home, this.system.startsWith("win32") ? "win32" : "darwin");
     new Setting(containerEl).setName("Remove Nuru")
-      .setDesc("Removes this plugin. It asks first whether to delete what Nuru added to this computer too, or keep it for later.")
+      .setDesc("Removes this plugin. It asks first whether to delete Nuru's files on this computer too, or keep them for later.")
       .addButton((button) => button.setButtonText("Remove Nuru…").setWarning()
-        .onClick(() => new RemoveModal(this.app, parts, (everything, say) => this.remove(everything, say, vault)).open()));
+        .onClick(() => new RemoveModal(this.app, parts, steps, (everything, say) => this.remove(everything, say, vault, steps)).open()));
   }
 
-  // Deletes everything Nuru added, if asked, once Nuru has stopped; then removes the plugin, unless some of
-  // what Nuru added is still there: then the plugin stays, so Remove Nuru can finish it. A Notice says how it
-  // went, since the settings go with the plugin.
-  async remove(everything, say, vault) {
+  // Deletes Nuru's files, if asked, once Nuru has stopped; then removes the plugin. A Notice says how it went,
+  // with the steps still to do, since the settings go with the plugin.
+  async remove(everything, say, vault, steps) {
     const { launcher, manifest } = this.plugin;
     let problems = [];
-    let manual = [];
     if (everything) {
       say("Stopping Nuru…");
       try {
@@ -149,13 +148,8 @@ class NuruSettingTab extends PluginSettingTab {
         new Notice(`Nothing was removed: ${error.message}`, 0);
         return;
       }
-      let left;
-      ({ problems, left, manual } = await this.removal.removeEverything({ home: launcher.home, vault, say }));
-      if (left) {
-        new Notice(`Some of what Nuru added is still there, so the plugin stays:\n${problems.join("\n")}\n` +
-          "Then click Remove Nuru again.", 0);
-        return;
-      }
+      say("Deleting Nuru's files…");
+      ({ problems } = this.removal.removeOwn({ home: launcher.home, vault }));
     }
     say("Removing the plugin…");
     try {
@@ -163,9 +157,10 @@ class NuruSettingTab extends PluginSettingTab {
     } catch {
       problems.push("The plugin is still there: remove it in Settings → Community plugins");
     }
-    const done = everything ? "Nuru and what it added are removed." : "The Nuru plugin is removed; what Nuru added is kept.";
-    const still = manual.length ? `\nStill to do: ${manual.join("\n")}.` : "";
-    new Notice((problems.length ? `${done} Except:\n${problems.join("\n")}` : done) + still, problems.length || manual.length ? 0 : undefined);
+    const done = everything ? "Nuru and its files are removed." : "The Nuru plugin is removed; Nuru's files are kept.";
+    const still = everything && steps.length ? `\nStill to do, to remove what Nuru added to Ollama:\n${steps.join("\n")}` : "";
+    const text = (problems.length ? `${done} Except:\n${problems.join("\n")}` : done) + still;
+    new Notice(text, problems.length || still ? 0 : undefined);
   }
 
   // Setting Nuru up as numbered steps, each enabled once the one before is done: 1 Nuru, the release
@@ -239,7 +234,7 @@ class NuruSettingTab extends PluginSettingTab {
           say("Starting Ollama…");
           await this.ollama.start(state.app);
         } else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
-        // Where Nuru put it: on macOS always ~/Applications/Ollama.app, the only app Remove Nuru deletes.
+        // Where Nuru put it: on macOS always ~/Applications/Ollama.app. Remove Nuru names it in its steps.
         if (installing) this.removal.remember(launcher.home, { app: windows ? this.ollama.findApp({ home: launcher.home })
           : path.join(launcher.home, "Applications", "Ollama.app") });
         return true;

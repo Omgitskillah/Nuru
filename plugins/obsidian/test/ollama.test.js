@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const os = require("node:os");
 
-const { CHAT_MODEL, EMBEDDING_MODEL, atLeast, check, findApp, install, pull, remove, start } = require("../lib/ollama");
+const { CHAT_MODEL, EMBEDDING_MODEL, atLeast, check, findApp, install, pull, start } = require("../lib/ollama");
 const { zip } = require("./helpers/archives");
 
 const POSIX = process.platform !== "win32";
@@ -247,12 +247,4 @@ test("an app that can't be opened is reported at once, not after the wait", asyn
     /Couldn't open Ollama: spawn ENOENT/);
   assert.ok(Date.now() - began < 10000);
   assert.equal(calls.length, 1);
-});
-
-test("remove deletes a model by name; one Ollama doesn't have is already gone, and any other failure is an error", async (t) => {
-  const gone = await ollama(t, { pullStatus: 404 });
-  await remove("old:1b", { base: gone.base });
-  assert.deepEqual(gone.pulls, [{ model: "old:1b" }], "the name reaches Ollama in the DELETE's body");
-  const broken = await ollama(t, { pullStatus: 500 });
-  await assert.rejects(remove("old:1b", { base: broken.base }), /Ollama answered 500/);
 });

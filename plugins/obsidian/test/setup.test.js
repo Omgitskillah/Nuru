@@ -270,8 +270,9 @@ test("a setup goes on only when no other live setup holds the lock, and clears t
   await assert.rejects(setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner }),
     /Nuru is already being set up, in another Obsidian window/);
   assert.deepEqual(fs.readdirSync(locks), [path.basename(other)], "the other setup's entry stays, this one's goes");
+  fs.rmSync(other); // that setup ends
   if (POSIX) {
-    fs.renameSync(other, path.join(locks, "1-launchd")); // running, but not ours to signal
+    fs.writeFileSync(path.join(locks, "1-launchd"), ""); // running, but not ours to signal
     await assert.rejects(setUp({ home: dir, release: facts, fetch: fetchLocal, runner: fakeUv().runner }), /already being set up/);
     fs.rmSync(path.join(locks, "1-launchd"));
   }

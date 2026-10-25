@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -232,4 +233,109 @@ test("an install.json from before PATH was recorded still finds uv's folder", as
     spawn: (command, args, options) => { env = options.env; return fakeChild(); }, connect: async () => ({}) });
   await launcher.start();
   assert.equal(env.PATH.split(path.delimiter)[0], path.dirname(uv));
+});
+
+test("Nuru starts by itself only once this version has connected, and never while a start failed or is unfinished", async () => {
+  const { dir } = home();
+  let fail = false;
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),
+    connect: async () => ({ client: "c", status: "s" }) });
+  const realStart = launcher.start.bind(launcher);
+  launcher.start = async () => { if (fail) throw new Error("uv failed"); return realStart(); };
+  const starts = path.join(dir, ".nuru", "service", "starts");
+
+  assert.equal(launcher.mayStartByItself("1.0.3"), false, "never started on this computer");
+  assert.deepEqual(await launcher.startMarked("1.0.3"), { client: "c", status: "s" });
+  assert.equal(launcher.mayStartByItself("1.0.3"), true);
+  assert.equal(launcher.mayStartByItself("1.0.4"), false, "the first time after an update");
+  assert.deepEqual(fs.readdirSync(starts), [], "a start that connected leaves no mark");
+
+  fail = true;
+  await assert.rejects(launcher.startMarked("1.0.3"), /uv failed/);
+  assert.equal(launcher.mayStartByItself("1.0.3"), false, "a failed start holds later launches");
+  assert.equal(fs.readdirSync(starts).length, 1);
+  fail = false;
+  await launcher.startMarked("1.0.3");
+  assert.equal(launcher.mayStartByItself("1.0.3"), true, "until a start connects, which clears this launcher's own marks");
+
+  fs.writeFileSync(path.join(dir, ".nuru", "service", "autostart.json"), "{broken");
+  assert.equal(launcher.mayStartByItself("1.0.3"), false);
+});
+
+test("overlapping starts from two vault windows never clear each other's marks; an ended window's are cleared", async () => {
+  const { dir } = home();
+  const make = (connect) => new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(), connect });
+  const a = make(async () => ({ client: "a", status: "s" }));
+  let open;
+  const blocked = new Promise((resolve) => { open = resolve; });
+  const b = make(async () => { await blocked; return { client: "b", status: "s" }; });
+  const bStart = b.startMarked("1.0.3"); // still under way
+  await a.startMarked("1.0.3");
+  assert.equal(a.mayStartByItself("1.0.3"), false, "B's start is unfinished, so neither window starts by itself");
+  open();
+  await bStart;
+  assert.equal(a.mayStartByItself("1.0.3"), true);
+
+  // A window force-quit mid-start: its process is gone, and its mark stays until a start connects.
+  const ended = childProcess.spawnSync(process.execPath, ["-e", "0"]).pid;
+  fs.writeFileSync(path.join(dir, ".nuru", "service", "starts", `${ended}-gone`), "");
+  assert.equal(a.mayStartByItself("1.0.3"), false);
+  await a.startMarked("1.0.3");
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".nuru", "service", "starts")), []);
+  assert.equal(a.mayStartByItself("1.0.3"), true);
+});
+
+test("a connecting start clears every mark but another window's start still under way, across plugin reloads", async (t) => {
+  const { dir } = home();
+  const make = (connect) => new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(), connect });
+  const starts = path.join(dir, ".nuru", "service", "starts");
+
+  // The plugin reloaded in the same Obsidian: the old launcher's start failed, a new one's connects.
+  const before = make(async () => ({ client: "a", status: "s" }));
+  before.start = async () => { throw new Error("uv failed"); };
+  await assert.rejects(before.startMarked("1.0.3"), /uv failed/);
+  assert.equal(fs.readFileSync(path.join(starts, fs.readdirSync(starts)[0]), "utf8"), "failed");
+  const after = make(async () => ({ client: "b", status: "s" }));
+  fs.writeFileSync(path.join(starts, `${process.pid}-abandoned`), ""); // this Obsidian's, not running any more
+
+  // Another Obsidian window, still running: its start under way stays; its failed one, or one too old, goes.
+  const other = childProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => other.kill());
+  await new Promise((resolve) => other.once("spawn", resolve));
+  fs.writeFileSync(path.join(starts, `${other.pid}-pending`), "");
+  fs.writeFileSync(path.join(starts, `${other.pid}-failed`), "failed");
+  fs.writeFileSync(path.join(starts, `${other.pid}-old`), "");
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(path.join(starts, `${other.pid}-old`), old, old);
+
+  await after.startMarked("1.0.3");
+  assert.deepEqual(fs.readdirSync(starts), [`${other.pid}-pending`]);
+  assert.equal(after.mayStartByItself("1.0.3"), false, "held while the other window's start is under way");
+  fs.rmSync(path.join(starts, `${other.pid}-pending`));
+  assert.equal(after.mayStartByItself("1.0.3"), true);
+});
+
+test("a connecting start isn't upset by another window clearing its mark during the sweep", async (t) => {
+  const { dir } = home();
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),
+    connect: async () => ({ client: "c", status: "s" }) });
+  const starts = path.join(dir, ".nuru", "service", "starts");
+  const other = childProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => other.kill());
+  await new Promise((resolve) => other.once("spawn", resolve));
+  fs.mkdirSync(starts, { recursive: true });
+  const [gone, pending] = [path.join(starts, `${other.pid}-gone`), path.join(starts, `${other.pid}-pending`)];
+  fs.writeFileSync(gone, "");
+  fs.writeFileSync(pending, "");
+  // The other window's start connects and clears its mark after this sweep stats it, before it reads it.
+  const read = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (file, ...rest) => {
+    if (file === gone) fs.rmSync(gone, { force: true });
+    return read(file, ...rest);
+  });
+
+  assert.deepEqual(await launcher.startMarked("1.0.3"), { client: "c", status: "s" });
+  assert.deepEqual(fs.readdirSync(starts), [`${other.pid}-pending`]);
+  fs.rmSync(pending);
+  assert.equal(launcher.mayStartByItself("1.0.3"), true, "its success was recorded");
 });

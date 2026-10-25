@@ -10,6 +10,7 @@
 "use strict";
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,6 +26,21 @@ const serviceDir = (home) => path.join(home, ".nuru", "service");
 const installPath = (home = os.homedir()) => path.join(home, ".nuru", "install.json");
 const logPath = (home = os.homedir()) => path.join(serviceDir(home), "serve.log");
 const managedPath = (home) => path.join(serviceDir(home), "managed.json");
+const autoStartPath = (home) => path.join(serviceDir(home), "autostart.json");
+const startsDir = (home) => path.join(serviceDir(home), "starts");
+const RUNNING = Symbol.for("nuru.starts.running"); // this Obsidian's starts under way, across plugin reloads
+const MARK_MS = 3 * START_SECONDS * 1000; // longer than any start runs: pairing, then the service's start
+
+// Whether process `pid` is still running (on this computer; one that's someone else's counts).
+function alive(pid) {
+  if (!(pid > 0)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
 
 const PROBLEMS = {
   "not-installed": "Nuru isn't set up on this computer yet: click Set up Nuru in this plugin's settings.",
@@ -35,6 +51,9 @@ const PROBLEMS = {
   busy: "Nuru is busy with a turn in that vault: try again when it finishes.",
   "not-stopped": "Nuru didn't stop in time.",
   released: "The plugin was turned off while Nuru was starting.",
+  held: "Nuru doesn't start by itself the first time after it's installed or updated, or after a start that didn't finish " +
+    "(Obsidian was closed or stopped responding while it started).",
+
 };
 
 class LaunchProblem extends Error {
@@ -92,6 +111,61 @@ class Launcher {
         { cwd: nuru, env: { ...process.env, PATH: searchPath }, timeout: START_SECONDS * 1000, windowsHide: true },
         (error) => (error ? reject(new LaunchProblem("no-pairing", error.message)) : resolve()));
     });
+  }
+
+  // Whether Nuru may start by itself when a panel opens: only once this version of the plugin has started it
+  // on this computer, and only while no start is unfinished. Each start leaves its own mark in
+  // ~/.nuru/service/starts (outside the vault, which syncs) until it connects; a start that failed, or never
+  // ended (Obsidian closed, or stopped responding, while it started), keeps its mark, so later launches wait
+  // for a click instead of trying again. One computer-wide rule: any vault's unfinished start holds them all.
+  mayStartByItself(version) {
+    let record;
+    try {
+      record = JSON.parse(fs.readFileSync(autoStartPath(this.home), "utf8"));
+      if (fs.readdirSync(startsDir(this.home)).length) return false;
+    } catch (error) {
+      if (error.code !== "ENOENT" || !record) return false; // no record, or one that can't be read
+    }
+    return record?.version === version;
+  }
+
+  // start(), with its own mark (above) until it connects; a start that fails writes "failed" in its mark and
+  // keeps it. A start that connects removes every mark but one whose start is still under way in another
+  // Obsidian window: failed ones, ones whose process has ended, ones older than any start can run (a process
+  // number since reused), and this Obsidian's own that aren't running (left by the plugin before a reload:
+  // the starts under way are kept on globalThis, which a reload doesn't reset). Then the record says this
+  // version has connected.
+  async startMarked(version) {
+    const dir = startsDir(this.home);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const mark = path.join(dir, `${process.pid}-${crypto.randomUUID()}`);
+    fs.writeFileSync(mark, "", { flag: "wx" });
+    const running = (globalThis[RUNNING] ??= new Set());
+    running.add(mark);
+    let connected;
+    try {
+      connected = await this.start();
+    } catch (error) {
+      fs.writeFileSync(mark, "failed");
+      throw error;
+    } finally {
+      running.delete(mark);
+    }
+    for (const name of fs.readdirSync(dir)) {
+      const entry = path.join(dir, name);
+      const pid = Number(name.split("-")[0]);
+      let underWay;
+      try {
+        underWay = Date.now() - fs.statSync(entry).mtimeMs < MARK_MS && fs.readFileSync(entry, "utf8") !== "failed" &&
+          (pid === process.pid ? running.has(entry) : alive(pid));
+      } catch (error) {
+        if (error.code === "ENOENT") continue; // its window cleared it meanwhile
+        throw error;
+      }
+      if (!underWay) fs.rmSync(entry, { force: true });
+    }
+    fs.writeFileSync(autoStartPath(this.home), `${JSON.stringify({ version })}\n`);
+    return connected;
   }
 
   // Start the service for this vault and wait until it answers; {client, status} as connect() gives.

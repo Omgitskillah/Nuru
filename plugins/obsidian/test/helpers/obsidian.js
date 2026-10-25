@@ -121,8 +121,15 @@ class PluginSettingTab {
   constructor(app, plugin) { this.app = app; this.plugin = plugin; this.containerEl = make("div"); }
 }
 
+// Obsidian's components all have then(cb) (BaseComponent, since 0.9.7), so each stand-in does too.
+function then(cb) { cb(this); return this; }
+
 class Setting {
   constructor(containerEl) { this.settingEl = containerEl.createDiv(); }
+
+  // As Obsidian's own (since 0.9.20): `then(cb)` calls cb with the setting and returns it. So a Setting looks
+  // like a promise: one a promise resolves with is waited on again and again, and Obsidian freezes.
+  then(cb) { return then.call(this, cb); }
 
   get infoEl() { return this.settingEl; }
 
@@ -139,7 +146,7 @@ class Setting {
 
   addText(build) {
     const input = this.settingEl.createEl("input");
-    build({ inputEl: input, setValue(v) { input.value = v; return this; }, setPlaceholder(p) { input.placeholder = p; return this; },
+    build({ inputEl: input, then, setValue(v) { input.value = v; return this; }, setPlaceholder(p) { input.placeholder = p; return this; },
       onChange(f) { input.addEventListener("input", () => f(input.value)); return this; } });
     return this;
   }
@@ -147,20 +154,20 @@ class Setting {
   addToggle(build) {
     const input = this.settingEl.createEl("input");
     input.type = "checkbox";
-    build({ setValue(v) { input.checked = v; return this; }, onChange(f) { input.addEventListener("change", () => f(input.checked)); return this; } });
+    build({ then, setValue(v) { input.checked = v; return this; }, onChange(f) { input.addEventListener("change", () => f(input.checked)); return this; } });
     return this;
   }
 
   addDropdown(build) {
     const select = this.settingEl.createEl("select");
-    build({ selectEl: select, addOption(value, text) { select.createEl("option", { text, value }); return this; },
+    build({ selectEl: select, then, addOption(value, text) { select.createEl("option", { text, value }); return this; },
       setValue(v) { select.value = v; return this; }, onChange(f) { select.addEventListener("change", () => f(select.value)); return this; } });
     return this;
   }
 
   addButton(build) {
     const button = this.settingEl.createEl("button");
-    build({ setButtonText(t) { button.textContent = t; return this; }, onClick(f) { button.addEventListener("click", f); return this; },
+    build({ then, setButtonText(t) { button.textContent = t; return this; }, onClick(f) { button.addEventListener("click", f); return this; },
       setDisabled(d) { button.disabled = d; return this; }, setWarning() { button.classList.add("mod-warning"); return this; } });
     return this;
   }

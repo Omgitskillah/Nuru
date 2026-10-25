@@ -30,16 +30,21 @@ function remember(home, { app, model }) {
   fs.writeFileSync(addedPath(home), `${JSON.stringify(now, null, 2)}\n`);
 }
 
-// What the user does to remove what Nuru added beside its own files, from added.json.
+// An Ollama model name, as Ollama writes them ("qwen3.5:4b", "library/name:tag"): nothing a shell reads as
+// more than one word. added.json can be edited, so only such names become commands to copy.
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*(:[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+
+// What the user does to remove what Nuru added beside its own files, from added.json. The Ollama app is
+// named only where Nuru installs it on macOS; on Windows, Settings finds it.
 function steps(home = os.homedir(), platform = process.platform) {
   const { ollama, models } = added(home);
+  const names = models.filter((name) => typeof name === "string" && name.length <= 200 && MODEL_NAME.test(name));
   const list = [];
-  if (models.length) {
-    list.push(`Delete the models Nuru downloaded, in a terminal: ${models.map((name) => `ollama rm ${name}`).join(", then ")}`);
-  }
-  if (ollama) {
-    list.push(platform === "win32" ? "Uninstall Ollama, which Nuru installed, in Windows Settings → Apps → Installed apps"
-      : `Quit Ollama from its menu-bar icon, then move ${ollama}, which Nuru installed, to the Bin`);
+  if (names.length) list.push(`Delete the models Nuru downloaded, in a terminal: ${names.map((name) => `ollama rm ${name}`).join(", then ")}`);
+  if (names.length < models.length) list.push("Nuru's record names other models it can't show: see `ollama list` for what to delete");
+  if (ollama && platform === "win32") list.push("Uninstall Ollama, which Nuru installed, in Windows Settings → Apps → Installed apps");
+  else if (ollama === path.join(home, "Applications", "Ollama.app")) {
+    list.push(`Quit Ollama from its menu-bar icon, then move ${ollama}, which Nuru installed, to the Bin`);
   }
   return list;
 }

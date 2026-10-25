@@ -520,6 +520,6 @@ test("what can't be removed is said: a Nuru that won't stop stops it all; a fold
   openRemove(partly.settingTab);
   dialogButton("Delete Nuru's files").click();
   await until(() => obsidian.Modal.shown === null);
-  assert.equal(obsidian.Notice.shown.at(-1), "Nuru and its files are removed. Except:\nThis vault's .nuru is still there: EBUSY\n" +
+  assert.equal(obsidian.Notice.shown.at(-1), "Nuru was only partly removed:\nThis vault's .nuru is still there: EBUSY\n" +
     "The plugin is still there: remove it in Settings → Community plugins");
 });

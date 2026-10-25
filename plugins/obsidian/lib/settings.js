@@ -159,7 +159,7 @@ class NuruSettingTab extends PluginSettingTab {
     }
     const done = everything ? "Nuru and its files are removed." : "The Nuru plugin is removed; Nuru's files are kept.";
     const still = everything && steps.length ? `\nStill to do, to remove what Nuru added to Ollama:\n${steps.join("\n")}` : "";
-    const text = (problems.length ? `${done} Except:\n${problems.join("\n")}` : done) + still;
+    const text = (problems.length ? `Nuru was only partly removed:\n${problems.join("\n")}` : done) + still;
     new Notice(text, problems.length || still ? 0 : undefined);
   }
 

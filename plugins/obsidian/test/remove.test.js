@@ -31,8 +31,9 @@ test("what Nuru added to Ollama becomes steps for the user, for macOS and Window
   remember(dir, { model: "qwen3.5:4b" });
   remember(dir, { model: "nomic-embed-text:v1.5" });
   assert.deepEqual(steps(dir, "darwin"), ["Delete the models Nuru downloaded, in a terminal: ollama rm qwen3.5:4b, then ollama rm nomic-embed-text:v1.5"]);
-  remember(dir, { app: "/Users/me/Applications/Ollama.app" });
-  assert.equal(steps(dir, "darwin")[1], "Quit Ollama from its menu-bar icon, then move /Users/me/Applications/Ollama.app, which Nuru installed, to the Bin");
+  const app = path.join(dir, "Applications", "Ollama.app");
+  remember(dir, { app });
+  assert.equal(steps(dir, "darwin")[1], `Quit Ollama from its menu-bar icon, then move ${app}, which Nuru installed, to the Bin`);
   assert.equal(steps(dir, "win32")[1], "Uninstall Ollama, which Nuru installed, in Windows Settings → Apps → Installed apps");
   assert.ok(Array.isArray(steps()), "this computer's own home and system by default");
 });
@@ -71,4 +72,18 @@ test("a folder that can't be deleted is said, and the other still goes", (t) => 
   }
   assert.deepEqual(result, { problems: [`${path.join(dir, ".nuru")} is still there: EBUSY: resource busy or locked`] });
   assert.ok(!fs.existsSync(path.join(vault, ".nuru")));
+});
+
+test("only model names Ollama itself would write become commands; anything else in the record is never shown", (t) => {
+  const dir = home(t);
+  for (const model of ["qwen3.5:4b", "library/granite4.2:3b", "qwen3.5:4b; echo UNRELATED_COMMAND", "a\nrm -rf ~", "$(id)", "`id`", "x y",
+    "-flag", "a:b:c", "a".repeat(201)]) remember(dir, { model });
+  const shown = steps(dir, "darwin");
+  assert.deepEqual(shown, ["Delete the models Nuru downloaded, in a terminal: ollama rm qwen3.5:4b, then ollama rm library/granite4.2:3b",
+    "Nuru's record names other models it can't show: see `ollama list` for what to delete"]);
+  assert.ok(!shown.join("\n").includes("UNRELATED") && !shown.join("\n").includes("rm -rf"));
+
+  fs.writeFileSync(path.join(dir, ".nuru", "added.json"), JSON.stringify({ ollama: "/Users/me/Projects; rm -rf ~", models: [42] }));
+  assert.deepEqual(steps(dir, "darwin"), ["Nuru's record names other models it can't show: see `ollama list` for what to delete"],
+    "an app anywhere but where Nuru installs it isn't named");
 });

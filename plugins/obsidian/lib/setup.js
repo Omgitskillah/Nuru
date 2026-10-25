@@ -183,8 +183,11 @@ function prune(appDir, keep) {
   }
 }
 
+// `start`, when Nuru is running, restarts it on the new install. It runs under the setup lock, and so does
+// going back to the previous install when it fails: no other window's setup can switch install.json in
+// between, so a late rollback never undoes another setup. The result says how the start went.
 async function setUp({ home = os.homedir(), release = RELEASE, system = thisSystem(), fetch = download, runner = run,
-  step = () => {} } = {}) {
+  step = () => {}, start = null } = {}) {
   if (!release) {
     throw new SetupProblem("This copy of the plugin isn't from a Nuru release, so it can't set Nuru up. " +
       "Install the plugin with BRAT from the Nuru repository, or run `node plugins/obsidian/install.js <vault>` in a Nuru checkout.");
@@ -239,17 +242,29 @@ async function setUp({ home = os.homedir(), release = RELEASE, system = thisSyst
     const installed = generation;
     generation = null;
     prune(appDir, [installed, ...(previous ? [previous] : [])]);
-    return { version: release.version, nuru: installed, previous: previousText };
+    const result = { version: release.version, nuru: installed, previous: previousText };
+    if (start) {
+      step("Restarting Nuru on the new install…");
+      try {
+        await start();
+      } catch (error) {
+        result.startError = error;
+        if (previousText) {
+          try {
+            switchInstall(installFile, previousText);
+            await start();
+            result.rolledBack = true;
+          } catch (back) {
+            result.rollbackError = back;
+          }
+        }
+      }
+    }
+    return result;
   } finally {
     if (generation) fs.rmSync(generation, { recursive: true, force: true, maxRetries: 2 });
     unlock();
   }
 }
 
-// Puts back the install.json a setup replaced (setUp's `previous`), for when the new install doesn't
-// start: the previous generation is still there, kept as the rollback.
-function restoreInstall(home, previous) {
-  switchInstall(path.join(home, ".nuru", "install.json"), previous);
-}
-
-module.exports = { HOSTS, RELEASE, SetupProblem, download, lock, restoreInstall, run, setUp, thisSystem };
+module.exports = { HOSTS, RELEASE, SetupProblem, download, lock, run, setUp, thisSystem };

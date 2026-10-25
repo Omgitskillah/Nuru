@@ -36,23 +36,35 @@ function tab({ connect, running = false } = {}) {
   };
   const settingTab = new NuruSettingTab({}, plugin);
   settingTab.ollama = fakeOllama();
+  settingTab.release = { version: "1.0.1", ollama: OLLAMA_PIN };
+  settingTab.system = "darwin-arm64";
   return { settingTab, nuru, home, restarts, reconnects };
 }
 
-// Stands in for lib/ollama.js: `have` are the models it has, null when Ollama isn't running.
-function fakeOllama({ have = ["qwen3.5:4b", "nomic-embed-text:v1.5"], pull } = {}) {
+// Stands in for lib/ollama.js. `have` are the models it has, and `version` the Ollama running (null when
+// none is); `app` is where findApp finds it installed. install and start make it run at the pinned version.
+function fakeOllama({ have = ["qwen3.5:4b", "nomic-embed-text:v1.5"], version = "0.40.4", app = null, pull, install } = {}) {
   const real = require("../lib/ollama");
   const fake = {
-    ...real, have, asked: [], pulled: [],
+    ...real, have, version, app, asked: [], pulled: [], installed: [], started: [],
     check: async (needed) => {
       fake.asked.push(needed);
-      return fake.have ? { running: true, version: "0.40.4", missing: needed.filter((m) => !fake.have.includes(m)) }
-        : { running: false, version: null, missing: needed };
+      return { running: Boolean(fake.version), version: fake.version, missing: needed.filter((m) => !fake.have.includes(m)) };
     },
+    findApp: () => fake.app,
     pull: pull || (async (name, onProgress) => { onProgress(`${name}: pulling 50%`); fake.pulled.push(name); fake.have.push(name); }),
+    install: install || (async (pin, system, { step }) => {
+      step(`Installing Ollama ${pin.version}…`);
+      fake.installed.push([pin.version, system]);
+      fake.version = pin.version;
+    }),
+    start: async (where) => { fake.started.push(where); fake.version = "0.40.4"; },
   };
   return fake;
 }
+
+const OLLAMA_PIN = { version: "0.40.4", url: "https://github.com/ollama/ollama/releases/download/v0.40.4/",
+  systems: { "darwin-arm64": { asset: "Ollama-darwin.zip", sha256: "a".repeat(64) }, "win32-x64": { asset: "OllamaSetup.exe", sha256: "b".repeat(64) } } };
 
 const row = (settingTab, name) => [...settingTab.containerEl.children].find((el) => el.firstChild?.textContent === name);
 const change = (el, value) => { el.value = value; el.dispatchEvent(new window.Event(el.tagName === "SELECT" ? "change" : "input")); };
@@ -140,139 +152,195 @@ test("without Nuru running the current model still shows; keep-alive and restart
 const { SetupProblem } = require("../lib/setup");
 const { LaunchProblem } = require("../lib/launcher");
 
-test("with Nuru not set up, Set up Nuru installs it, and the tab then shows Nuru's settings", async () => {
+const buttonOf = (settingTab, name, text) => [...row(settingTab, name).querySelectorAll("button")].find((b) => b.textContent === text);
+const said = (settingTab, name) => row(settingTab, name).textContent;
+const shown = async (settingTab) => { await settingTab.stepsChecked; };
+
+test("with Nuru not set up, only step 1 can run; Set up Nuru installs it, and the tab then shows Nuru's settings", async () => {
   const { settingTab, home, nuru, restarts } = tab();
   fs.rmSync(path.join(home, ".nuru", "install.json"));
   const calls = [];
   settingTab.setUp = async (options) => {
-    calls.push(options.home);
+    calls.push([options.home, options.start]);
     options.step("Downloading Nuru…");
     fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv") }));
-    return { version: "0.1.0", nuru };
+    return { version: "1.0.1", nuru };
   };
   settingTab.display();
+  await shown(settingTab);
   assert.equal(row(settingTab, "Default model"), undefined);
-  const setup = row(settingTab, "Set up Nuru");
-  assert.match(setup.textContent, /Downloads Nuru and what it needs .* Your notes aren't touched/);
+  assert.match(said(settingTab, "1. Nuru"), /Downloads Nuru and what it needs .* Your notes aren't touched/);
+  assert.match(said(settingTab, "2. Ollama"), /After step 1\./);
+  assert.equal(buttonOf(settingTab, "2. Ollama", "Install Ollama").disabled, true);
+  assert.match(said(settingTab, "3. Models"), /After step 2|✓/);
+  assert.match(said(settingTab, "4. Ready"), /After the steps above/);
 
-  setup.querySelector("button").click();
-  await until(() => row(settingTab, "Repair or update Nuru"));
+  buttonOf(settingTab, "1. Nuru", "Set up Nuru").click();
+  await until(() => row(settingTab, "1. Nuru") && /Nuru 1\.0\.1 is set up\./.test(said(settingTab, "1. Nuru")));
 
-  assert.deepEqual(calls, [home]);
-  assert.match(row(settingTab, "Repair or update Nuru").textContent, /Nuru 0\.1\.0 is set up\./);
+  assert.deepEqual(calls, [[home, null]], "nothing was running, so no restart");
   assert.ok(row(settingTab, "Default model"), "Nuru's own settings are shown now");
-  assert.deepEqual(restarts, [], "nothing was running, so nothing restarts");
+  assert.deepEqual(restarts, []);
+  await shown(settingTab);
+  assert.match(said(settingTab, "4. Ready"), /✓ Open the Nuru panel to chat\./);
   settingTab.display();
-  assert.doesNotMatch(row(settingTab, "Repair or update Nuru").textContent, /is set up/, "the news is shown once");
+  await shown(settingTab);
+  assert.match(said(settingTab, "1. Nuru"), /✓ Nuru is set up\. Repair installs Nuru 1\.0\.1 again/, "the news is shown once");
 });
 
 test("a repair while Nuru runs restarts it on the new install and reconnects the chat", async () => {
   const { settingTab, restarts, reconnects } = tab({ running: true });
-  settingTab.setUp = async ({ start }) => { await start(); return { version: "0.1.0" }; };
+  settingTab.setUp = async ({ start }) => { await start(); return { version: "1.0.1" }; };
   settingTab.display();
-
-  row(settingTab, "Repair or update Nuru").querySelector("button").click();
-  await until(() => restarts.length && /is set up/.test(row(settingTab, "Repair or update Nuru").textContent));
-
+  await shown(settingTab);
+  buttonOf(settingTab, "1. Nuru", "Repair").click();
+  await until(() => restarts.length && /is set up/.test(said(settingTab, "1. Nuru")));
   assert.deepEqual([restarts.length, reconnects.length], [1, 1]);
 });
 
-test("what went wrong in a setup, or in the restart after it, is said in the tab", async () => {
-  const cases = [
-    [async () => { throw new SetupProblem("Couldn't download uv: the server answered 404"); }, false,
-      "Couldn't download uv: the server answered 404"],
-    [async () => { throw new Error("EACCES"); }, false, "Setting Nuru up failed: EACCES"],
-  ];
-  for (const [setUp, running, said] of cases) {
+test("what went wrong in a setup, its restart or the rollback after it, is said in step 1", async () => {
+  for (const [running, setUp, words] of [
+    [false, async () => { throw new SetupProblem("Couldn't download uv: the server answered 404"); }, "Couldn't download uv: the server answered 404"],
+    [false, async () => { throw new Error("EACCES"); }, "Setting Nuru up failed: EACCES"],
+    [true, async () => ({ version: "0.2.0", rolledBack: true, startError: new LaunchProblem("exited") }),
+      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Nuru is back on the install it had before."],
+    [true, async () => ({ version: "0.2.0", startError: new LaunchProblem("exited"), rollbackError: new LaunchProblem("exited") }),
+      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Going back to the install it had before failed too: Nuru stopped while starting."],
+  ]) {
     const { settingTab } = tab({ running });
-    settingTab.plugin.launcher.restart = async () => { throw new LaunchProblem("exited"); };
     settingTab.setUp = setUp;
     settingTab.display();
-    row(settingTab, "Repair or update Nuru").querySelector("button").click();
-    await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
+    await shown(settingTab);
+    buttonOf(settingTab, "1. Nuru", "Repair").click();
+    await until(() => said(settingTab, "1. Nuru").includes(words));
   }
 });
 
-test("Ollama with the chosen model and the embedding model says so, and Download stays off", async () => {
+test("with Ollama at the pinned version and the models there, every step shows done and nothing is left to click", async () => {
   const { settingTab } = tab();
   settingTab.display();
-  await settingTab.ollamaChecked;
-  const ollama = row(settingTab, "Ollama");
-  assert.match(ollama.textContent, /Ollama 0\.40\.4 has the models Nuru needs: qwen3\.5:4b and nomic-embed-text:v1\.5\./);
+  await shown(settingTab);
+  assert.match(said(settingTab, "2. Ollama"), /✓ Ollama 0\.40\.4 is running\./);
+  assert.match(said(settingTab, "3. Models"), /✓ Ollama has the models Nuru needs: qwen3\.5:4b and nomic-embed-text:v1\.5\./);
+  assert.match(said(settingTab, "4. Ready"), /✓ Open the Nuru panel to chat\./);
   assert.deepEqual(settingTab.ollama.asked, [["qwen3.5:4b", "nomic-embed-text:v1.5"]]);
-  assert.equal([...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download").disabled, true);
+  for (const [name, text] of [["2. Ollama", "Install Ollama"], ["3. Models", "Download"], ["Set up everything", "Set up everything"]]) {
+    assert.equal(buttonOf(settingTab, name, text).disabled, true, `${text} is off`);
+  }
 });
 
-test("missing models download through Ollama with progress, then the check runs again", async () => {
-  const { settingTab, home } = tab();
-  fs.rmSync(path.join(home, ".nuru", "install.json")); // not set up: Nuru's default chat model
-  settingTab.ollama = fakeOllama({ have: [] });
+test("a missing Ollama is installed at the pinned version, then the models download, with progress", async () => {
+  const { settingTab } = tab();
+  settingTab.ollama = fakeOllama({ version: null, have: [] });
   settingTab.display();
-  await settingTab.ollamaChecked;
-  const ollama = row(settingTab, "Ollama");
-  assert.match(ollama.textContent, /doesn't have qwen3\.5:4b and nomic-embed-text:v1\.5 yet: click Download/);
-  const download = [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download");
-  assert.equal(download.disabled, false);
+  await shown(settingTab);
+  assert.match(said(settingTab, "2. Ollama"), /Install Ollama downloads and installs Ollama 0\.40\.4 for you \(200 MB\)\./);
+  assert.match(said(settingTab, "3. Models"), /After step 2\./);
+  assert.equal(buttonOf(settingTab, "3. Models", "Download").disabled, true);
 
-  download.click();
-  await until(() => /has the models Nuru needs/.test(ollama.textContent));
+  buttonOf(settingTab, "2. Ollama", "Install Ollama").click();
+  await until(() => /✓ Ollama 0\.40\.4 is running/.test(said(settingTab, "2. Ollama")));
+  assert.deepEqual(settingTab.ollama.installed, [["0.40.4", "darwin-arm64"]]);
+  assert.match(said(settingTab, "3. Models"), /doesn't have qwen3\.5:4b and nomic-embed-text:v1\.5 yet: click Download/);
 
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => /✓ Open the Nuru panel/.test(said(settingTab, "4. Ready")));
   assert.deepEqual(settingTab.ollama.pulled, ["qwen3.5:4b", "nomic-embed-text:v1.5"]);
-  assert.equal(download.disabled, true);
 });
 
-test("with Claude as the default only the embedding model is needed, and a stopped Ollama is explained", async () => {
+test("an installed Ollama that isn't running is started; an older one is updated on Windows, and pointed to its updater on macOS", async () => {
+  const { settingTab } = tab();
+  settingTab.ollama = fakeOllama({ version: null, app: "/Applications/Ollama.app" });
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "2. Ollama"), /Ollama is installed but not running: click Start Ollama\./);
+  buttonOf(settingTab, "2. Ollama", "Start Ollama").click();
+  await until(() => /✓ Ollama 0\.40\.4 is running/.test(said(settingTab, "2. Ollama")));
+  assert.deepEqual(settingTab.ollama.started, ["/Applications/Ollama.app"]);
+
+  settingTab.ollama = fakeOllama({ version: "0.38.2" });
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "2. Ollama"), /Ollama 0\.38\.2 is older than Nuru needs \(0\.40\.4\): update it from Ollama's menu-bar icon/);
+  assert.equal(row(settingTab, "2. Ollama").querySelector("a").getAttribute("href"), "https://ollama.com/download");
+  assert.equal(buttonOf(settingTab, "2. Ollama", "Install Ollama").disabled, true, "no second copy beside it on macOS");
+  assert.match(said(settingTab, "3. Models"), /After step 2\./, "no models into an Ollama too old for them");
+
+  settingTab.system = "win32-x64";
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "2. Ollama"), /older than Nuru needs \(0\.40\.4\): click Update Ollama\./);
+  buttonOf(settingTab, "2. Ollama", "Update Ollama").click();
+  await until(() => /✓ Ollama 0\.40\.4 is running/.test(said(settingTab, "2. Ollama")));
+  assert.deepEqual(settingTab.ollama.installed, [["0.40.4", "win32-x64"]]);
+  assert.match(said(settingTab, "3. Models"), /✓/);
+});
+
+test("Set up everything runs each step still to do, in order, and stops at one that fails", async () => {
+  const { settingTab, home, nuru } = tab();
+  fs.rmSync(path.join(home, ".nuru", "install.json"));
+  const order = [];
+  settingTab.setUp = async () => {
+    order.push("nuru");
+    fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv") }));
+    return { version: "1.0.1" };
+  };
+  settingTab.ollama = fakeOllama({ version: null, have: [] });
+  const { install, pull } = settingTab.ollama;
+  settingTab.ollama.install = async (...args) => { order.push("ollama"); return install(...args); };
+  settingTab.ollama.pull = async (...args) => { order.push(args[0]); return pull(...args); };
+  settingTab.display();
+  await shown(settingTab);
+
+  buttonOf(settingTab, "Set up everything", "Set up everything").click();
+  await until(() => order.length === 4 && row(settingTab, "Default model"));
+  await shown(settingTab);
+
+  assert.deepEqual(order, ["nuru", "ollama", "qwen3.5:4b", "nomic-embed-text:v1.5"]);
+  assert.match(said(settingTab, "4. Ready"), /✓ Open the Nuru panel to chat\./);
+
+  const failing = tab();
+  failing.settingTab.ollama = fakeOllama({ version: null, have: [], install: async () => { throw new Error("no disk space"); } });
+  failing.settingTab.display();
+  await shown(failing.settingTab);
+  buttonOf(failing.settingTab, "Set up everything", "Set up everything").click();
+  await until(() => !buttonOf(failing.settingTab, "Set up everything", "Set up everything").disabled);
+  assert.deepEqual(failing.settingTab.ollama.pulled, [], "no models without Ollama");
+});
+
+test("with Claude as the default only the embedding model is needed; a dev build without pins points to Ollama's site", async () => {
   const { settingTab, nuru } = tab();
   fs.writeFileSync(path.join(nuru, ".env.nuru"), "NURU_MAIN_MODEL=anthropic:claude-haiku-5-5\n");
-  settingTab.ollama = fakeOllama({ have: null });
+  settingTab.release = null;
+  settingTab.ollama = fakeOllama({ version: null });
   settingTab.display();
-  await settingTab.ollamaChecked;
+  await shown(settingTab);
   assert.deepEqual(settingTab.ollama.asked, [["nomic-embed-text:v1.5"]]);
-  assert.match(row(settingTab, "Ollama").textContent,
-    /Ollama isn't running\. Install it from https:\/\/ollama\.com\/download, open it, then click Check\./);
-  const link = row(settingTab, "Ollama").querySelector("a");
-  assert.equal(link.getAttribute("href"), "https://ollama.com/download", "the installer is a link");
+  assert.match(said(settingTab, "2. Ollama"), /Ollama isn't running\. Install it from https:\/\/ollama\.com\/download, open it, then click Check\./);
+  assert.equal(row(settingTab, "2. Ollama").querySelector("a").getAttribute("href"), "https://ollama.com/download");
 
-  settingTab.ollama.have = ["nomic-embed-text:v1.5"];
-  [...row(settingTab, "Ollama").querySelectorAll("button")].find((b) => b.textContent === "Check").click();
-  await until(() => /has the models Nuru needs: nomic-embed-text:v1\.5\./.test(row(settingTab, "Ollama").textContent));
+  settingTab.ollama.version = "0.30.0"; // no pin to compare with: any running Ollama does
+  buttonOf(settingTab, "2. Ollama", "Check").click();
+  await until(() => /✓ Ollama 0\.30\.0 is running/.test(said(settingTab, "2. Ollama")));
 });
 
-test("a failed download or check is said, and Download can be tried again", async () => {
+test("a failed install, download or check is said, and can be tried again", async () => {
   const { settingTab } = tab();
+  settingTab.ollama = fakeOllama({ version: null, install: async () => { throw new Error("no disk space"); } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "2. Ollama", "Install Ollama").click();
+  await until(() => /Install Ollama failed: no disk space/.test(said(settingTab, "2. Ollama")));
+  assert.equal(buttonOf(settingTab, "2. Ollama", "Install Ollama").disabled, false);
+
   settingTab.ollama = fakeOllama({ have: ["nomic-embed-text:v1.5"], pull: async () => { throw new Error("no space left"); } });
   settingTab.display();
-  await settingTab.ollamaChecked;
-  const ollama = row(settingTab, "Ollama");
-  const download = [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Download");
-  download.click();
-  await until(() => /Downloading failed: no space left/.test(ollama.textContent));
-  assert.equal(download.disabled, false);
+  await shown(settingTab);
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => /Downloading failed: no space left/.test(said(settingTab, "3. Models")));
+  assert.equal(buttonOf(settingTab, "3. Models", "Download").disabled, false);
 
   settingTab.ollama.check = async () => { throw new Error("Ollama answered 500"); };
-  [...ollama.querySelectorAll("button")].find((b) => b.textContent === "Check").click();
-  await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(ollama.textContent));
-});
-
-test("setUp restarts a running Nuru, and the tab says how a failed start and its rollback went", async () => {
-  for (const [running, result, said] of [
-    [true, { version: "0.2.0", rolledBack: true, startError: new LaunchProblem("exited") },
-      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Nuru is back on the install it had before."],
-    [true, { version: "0.2.0", startError: new LaunchProblem("exited"), rollbackError: new LaunchProblem("exited") },
-      "Nuru 0.2.0 was set up, but it didn't start: Nuru stopped while starting. Going back to the install it had before failed too: Nuru stopped while starting."],
-    [false, { version: "0.2.0" }, "Nuru 0.2.0 is set up."],
-  ]) {
-    const { settingTab, restarts, reconnects } = tab({ running });
-    let given;
-    settingTab.setUp = async (options) => {
-      given = options.start;
-      if (given) await given(); // what setUp does under its lock
-      return result;
-    };
-    settingTab.display();
-    row(settingTab, "Repair or update Nuru").querySelector("button").click();
-    await until(() => row(settingTab, "Repair or update Nuru").textContent.includes(said));
-    assert.equal(Boolean(given), running, "a restart only when Nuru runs");
-    assert.deepEqual([restarts.length, reconnects.length], running ? [1, 1] : [0, 0]);
-  }
+  buttonOf(settingTab, "2. Ollama", "Check").click();
+  await until(() => /Couldn't ask Ollama about its models: Ollama answered 500/.test(said(settingTab, "2. Ollama")));
 });

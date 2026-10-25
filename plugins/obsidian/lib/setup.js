@@ -30,13 +30,22 @@ function thisSystem(platform = process.platform, arch = process.arch) {
   return system === "win32-arm64" ? "win32-x64" : system;
 }
 
-// The file at `url`, if its sha256 is `sha256`. Redirects are followed only to `hosts`, over
-// `protocols`, at most `redirects` times; nothing is sent with a request.
-function download(url, { sha256, get = https.get, hosts = HOSTS, protocols = ["https:"], redirects = 5,
+// The file at `url`, if its sha256 is `sha256`: its bytes, or with `to`, the path it was saved at
+// (written to `to`.partial as it arrives, hashed as it goes, and renamed only once it matches; for
+// files too large to hold, like Ollama's Windows installer). Redirects are followed only to `hosts`,
+// over `protocols`, at most `redirects` times; nothing is sent with a request.
+function download(url, { sha256, to = null, get = https.get, hosts = HOSTS, protocols = ["https:"], redirects = 5,
   maxBytes = MAX_BYTES, timeoutMs = 10 * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
     let request;
-    const fail = (message) => reject(new SetupProblem(`Couldn't download ${path.basename(new URL(url).pathname)}: ${message}`));
+    let fd = null;
+    const partial = to && `${to}.partial`;
+    const discard = () => {
+      if (fd !== null) fs.closeSync(fd);
+      fd = null;
+      if (partial) fs.rmSync(partial, { force: true });
+    };
+    const fail = (message) => { discard(); reject(new SetupProblem(`Couldn't download ${path.basename(new URL(url).pathname)}: ${message}`)); };
     const deadline = setTimeout(() => { request.destroy(); fail("it took too long"); }, timeoutMs);
     const done = (fn) => (value) => { clearTimeout(deadline); fn(value); };
     const fetch = (current, left) => {
@@ -52,21 +61,28 @@ function download(url, { sha256, get = https.get, hosts = HOSTS, protocols = ["h
           response.resume();
           return done(fail)(`the server answered ${statusCode}`);
         }
+        const hash = crypto.createHash("sha256");
         const chunks = [];
         let size = 0;
+        if (partial) fd = fs.openSync(partial, "w");
         response.on("data", (chunk) => {
           if ((size += chunk.length) > maxBytes) {
             request.destroy();
-            done(fail)("it is larger than expected");
-          } else {
-            chunks.push(chunk);
+            return done(fail)("it is larger than expected");
           }
+          hash.update(chunk);
+          if (partial) fs.writeSync(fd, chunk);
+          else chunks.push(chunk);
+          return undefined;
         });
         response.on("end", () => {
           if (size > maxBytes) return;
-          const data = Buffer.concat(chunks);
-          if (crypto.createHash("sha256").update(data).digest("hex") !== sha256) return done(fail)("it isn't the file this release names");
-          done(resolve)(data);
+          if (hash.digest("hex") !== sha256) return done(fail)("it isn't the file this release names");
+          if (!partial) return done(resolve)(Buffer.concat(chunks));
+          fs.closeSync(fd);
+          fd = null;
+          fs.renameSync(partial, to);
+          return done(resolve)(to);
         });
         response.on("error", (error) => done(fail)(error.message));
       });

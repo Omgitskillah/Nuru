@@ -137,3 +137,37 @@ test("a name twice, or twice in different case on Windows and macOS, is refused 
   assert.throws(() => writeEntries(readZip(zip([{ name: "a", data: "1" }, { name: "a", data: "2" }]), ""), dir), { code: "EEXIST" });
   assert.equal(fs.readFileSync(path.join(dir, "a"), "utf8"), "1");
 });
+
+const LINK = 0o120777;
+
+test("with links on, a macOS app's relative links inside it are kept, and written after its files", { skip: !POSIX && "symlinks need privileges on Windows" }, (t) => {
+  const dir = folder(t);
+  const archive = zip([
+    { name: "Ollama.app/Contents/Resources/libggml.dylib", data: "libggml.0.dylib", mode: LINK },
+    { name: "Ollama.app/Contents/Resources/libggml.0.dylib", data: "binary", mode: 0o100755 },
+    { name: "Ollama.app/Contents/Frameworks/S.framework/Versions/Current", data: "A", mode: LINK },
+    { name: "Ollama.app/Contents/Frameworks/S.framework/S", data: "Versions/Current/S", mode: LINK },
+    { name: "Ollama.app/Contents/Frameworks/S.framework/Versions/A/S", data: "framework" },
+    { name: "Ollama.app/Contents/Frameworks/S.framework/Versions/A/Resources/ShipIt", data: "../S", mode: LINK },
+  ]);
+
+  const entries = readZip(archive, "Ollama.app/", undefined, { links: true });
+  writeEntries(entries, path.join(dir, "Ollama.app"));
+
+  const at = (rel) => path.join(dir, "Ollama.app", "Contents", ...rel.split("/"));
+  assert.equal(fs.readlinkSync(at("Resources/libggml.dylib")), "libggml.0.dylib");
+  assert.equal(fs.readFileSync(at("Resources/libggml.dylib"), "utf8"), "binary");
+  assert.equal(fs.readFileSync(at("Frameworks/S.framework/S"), "utf8"), "framework", "a link through a link");
+  assert.equal(fs.readFileSync(at("Frameworks/S.framework/Versions/A/Resources/ShipIt"), "utf8"), "framework");
+});
+
+test("with links on, a link leaving the top folder, or an entry below a link, stops the whole archive", () => {
+  for (const [target, at] of [["/etc/passwd", "a/l"], ["../../outside", "a/l"], ["..", "l"], ["../x", "l"], ["a/../../x", "a/l"],
+    ["./x", "a/l"], ["x/", "a/l"], ["", "a/l"], ["..\\..\\x", "a/l"], ["C:x", "a/l"]]) {
+    assert.throws(() => readZip(zip([{ name: `top/${at}`, data: target, mode: LINK }]), "top/", undefined, { links: true }),
+      /links outside the archive/, `${at} -> ${target}`);
+  }
+  assert.throws(() => readZip(zip([{ name: "top/d", data: "e", mode: LINK }, { name: "top/d/f", data: "x" }]), "top/", undefined, { links: true }),
+    /d\/f is below a link/);
+  assert.throws(() => readZip(zip([{ name: "top/d", data: "e", mode: LINK }]), "top/"), /top\/d isn't a plain file/, "links stay off by default");
+});

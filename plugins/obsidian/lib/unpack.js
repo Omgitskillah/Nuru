@@ -3,6 +3,10 @@
 // top folder, with names that are safe on Windows and macOS, within count and size limits. Links,
 // devices, absolute names and ".." are refused. The archives' bytes are hash-checked before they get
 // here; this is the second line. No system tar and no zip library: the same code runs everywhere.
+//
+// A macOS app (Ollama.app) needs its links: with `links`, a zip's relative links are kept when each
+// resolves inside the top folder (a normal relative target, ".." only at its start) and no entry sits
+// below a link, so every link, followed however far, lands inside. They are written after the files.
 "use strict";
 
 const fs = require("node:fs");
@@ -28,7 +32,16 @@ function relative(name, root) {
   return parts;
 }
 
-function readZip(buffer, root, limits = LIMITS) {
+// A link's target, if it stays inside the top folder from the link at `parts`.
+function linkTarget(target, parts, name) {
+  const steps = target.split("/");
+  const up = steps.findIndex((step) => step !== "..");
+  const inside = up >= 0 && up < parts.length && steps.slice(up).every((step) => step && step !== "." && step !== "..");
+  if (!inside || /[\\:\0]/.test(target)) throw new ArchiveProblem(`${name} links outside the archive`);
+  return target;
+}
+
+function readZip(buffer, root, limits = LIMITS, { links = false } = {}) {
   const end = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (end < 0 || end + 22 > buffer.length) throw new ArchiveProblem("not a zip file");
   const count = buffer.readUInt16LE(end + 10);
@@ -51,7 +64,8 @@ function readZip(buffer, root, limits = LIMITS) {
       if (type && type !== 0o040000) throw new ArchiveProblem(`${name} isn't a plain folder`);
       continue;
     }
-    if ((type && type !== 0o100000) || !parts) throw new ArchiveProblem(`${name} isn't a plain file`);
+    const link = links && type === 0o120000;
+    if ((type && type !== 0o100000 && !link) || !parts) throw new ArchiveProblem(`${name} isn't a plain file`);
     if (flags & 1 || (method !== 0 && method !== 8)) throw new ArchiveProblem(`${name} is encrypted or compressed in an unknown way`);
     if ((total += unpacked) > limits.bytes) throw new ArchiveProblem(`more than ${limits.bytes} bytes`);
     if (buffer.readUInt32LE(local) !== 0x04034b50) throw new ArchiveProblem(`a damaged zip entry, ${name}`);
@@ -59,7 +73,13 @@ function readZip(buffer, root, limits = LIMITS) {
     const packed = buffer.subarray(start, start + size);
     const data = method === 8 ? zlib.inflateRawSync(packed, { maxOutputLength: unpacked + 1 }) : packed;
     if (data.length !== unpacked) throw new ArchiveProblem(`${name} isn't the size the zip says`);
-    entries.push({ parts, executable: Boolean(mode & 0o100), data });
+    entries.push(link ? { parts, link: linkTarget(data.toString("utf8"), parts, name) } : { parts, executable: Boolean(mode & 0o100), data });
+  }
+  const linked = new Set(entries.filter((e) => e.link).map((e) => e.parts.join("/")));
+  for (const { parts } of entries) {
+    for (let i = 1; i < parts.length; i++) {
+      if (linked.has(parts.slice(0, i).join("/"))) throw new ArchiveProblem(`${parts.join("/")} is below a link`);
+    }
   }
   return entries;
 }
@@ -98,10 +118,11 @@ function readTarGz(buffer, root, limits = LIMITS) {
 // Writes the entries into `dir`, a new empty folder: never over a file, so a name that appears twice
 // (or twice in different case, on Windows and macOS) is refused rather than overwritten.
 function writeEntries(entries, dir) {
-  for (const { parts, executable, data } of entries) {
+  for (const { parts, executable, data, link } of [...entries.filter((e) => !e.link), ...entries.filter((e) => e.link)]) {
     const file = path.join(dir, ...parts);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, data, { flag: "wx", mode: executable ? 0o755 : 0o644 });
+    if (link) fs.symlinkSync(link, file);
+    else fs.writeFileSync(file, data, { flag: "wx", mode: executable ? 0o755 : 0o644 });
   }
 }
 

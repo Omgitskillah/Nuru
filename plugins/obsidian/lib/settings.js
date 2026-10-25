@@ -7,7 +7,7 @@ const obsidian = require("obsidian");
 const { NuruSettings, fingerprint } = require("./envfiles");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
-const { RELEASE, SetupProblem, setUp } = require("./setup");
+const { RELEASE, SetupProblem, setUp, thisSystem } = require("./setup");
 const ollama = require("./ollama");
 
 const { PluginSettingTab, Setting } = obsidian;
@@ -33,6 +33,8 @@ class NuruSettingTab extends PluginSettingTab {
     this.plugin = plugin;
     this.setUp = setUp;
     this.ollama = ollama;
+    this.release = RELEASE;
+    this.system = thisSystem();
     this.setupNews = "";
   }
 
@@ -77,95 +79,152 @@ class NuruSettingTab extends PluginSettingTab {
     this.displayNuru(containerEl);
   }
 
-  // "Set up Nuru", or repair or update it: the release this plugin came with (lib/setup.js). Nuru in
-  // use is restarted on the new install; this tab is then shown again, saying how it went.
-  displaySetup(containerEl, installed) {
-    const row = new Setting(containerEl).setName(installed ? "Repair or update Nuru" : "Set up Nuru");
-    const say = (text) => row.setDesc(text);
-    say(this.setupNews || (installed
-      ? `Installs Nuru ${RELEASE?.version ?? ""} again beside the one in use, and switches to it once it works.`
-      : "Downloads Nuru and what it needs (a few hundred MB) into a .nuru folder in your home folder. Your notes aren't touched."));
+  // Setting Nuru up as numbered steps, each enabled once the one before is done: 1 Nuru, the release
+  // this plugin came with (lib/setup.js); 2 Ollama, at the version the release pins or newer, installed,
+  // updated or started from here (lib/ollama.js); 3 the models Nuru needs from it (the chat model, none
+  // when Claude is the default, and the notes' embedding model); 4 ready. "Set up everything" runs the
+  // steps still to do, in order. When it's done, this tab is shown again, saying how it went.
+  displaySteps(containerEl, installed, chatModel) {
+    new Setting(containerEl).setName("Set up").setHeading();
+    const { launcher } = this.plugin;
+    const pin = this.release?.ollama;
+    const windows = this.system.startsWith("win32");
+    const needed = [chatModel, this.ollama.EMBEDDING_MODEL].filter(Boolean);
+    const state = { running: false, version: null, app: null, missing: needed, ok: false };
+    const news = { nuru: this.setupNews, ollama: "", models: "" }; // shown once, by these rows
     this.setupNews = "";
-    row.addButton((button) => button.setButtonText(installed ? "Repair" : "Set up Nuru").onClick(async () => {
-      button.setDisabled(true);
-      const { launcher } = this.plugin;
+    const rows = {};
+    const buttons = {};
+    const row = (key, name) => { rows[key] = new Setting(containerEl).setName(name); };
+    const button = (key, text, action, on = key) => rows[on].addButton((b) => {
+      buttons[key] = b.setButtonText(text).onClick(async () => {
+        for (const other of Object.values(buttons)) other.setDisabled(true);
+        await action();
+        await refresh();
+      });
+    });
+    const link = (before, after) => createFragment((text) => {
+      text.appendText(before);
+      text.createEl("a", { text: this.ollama.DOWNLOAD, attr: { href: this.ollama.DOWNLOAD } });
+      text.appendText(after);
+    });
+
+    const setUpNuru = async () => {
       const restart = async () => {
         await launcher.restart();
         for (const view of this.plugin.views()) await view.reconnect();
       };
       try {
-        const result = await this.setUp({ home: launcher.home, step: say, start: launcher.running() ? restart : null });
+        const result = await this.setUp({ home: launcher.home, step: (text) => rows.nuru.setDesc(text), start: launcher.running() ? restart : null });
         this.setupNews = `Nuru ${result.version} is set up.`;
         if (result.startError) {
           this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
           if (result.rolledBack) this.setupNews += " Nuru is back on the install it had before.";
           if (result.rollbackError) this.setupNews += ` Going back to the install it had before failed too: ${result.rollbackError.message}`;
         }
+        return !result.startError;
       } catch (error) {
         this.setupNews = error instanceof SetupProblem ? error.message : `Setting Nuru up failed: ${error.message}`;
-      }
-      this.display();
-    }));
-  }
-
-  // Ollama and the models Nuru needs from it: the chat model (none when Claude is the default) and the
-  // notes' embedding model. Missing models download through Ollama; Ollama itself, from its installer.
-  displayOllama(containerEl, chatModel) {
-    const needed = [chatModel, this.ollama.EMBEDDING_MODEL].filter(Boolean);
-    const row = new Setting(containerEl).setName("Ollama");
-    const say = (text) => row.setDesc(text);
-    let missing = [];
-    const check = async () => {
-      say("Checking…");
-      try {
-        const found = await this.ollama.check(needed);
-        missing = found.missing;
-        download.setDisabled(!found.running || !missing.length);
-        if (!found.running) {
-          say(createFragment((text) => {
-            text.appendText("Ollama isn't running. Install it from ");
-            text.createEl("a", { text: this.ollama.DOWNLOAD, attr: { href: this.ollama.DOWNLOAD } });
-            text.appendText(", open it, then click Check.");
-          }));
-        } else {
-          say(missing.length ? `Ollama ${found.version} is running, but doesn't have ${missing.join(" and ")} yet: click Download (a few GB).`
-            : `Ollama ${found.version} has the models Nuru needs: ${needed.join(" and ")}.`);
-        }
-      } catch (error) {
-        say(`Couldn't ask Ollama about its models: ${error.message}`);
+        return false;
       }
     };
-    let download;
-    row.addButton((button) => button.setButtonText("Check").onClick(check));
-    row.addButton((button) => {
-      download = button.setButtonText("Download").setDisabled(true).onClick(async () => {
-        download.setDisabled(true);
-        try {
-          for (const name of missing) await this.ollama.pull(name, say);
-          await check();
-        } catch (error) {
-          say(`Downloading failed: ${error.message}`);
-          download.setDisabled(false);
-        }
-      });
+    // What step 2's button does now: install, update or start Ollama, or nothing.
+    const ollamaAction = () => {
+      if (!pin || (state.running && (state.ok || !windows))) return null;
+      if (state.running) return "Update Ollama";
+      return state.app ? "Start Ollama" : "Install Ollama";
+    };
+    const fixOllama = async () => {
+      const say = (text) => rows.ollama.setDesc(text);
+      try {
+        if (ollamaAction() === "Start Ollama") await this.ollama.start(state.app);
+        else await this.ollama.install(pin, this.system, { home: launcher.home, step: say });
+        return true;
+      } catch (error) {
+        news.ollama = `${ollamaAction()} failed: ${error.message}`;
+        return false;
+      }
+    };
+    const downloadModels = async () => {
+      try {
+        for (const name of state.missing) await this.ollama.pull(name, (text) => rows.models.setDesc(text));
+        return true;
+      } catch (error) {
+        news.models = `Downloading failed: ${error.message}`;
+        return false;
+      }
+    };
+
+    const refresh = async () => {
+      try {
+        const found = await this.ollama.check(needed);
+        Object.assign(state, found, { app: this.ollama.findApp({ home: launcher.home }) });
+        state.ok = found.running && (!pin || this.ollama.atLeast(found.version, pin.version));
+      } catch (error) {
+        Object.assign(state, { running: false, ok: false });
+        news.ollama ||= `Couldn't ask Ollama about its models: ${error.message}`;
+      }
+      const action = ollamaAction();
+      rows.nuru.setDesc(news.nuru || (installed
+        ? `✓ Nuru is set up. Repair installs Nuru ${this.release?.version ?? ""} again beside it, and switches once the new one works.`
+        : "Downloads Nuru and what it needs into a .nuru folder in your home folder. Your notes aren't touched."));
+      if (!installed) rows.ollama.setDesc("After step 1.");
+      else if (news.ollama) rows.ollama.setDesc(news.ollama);
+      else if (state.ok) rows.ollama.setDesc(`✓ Ollama ${state.version} is running.`);
+      else if (state.running && action) rows.ollama.setDesc(`Ollama ${state.version} is older than Nuru needs (${pin.version}): click Update Ollama.`);
+      else if (state.running && pin) rows.ollama.setDesc(link(`Ollama ${state.version} is older than Nuru needs (${pin.version}): update it from Ollama's menu-bar icon, or from `, ", then click Check."));
+      else if (action === "Start Ollama") rows.ollama.setDesc("Ollama is installed but not running: click Start Ollama.");
+      else if (action) rows.ollama.setDesc(`Ollama runs Nuru's models. Install Ollama downloads and installs Ollama ${pin.version} for you (${windows ? "1.5 GB" : "200 MB"}).`);
+      else if (state.running) rows.ollama.setDesc(`✓ Ollama ${state.version} is running.`);
+      else rows.ollama.setDesc(link("Ollama isn't running. Install it from ", ", open it, then click Check."));
+      if (!state.ok) rows.models.setDesc("After step 2.");
+      else if (news.models) rows.models.setDesc(news.models);
+      else rows.models.setDesc(state.missing.length ? `Ollama doesn't have ${state.missing.join(" and ")} yet: click Download (a few GB).`
+        : `✓ Ollama has the models Nuru needs: ${needed.join(" and ")}.`);
+      const done = installed && state.ok && !state.missing.length;
+      rows.ready.setDesc(done ? "✓ Open the Nuru panel to chat." : "After the steps above.");
+      Object.assign(news, { nuru: "", ollama: "", models: "" });
+      buttons.nuru.setButtonText(installed ? "Repair" : "Set up Nuru").setDisabled(false);
+      buttons.ollama.setButtonText(action || "Install Ollama").setDisabled(!installed || !action);
+      buttons.check.setDisabled(false);
+      buttons.models.setDisabled(!state.ok || !state.missing.length);
+      buttons.all.setDisabled(done || (installed && !state.ok && !action));
+    };
+
+    row("all", "Set up everything");
+    rows.all.setDesc("Runs the steps below that are still to do, in order.");
+    button("all", "Set up everything", async () => {
+      if (!installed && !(await setUpNuru())) return this.display();
+      installed = true;
+      await refresh();
+      if (!state.ok && (!ollamaAction() || !(await fixOllama()))) return this.display();
+      await refresh();
+      if (state.missing.length) await downloadModels();
+      return this.display();
     });
-    this.ollamaChecked = check();
+    row("nuru", "1. Nuru");
+    button("nuru", installed ? "Repair" : "Set up Nuru", async () => { await setUpNuru(); this.display(); });
+    row("ollama", "2. Ollama");
+    button("check", "Check", async () => {}, "ollama");
+    button("ollama", "Install Ollama", fixOllama);
+    row("models", "3. Models");
+    button("models", "Download", downloadModels);
+    row("ready", "4. Ready");
+    this.stepsChecked = refresh();
   }
 
   // Nuru's settings, read from and written to its env files; Nuru reads them when it starts.
   displayNuru(containerEl) {
-    new Setting(containerEl).setName("Nuru").setHeading();
     let settings;
     try {
       settings = new NuruSettings(readInstall(this.plugin.launcher.home).nuru);
     } catch {
-      this.displaySetup(containerEl, false);
-      this.displayOllama(containerEl, ollama.CHAT_MODEL);
+      this.displaySteps(containerEl, false, ollama.CHAT_MODEL);
       return;
     }
-    this.displaySetup(containerEl, true);
     const chosen = settings.defaultModel() || ollama.CHAT_MODEL;
-    this.displayOllama(containerEl, chosen.startsWith("anthropic:") ? null : chosen);
+    this.displaySteps(containerEl, true, chosen.startsWith("anthropic:") ? null : chosen);
+    new Setting(containerEl).setName("Nuru").setHeading();
     const overridden = (key) => {
       const name = settings.overridden(key);
       return name ? ` Obsidian's environment sets ${name}, which Nuru uses instead.` : "";

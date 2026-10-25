@@ -45,17 +45,23 @@ What it does:
 Needs only desktop Obsidian, on Windows or macOS.
 
 1. Install the BRAT plugin, and add the beta plugin `Omgitskillah/Nuru`.
-2. Turn Nuru on under Community plugins, open its settings and click **Set up Nuru**.
+2. Turn Nuru on under Community plugins and open its settings.
+   - **Set up everything** runs the steps below that are still to do, in order.
+   - Each step can also be run on its own, once the step before it is done.
+3. **1. Nuru: Set up Nuru.**
    - It downloads this release's Nuru, uv and calculator, and checks each against the sha256 built into the plugin.
    - It installs them into `~/.nuru/app/<version>/<n>/`, then installs Python and Nuru's packages there.
    - It switches `~/.nuru/install.json` to the new install only once that install starts.
-3. **Ollama**, in the same settings, says whether Ollama is running and has the models Nuru needs.
+   - **Repair** installs again, beside the install in use. Settings (`.env.*`) carry over, and the previous install is kept to roll back to.
+4. **2. Ollama:** Ollama at the version this release pins, or newer. Nothing is downgraded.
+   - **Install Ollama** downloads it and checks it against the pinned sha256.
+     - On Windows, it runs Ollama's own installer silently, for this user only, with no admin rights (1.5 GB).
+     - On macOS, it unpacks `Ollama.app` into `~/Applications` (200 MB) and opens it.
+   - **Update Ollama** on Windows does the same over an older install. On macOS, an older Ollama updates from its own menu-bar icon.
+   - **Start Ollama** opens an installed Ollama that isn't running.
+5. **3. Models:** **Download** fetches the models Nuru needs through Ollama.
    - Those are the chosen chat model (`qwen3.5:4b` unless changed) and `nomic-embed-text:v1.5`, for search.
-   - **Download** fetches missing models through Ollama.
-   - Ollama itself comes from https://ollama.com/download.
-4. **Repair** in the same place installs again, beside the install in use.
-   - Settings (`.env.*`) carry over.
-   - The previous install is kept, to roll back to.
+6. **4. Ready:** open the Nuru panel to chat.
 
 ## Install from a checkout
 

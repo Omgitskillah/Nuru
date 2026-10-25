@@ -16,5 +16,14 @@
       "darwin-x64": {"asset": "uv-x86_64-apple-darwin.tar.gz", "sha256": "5e287ef61cb6a9b61b3a83fef124fd143e400468a7dac794230147a810e17119"},
       "win32-x64": {"asset": "uv-x86_64-pc-windows-msvc.zip", "sha256": "a86c9dc7bad9b03f388583b7187c05fe9951c2e0d392217e8fd43d97787f6ec2"}
     }
+  },
+  "ollama": {
+    "version": "0.40.4",
+    "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/",
+    "systems": {
+      "darwin-arm64": {"asset": "Ollama-darwin.zip", "sha256": "a80be41441764333321db8ff41155b3ab5f53fcea0a4057408e602ba2b02a203"},
+      "darwin-x64": {"asset": "Ollama-darwin.zip", "sha256": "a80be41441764333321db8ff41155b3ab5f53fcea0a4057408e602ba2b02a203"},
+      "win32-x64": {"asset": "OllamaSetup.exe", "sha256": "45fcd47d70dd047ab95736802e71a7497ef1a473a50470471fc2fb0eb90badde"}
+    }
   }
 }

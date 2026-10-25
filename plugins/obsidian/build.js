@@ -20,7 +20,7 @@ function releaseFacts(bundle, pinsFile = PINS) {
   return {
     version, url: `https://github.com/Omgitskillah/Nuru/releases/download/${version}/`,
     bundle: { asset: path.basename(bundle), sha256: crypto.createHash("sha256").update(fs.readFileSync(bundle)).digest("hex") },
-    uv: pins.uv, "math-mcp": pins["math-mcp"],
+    uv: pins.uv, "math-mcp": pins["math-mcp"], ollama: pins.ollama,
   };
 }
 

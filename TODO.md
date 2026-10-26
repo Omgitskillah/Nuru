@@ -82,6 +82,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - where shared tests, CI and coverage gates (F13) live.
   - **Done when:** a split is agreed and done, with one-link setup and the release still working.
 - [ ] **F16** Give a release install its own uv cache and Python (`UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR` under `~/.nuru`), in setup and in the launcher alike, so Remove Nuru can delete them with Nuru. Today they're uv's shared defaults, which Remove Nuru leaves alone (the user: don't delete anything unrelated to Nuru). **Done when:** a fresh install puts no files in uv's default folders, and Remove Nuru deletes them.
+- [ ] **F17** When a model download is blocked by a network filter (seen 2026-10-26: Zscaler redirected Ollama's `registry.ollama.ai` request to its own `gateway.zscalerthree.net` sign-in page, and Ollama refused the redirect), say so plainly and give the user a way to go ahead themselves, by their own conscious choice: a link to open in their browser (the filter's page, or the model's page on ollama.com), and the `ollama pull <model>` command to run, which worked on that laptop where the plugin's download didn't; then Check picks the model up. Nuru never gets around the filter itself, and the message says the filter may be their organisation's, to clear with IT. **Done when:** a test with a redirect to another host shows the link and the command, and nothing is retried or worked around automatically.
 
 ## Standing reminders (R)
 

@@ -38,12 +38,13 @@ function remember(home, { app, model }) {
 // An Ollama model name, as Ollama writes them ("qwen3.5:4b", "library/name:tag"): nothing a shell reads as
 // more than one word. added.json can be edited, so only such names become commands to copy.
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*(:[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+const commandSafe = (name) => typeof name === "string" && name.length <= 200 && MODEL_NAME.test(name);
 
 // What the user does to remove what Nuru added beside its own files, from added.json. The Ollama app is
 // named only where Nuru installs it on macOS; on Windows, Settings finds it.
 function steps(home = os.homedir(), platform = process.platform) {
   const { ollama, models } = added(home);
-  const names = models.filter((name) => name.length <= 200 && MODEL_NAME.test(name));
+  const names = models.filter(commandSafe);
   const list = [];
   if (names.length) list.push(`Delete the models Nuru downloaded, in a terminal: ${names.map((name) => `ollama rm ${name}`).join(", then ")}`);
   if (names.length < models.length) list.push("Nuru's record names other models it can't show: see `ollama list` for what to delete");
@@ -67,4 +68,4 @@ function removeOwn({ home = os.homedir(), vault } = {}) {
   return { problems };
 }
 
-module.exports = { added, remember, removeOwn, steps };
+module.exports = { added, commandSafe, remember, removeOwn, steps };

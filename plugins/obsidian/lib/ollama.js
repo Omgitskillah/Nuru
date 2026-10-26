@@ -170,6 +170,20 @@ async function check(needed, options = {}) {
   return { running: true, version, missing: needed.filter((name) => !have.has(tagged(name))) };
 }
 
+// When a network filter (a company proxy such as Zscaler) answers for Ollama's library with its own page, a
+// sign-in or a warning, Ollama refuses the redirect: "Get \"<the filter's page>\": blocked redirect to a
+// different host". {host, page}: the page to open in a browser, only an https one off Ollama's own hosts
+// (null when there's none to offer); null when the error isn't that.
+function filterPage(message) {
+  if (!/blocked redirect to a different host/.test(message)) return null;
+  let url = null;
+  try {
+    url = new URL(/Get "([^"]+)"/.exec(message)?.[1]);
+  } catch {} // no usable address in the message: the filter is still named
+  if (!url || url.protocol !== "https:" || /(^|\.)ollama\.(ai|com)$/.test(url.hostname)) return { host: null, page: null };
+  return { host: url.hostname, page: url.href };
+}
+
 // Downloads `name` into Ollama, calling onProgress(completed, total) with the bytes of the part it's
 // pulling (total 0 while it does something else: the manifest, checking); done only when Ollama's last
 // line says "success". Models are gigabytes, so there is no time limit beyond one between progress lines.
@@ -184,4 +198,4 @@ async function pull(name, onProgress = () => {}, options = {}) {
   if (!finished) throw new Error(`downloading ${name} stopped before Ollama finished it`);
 }
 
-module.exports = { CHAT_MODEL, DOWNLOAD, EMBEDDING_MODEL, OLLAMA, atLeast, check, findApp, install, pull, start };
+module.exports = { CHAT_MODEL, DOWNLOAD, EMBEDDING_MODEL, OLLAMA, atLeast, check, filterPage, findApp, install, pull, start };

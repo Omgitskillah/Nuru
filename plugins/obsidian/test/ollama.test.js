@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const os = require("node:os");
 
-const { CHAT_MODEL, EMBEDDING_MODEL, atLeast, check, findApp, install, pull, start } = require("../lib/ollama");
+const { CHAT_MODEL, EMBEDDING_MODEL, atLeast, check, filterPage, findApp, install, pull, start } = require("../lib/ollama");
 const { zip } = require("./helpers/archives");
 
 const POSIX = process.platform !== "win32";
@@ -119,6 +119,26 @@ const spawned = (error = null) => {
   };
   return { calls, spawn };
 };
+
+// What Ollama 0.40.4 said on a laptop behind Zscaler (2026-10-26), its session tokens shortened.
+const ZSCALER = 'pull model manifest: Get "https://gateway.zscalerthree.net:443/_sm_ccik?_ordtok=KDW3&_sm_rid=Q1L7": ' +
+  "blocked redirect to a different host";
+
+test("filterPage finds a network filter's page in Ollama's refused redirect, offering only an https page off Ollama's hosts", () => {
+  assert.deepEqual(filterPage(ZSCALER),
+    { host: "gateway.zscalerthree.net", page: "https://gateway.zscalerthree.net/_sm_ccik?_ordtok=KDW3&_sm_rid=Q1L7" });
+  for (const message of [
+    'Get "http://filter.example/login": blocked redirect to a different host', // not https: not offered
+    'Get "https://registry.ollama.ai/v2/x": blocked redirect to a different host', // Ollama's own
+    'Get "https://cdn.ollama.com/x": blocked redirect to a different host',
+    'Get "javascript:alert(1)": blocked redirect to a different host',
+    "blocked redirect to a different host", // no address
+  ]) {
+    assert.deepEqual(filterPage(message), { host: null, page: null }, message);
+  }
+  assert.equal(filterPage('pull model manifest: Get "https://registry.ollama.ai/v2/x": context deadline exceeded'), null);
+  assert.equal(filterPage("disk full"), null);
+});
 
 test("atLeast compares Ollama versions number by number, and never asks for a downgrade", () => {
   assert.equal(atLeast("0.40.4", "0.40.4"), true);

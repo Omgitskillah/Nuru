@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
+_CLOSE_SECONDS = 15
+
 _CLIENT_INFO = types.Implementation(name="nuru-agent", version="0.1.0")
 
 
@@ -40,23 +42,44 @@ class MCPTools:
         self._server_params = server_params
         self._model_tools = model_tools
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._started = False
+        self._closed = False
+        self._close_lock = threading.Lock()
+        self._sessions_ready: concurrent.futures.Future | None = None
         self._sessions: list[ClientSession] = []
         self._tool_sessions: dict[str, ClientSession] = {}
         self._stop_event: asyncio.Event | None = None
         self._closed_future: concurrent.futures.Future | None = None
 
     def connect(self) -> None:
-        self._thread.start()
-        sessions_ready: concurrent.futures.Future = concurrent.futures.Future()
+        if self._started or self._closed:
+            raise RuntimeError("MCPTools cannot be connected more than once")
+        self._sessions_ready = concurrent.futures.Future()
         self._closed_future = concurrent.futures.Future()
-        asyncio.run_coroutine_threadsafe(self._run(sessions_ready), self._loop)
-        self._sessions = sessions_ready.result()
+        self._started = True
+        try:
+            self._thread.start()
+            self._sessions = self._sessions_ready.result()
+        except BaseException:
+            self.close()
+            raise
+
+    def _run_loop(self) -> None:
+        """The owner task and its loop have the same lifetime, including failed startup."""
+        try:
+            self._loop.run_until_complete(self._run(self._sessions_ready))
+        finally:
+            try:
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            finally:
+                self._loop.close()
 
     async def _run(self, sessions_ready: concurrent.futures.Future) -> None:
         """Owns every session for their whole life: entered and exited by this
         same task, since anyio's cancel scopes require that."""
         self._stop_event = asyncio.Event()
+        failure = None
         try:
             async with AsyncExitStack() as stack:
                 sessions = []
@@ -69,11 +92,16 @@ class MCPTools:
                     sessions.append(session)
                 sessions_ready.set_result(sessions)
                 await self._stop_event.wait()
-        except Exception as e:
+        except BaseException as e:
             if not sessions_ready.done():
                 sessions_ready.set_exception(e)
+            else:
+                failure = e
         finally:
-            self._closed_future.set_result(None)
+            if failure is not None:
+                self._closed_future.set_exception(failure)
+            else:
+                self._closed_future.set_result(None)
 
     def list_tools(self) -> list[dict]:
         """Ollama-format `tools` definitions for the allowlisted tools - what the model is offered."""
@@ -122,7 +150,24 @@ class MCPTools:
         return ToolResult(text, bool(getattr(result, "is_error", False)))
 
     def close(self) -> None:
-        self._loop.call_soon_threadsafe(self._stop_event.set)
-        self._closed_future.result(timeout=10)
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=5)
+        """Close sessions in their owner task, then join and release its event loop.
+
+        Never stop the loop underneath an AnyIO context manager: the SDK must finish
+        releasing its subprocess and streams before the loop can be closed.
+        """
+        with self._close_lock:
+            if self._closed:
+                return
+            if not self._started or self._thread.ident is None:
+                self._loop.close()
+                self._closed = True
+                return
+            if self._thread.is_alive() and not self._closed_future.done():
+                self._loop.call_soon_threadsafe(self._stop_event.set)
+            self._thread.join(timeout=_CLOSE_SECONDS)
+            if self._thread.is_alive():
+                raise TimeoutError(f"MCP cleanup did not finish within {_CLOSE_SECONDS} seconds")
+            self._closed = True
+            self._sessions = []
+            self._tool_sessions = {}
+            self._closed_future.result()

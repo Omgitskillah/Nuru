@@ -231,6 +231,59 @@ test("with Ollama at the pinned version and the models there, every step shows d
   }
 });
 
+// The plugin updates without Nuru (BRAT updates only the plugin), as on a Windows laptop with the 1.0.3
+// plugin over a 1.0.1 install, which showed "✓ Nuru is set up. Repair installs Nuru 1.0.3 again".
+test("an installed Nuru older than the plugin's release says so, and Update and Set up everything install the new one", async () => {
+  const { settingTab, home, nuru } = tab();
+  const install = path.join(home, ".nuru", "install.json");
+  fs.writeFileSync(install, JSON.stringify({ nuru, uv: path.join(home, "uv"), version: "1.0.0" }));
+  const setUps = [];
+  settingTab.setUp = async () => {
+    setUps.push(1);
+    fs.writeFileSync(install, JSON.stringify({ nuru, uv: path.join(home, "uv"), version: "1.0.1" }));
+    return { version: "1.0.1" };
+  };
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "1. Nuru"),
+    /Nuru 1\.0\.0 is installed; this plugin comes with Nuru 1\.0\.1\. Update installs 1\.0\.1 beside it, and switches once the new one works\./);
+  assert.ok(buttonOf(settingTab, "1. Nuru", "Update"), "Update, not Repair");
+  assert.doesNotMatch(said(settingTab, "1. Nuru"), /✓/, "not shown as done");
+  assert.equal(buttonOf(settingTab, "Set up everything", "Set up everything").disabled, false,
+    "Ollama and the models are done, but Nuru is still to update");
+
+  buttonOf(settingTab, "Set up everything", "Set up everything").click();
+  await until(() => setUps.length && /Nuru 1\.0\.1 is set up\./.test(said(settingTab, "1. Nuru")));
+  await shown(settingTab);
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "1. Nuru"), /✓ Nuru is set up\. Repair installs Nuru 1\.0\.1 again/);
+  assert.ok(buttonOf(settingTab, "1. Nuru", "Repair"));
+  assert.equal(buttonOf(settingTab, "Set up everything", "Set up everything").disabled, true, "nothing left to do");
+
+  fs.writeFileSync(install, JSON.stringify({ nuru, uv: path.join(home, "uv"), version: "0.9.0" }));
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "1. Nuru", "Update").click();
+  await until(() => setUps.length === 2 && /Nuru 1\.0\.1 is set up\./.test(said(settingTab, "1. Nuru")));
+});
+
+test("an installed Nuru newer than the plugin's release asks for a plugin update; one without a version (a checkout's) isn't called older", async () => {
+  const { settingTab, home, nuru } = tab();
+  fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv"), version: "1.0.2" }));
+  settingTab.display();
+  await shown(settingTab);
+  assert.match(said(settingTab, "1. Nuru"),
+    /✓ Nuru 1\.0\.2 is set up, newer than this plugin's 1\.0\.1: update the plugin\. Repair installs 1\.0\.1 beside it/);
+  assert.ok(buttonOf(settingTab, "1. Nuru", "Repair"));
+  assert.equal(buttonOf(settingTab, "Set up everything", "Set up everything").disabled, true);
+
+  const checkout = tab(); // install.json without a version, as install.js writes it
+  checkout.settingTab.display();
+  await shown(checkout.settingTab);
+  assert.match(said(checkout.settingTab, "1. Nuru"), /✓ Nuru is set up\. Repair installs Nuru 1\.0\.1 again/);
+});
+
 test("a missing Ollama is installed at the pinned version, then the models download, with progress", async () => {
   const { settingTab, home } = tab();
   settingTab.ollama = fakeOllama({ version: null, have: [] });

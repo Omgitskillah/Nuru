@@ -693,7 +693,7 @@ class ChatView extends ItemView {
     const thinking = this.currentThinking(model);
     this.modelButton.hidden = !model;
     this.modelButton.setText(model ? `${model.label}${model.cloud ? " ☁" : ""}` : "");
-    this.modelButton.setAttr("title", model?.cloud ? "Runs on Claude: what Nuru reads is sent to Anthropic" : "Runs on this Mac");
+    this.modelButton.setAttr("title", model?.cloud ? "Runs on Claude: what Nuru reads is sent to Anthropic" : "Runs on this computer");
     this.thinkingButton.hidden = !thinking;
     this.thinkingButton.setText(thinking ? `Thinking: ${thinking.label}` : "");
   }

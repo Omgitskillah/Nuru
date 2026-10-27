@@ -1104,3 +1104,89 @@ def test_while_a_receipt_still_cant_be_stored_the_turn_stays_open_and_a_restart_
     protocol.check_stream(events)
     assert [e["data"]["state"] for e in events if e["type"] == "write_receipt"] == ["uncertain"]
     assert events[-1]["data"]["code"] == "service_restarted"
+
+
+# ---------------------------------------------------------------------- conversation titles (TODO F25)
+def titled(tmp_path, scripts, titles):
+    return Harness(tmp_path, scripts, titles=titles)
+
+
+def test_a_new_conversations_first_turn_names_it_before_the_turn_is_reported_finished(tmp_path):
+    asked = []
+    def titles(message, reply):
+        asked.append((message, reply))
+        return "Lisbon trip plan"
+    h = titled(tmp_path, [reply("Flights are ", "about 400 EUR."), reply("Second.")], titles)
+    try:
+        conversation_id = h.conversation()
+        _, body = h.submit(conversation_id, "plan my Lisbon trip")
+        events = h.finished(body["turn_id"])
+        assert events[-1]["type"] == "completed"
+        assert h.service.store.title(conversation_id) == "Lisbon trip plan", "named before 'completed' was stored"
+        assert asked == [("plan my Lisbon trip", "Flights are about 400 EUR.")]
+        _, body = h.submit(conversation_id, "and hotels?", request_id="req-turn-00000002")
+        h.finished(body["turn_id"])
+        assert len(asked) == 1, "only the first turn names it"
+    finally:
+        h.close()
+
+
+def test_a_title_the_client_chose_itself_is_kept_and_the_messages_start_is_replaced(tmp_path):
+    h = titled(tmp_path, [reply("ok"), reply("ok")], lambda message, reply: "Named by the model")
+    try:
+        status, body = h.service.create_conversation(ME, {"request_id": "req-conversation-0002", "title": "My own name"})
+        own = body["conversation_id"]
+        _, body = h.submit(own, "hello there")
+        h.finished(body["turn_id"])
+        assert h.service.store.title(own) == "My own name"
+
+        status, body = h.service.create_conversation(ME, {"request_id": "req-conversation-0003", "title": "hello the"})
+        prefixed = body["conversation_id"]  # as the plugin names it: the message's first characters
+        _, body = h.submit(prefixed, "hello there, plan a trip", request_id="req-turn-00000002")
+        h.finished(body["turn_id"])
+        assert h.service.store.title(prefixed) == "Named by the model"
+    finally:
+        h.close()
+
+
+def test_a_title_that_fails_or_comes_back_empty_never_fails_the_turn(tmp_path, capsys):
+    def broken(message, reply):
+        raise RuntimeError("Ollama went away")
+    for i, titles in enumerate((broken, lambda message, reply: None)):
+        (tmp_path / str(i)).mkdir()
+        h = titled(tmp_path / str(i), [reply("fine")], titles)
+        try:
+            conversation_id = h.conversation()
+            _, body = h.submit(conversation_id, "hi")
+            assert h.finished(body["turn_id"])[-1]["type"] == "completed"
+            assert h.service.store.title(conversation_id) is None
+        finally:
+            h.close()
+    assert "couldn't name a conversation" in capsys.readouterr().err
+
+
+def test_a_cancelled_first_turn_doesnt_name_the_conversation(tmp_path):
+    gate, asked = threading.Event(), []
+    h = titled(tmp_path, [held(gate, "partial")], lambda message, reply: asked.append(1) or "Never")
+    try:
+        conversation_id = h.conversation()
+        _, body = h.submit(conversation_id, "long one")
+        h.first(body["turn_id"], "text")
+        h.service.cancel_turn(ME, body["turn_id"], {"request_id": "req-cancel-000001"})
+        gate.set()
+        assert h.finished(body["turn_id"])[-1]["type"] == "cancelled"
+        assert asked == [] and h.service.store.title(conversation_id) is None
+    finally:
+        h.close()
+
+
+def test_retitle_changes_a_title_only_if_it_is_still_the_one_read(tmp_path):
+    store = ServiceStore(tmp_path / "service.db")
+    try:
+        store.add_conversation("conv-a", ME, 1, None)
+        assert store.retitle("conv-a", None, "First") is True
+        assert store.retitle("conv-a", None, "Stale") is False, "someone named it meanwhile"
+        assert store.title("conv-a") == "First"
+        assert store.retitle("missing", None, "x") is False and store.title("missing") is None
+    finally:
+        store.close()

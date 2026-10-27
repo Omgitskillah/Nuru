@@ -282,14 +282,25 @@ class ChatView extends ItemView {
   // started a new conversation opens it, but only if the panel is still on "New conversation".
   async show(message, turnId, generation) {
     if (generation !== this.generation) return;
-    if (this.conversationId === null && message.origin === null) {
+    const started = this.conversationId === null && message.origin === null;
+    if (started) {
       this.conversationId = message.conversationId;
       if (!(await this.loadConversations(generation))) return;
       this.picker.value = message.conversationId;
       await this.plugin.remember({ conversationId: message.conversationId });
       if (generation !== this.generation) return;
     }
-    if (this.conversationId === message.conversationId && !this.turns.has(turnId)) this.addTurn(turnId, message.text);
+    if (this.conversationId === message.conversationId && !this.turns.has(turnId)) {
+      this.addTurn(turnId, message.text, undefined, { namesConversation: started });
+    }
+  }
+
+  // The service names a new conversation as its first turn finishes (core/titles.py): list it by that name.
+  async showTitles() {
+    const generation = this.generation;
+    try {
+      if (await this.loadConversations(generation)) this.picker.value = this.conversationId || "";
+    } catch {} // the list keeps the name it had; the next one to load shows the new one
   }
 
   // Only what the user asks for: the open note. A selection in it goes by itself (trackSelection).
@@ -356,7 +367,7 @@ class ChatView extends ItemView {
   }
 
   // ------------------------------------------------------------------ turns
-  addTurn(turnId, text, saved) {
+  addTurn(turnId, text, saved, { namesConversation = false } = {}) {
     const el = this.messagesEl.createDiv({ cls: "nuru-turn" });
     el.createDiv({ cls: "nuru-user", text });
     const turn = {
@@ -369,6 +380,7 @@ class ChatView extends ItemView {
       receiptsEl: el.createDiv({ cls: "nuru-receipts" }),
       questionEl: el.createDiv({ cls: "nuru-question" }),
       renderTimer: null, renderedReply: null, forgotten: false, shownQuestion: null,
+      namesConversation, // its conversation's first turn, sent from here: once it's done, the service has named it
     };
     turn.runner = new TurnRunner({ client: this.client, turnId, onChange: () => this.update(turn) });
     // A finished turn from history shows its saved display; its full steps are fetched when asked for. An
@@ -392,6 +404,10 @@ class ChatView extends ItemView {
 
   update(turn) {
     const display = turn.runner.display;
+    if (turn.namesConversation && display.state === "completed" && !turn.forgotten) {
+      turn.namesConversation = false; // once
+      this.showTitles();
+    }
     const words = turn.runner.connection === "reconnecting" ? "Reconnecting…"
       : turn.runner.connection === "lost" ? "This turn can't be followed any more; reopen the conversation."
       : display.state === "queued" ? `Waiting for Nuru (place ${display.position ?? "?"})`

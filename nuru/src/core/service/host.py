@@ -85,13 +85,15 @@ class Service:
     def __init__(self, store: ServiceStore, conversations: ConversationStore, session_factory: Callable[[int], object],
                  vault: Path, *, queue_limit: int = QUEUE_LIMIT, answer_seconds: float | None = None,
                  retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None,
-                 vault_uuid: str | None = None) -> None:
+                 vault_uuid: str | None = None, titles: Callable[[str, str], str | None] | None = None) -> None:
         """`session_factory(conversation_id)` builds the Session (in the worker thread, on the first
         turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS).
         `models()` gives the models a conversation may pick (core.main_models.choices); without it,
-        every conversation runs on the configured model."""
+        every conversation runs on the configured model. `titles(message, reply)` names a new conversation
+        after its first turn (core.titles.title); without it, conversations keep the title they came with."""
         self.store, self.conversations, self._factory = store, conversations, session_factory
         self._models = models
+        self._titles = titles
         self.vault = Path(vault).resolve()
         self.vault_id = protocol.vault_id(self.vault)  # v1's path hash
         self.vault_uuid = vault_uuid  # v2's identity (core.vault_identity), set by nuru-serve
@@ -626,6 +628,8 @@ class Service:
             session.authorize_tool = None
             if getattr(session, "tools", None) is not None:
                 session.tools.authorize_tool = None
+        if not live.cancel.is_set() and not live.lost_outcome:
+            self._name_conversation(live)
         with self._lock:
             if live.stream.ended or self._unsafe or not self._caught_up(live):
                 return  # not caught up: left unfinished, and the next start recovers its writes from the ledger
@@ -633,6 +637,27 @@ class Service:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": UNRECORDED}))
             else:
                 self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+
+    def _name_conversation(self, live: _Live) -> None:
+        """A new conversation's first turn names it, before the turn is reported finished, so a client that
+        lists the conversations then shows the title. Only a title a client gave from the message (its
+        start) or none is replaced. A title is never worth failing a turn: any problem is only logged."""
+        if self._titles is None:
+            return
+        conversation_id = live.stream.conversation_id
+        try:
+            with self._lock:
+                turns = self.store.turns(conversation_id, None, 2)
+                old = self.store.title(conversation_id)
+            if len(turns) != 1 or not (old is None or turns[0]["text"].startswith(old)):
+                return
+            new = self._titles(turns[0]["text"], live.stream.reply)  # a model call: outside the lock
+            if new and new != old:
+                with self._lock, self._atomic():
+                    self.store.retitle(conversation_id, old, new)
+        except Exception:
+            print("nuru-serve: couldn't name a conversation:", file=sys.stderr)
+            traceback.print_exc(limit=5, file=sys.stderr)
 
     def _caught_up(self, live: _Live) -> bool:
         """Store the outcomes that couldn't be stored when they came, oldest first. False if one still

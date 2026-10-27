@@ -912,3 +912,27 @@ test("a selection that would be a sixth attachment isn't sent, and says so", asy
   view.stop();
   await view.close();
 });
+
+// TODO F25: the service names a new conversation as its first turn finishes; the picker then shows that name,
+// not the message's first 60 characters it was created with. Turns in a conversation already named don't ask.
+test("a new conversation's first finished turn lists it by the name the service gave it", async () => {
+  const stream = FIXTURES.streams.completed_with_tools.map((e) => ({ ...e, conversation_id: "conv0000new1", turn_id: "turn0000new1" }));
+  const client = fakeClient({ live: { turn0000new1: stream } });
+  const trip = { id: "conv0000demo", title: "Trip", created_at: "2026-10-09T12:00:00.000Z" };
+  const created = { id: "conv0000new1", created_at: "2026-10-27T09:00:00.000Z" };
+  let listings = 0;
+  client.conversations = async () => {
+    listings += 1; // when the panel opens; when the new conversation is shown; after its first turn
+    const title = listings >= 3 ? "Notes on Grüße and the trip" : "find my trip notes";
+    return { conversations: listings === 1 ? [trip] : [{ ...created, title }, trip] };
+  };
+  const { view } = await open({ client, conversationId: null });
+  view.input.value = "find my trip notes";
+  view.sendButton.click();
+  await until(() => view.turns.size === 1);
+  const [turn] = view.turns.values();
+  await until(() => turn.runner.display.state === "completed");
+  await until(() => view.picker.selectedOptions[0]?.textContent === "Notes on Grüße and the trip");
+  assert.equal(view.picker.value, "conv0000new1", "still on the new conversation");
+  assert.equal(listings, 3);
+});

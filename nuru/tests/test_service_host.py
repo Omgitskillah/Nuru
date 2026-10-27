@@ -50,9 +50,6 @@ class ScriptedSession:
         self.asked.append((self.conversation_id, text))
         yield from self.scripts.pop(0)(self, text, cancel)
 
-    def title_model(self):
-        return ("scripted-model", 4096)
-
     def close(self):
         self.closed = True
 
@@ -1112,7 +1109,10 @@ def test_while_a_receipt_still_cant_be_stored_the_turn_stays_open_and_a_restart_
 
 # ---------------------------------------------------------------------- conversation titles (TODO F25)
 def titled(tmp_path, scripts, titles):
-    return Harness(tmp_path, scripts, titles=titles)
+    """A Harness whose Session names conversations with `titles(message, reply, stop)`, as Session.title."""
+    h = Harness(tmp_path, scripts)
+    h.session.title = titles
+    return h
 
 
 def named(service, conversation_id, title):
@@ -1124,11 +1124,11 @@ def named(service, conversation_id, title):
     return True
 
 
-def test_a_new_conversation_is_named_after_its_first_turn_has_completed_by_that_turns_model(tmp_path):
+def test_a_new_conversation_is_named_after_its_first_turn_has_completed(tmp_path):
     asked, h = [], None
-    def titles(message, reply, model, num_ctx, *, stop):
+    def titles(message, reply, stop):
         turn = h.service.store.turns(conversation_id, None, 1)[0]
-        asked.append((message, reply, model, num_ctx, h.service.wait_events(turn["id"], 0, 0)[0][-1]["type"]))
+        asked.append((message, reply, h.service.wait_events(turn["id"], 0, 0)[0][-1]["type"]))
         return "Lisbon trip plan"
     h = titled(tmp_path, [reply("Flights are ", "about 400 EUR."), reply("Second.")], titles)
     try:
@@ -1136,8 +1136,8 @@ def test_a_new_conversation_is_named_after_its_first_turn_has_completed_by_that_
         _, body = h.submit(conversation_id, "plan my Lisbon trip")
         assert h.finished(body["turn_id"])[-1]["type"] == "completed"
         assert named(h.service, conversation_id, "Lisbon trip plan")
-        assert asked == [("plan my Lisbon trip", "Flights are about 400 EUR.", "scripted-model", 4096, "completed")], \
-            "asked only once the turn had completed, of the model and window the Session ran it on"
+        assert asked == [("plan my Lisbon trip", "Flights are about 400 EUR.", "completed")], \
+            "asked only once the turn had completed"
         _, body = h.submit(conversation_id, "and hotels?", request_id="req-turn-00000002")
         h.finished(body["turn_id"])
         h.service.close()  # the worker has finished all it had
@@ -1150,7 +1150,7 @@ def test_a_title_being_written_holds_up_no_turn_and_gives_way_to_the_next(tmp_pa
     """Astra's probe on #61: a title that takes long must not keep 'completed' back, nor the next turn
     waiting. The next turn stops it (stop()), as core.titles then gives no title."""
     writing, gave_way = threading.Event(), threading.Event()
-    def titles(message, reply, model, num_ctx, *, stop):
+    def titles(message, reply, stop):
         writing.set()
         while not stop():
             time.sleep(0.01)
@@ -1173,7 +1173,7 @@ def test_a_title_being_written_holds_up_no_turn_and_gives_way_to_the_next(tmp_pa
 
 def test_closing_stops_a_title_being_written_and_one_that_comes_back_after_is_not_stored(tmp_path):
     writing, closed = threading.Event(), threading.Event()
-    def titles(message, reply, model, num_ctx, *, stop):
+    def titles(message, reply, stop):
         writing.set()
         while not stop():
             time.sleep(0.01)
@@ -1197,7 +1197,7 @@ def test_closing_stops_a_title_being_written_and_one_that_comes_back_after_is_no
 
 def test_a_title_the_client_chose_itself_or_changed_meanwhile_is_kept_and_the_messages_start_is_replaced(tmp_path):
     renames = {}
-    def titles(message, reply, model, num_ctx, *, stop):
+    def titles(message, reply, stop):
         if message in renames:  # the user renames it while the model writes
             h.service.store.retitle(renames[message], h.service.store.title(renames[message]), "Renamed by the user")
         return "Named by the model"
@@ -1226,9 +1226,9 @@ def test_a_title_the_client_chose_itself_or_changed_meanwhile_is_kept_and_the_me
 
 
 def test_a_title_that_fails_or_comes_back_empty_never_fails_the_turn(tmp_path, capsys):
-    def broken(message, reply, model, num_ctx, *, stop):
+    def broken(message, reply, stop):
         raise RuntimeError("Ollama went away")
-    for i, titles in enumerate((broken, lambda *args, stop: None)):
+    for i, titles in enumerate((broken, lambda message, reply, stop: None)):
         (tmp_path / str(i)).mkdir()
         h = titled(tmp_path / str(i), [reply("fine")], titles)
         try:
@@ -1244,7 +1244,7 @@ def test_a_title_that_fails_or_comes_back_empty_never_fails_the_turn(tmp_path, c
 
 def test_no_title_for_a_cancelled_first_turn_or_one_run_on_claude(tmp_path):
     gate, asked = threading.Event(), []
-    h = titled(tmp_path, [held(gate, "partial"), reply("from Claude")], lambda *args, stop: asked.append(1) or "Never")
+    h = titled(tmp_path, [held(gate, "partial"), reply("from Claude")], lambda message, reply, stop: asked.append(1) or "Never")
     try:
         conversation_id = h.conversation()
         _, body = h.submit(conversation_id, "long one")
@@ -1253,7 +1253,7 @@ def test_no_title_for_a_cancelled_first_turn_or_one_run_on_claude(tmp_path):
         gate.set()
         assert h.finished(body["turn_id"])[-1]["type"] == "cancelled"
 
-        h.session.title_model = lambda: None  # what Session says on Claude
+        h.session.title = lambda message, reply, stop: None  # what Session.title says on Claude
         _, body = h.service.create_conversation(ME, {"request_id": "req-conversation-0002"})
         claude = body["conversation_id"]
         _, body = h.submit(claude, "hi", request_id="req-turn-00000002")

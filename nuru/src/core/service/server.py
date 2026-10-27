@@ -562,10 +562,10 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
     if session.DB_PATH is None and vault_data.legacy_waiting():
         print("nuru-serve: conversations from before vaults had their own history are still in the Nuru folder; "
               "to move them into a vault, stop Nuru and run `uv run nuru-serve vault adopt-legacy <vault>`", file=sys.stderr)
-    from core import main_models, titles
+    from core import main_models
     default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
     service = Service(store, ConversationStore(db_path), _session_factory(vault), vault, queue_limit=queue_limit,
-                      models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid, titles=titles.title)
+                      models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)

@@ -110,13 +110,18 @@ def test_switching_to_claude_sends_its_system_prompt_and_unloads_the_local_model
 
 
 def test_a_title_is_written_by_the_local_model_the_turn_ran_on_at_its_window_never_by_claude(monkeypatch, local):
+    asked = []
+    monkeypatch.setattr(session.titles, "title", lambda *args, stop: asked.append((*args, stop)) or "Rome trip")
     s = start_session(monkeypatch, model_info={"context_window": 16384})
     list(s.ask("hi"))
-    assert s.title_model() == (session.MODEL, 16384), "the window the turn asked for: Ollama keeps the model as it is"
+    stop = lambda: False  # noqa: E731
+    assert s.title("hi", "hello", stop) == "Rome trip"
+    assert asked == [("hi", "hello", session.MODEL, 16384, stop)], "the window the turn asked for: Ollama keeps the model as it is"
     s.use_model(GRANITE)
-    assert s.title_model()[0] == "nuru-granite4.2-3b-q8_0"
+    s.title("hi", "hello", stop)
+    assert asked[-1][2] == "nuru-granite4.2-3b-q8_0"
     s.use_model(HAIKU)
-    assert s.title_model() is None, "no note goes to Claude for a title"
+    assert s.title("hi", "hello", stop) is None and len(asked) == 2, "no note goes to Claude for a title"
     s.close()
 
 

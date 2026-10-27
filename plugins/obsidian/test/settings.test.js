@@ -268,6 +268,36 @@ test("an installed Nuru older than the plugin's release says so, and Update and 
   await until(() => setUps.length === 2 && /Nuru 1\.0\.1 is set up\./.test(said(settingTab, "1. Nuru")));
 });
 
+// Astra's review of #58: Set up everything updated Nuru, then stopped at an Ollama only its own menu could update,
+// without redrawing the tab, and step 1 called the old version newer than the plugin.
+test("after Set up everything updates Nuru and stops at Ollama, step 1 names the new version; a rolled-back update stays older", async () => {
+  const { settingTab, home, nuru } = tab();
+  const install = path.join(home, ".nuru", "install.json");
+  const record = (version) => fs.writeFileSync(install, JSON.stringify({ nuru, uv: path.join(home, "uv"), version }));
+  record("1.0.0");
+  settingTab.ollama = fakeOllama({ version: "0.30.0" }); // below the pin, on macOS: the user updates it from its menu
+  settingTab.setUp = async () => { record("1.0.1"); return { version: "1.0.1" }; };
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "Set up everything", "Set up everything").click();
+  await until(() => /✓ Nuru is set up\. Repair installs Nuru 1\.0\.1 again/.test(said(settingTab, "1. Nuru")));
+  assert.doesNotMatch(said(settingTab, "1. Nuru"), /newer|1\.0\.0/);
+  assert.match(said(settingTab, "2. Ollama"), /Ollama 0\.30\.0 is older than Nuru needs/);
+
+  const rolled = tab({ running: true });
+  fs.writeFileSync(path.join(rolled.home, ".nuru", "install.json"),
+    JSON.stringify({ nuru: rolled.nuru, uv: path.join(rolled.home, "uv"), version: "1.0.0" }));
+  rolled.settingTab.setUp = async () => ({ version: "1.0.1", rolledBack: true, startError: new LaunchProblem("exited") });
+  rolled.settingTab.display();
+  await shown(rolled.settingTab);
+  buttonOf(rolled.settingTab, "Set up everything", "Set up everything").click();
+  await until(() => /Nuru is back on the install it had before/.test(said(rolled.settingTab, "1. Nuru")));
+  assert.ok(buttonOf(rolled.settingTab, "1. Nuru", "Update"), "still older: Update stays");
+  rolled.settingTab.display();
+  await shown(rolled.settingTab);
+  assert.match(said(rolled.settingTab, "1. Nuru"), /Nuru 1\.0\.0 is installed; this plugin comes with Nuru 1\.0\.1/);
+});
+
 test("an installed Nuru newer than the plugin's release asks for a plugin update; one without a version (a checkout's) isn't called older", async () => {
   const { settingTab, home, nuru } = tab();
   fs.writeFileSync(path.join(home, ".nuru", "install.json"), JSON.stringify({ nuru, uv: path.join(home, "uv"), version: "1.0.2" }));

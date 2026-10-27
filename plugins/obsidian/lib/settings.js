@@ -179,7 +179,7 @@ class NuruSettingTab extends PluginSettingTab {
     // `current`, the installed release, against the one this plugin came with: updating the plugin (BRAT)
     // leaves Nuru as it was. null for a checkout's install, which has no version; older is then never claimed.
     const releaseVersion = this.release?.version;
-    let older = Boolean(current && releaseVersion && !this.ollama.atLeast(current, releaseVersion));
+    const older = () => Boolean(current && releaseVersion && !this.ollama.atLeast(current, releaseVersion));
     const state = { running: false, version: null, app: null, missing: needed, ok: false };
     const news = { nuru: this.setupNews, ollama: "", models: this.modelsNews }; // shown once, by these rows
     this.setupNews = "";
@@ -214,6 +214,7 @@ class NuruSettingTab extends PluginSettingTab {
       };
       try {
         const result = await this.setUp({ home: launcher.home, step: progress("nuru"), start: launcher.running() ? restart : null });
+        if (!result.rolledBack) current = result.version; // install.json names it now: step 1 says so before any redraw
         this.setupNews = `Nuru ${result.version} is set up.`;
         if (result.startError) {
           this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
@@ -227,7 +228,7 @@ class NuruSettingTab extends PluginSettingTab {
       }
     };
     // What step 1's button does: set Nuru up, update an older install, or install this release again.
-    const nuruAction = () => (!installed ? "Set up Nuru" : older ? "Update" : "Repair");
+    const nuruAction = () => (!installed ? "Set up Nuru" : older() ? "Update" : "Repair");
     // What step 2's button does now: install, update or start Ollama, or nothing.
     const ollamaAction = () => {
       if (!pin || (state.running && (state.ok || !windows))) return null;
@@ -322,7 +323,7 @@ class NuruSettingTab extends PluginSettingTab {
       const action = ollamaAction();
       rows.nuru.setDesc(news.nuru || (!installed
         ? "Downloads Nuru and what it needs into a .nuru folder in your home folder. Your notes aren't touched."
-        : older ? `Nuru ${current} is installed; this plugin comes with Nuru ${releaseVersion}. Update installs ${releaseVersion} ` +
+        : older() ? `Nuru ${current} is installed; this plugin comes with Nuru ${releaseVersion}. Update installs ${releaseVersion} ` +
           "beside it, and switches once the new one works."
         : current && current !== releaseVersion ? `✓ Nuru ${current} is set up, newer than this plugin's ${releaseVersion}: ` +
           `update the plugin. Repair installs ${releaseVersion} beside it, and switches once it works.`
@@ -347,7 +348,7 @@ class NuruSettingTab extends PluginSettingTab {
       buttons.ollama.setButtonText(action || "Install Ollama").setDisabled(!installed || !action);
       buttons.check.setDisabled(false);
       buttons.models.setDisabled(!state.ok || !state.missing.length);
-      buttons.all.setDisabled((done && !older) || (installed && !older && !state.ok && !action));
+      buttons.all.setDisabled((done && !older()) || (installed && !older() && !state.ok && !action));
     };
 
     row("all", "Set up everything");
@@ -355,9 +356,8 @@ class NuruSettingTab extends PluginSettingTab {
     rows.all.setDesc(`Runs the steps below that are still to do, in order: it installs Nuru, installs or updates Ollama ` +
       `(a separate app, ${windows ? "1.5 GB" : "200 MB"}) if needed, and downloads the models (a few GB).`);
     button("all", "Set up everything", async () => {
-      if ((!installed || older) && !(await setUpNuru())) return this.display();
+      if ((!installed || older()) && !(await setUpNuru())) return this.display();
       installed = true;
-      older = false;
       await refresh();
       // Start, then update if what started is older: at most both, each once.
       for (let tries = 0; !state.ok && tries < 2; tries++) {

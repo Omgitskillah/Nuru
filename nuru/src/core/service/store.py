@@ -255,6 +255,15 @@ class ServiceStore:
     def set_conversation_model(self, conversation_id: str, model: str | None, thinking: str | None) -> None:
         self._conn.execute("UPDATE conversations SET model = ?, thinking = ? WHERE id = ?", (model, thinking, conversation_id))
 
+    def title(self, conversation_id: str) -> str | None:
+        row = self._conn.execute("SELECT title FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return row[0] if row else None
+
+    def retitle(self, conversation_id: str, old: str | None, new: str) -> bool:
+        """Name the conversation `new` only if its title is still `old`: never over one set meanwhile."""
+        return self._conn.execute("UPDATE conversations SET title = ? WHERE id = ? AND title IS ?",
+                                  (new, conversation_id, old)).rowcount == 1
+
     def conversations(self, principal: str, before: str | None, limit: int) -> list[dict]:
         """Newest first; `before` is the last ID of the previous page."""
         rows = self._conn.execute(

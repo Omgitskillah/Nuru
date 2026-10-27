@@ -39,7 +39,7 @@ from core.context_budget import ContextBudgetExceeded, available_tokens, estimat
 from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import model_profile, questions
+from core import model_profile, questions, titles
 from core.providers.mcp_tools import MCPTools, ToolResult
 from core.questions import Question
 from core import tool_dispatch
@@ -645,6 +645,14 @@ class Session:
     @property
     def context_window(self) -> int:
         return _context_window(self.model_info)
+
+    def title(self, message: str, reply: str, stop) -> str | None:
+        """A title for the conversation that `message` and `reply` begin (core.titles), by the model the
+        last turn ran on: a local one at the window that turn asked for, so it stays loaded as it is, or
+        Claude, which the conversation already runs on. `stop()` ends it."""
+        if self._claude():
+            return titles.by_claude(self._chat_with, self._model(), message, reply, stop=stop)
+        return titles.title(message, reply, self._model(), self.context_window, stop=stop)
 
     # ------------------------------------------------------------------ the main model
     # A Session runs on the configured model (MODEL, PROFILE, chat and THINK above) until use_model()

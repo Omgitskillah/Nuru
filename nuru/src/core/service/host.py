@@ -550,10 +550,11 @@ class Service:
                         return
                     live = self._live[self._queue.popleft()]
                     self._active = live.stream.turn_id
+                completed = False
                 try:
                     with self._lock:
                         self._emit(live, lambda s: s.emit("started", {}))
-                    self._turn(live)
+                    completed = self._turn(live)
                 except Exception:
                     # The store failed under the turn. It is left unfinished for the next start to
                     # recover; the worker goes on, or stops if the database is now unsafe (loop head).
@@ -563,11 +564,14 @@ class Service:
                     with self._lock:
                         self._active = None
                         self._changed.notify_all()
+                if completed:
+                    self._name_conversation(live)
         finally:
             if self._session is not None:
                 self._session.close()
 
-    def _turn(self, live: _Live) -> None:
+    def _turn(self, live: _Live) -> bool | None:
+        """Run the turn to its end; True if it completed."""
         if live.authorize and not live.authorize(None):
             with self._lock:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": "Device authorization expired or was revoked."}))
@@ -631,8 +635,42 @@ class Service:
                 return  # not caught up: left unfinished, and the next start recovers its writes from the ledger
             if live.lost_outcome:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": UNRECORDED}))
-            else:
-                self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+                return False
+            completed = not live.cancel.is_set()
+            self._emit(live, lambda s: s.completed() if completed else s.cancelled(live.cancel_reason))
+            return completed
+
+    def _name_conversation(self, live: _Live) -> None:
+        """After a new conversation's first turn has completed, the Session names it (Session.title):
+        no turn waits for a title, and one that comes while it is being written stops it, as closing
+        does. Only a title a client gave from the message (its start) or none is replaced, and only if it
+        is still the one read when the new one is stored. A title is never worth more than a log line."""
+        name = getattr(self._session, "title", None)  # Session.title; scripted stand-ins may have none
+        if name is None:
+            return
+        conversation_id = live.stream.conversation_id
+
+        def stop() -> bool:  # core.titles calls it from its own thread, so without the lock
+            return self._closing or bool(self._queue)
+
+        try:
+            with self._lock:
+                if stop():
+                    return
+                turns = self.store.turns(conversation_id, None, 2)
+                old = self.store.title(conversation_id)
+            if len(turns) != 1 or not (old is None or turns[0]["text"].startswith(old)):
+                return
+            new = name(turns[0]["text"], live.stream.reply, stop)  # a model call: outside the lock
+            if new and new != old:
+                with self._lock:
+                    if self._closing or self._unsafe:
+                        return  # close() may already have returned: the database is no longer this service's
+                    with self._atomic():
+                        self.store.retitle(conversation_id, old, new)
+        except Exception:
+            print("nuru-serve: couldn't name a conversation:", file=sys.stderr)
+            traceback.print_exc(limit=5, file=sys.stderr)
 
     def _caught_up(self, live: _Live) -> bool:
         """Store the outcomes that couldn't be stored when they came, oldest first. False if one still

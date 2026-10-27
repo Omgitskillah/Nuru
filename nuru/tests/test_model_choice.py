@@ -109,6 +109,29 @@ def test_switching_to_claude_sends_its_system_prompt_and_unloads_the_local_model
     s.close()
 
 
+def test_a_title_is_written_by_the_model_the_turn_ran_on_at_its_window(monkeypatch, local):
+    asked = []
+    monkeypatch.setattr(session.titles, "title", lambda *args, stop: asked.append((*args, stop)) or "Rome trip")
+    s = start_session(monkeypatch, model_info={"context_window": 16384})
+    list(s.ask("hi"))
+    stop = lambda: False  # noqa: E731
+    assert s.title("hi", "hello", stop) == "Rome trip"
+    assert asked == [("hi", "hello", session.MODEL, 16384, stop)], "the window the turn asked for: Ollama keeps the model as it is"
+    s.use_model(GRANITE)
+    s.title("hi", "hello", stop)
+    assert asked[-1][2] == "nuru-granite4.2-3b-q8_0"
+    sent = []
+    def claude_chat(model, messages, **kwargs):
+        sent.append((model, messages[0]["content"], kwargs))
+        yield "Rome by Claude"
+    monkeypatch.setattr(session.claude_provider, "chat", claude_chat)
+    s.use_model(HAIKU)
+    assert s.title("hi", "hello", stop) == "Rome by Claude" and len(asked) == 2, \
+        "on Claude, Claude names it: choosing it already sends it the conversation"
+    assert sent[0][0] == "claude-haiku-5-5" and "two to six words" in sent[0][1] and sent[0][2] == {"think": False, "max_tokens": 64}
+    s.close()
+
+
 # --------------------------------------------------------------------------- the service
 MODELS = {"default": QWEN, "choices": [
     {"id": QWEN, "label": QWEN, "cloud": False, "thinking": [{"id": "off", "label": "Off"}, {"id": "low", "label": "On"}],

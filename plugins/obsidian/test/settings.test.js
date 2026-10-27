@@ -529,6 +529,49 @@ test("what can't be removed is said: a Nuru that won't stop stops it all; a fold
     "The plugin is still there: remove it in Settings → Community plugins");
 });
 
+// As on a work laptop behind Zscaler (2026-10-26): Ollama refused the filter's redirect. Nuru names the filter and
+// gives the user the page and the commands, for them to choose to go ahead; then Check picks the models up.
+test("a download a network filter stopped names it, links its page and gives the pull commands for what's left; Check picks the models up", async () => {
+  const { settingTab } = tab();
+  const filter = 'pull model manifest: Get "https://gateway.zscalerthree.net:443/_sm_ccik?_ordtok=KDW3": blocked redirect to a different host';
+  const pulls = [];
+  settingTab.ollama = fakeOllama({ have: [], pull: async (name) => {
+    pulls.push(name);
+    if (name !== "qwen3.5:4b") throw new Error(filter); // the first model came down; the second was stopped
+    settingTab.ollama.have.push(name);
+  } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "Set up everything", "Set up everything").click();
+  await until(() => /A network filter/.test(said(settingTab, "3. Models")));
+  const models = row(settingTab, "3. Models");
+  assert.match(models.textContent, /A network filter \(gateway\.zscalerthree\.net\) stopped the download: .* check with your IT before going around it\. If you may, open the filter's page in your browser, or run in a terminal: ollama pull nomic-embed-text:v1\.5\. Then click Check\./);
+  assert.equal(models.querySelector("a").getAttribute("href"), "https://gateway.zscalerthree.net/_sm_ccik?_ordtok=KDW3");
+  assert.deepEqual([...models.querySelectorAll("code")].map((c) => c.textContent), ["ollama pull nomic-embed-text:v1.5"],
+    "only what's still missing");
+  assert.deepEqual(pulls, ["qwen3.5:4b", "nomic-embed-text:v1.5"], "nothing retried or worked around");
+
+  settingTab.ollama.have.push("nomic-embed-text:v1.5"); // the user ran the command
+  buttonOf(settingTab, "2. Ollama", "Check").click();
+  await until(() => /✓ Ollama has the models Nuru needs/.test(said(settingTab, "3. Models")));
+});
+
+test("a filter's message without a page to offer, or with no model name fit to copy, still says what to do", async () => {
+  const { settingTab, nuru } = tab();
+  fs.writeFileSync(path.join(nuru, ".env.nuru"), "NURU_BASE_MODEL=bad;name\n");
+  settingTab.ollama = fakeOllama({ have: ["nomic-embed-text:v1.5"], pull: async () => {
+    throw new Error('Get "http://filter.example/": blocked redirect to a different host');
+  } });
+  settingTab.display();
+  await shown(settingTab);
+  buttonOf(settingTab, "3. Models", "Download").click();
+  await until(() => /A network filter/.test(said(settingTab, "3. Models")));
+  const models = row(settingTab, "3. Models");
+  assert.match(models.textContent, /A network filter stopped the download: .* If you may, download the models with ollama pull in a terminal\. Then click Check\./);
+  assert.equal(models.querySelector("a"), null, "no page offered for a plain-http address");
+  assert.equal(models.querySelector("code"), null, "a name a shell would split is never shown as a command");
+});
+
 test("a model download that fails in Set up everything says why once the tab is shown again, naming a blocked network", async () => {
   const { settingTab } = tab();
   const manifest = 'pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b": context deadline exceeded';

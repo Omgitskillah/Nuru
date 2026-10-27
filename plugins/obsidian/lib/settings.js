@@ -246,9 +246,32 @@ class NuruSettingTab extends PluginSettingTab {
       }
     };
     // Models go only into an Ollama confirmed, just now, to be at the pinned version or newer.
+    // A network filter stopped Ollama: say so, and give the user what they need to go ahead themselves, if
+    // they may (it's often their organisation's): the filter's page to open in a browser, and the commands
+    // that download the models in a terminal. Nuru never goes around the filter itself. A fragment, built
+    // when shown, so the message survives the tab being drawn again.
+    const blockedByFilter = (filter, models) => () => createFragment((text) => {
+      text.appendText(`A network filter${filter.host ? ` (${filter.host})` : ""} stopped the download: it answered for ` +
+        "Ollama's library with its own page, which Ollama can't open. It is often an organisation's: check with your IT " +
+        "before going around it. If you may, ");
+      if (filter.page) {
+        text.createEl("a", { text: "open the filter's page", attr: { href: filter.page } });
+        text.appendText(" in your browser, or ");
+      }
+      const commands = models.filter(this.removal.commandSafe).map((name) => `ollama pull ${name}`);
+      if (!commands.length) text.appendText("download the models with ollama pull in a terminal"); // names unfit to copy
+      else text.appendText("run in a terminal: ");
+      commands.forEach((command, i) => {
+        if (i) text.appendText(", then ");
+        text.createEl("code", { text: command });
+      });
+      text.appendText(". Then click Check.");
+    });
     const downloadModels = async () => {
+      let missing = needed;
       try {
         const found = await this.ollama.check(needed);
+        missing = found.missing;
         if (!found.running || (pin && !this.ollama.atLeast(found.version, pin.version))) {
           news.models = "Ollama isn't at the version Nuru needs yet: finish step 2 first.";
           return false;
@@ -259,9 +282,15 @@ class NuruSettingTab extends PluginSettingTab {
           say(text, 0);
           await this.ollama.pull(name, downloading(say, text));
           this.removal.remember(launcher.home, { model: name });
+          missing = missing.filter((other) => other !== name); // what a blocked download still leaves to do
         }
         return true;
       } catch (error) {
+        const filter = this.ollama.filterPage(error.message);
+        if (filter) {
+          news.models = blockedByFilter(filter, missing);
+          return false;
+        }
         // Ollama asks its online library first; a network that blocks or holds it fails here, before any download.
         news.models = /pull model manifest|registry\.ollama\.ai/.test(error.message)
           ? "Ollama couldn't fetch the model's details from its library (registry.ollama.ai). Check the internet " +
@@ -298,7 +327,7 @@ class NuruSettingTab extends PluginSettingTab {
       else if (state.running) rows.ollama.setDesc(`✓ Ollama ${state.version} is running.`);
       else rows.ollama.setDesc(link("Ollama isn't running. Install it from ", ", open it, then click Check."));
       if (!state.ok) rows.models.setDesc("After step 2.");
-      else if (news.models) rows.models.setDesc(news.models);
+      else if (news.models) rows.models.setDesc(typeof news.models === "function" ? news.models() : news.models);
       else rows.models.setDesc(state.missing.length ? `Ollama doesn't have ${state.missing.join(" and ")} yet: click Download (a few GB).`
         : `✓ Ollama has the models Nuru needs: ${needed.join(" and ")}.`);
       const done = installed && state.ok && !state.missing.length;

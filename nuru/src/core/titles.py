@@ -1,10 +1,11 @@
 """A conversation's title: a few words the local model writes from its first message and reply, for the
 history list, in place of the message's first 60 characters that a client names it with.
 
-The model the turn just ran on writes it, at the window that turn asked for: that model is in memory and
-stays as it is (a different window would make Ollama reload it). Nothing goes to Claude for a title. It
-runs after the turn has ended (core.service.host), gives way to the next turn, and has one deadline for
-the whole of it; anything that goes wrong means no title, and the conversation keeps the one it has.
+The model the turn just ran on writes it: a local one at the window that turn asked for, so it stays in
+memory as it is (a different window would make Ollama reload it); Claude, if the conversation runs on
+Claude (by_claude), as choosing Claude already sends it what the conversation holds. It runs after the
+turn has ended (core.service.host), gives way to the next turn, and has one deadline for the whole of
+it; anything that goes wrong means no title, and the conversation keeps the one it has.
 """
 
 import http.client
@@ -15,6 +16,8 @@ import threading
 import time
 from typing import Callable
 from urllib.parse import urlsplit
+
+import requests
 
 from core.providers.ollama import BASE, _keep_alive
 
@@ -37,14 +40,17 @@ def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[
     address = urlsplit(base)
     connection = http.client.HTTPConnection(address.hostname, address.port, timeout=seconds)
     ended, cut = threading.Event(), threading.Event()
+    # The socket itself: the connection lets go of it when a reply says "Connection: close", but the
+    # reply's body is still read through it.
+    connected: list[socket.socket] = []
 
     def watch():
         while not ended.wait(_POLL_SECONDS):
             if cut.is_set() or stop() or time.monotonic() >= deadline:
                 cut.set()
-                if connection.sock is not None:  # None while connecting: cut it once it's there
+                if connected:  # none while connecting: cut it once it's there
                     try:
-                        connection.sock.shutdown(socket.SHUT_RDWR)  # wakes a read in progress
+                        connected[0].shutdown(socket.SHUT_RDWR)  # wakes a read in progress
                     except OSError:
                         pass
                     return
@@ -52,9 +58,11 @@ def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[
     watcher = threading.Thread(target=watch, name="nuru-title-deadline", daemon=True)
     watcher.start()
     try:
+        connection.connect()
+        connected.append(connection.sock)
         connection.request("POST", "/api/generate", json.dumps({
             "model": model, "system": _SYSTEM, "stream": True, "think": False,
-            "prompt": f"The user said:\n{message[:_INPUT_CHARS]}\n\nThe assistant replied:\n{reply[:_INPUT_CHARS]}",
+            "prompt": _prompt(message, reply),
             "options": {"num_ctx": num_ctx, "num_predict": 24, "temperature": 0.2}, **_keep_alive(),
         }), {"content-type": "application/json"})
         response = connection.getresponse()
@@ -76,6 +84,35 @@ def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[
         ended.set()
         watcher.join()
         connection.close()
+
+
+def by_claude(chat, model: str, message: str, reply: str, *, stop: Callable[[], bool] = lambda: False,
+              seconds: float = SECONDS) -> str | None:
+    """The same title by Claude: `chat` is core.providers.claude.chat (which logs the request), with
+    thinking off. Its stream can't be cut from here, so it runs in a thread of its own that is left to
+    finish if the `seconds` run out or `stop()` is true: then, as for a failed request, there is no title."""
+    answer = {}
+
+    def ask():
+        try:
+            answer["text"] = "".join(part for part in chat(model, [
+                {"role": "system", "content": _SYSTEM}, {"role": "user", "content": _prompt(message, reply)},
+            ], think=False) if isinstance(part, str))
+        except requests.RequestException:  # core.providers.claude.ClaudeError
+            pass
+
+    deadline = time.monotonic() + seconds
+    asking = threading.Thread(target=ask, name="nuru-title-claude", daemon=True)
+    asking.start()
+    while asking.is_alive():
+        if stop() or time.monotonic() >= deadline:
+            return None
+        asking.join(_POLL_SECONDS)
+    return clean(answer.get("text", ""))
+
+
+def _prompt(message: str, reply: str) -> str:
+    return f"The user said:\n{message[:_INPUT_CHARS]}\n\nThe assistant replied:\n{reply[:_INPUT_CHARS]}"
 
 
 def clean(text: str) -> str | None:

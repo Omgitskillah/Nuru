@@ -1226,25 +1226,51 @@ def test_a_title_the_client_chose_itself_or_changed_meanwhile_is_kept_and_the_me
 
 
 def test_a_title_that_fails_or_comes_back_empty_never_fails_the_turn(tmp_path, capsys):
+    asked = threading.Event()
     def broken(message, reply, stop):
+        asked.set()
         raise RuntimeError("Ollama went away")
-    for i, titles in enumerate((broken, lambda message, reply, stop: None)):
+    def empty(message, reply, stop):
+        asked.set()
+        return None
+    for i, titles in enumerate((broken, empty)):
         (tmp_path / str(i)).mkdir()
+        asked.clear()
         h = titled(tmp_path / str(i), [reply("fine")], titles)
         try:
             conversation_id = h.conversation()
             _, body = h.submit(conversation_id, "hi")
             assert h.finished(body["turn_id"])[-1]["type"] == "completed"
-            h.service.close()
+            assert asked.wait(WAIT), "closing before it was asked would skip it"
+            h.service.close()  # the worker has finished with it, log line included
             assert h.service.store.title(conversation_id) is None
         finally:
             h.close()
     assert "couldn't name a conversation" in capsys.readouterr().err
 
 
-def test_no_title_for_a_cancelled_first_turn_or_one_run_on_claude(tmp_path):
+def test_no_title_is_started_while_a_turn_is_waiting(tmp_path):
     gate, asked = threading.Event(), []
-    h = titled(tmp_path, [held(gate, "partial"), reply("from Claude")], lambda message, reply, stop: asked.append(1) or "Never")
+    h = titled(tmp_path, [held(gate, "first"), reply("second")], lambda message, reply, stop: asked.append(1) or "Never")
+    try:
+        first = h.conversation()
+        _, body = h.submit(first, "first")
+        h.first(body["turn_id"], "text")
+        _, body = h.service.create_conversation(ME, {"request_id": "req-conversation-0002"})
+        second = body["conversation_id"]
+        _, waiting = h.submit(second, "second", request_id="req-turn-00000002")  # queued behind the first
+        gate.set()
+        h.finished(waiting["turn_id"])
+        assert named(h.service, second, "Never")
+        assert asked == [1], "the first turn's title wasn't started: a turn was waiting; the second's was"
+        assert h.service.store.title(first) is None
+    finally:
+        h.close()
+
+
+def test_a_cancelled_first_turn_doesnt_name_the_conversation(tmp_path):
+    gate, asked = threading.Event(), []
+    h = titled(tmp_path, [held(gate, "partial")], lambda message, reply, stop: asked.append(1) or "Never")
     try:
         conversation_id = h.conversation()
         _, body = h.submit(conversation_id, "long one")
@@ -1252,14 +1278,8 @@ def test_no_title_for_a_cancelled_first_turn_or_one_run_on_claude(tmp_path):
         h.service.cancel_turn(ME, body["turn_id"], {"request_id": "req-cancel-000001"})
         gate.set()
         assert h.finished(body["turn_id"])[-1]["type"] == "cancelled"
-
-        h.session.title = lambda message, reply, stop: None  # what Session.title says on Claude
-        _, body = h.service.create_conversation(ME, {"request_id": "req-conversation-0002"})
-        claude = body["conversation_id"]
-        _, body = h.submit(claude, "hi", request_id="req-turn-00000002")
-        assert h.finished(body["turn_id"])[-1]["type"] == "completed"
         h.service.close()
-        assert asked == [] and h.service.store.title(conversation_id) is None and h.service.store.title(claude) is None
+        assert asked == [] and h.service.store.title(conversation_id) is None
     finally:
         h.close()
 

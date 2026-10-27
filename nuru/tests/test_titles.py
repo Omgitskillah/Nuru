@@ -13,18 +13,20 @@ from core import titles
 
 class FakeOllama:
     """/api/generate runs `steps`: ("chunk", dict) streams a line, ("hold",) stalls until the client goes
-    or the test ends, ("raw", bytes) streams bytes as they are. `status` other than 200 answers that.
-    The headers go out with the first step, as Ollama sends them with its first chunk."""
+    or the test ends, ("trickle",) streams an empty line every 50 ms until then, ("raw", bytes) streams
+    bytes as they are. `status` other than 200 answers that. The headers go out with the first step, as
+    Ollama sends them with its first chunk. `framing`: "chunked", as Ollama; "close", HTTP/1.1 with
+    Connection: close and no chunking; "http10", an HTTP/1.0 reply."""
 
-    def __init__(self, steps, status=200):
-        self.steps, self.status = steps, status
+    def __init__(self, steps, status=200, framing="chunked"):
+        self.steps, self.status, self.framing = steps, status, framing
         self.generated = []
         self.gone = threading.Event()  # the client cut the connection while a reply was streaming
         self.release = threading.Event()
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
+            protocol_version = "HTTP/1.0" if framing == "http10" else "HTTP/1.1"
 
             def log_message(self, *args):
                 pass
@@ -37,6 +39,18 @@ class FakeOllama:
                     self.end_headers()
                     return
                 started = False
+                chunked = fake.framing == "chunked"
+
+                def send(data):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data) if chunked else data)
+                    self.wfile.flush()
+
+                def start():
+                    self.send_response(200)
+                    self.send_header("content-type", "application/x-ndjson")
+                    self.send_header("transfer-encoding" if chunked else "connection", "chunked" if chunked else "close")
+                    self.end_headers()
+
                 try:
                     for step in fake.steps:
                         if step[0] == "hold":
@@ -50,15 +64,14 @@ class FakeOllama:
                                     pass
                             return
                         if not started:
-                            self.send_response(200)
-                            self.send_header("content-type", "application/x-ndjson")
-                            self.send_header("transfer-encoding", "chunked")
-                            self.end_headers()
+                            start()
                             started = True
-                        data = step[1] if step[0] == "raw" else json.dumps(step[1]).encode() + b"\n"
-                        self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
-                        self.wfile.flush()
-                    if started:
+                        if step[0] == "trickle":
+                            while not fake.release.wait(0.05):
+                                send(json.dumps({"response": "", "done": False}).encode() + b"\n")
+                            return
+                        send(step[1] if step[0] == "raw" else json.dumps(step[1]).encode() + b"\n")
+                    if started and chunked:
                         self.wfile.write(b"0\r\n\r\n")
                 except (BrokenPipeError, ConnectionResetError):
                     fake.gone.set()
@@ -116,6 +129,26 @@ def test_one_deadline_bounds_it_however_ollama_stalls_and_ollama_is_told(ollama,
     assert fake.gone.wait(2), "the connection is cut, which stops Ollama's work on it"
 
 
+@pytest.mark.parametrize("framing", ["chunked", "close", "http10"])
+def test_a_reply_that_never_ends_is_cut_at_the_deadline_and_on_stop_however_it_is_framed(ollama, framing):
+    """Astra's probe on #61 (r2): with Connection: close, http.client lets go of the socket once the headers
+    are in, so the watcher must keep its own hold on it, or an endless stream holds the worker."""
+    fake = ollama([("trickle",)], framing=framing)
+    started = time.monotonic()
+    assert titles.title("hello", "hi", "nuru", 8192, base=fake.base, seconds=0.3) is None
+    assert time.monotonic() - started < 0.3 + 0.3
+    assert fake.gone.wait(2)
+    started = time.monotonic()
+    assert titles.title("hello", "hi", "nuru", 8192, stop=lambda: time.monotonic() - started > 0.1,
+                        base=fake.base, seconds=30) is None
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.parametrize("framing", ["close", "http10"])
+def test_a_title_comes_through_however_the_reply_is_framed(ollama, framing):
+    assert titles.title("hello", "hi", "nuru", 8192, base=ollama(answer("Lisbon", " plan"), framing=framing).base) == "Lisbon plan"
+
+
 def test_a_connection_that_cant_be_cut_still_ends_at_its_own_timeout(ollama, monkeypatch):
     import socket
     def refuses(self, how):
@@ -160,6 +193,49 @@ def test_any_bad_answer_gives_no_title(ollama, fake_args):
 
 def test_no_title_without_ollama():
     assert titles.title("hello", "hi", "nuru", 8192, base="http://127.0.0.1:9", seconds=1) is None
+
+
+# ---------------------------------------------------------------------- on Claude
+def claude_chat(*parts, error=None, hold=None):
+    """Stands in for core.providers.claude.chat: yields `parts` (text, and dicts as the real one adds),
+    or waits for `hold`, or raises `error`; records what it was asked."""
+    asked = []
+    def chat(model, messages, **kwargs):
+        asked.append((model, messages, kwargs))
+        if hold is not None:
+            hold.wait(5)
+        if error is not None:
+            raise error
+        yield from parts
+    chat.asked = asked
+    return chat
+
+
+def test_on_claude_the_conversations_model_names_it_without_thinking():
+    chat = claude_chat("Lisbon ", "trip plan", {"prompt_tokens": 90, "completion_tokens": 4})
+    assert titles.by_claude(chat, "claude-haiku-5-5", "plan my Lisbon trip " + "x" * 5000, "Flights are 400 EUR.") == "Lisbon trip plan"
+    [(model, messages, kwargs)] = chat.asked
+    assert model == "claude-haiku-5-5" and kwargs == {"think": False}
+    assert messages[0]["role"] == "system" and "two to six words" in messages[0]["content"], \
+        "its own instructions in place of Nuru's system prompt"
+    assert "plan my Lisbon trip" in messages[1]["content"] and "Flights are 400 EUR." in messages[1]["content"]
+    assert len(messages[1]["content"]) < 4200
+
+
+def test_on_claude_a_failed_slow_or_stopped_request_gives_no_title():
+    from core.providers.claude import ClaudeError
+    assert titles.by_claude(claude_chat(error=ClaudeError("overloaded")), "claude-haiku-5-5", "hi", "hello") is None
+    hold = threading.Event()
+    try:
+        started = time.monotonic()
+        assert titles.by_claude(claude_chat("Late", hold=hold), "claude-haiku-5-5", "hi", "hello", seconds=0.3) is None
+        assert time.monotonic() - started < 0.6, "the deadline, though the request can't be cut"
+        started = time.monotonic()
+        assert titles.by_claude(claude_chat("Late", hold=hold), "claude-haiku-5-5", "hi", "hello",
+                                stop=lambda: time.monotonic() - started > 0.1, seconds=30) is None
+        assert time.monotonic() - started < 0.5
+    finally:
+        hold.set()
 
 
 @pytest.mark.parametrize("answer, title", [

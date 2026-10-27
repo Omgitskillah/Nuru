@@ -49,20 +49,30 @@ class MCPTools:
         self._sessions_ready: concurrent.futures.Future | None = None
         self._sessions: list[ClientSession] = []
         self._tool_sessions: dict[str, ClientSession] = {}
-        self._stop_event: asyncio.Event | None = None
+        self._stop_event = asyncio.Event()
         self._closed_future: concurrent.futures.Future | None = None
 
     def connect(self) -> None:
-        if self._started or self._closed:
-            raise RuntimeError("MCPTools cannot be connected more than once")
-        self._sessions_ready = concurrent.futures.Future()
-        self._closed_future = concurrent.futures.Future()
-        self._started = True
+        started_here = False
         try:
-            self._thread.start()
+            # close() may run from another thread during startup. Publish the futures
+            # and start the thread under the same lock, without holding it while waiting.
+            with self._close_lock:
+                if self._started or self._closed:
+                    raise RuntimeError("MCPTools cannot be connected more than once")
+                self._sessions_ready = concurrent.futures.Future()
+                self._closed_future = concurrent.futures.Future()
+                self._started = True
+                started_here = True
+                self._thread.start()
             self._sessions = self._sessions_ready.result()
-        except BaseException:
-            self.close()
+        except BaseException as error:
+            if not started_here:
+                raise
+            try:
+                self.close()
+            except BaseException as cleanup:
+                error.add_note(f"MCP cleanup also failed: {type(cleanup).__name__}: {cleanup}")
             raise
 
     def _run_loop(self) -> None:
@@ -78,7 +88,6 @@ class MCPTools:
     async def _run(self, sessions_ready: concurrent.futures.Future) -> None:
         """Owns every session for their whole life: entered and exited by this
         same task, since anyio's cancel scopes require that."""
-        self._stop_event = asyncio.Event()
         failure = None
         try:
             async with AsyncExitStack() as stack:
@@ -163,7 +172,12 @@ class MCPTools:
                 self._closed = True
                 return
             if self._thread.is_alive() and not self._closed_future.done():
-                self._loop.call_soon_threadsafe(self._stop_event.set)
+                try:
+                    self._loop.call_soon_threadsafe(self._stop_event.set)
+                except RuntimeError:
+                    # The owner can finish between the liveness check and scheduling.
+                    if not self._loop.is_closed():
+                        raise
             self._thread.join(timeout=_CLOSE_SECONDS)
             if self._thread.is_alive():
                 raise TimeoutError(f"MCP cleanup did not finish within {_CLOSE_SECONDS} seconds")

@@ -1514,16 +1514,24 @@ class Session:
     def close(self) -> None:
         """Stop the indexer and release the MCP servers and the database. Leaves the model loaded and
         Ollama running."""
-        if self.indexer:
-            self.indexer.stop()
-        if self.link_auditor:
-            self.link_auditor.stop()
-        if self.steward:
-            self.steward.stop()
-        self.tools.close()
-        self.store.close()
+        # Every resource must be released even if an earlier close fails, especially
+        # the vault's history lock. Preserve the first failure for the caller.
+        closers = [resource.stop for resource in (self.indexer, self.link_auditor, self.steward)
+                   if resource is not None]
+        closers.extend((self.tools.close, self.store.close))
         if self._in_use is not None:
-            self._in_use.close()  # a move may now replace this history
+            held = self._in_use
             self._in_use = None
+            closers.append(held.close)
         if self.shadow:
-            self.shadow.close()
+            closers.append(self.shadow.close)
+        errors = []
+        for close in closers:
+            try:
+                close()
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f"Additional cleanup failure: {type(error).__name__}: {error}")
+            raise errors[0]

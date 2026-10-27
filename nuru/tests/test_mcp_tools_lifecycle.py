@@ -180,3 +180,88 @@ def test_permission_refusal_never_reaches_peer_even_without_discovery(fake_peer)
     finally:
         client.close()
     released(client)
+
+
+def test_connect_preserves_startup_error_when_cleanup_also_raises(fake_peer, monkeypatch):
+    async def fail(self):
+        raise ValueError('original startup failure')
+    monkeypatch.setattr(Session, 'initialize', fail)
+    client = MCPTools(['peer'], frozenset())
+    close = client.close
+    def noisy_close():
+        close()
+        raise RuntimeError('secondary cleanup failure')
+    monkeypatch.setattr(client, 'close', noisy_close)
+    with pytest.raises(ValueError, match='original startup failure') as error:
+        client.connect()
+    assert any('secondary cleanup failure' in note for note in error.value.__notes__)
+    assert not client._thread.is_alive() and client._loop.is_closed()
+
+
+def test_close_tolerates_owner_closing_loop_before_stop_is_scheduled(fake_peer, monkeypatch):
+    client = MCPTools(['peer'], frozenset())
+    client.connect()
+    schedule = client._loop.call_soon_threadsafe
+    def race(callback, *args, **kwargs):
+        schedule(callback, *args, **kwargs)
+        client._thread.join(5)
+        assert client._loop.is_closed()
+        raise RuntimeError('Event loop is closed')
+    monkeypatch.setattr(client._loop, 'call_soon_threadsafe', race)
+    client.close()
+    released(client)
+
+
+def test_close_does_not_swallow_scheduler_error_on_live_loop(fake_peer, monkeypatch):
+    client = MCPTools(['peer'], frozenset())
+    client.connect()
+    schedule = client._loop.call_soon_threadsafe
+    def fail(*args, **kwargs):
+        raise RuntimeError('unexpected scheduling error')
+    monkeypatch.setattr(client._loop, 'call_soon_threadsafe', fail)
+    try:
+        with pytest.raises(RuntimeError, match='unexpected scheduling error'):
+            client.close()
+        assert not client._loop.is_closed()
+    finally:
+        monkeypatch.setattr(client._loop, 'call_soon_threadsafe', schedule)
+        client.close()
+    released(client)
+
+
+def test_close_during_startup_before_owner_initialization(fake_peer, monkeypatch):
+    client = MCPTools(['peer'], frozenset())
+    gate = asyncio.Event()
+    entered, scheduled = threading.Event(), threading.Event()
+    run = client._run
+    async def delayed(ready):
+        entered.set()
+        await gate.wait()
+        await run(ready)
+    monkeypatch.setattr(client, '_run', delayed)
+    schedule = client._loop.call_soon_threadsafe
+    def observed(callback, *args, **kwargs):
+        result = schedule(callback, *args, **kwargs)
+        scheduled.set()
+        return result
+    monkeypatch.setattr(client._loop, 'call_soon_threadsafe', observed)
+    errors = []
+    def invoke(fn):
+        try:
+            fn()
+        except BaseException as error:
+            errors.append(error)
+    connecting = threading.Thread(target=invoke, args=(client.connect,))
+    closing = threading.Thread(target=invoke, args=(client.close,))
+    connecting.start()
+    assert entered.wait(5)
+    closing.start()
+    try:
+        assert scheduled.wait(5)
+    finally:
+        schedule(gate.set)
+        connecting.join(5)
+        closing.join(5)
+    assert not connecting.is_alive() and not closing.is_alive()
+    assert errors == []
+    released(client)

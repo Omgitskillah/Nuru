@@ -315,6 +315,28 @@ test("a connecting start clears every mark but another window's start still unde
   assert.equal(after.mayStartByItself("1.0.3"), true);
 });
 
+// The sweep's other step: a mark it has decided to remove (failed) is removed by its own window first.
+test("a connecting start isn't upset by a mark vanishing just before the sweep removes it", async (t) => {
+  const { dir } = home();
+  const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),
+    connect: async () => ({ client: "c", status: "s" }) });
+  const starts = path.join(dir, ".nuru", "service", "starts");
+  fs.mkdirSync(starts, { recursive: true });
+  const failed = path.join(starts, `${process.pid}-failed`);
+  fs.writeFileSync(failed, "failed");
+  // Its window clears it right after this sweep has read it (and decided to remove it), before rmSync.
+  const read = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (file, ...rest) => {
+    const text = read(file, ...rest);
+    if (file === failed) fs.rmSync(failed);
+    return text;
+  });
+
+  assert.deepEqual(await launcher.startMarked("1.0.3"), { client: "c", status: "s" });
+  assert.deepEqual(fs.readdirSync(starts), []);
+  assert.equal(launcher.mayStartByItself("1.0.3"), true, "its success was recorded");
+});
+
 test("a connecting start isn't upset by another window clearing its mark during the sweep", async (t) => {
   const { dir } = home();
   const launcher = new Launcher({ vaultPath: "/v", port: 1, home: dir, pollMs: 1, spawn: () => fakeChild(),

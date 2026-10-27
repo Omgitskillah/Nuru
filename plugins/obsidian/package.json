@@ -7,7 +7,7 @@
     "node": ">=24.15.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test --test-timeout=60000 test/*.test.js",
     "test:e2e": "node --test --test-timeout=60000 test/e2e/*.test.js",
     "build": "node build.js"
   },

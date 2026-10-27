@@ -45,6 +45,13 @@ function fakeClient({ history = [], live = {} } = {}) {
   };
 }
 
+// A test that fails before its own `await view.close()` used to leave the view's interval running, so the
+// test process never exited and the run hung (2026-10-27). Every view a test opens is closed after it.
+const views = [];
+test.afterEach(async () => {
+  for (const view of views.splice(0)) if (view._loaded) await view.close();
+});
+
 async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status, launcher,
   autoStart = Boolean(launcher) } = {}) {
   const opened = [];
@@ -72,6 +79,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     },
   };
   const view = new ChatView({ app }, plugin);
+  views.push(view);
   await view.open();
   return { view, opened, plugin, editing, note };
 }

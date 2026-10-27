@@ -1,5 +1,11 @@
+import os
 import pathlib
 import sys
+import tempfile
+
+# A developer's own model settings (~/.nuru/models, core.user_models) never reach the tests: set before
+# core.session, which reads them when it's imported. A test that wants some sets its own.
+os.environ["NURU_MODELS_DIR"] = tempfile.mkdtemp(prefix="nuru-test-models-")
 
 from core.modelfile import render_modelfile
 import pytest

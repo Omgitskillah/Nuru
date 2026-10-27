@@ -13,7 +13,7 @@ import requests
 from claude_access.keys import api_key
 from claude_access.models import MAIN_MODELS
 
-from core import model_profile
+from core import model_profile, user_models
 from core.providers import claude as claude_provider
 from core.providers.ollama import BASE, model_info
 
@@ -55,7 +55,8 @@ def _local() -> list[dict]:
             can_think = "thinking" in model_info(name).get("capabilities", [])
         except (ValueError, requests.RequestException):
             continue
-        found.append(_choice(name, name, False, profile, can_think))
+        label = f"{name} (untested)" if user_models.custom(name) else name  # the user's own settings
+        found.append(_choice(name, label, False, profile, can_think))
     return found
 
 

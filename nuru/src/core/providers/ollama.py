@@ -80,6 +80,28 @@ def create_model(model: str, base_model: str, modelfile_path: Path) -> str:
     return rendered
 
 
+BUILD_SECONDS = 300  # `ollama create` from a pulled base copies no weights: seconds, unless Ollama is stuck
+
+
+def build_model(model: str, rendered: str, timeout: float = BUILD_SECONDS) -> str:
+    """(Re)builds `model` from a whole Modelfile, `rendered` (core.modelfile.render_header), within
+    `timeout` seconds: past it `ollama create` is killed and reaped (subprocess.TimeoutExpired)."""
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".Modelfile", delete=False) as f:
+        f.write(rendered)
+        rendered_path = f.name
+    try:
+        subprocess.run(["ollama", "create", model, "-f", rendered_path], check=True, capture_output=True, text=True,
+                       timeout=timeout)
+    finally:
+        os.remove(rendered_path)
+    return rendered
+
+
+def remove_model(model: str, timeout: float = 60) -> None:
+    """`ollama rm model`, within `timeout` seconds. Only for a model Nuru made itself."""
+    subprocess.run(["ollama", "rm", model], check=True, capture_output=True, text=True, timeout=timeout)
+
+
 def unload_model(model: str) -> None:
     """Unloads `model` if it's in memory."""
     if is_model_loaded(model):

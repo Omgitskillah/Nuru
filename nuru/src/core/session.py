@@ -647,11 +647,11 @@ class Session:
         return _context_window(self.model_info)
 
     def title(self, message: str, reply: str, stop) -> str | None:
-        """A title for the conversation that `message` and `reply` begin (core.titles), by the local model
-        the last turn ran on at the window it asked for, so that model stays loaded as it is; `stop()`
-        ends it. None on Claude: no note goes to Claude for a title."""
+        """A title for the conversation that `message` and `reply` begin (core.titles), by the model the
+        last turn ran on: a local one at the window that turn asked for, so it stays loaded as it is, or
+        Claude, which the conversation already runs on. `stop()` ends it."""
         if self._claude():
-            return None
+            return titles.by_claude(self._chat_with, self._model(), message, reply, stop=stop)
         return titles.title(message, reply, self._model(), self.context_window, stop=stop)
 
     # ------------------------------------------------------------------ the main model

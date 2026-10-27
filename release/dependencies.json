@@ -18,12 +18,12 @@
     }
   },
   "ollama": {
-    "version": "0.40.4",
-    "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/",
+    "version": "0.40.11",
+    "url": "https://github.com/ollama/ollama/releases/download/v0.40.11/",
     "systems": {
-      "darwin-arm64": {"asset": "Ollama-darwin.zip", "sha256": "a80be41441764333321db8ff41155b3ab5f53fcea0a4057408e602ba2b02a203"},
-      "darwin-x64": {"asset": "Ollama-darwin.zip", "sha256": "a80be41441764333321db8ff41155b3ab5f53fcea0a4057408e602ba2b02a203"},
-      "win32-x64": {"asset": "OllamaSetup.exe", "sha256": "45fcd47d70dd047ab95736802e71a7497ef1a473a50470471fc2fb0eb90badde"}
+      "darwin-arm64": {"asset": "Ollama-darwin.zip", "sha256": "cff3c721f69b8efb186c4c75775e1e777516ca9c2863065a25367f739e7623c4"},
+      "darwin-x64": {"asset": "Ollama-darwin.zip", "sha256": "cff3c721f69b8efb186c4c75775e1e777516ca9c2863065a25367f739e7623c4"},
+      "win32-x64": {"asset": "OllamaSetup.exe", "sha256": "87309d23b423abeae1d8df2f98df95f94bf35659debfdf3761d65b7b62a75508"}
     }
   }
 }

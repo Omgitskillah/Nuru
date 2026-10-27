@@ -170,12 +170,16 @@ class NuruSettingTab extends PluginSettingTab {
   // when Claude is the default, and the notes' embedding model); 4 ready. "Set up everything" runs the
   // steps still to do, in order. When it's done, this tab is shown again, saying how it went. A step at
   // work shows a bar under its text: filled as far as a download is, or moving when how long isn't known.
-  displaySteps(containerEl, installed, chatModel) {
+  displaySteps(containerEl, installed, chatModel, current = null) {
     new Setting(containerEl).setName("Set up").setHeading();
     const { launcher } = this.plugin;
     const pin = this.release?.ollama;
     const windows = this.system.startsWith("win32");
     const needed = [chatModel, this.ollama.EMBEDDING_MODEL].filter(Boolean);
+    // `current`, the installed release, against the one this plugin came with: updating the plugin (BRAT)
+    // leaves Nuru as it was. null for a checkout's install, which has no version; older is then never claimed.
+    const releaseVersion = this.release?.version;
+    const older = () => Boolean(current && releaseVersion && !this.ollama.atLeast(current, releaseVersion));
     const state = { running: false, version: null, app: null, missing: needed, ok: false };
     const news = { nuru: this.setupNews, ollama: "", models: this.modelsNews }; // shown once, by these rows
     this.setupNews = "";
@@ -210,6 +214,7 @@ class NuruSettingTab extends PluginSettingTab {
       };
       try {
         const result = await this.setUp({ home: launcher.home, step: progress("nuru"), start: launcher.running() ? restart : null });
+        if (!result.rolledBack) current = result.version; // install.json names it now: step 1 says so before any redraw
         this.setupNews = `Nuru ${result.version} is set up.`;
         if (result.startError) {
           this.setupNews = `Nuru ${result.version} was set up, but it didn't start: ${result.startError.message}`;
@@ -222,6 +227,8 @@ class NuruSettingTab extends PluginSettingTab {
         return false;
       }
     };
+    // What step 1's button does: set Nuru up, update an older install, or install this release again.
+    const nuruAction = () => (!installed ? "Set up Nuru" : older() ? "Update" : "Repair");
     // What step 2's button does now: install, update or start Ollama, or nothing.
     const ollamaAction = () => {
       if (!pin || (state.running && (state.ok || !windows))) return null;
@@ -314,9 +321,13 @@ class NuruSettingTab extends PluginSettingTab {
         delete bars[key];
       }
       const action = ollamaAction();
-      rows.nuru.setDesc(news.nuru || (installed
-        ? `✓ Nuru is set up. Repair installs Nuru ${this.release?.version ?? ""} again beside it, and switches once the new one works.`
-        : "Downloads Nuru and what it needs into a .nuru folder in your home folder. Your notes aren't touched."));
+      rows.nuru.setDesc(news.nuru || (!installed
+        ? "Downloads Nuru and what it needs into a .nuru folder in your home folder. Your notes aren't touched."
+        : older() ? `Nuru ${current} is installed; this plugin comes with Nuru ${releaseVersion}. Update installs ${releaseVersion} ` +
+          "beside it, and switches once the new one works."
+        : current && current !== releaseVersion ? `✓ Nuru ${current} is set up, newer than this plugin's ${releaseVersion}: ` +
+          `update the plugin. Repair installs ${releaseVersion} beside it, and switches once it works.`
+        : `✓ Nuru is set up. Repair installs Nuru ${releaseVersion ?? ""} again beside it, and switches once the new one works.`));
       if (!installed) rows.ollama.setDesc("After step 1.");
       else if (news.ollama) rows.ollama.setDesc(news.ollama);
       else if (state.ok) rows.ollama.setDesc(`✓ Ollama ${state.version} is running.`);
@@ -333,11 +344,11 @@ class NuruSettingTab extends PluginSettingTab {
       const done = installed && state.ok && !state.missing.length;
       rows.ready.setDesc(done ? "✓ Open the Nuru panel to chat." : "After the steps above.");
       Object.assign(news, { nuru: "", ollama: "", models: "" });
-      buttons.nuru.setButtonText(installed ? "Repair" : "Set up Nuru").setDisabled(false);
+      buttons.nuru.setButtonText(nuruAction()).setDisabled(false);
       buttons.ollama.setButtonText(action || "Install Ollama").setDisabled(!installed || !action);
       buttons.check.setDisabled(false);
       buttons.models.setDisabled(!state.ok || !state.missing.length);
-      buttons.all.setDisabled(done || (installed && !state.ok && !action));
+      buttons.all.setDisabled((done && !older()) || (installed && !older() && !state.ok && !action));
     };
 
     row("all", "Set up everything");
@@ -345,7 +356,7 @@ class NuruSettingTab extends PluginSettingTab {
     rows.all.setDesc(`Runs the steps below that are still to do, in order: it installs Nuru, installs or updates Ollama ` +
       `(a separate app, ${windows ? "1.5 GB" : "200 MB"}) if needed, and downloads the models (a few GB).`);
     button("all", "Set up everything", async () => {
-      if (!installed && !(await setUpNuru())) return this.display();
+      if ((!installed || older()) && !(await setUpNuru())) return this.display();
       installed = true;
       await refresh();
       // Start, then update if what started is older: at most both, each once.
@@ -358,7 +369,7 @@ class NuruSettingTab extends PluginSettingTab {
       return this.display();
     });
     row("nuru", "1. Nuru");
-    button("nuru", installed ? "Repair" : "Set up Nuru", async () => { await setUpNuru(); this.display(); });
+    button("nuru", nuruAction(), async () => { await setUpNuru(); this.display(); });
     row("ollama", "2. Ollama");
     button("check", "Check", async () => {}, "ollama");
     button("ollama", "Install Ollama", fixOllama);
@@ -370,15 +381,16 @@ class NuruSettingTab extends PluginSettingTab {
 
   // Nuru's settings, read from and written to its env files; Nuru reads them when it starts.
   displayNuru(containerEl) {
-    let settings;
+    let settings, install;
     try {
-      settings = new NuruSettings(readInstall(this.plugin.launcher.home).nuru);
+      install = readInstall(this.plugin.launcher.home);
+      settings = new NuruSettings(install.nuru);
     } catch {
       this.displaySteps(containerEl, false, ollama.CHAT_MODEL);
       return;
     }
     const chosen = settings.defaultModel() || ollama.CHAT_MODEL;
-    this.displaySteps(containerEl, true, chosen.startsWith("anthropic:") ? null : chosen);
+    this.displaySteps(containerEl, true, chosen.startsWith("anthropic:") ? null : chosen, install.version);
     new Setting(containerEl).setName("Nuru").setHeading();
     const overridden = (key) => {
       const name = settings.overridden(key);

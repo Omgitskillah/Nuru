@@ -818,6 +818,7 @@ test("the model and thinking buttons show the conversation's choice; a pick goes
   const client = fakeClient();
   const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
   assert.equal(view.modelButton.textContent, "qwen3.5:4b-q8_0");
+  assert.equal(view.modelButton.getAttribute("title"), "Runs on this computer", "not 'this Mac': Nuru runs on Windows too");
   assert.equal(view.thinkingButton.textContent, "Thinking: Off");
 
   view.modelButton.click();
@@ -825,6 +826,7 @@ test("the model and thinking buttons show the conversation's choice; a pick goes
     [["qwen3.5:4b-q8_0", true], ["Claude Haiku 5.5 ☁ cloud", false], ["plain:1b", false]]);
   Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
   assert.equal(view.modelButton.textContent, "Claude Haiku 5.5 ☁");
+  assert.equal(view.modelButton.getAttribute("title"), "Runs on Claude: what Nuru reads is sent to Anthropic");
   view.thinkingButton.click();
   assert.deepEqual(Menu.shown.items.map((i) => i.title), ["Off", "Low", "High"]);
   Menu.shown.pick("High");

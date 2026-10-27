@@ -63,8 +63,9 @@ class LaunchProblem extends Error {
   }
 }
 
-// {nuru, uv, path}: the Nuru folder, the uv that install.js found, and the PATH Nuru's tools are found
-// on: the installing shell's, else uv's folder in front of Obsidian's own (an older install.json).
+// {nuru, uv, path, version}: the Nuru folder, the uv that install.js found, the PATH Nuru's tools are found
+// on (the installing shell's, else uv's folder in front of Obsidian's own: an older install.json), and the
+// release version the plugin's setup installed.
 function readInstall(home) {
   let recorded;
   try {
@@ -72,12 +73,13 @@ function readInstall(home) {
   } catch {
     throw new LaunchProblem("not-installed");
   }
-  const { nuru, uv, path: searchPath } = recorded || {};
+  const { nuru, uv, path: searchPath, version } = recorded || {};
   if (![nuru, uv].every((p) => typeof p === "string" && path.isAbsolute(p) && fs.existsSync(p))) {
     throw new LaunchProblem("not-installed");
   }
   const fallback = [path.dirname(uv), process.env.PATH].filter(Boolean).join(path.delimiter);
-  return { nuru, uv, path: typeof searchPath === "string" && searchPath ? searchPath : fallback };
+  return { nuru, uv, path: typeof searchPath === "string" && searchPath ? searchPath : fallback,
+    version: typeof version === "string" ? version : null }; // null: a checkout's install.js, not a release
 }
 
 function lastLines(file, n) {

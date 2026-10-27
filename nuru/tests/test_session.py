@@ -1459,3 +1459,29 @@ def test_link_auditor_starts_logs_summary_and_stops_with_session(monkeypatch):
     finally:
         s.close()
     assert auditor.calls == ['start', 'stop']
+
+
+def test_close_releases_store_history_and_shadow_even_when_tools_fail(monkeypatch):
+    tools = FakeMCPTools()
+    s = start_session(monkeypatch, tools=tools)
+    released = []
+    class HeldHistory:
+        def close(self):
+            released.append('history')
+    s._in_use = HeldHistory()
+    shadow_close = s.shadow.close
+    def close_shadow():
+        shadow_close()
+        released.append('shadow')
+        raise ValueError('later shadow failure')
+    monkeypatch.setattr(s.shadow, 'close', close_shadow)
+    def fail():
+        raise RuntimeError('first MCP failure')
+    monkeypatch.setattr(tools, 'close', fail)
+    with pytest.raises(RuntimeError, match='first MCP failure') as error:
+        s.close()
+    assert released == ['history', 'shadow']
+    assert s._in_use is None
+    with pytest.raises(Exception, match='closed database'):
+        s.store.get_messages(s.conversation_id)
+    assert any('later shadow failure' in note for note in error.value.__notes__)

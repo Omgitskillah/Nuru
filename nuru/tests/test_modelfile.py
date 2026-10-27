@@ -161,7 +161,7 @@ def test_directives_are_case_insensitive_and_a_template_may_run_over_lines():
     (F + 'TEMPLATE """"a"""\n', "TEMPLATE can't contain"),
     (F + "PARAMETER temperature 1\x1b[2J\n", "control character"),
     (F + "# " + "x" * (64 * 1024), "longer than 64 KiB"),
-], ids=lambda value: value if isinstance(value, str) and len(value) < 40 and "\n" not in value else None)
+], ids=lambda value: "header" if "\n" in value or len(value) > 60 else value)  # never the header itself: a 64 KiB id ended the Windows run
 def test_a_header_outside_the_allowlist_is_refused_naming_why(header, problem):
     with pytest.raises(ValueError, match=re.escape(problem) if "'" in problem else problem):
         check_header(header, {"tools", "completion"})

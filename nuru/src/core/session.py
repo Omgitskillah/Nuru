@@ -646,6 +646,11 @@ class Session:
     def context_window(self) -> int:
         return _context_window(self.model_info)
 
+    def title_model(self) -> tuple[str, int] | None:
+        """The local model the last turn ran on and the window it asked for, for core.titles to name the
+        conversation with, as that model stays loaded; None on Claude: no note goes to it for a title."""
+        return None if self._claude() else (self._model(), self.context_window)
+
     # ------------------------------------------------------------------ the main model
     # A Session runs on the configured model (MODEL, PROFILE, chat and THINK above) until use_model()
     # picks another for the conversation it serves; self._main then holds that one.

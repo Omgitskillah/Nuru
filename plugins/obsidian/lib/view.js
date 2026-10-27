@@ -18,6 +18,10 @@ const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
 const RENDER_MS = 80; // a streaming reply is rendered again at most this often
+// After a new conversation's first turn, how often and how many times the list is checked for the title
+// the service gives it (core/titles.py takes at most 8 seconds).
+const TITLE_POLL_MS = 1000;
+const TITLE_TRIES = 10;
 const SELECTION_CHARS = 16000; // a selection is sent up to this long
 const MAX_ATTACHMENTS = 5; // what submit_turn takes, the selection included
 const STATUS_SECONDS = 10; // the status line is refreshed this often while the panel is open
@@ -33,6 +37,7 @@ class ChatView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
+    this.titlePollMs = TITLE_POLL_MS; // shorter in tests
     this.client = null;
     this.chat = null; // the service's chat readiness from /v1/status: idle, loading, ready or unavailable
     this.service = null; // the last /v1/status, for the status line
@@ -295,12 +300,24 @@ class ChatView extends ItemView {
     }
   }
 
-  // The service names a new conversation as its first turn finishes (core/titles.py): list it by that name.
+  // The service names a new conversation once its first turn has completed (core/titles.py): list it by
+  // that name when it has one. The picker is redrawn only then, not under a user choosing from it.
   async showTitles() {
-    const generation = this.generation;
-    try {
-      if (await this.loadConversations(generation)) this.picker.value = this.conversationId || "";
-    } catch {} // the list keeps the name it had; the next one to load shows the new one
+    const generation = this.generation, id = this.conversationId;
+    const shown = this.picker.selectedOptions[0]?.textContent;
+    for (let tries = 0; tries < TITLE_TRIES; tries++) {
+      await new Promise((resolve) => window.setTimeout(resolve, this.titlePollMs));
+      if (generation !== this.generation) return;
+      try {
+        const title = (await this.client.conversations()).conversations.find((c) => c.id === id)?.title;
+        if (title && title !== shown) {
+          if (await this.loadConversations(generation)) this.picker.value = this.conversationId || "";
+          return;
+        }
+      } catch {
+        return; // the list keeps the name it had; the next one to load shows the new one
+      }
+    }
   }
 
   // Only what the user asks for: the open note. A selection in it goes by itself (trackSelection).

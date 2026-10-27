@@ -913,26 +913,65 @@ test("a selection that would be a sixth attachment isn't sent, and says so", asy
   await view.close();
 });
 
-// TODO F25: the service names a new conversation as its first turn finishes; the picker then shows that name,
-// not the message's first 60 characters it was created with. Turns in a conversation already named don't ask.
-test("a new conversation's first finished turn lists it by the name the service gave it", async () => {
+// TODO F25: the service names a new conversation once its first turn has completed; the picker then shows that
+// name, not the message's first 60 characters it was created with. Turns in a conversation already named don't ask.
+function naming(titles) {
   const stream = FIXTURES.streams.completed_with_tools.map((e) => ({ ...e, conversation_id: "conv0000new1", turn_id: "turn0000new1" }));
   const client = fakeClient({ live: { turn0000new1: stream } });
   const trip = { id: "conv0000demo", title: "Trip", created_at: "2026-10-09T12:00:00.000Z" };
   const created = { id: "conv0000new1", created_at: "2026-10-27T09:00:00.000Z" };
-  let listings = 0;
+  client.listings = 0;
   client.conversations = async () => {
-    listings += 1; // when the panel opens; when the new conversation is shown; after its first turn
-    const title = listings >= 3 ? "Notes on Grüße and the trip" : "find my trip notes";
-    return { conversations: listings === 1 ? [trip] : [{ ...created, title }, trip] };
+    client.listings += 1;
+    return { conversations: client.listings === 1 ? [trip] : [{ ...created, title: titles(client.listings) }, trip] };
   };
+  return client;
+}
+
+async function sendFirst(client) {
   const { view } = await open({ client, conversationId: null });
+  view.titlePollMs = 10;
   view.input.value = "find my trip notes";
   view.sendButton.click();
   await until(() => view.turns.size === 1);
   const [turn] = view.turns.values();
   await until(() => turn.runner.display.state === "completed");
+  return view;
+}
+
+test("a new conversation's first finished turn lists it by the name the service gives it after", async () => {
+  // listings: when the panel opens; when the new conversation is shown; two checks before it's named; the redraw
+  const client = naming((listing) => (listing >= 5 ? "Notes on Grüße and the trip" : "find my trip notes"));
+  const view = await sendFirst(client);
   await until(() => view.picker.selectedOptions[0]?.textContent === "Notes on Grüße and the trip");
   assert.equal(view.picker.value, "conv0000new1", "still on the new conversation");
-  assert.equal(listings, 3);
+  assert.equal(client.listings, 6, "the picker is redrawn once, when the name has come");
+});
+
+test("a conversation the service doesn't name keeps its name, and the panel stops looking", async () => {
+  const client = naming(() => "find my trip notes");
+  const view = await sendFirst(client);
+  await until(() => client.listings === 2 + 10);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(client.listings, 12, "ten checks, then no more");
+  assert.equal(view.picker.selectedOptions[0]?.textContent, "find my trip notes");
+});
+
+test("the panel stops looking for a title once the user opens another conversation, or the list fails", async () => {
+  const client = naming(() => "find my trip notes");
+  const view = await sendFirst(client);
+  await until(() => client.listings >= 3);
+  await view.openConversation("conv0000demo");
+  const seen = client.listings;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(client.listings <= seen + 1, "at most the check already on its way");
+
+  const failing = naming((listing) => {
+    if (listing >= 3) throw new Error("service gone");
+    return "find my trip notes";
+  });
+  await sendFirst(failing);
+  await until(() => failing.listings === 3);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(failing.listings, 3, "no more checks after a failed one");
 });

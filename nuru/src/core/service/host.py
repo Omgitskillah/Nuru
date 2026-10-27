@@ -85,12 +85,12 @@ class Service:
     def __init__(self, store: ServiceStore, conversations: ConversationStore, session_factory: Callable[[int], object],
                  vault: Path, *, queue_limit: int = QUEUE_LIMIT, answer_seconds: float | None = None,
                  retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None,
-                 vault_uuid: str | None = None, titles: Callable[[str, str], str | None] | None = None) -> None:
+                 vault_uuid: str | None = None, titles: Callable[..., str | None] | None = None) -> None:
         """`session_factory(conversation_id)` builds the Session (in the worker thread, on the first
         turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS).
         `models()` gives the models a conversation may pick (core.main_models.choices); without it,
-        every conversation runs on the configured model. `titles(message, reply)` names a new conversation
-        after its first turn (core.titles.title); without it, conversations keep the title they came with."""
+        every conversation runs on the configured model. `titles(message, reply, model, num_ctx, stop=)` names a
+        new conversation after its first turn (core.titles.title); without it, conversations keep the title they came with."""
         self.store, self.conversations, self._factory = store, conversations, session_factory
         self._models = models
         self._titles = titles
@@ -552,10 +552,11 @@ class Service:
                         return
                     live = self._live[self._queue.popleft()]
                     self._active = live.stream.turn_id
+                completed = False
                 try:
                     with self._lock:
                         self._emit(live, lambda s: s.emit("started", {}))
-                    self._turn(live)
+                    completed = self._turn(live)
                 except Exception:
                     # The store failed under the turn. It is left unfinished for the next start to
                     # recover; the worker goes on, or stops if the database is now unsafe (loop head).
@@ -565,11 +566,14 @@ class Service:
                     with self._lock:
                         self._active = None
                         self._changed.notify_all()
+                if completed:
+                    self._name_conversation(live)
         finally:
             if self._session is not None:
                 self._session.close()
 
-    def _turn(self, live: _Live) -> None:
+    def _turn(self, live: _Live) -> bool | None:
+        """Run the turn to its end; True if it completed."""
         if live.authorize and not live.authorize(None):
             with self._lock:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": "Device authorization expired or was revoked."}))
@@ -628,33 +632,44 @@ class Service:
             session.authorize_tool = None
             if getattr(session, "tools", None) is not None:
                 session.tools.authorize_tool = None
-        if not live.cancel.is_set() and not live.lost_outcome:
-            self._name_conversation(live)
         with self._lock:
             if live.stream.ended or self._unsafe or not self._caught_up(live):
                 return  # not caught up: left unfinished, and the next start recovers its writes from the ledger
             if live.lost_outcome:
                 self._emit(live, lambda s: s.emit("failed", {"code": "internal", "message": UNRECORDED}))
-            else:
-                self._emit(live, lambda s: s.cancelled(live.cancel_reason) if live.cancel.is_set() else s.completed())
+                return False
+            completed = not live.cancel.is_set()
+            self._emit(live, lambda s: s.completed() if completed else s.cancelled(live.cancel_reason))
+            return completed
 
     def _name_conversation(self, live: _Live) -> None:
-        """A new conversation's first turn names it, before the turn is reported finished, so a client that
-        lists the conversations then shows the title. Only a title a client gave from the message (its
-        start) or none is replaced. A title is never worth failing a turn: any problem is only logged."""
-        if self._titles is None:
+        """After a new conversation's first turn has completed, the model it ran on names it (core.titles):
+        no turn waits for a title, and one that comes while it is being written stops it, as closing
+        does. Only a title a client gave from the message (its start) or none is replaced, and only if it
+        is still the one read when the new one is stored. A title is never worth more than a log line."""
+        model = getattr(self._session, "title_model", lambda: None)()  # None: no local model (Claude)
+        if self._titles is None or model is None:
             return
         conversation_id = live.stream.conversation_id
+
+        def stop() -> bool:  # core.titles calls it from its own thread, so without the lock
+            return self._closing or bool(self._queue)
+
         try:
             with self._lock:
+                if stop():
+                    return
                 turns = self.store.turns(conversation_id, None, 2)
                 old = self.store.title(conversation_id)
             if len(turns) != 1 or not (old is None or turns[0]["text"].startswith(old)):
                 return
-            new = self._titles(turns[0]["text"], live.stream.reply)  # a model call: outside the lock
+            new = self._titles(turns[0]["text"], live.stream.reply, *model, stop=stop)  # outside the lock
             if new and new != old:
-                with self._lock, self._atomic():
-                    self.store.retitle(conversation_id, old, new)
+                with self._lock:
+                    if self._closing or self._unsafe:
+                        return  # close() may already have returned: the database is no longer this service's
+                    with self._atomic():
+                        self.store.retitle(conversation_id, old, new)
         except Exception:
             print("nuru-serve: couldn't name a conversation:", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)

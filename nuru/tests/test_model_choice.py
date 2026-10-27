@@ -109,6 +109,17 @@ def test_switching_to_claude_sends_its_system_prompt_and_unloads_the_local_model
     s.close()
 
 
+def test_a_title_is_written_by_the_local_model_the_turn_ran_on_at_its_window_never_by_claude(monkeypatch, local):
+    s = start_session(monkeypatch, model_info={"context_window": 16384})
+    list(s.ask("hi"))
+    assert s.title_model() == (session.MODEL, 16384), "the window the turn asked for: Ollama keeps the model as it is"
+    s.use_model(GRANITE)
+    assert s.title_model()[0] == "nuru-granite4.2-3b-q8_0"
+    s.use_model(HAIKU)
+    assert s.title_model() is None, "no note goes to Claude for a title"
+    s.close()
+
+
 # --------------------------------------------------------------------------- the service
 MODELS = {"default": QWEN, "choices": [
     {"id": QWEN, "label": QWEN, "cloud": False, "thinking": [{"id": "off", "label": "Off"}, {"id": "low", "label": "On"}],

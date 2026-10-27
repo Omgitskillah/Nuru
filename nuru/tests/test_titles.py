@@ -11,6 +11,10 @@ import pytest
 from core import titles
 
 
+# A client that cut the connection, as a server sees it: on Windows, also WinError 10053 (aborted).
+DISCONNECTED = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+
 class FakeOllama:
     """/api/generate runs `steps`: ("chunk", dict) streams a line, ("hold",) stalls until the client goes
     or the test ends, ("trickle",) streams an empty line every 50 ms until then, ("raw", bytes) streams
@@ -21,7 +25,7 @@ class FakeOllama:
     def __init__(self, steps, status=200, framing="chunked"):
         self.steps, self.status, self.framing = steps, status, framing
         self.generated = []
-        self.gone = threading.Event()  # the client cut the connection while a reply was streaming
+        self.disconnects = []  # per request: set once the client cut the connection mid-reply
         self.release = threading.Event()
         fake = self
 
@@ -33,6 +37,8 @@ class FakeOllama:
 
             def do_POST(self):
                 fake.generated.append(json.loads(self.rfile.read(int(self.headers["content-length"]))))
+                gone = threading.Event()
+                fake.disconnects.append(gone)
                 if fake.status != 200:
                     self.send_response(fake.status)
                     self.send_header("content-length", "0")
@@ -58,10 +64,13 @@ class FakeOllama:
                             while not fake.release.is_set():
                                 try:
                                     if self.connection.recv(1) == b"":  # the client is gone
-                                        fake.gone.set()
+                                        gone.set()
                                         return
                                 except TimeoutError:
                                     pass
+                                except DISCONNECTED:  # how Windows may say it
+                                    gone.set()
+                                    return
                             return
                         if not started:
                             start()
@@ -73,8 +82,8 @@ class FakeOllama:
                         send(step[1] if step[0] == "raw" else json.dumps(step[1]).encode() + b"\n")
                     if started and chunked:
                         self.wfile.write(b"0\r\n\r\n")
-                except (BrokenPipeError, ConnectionResetError):
-                    fake.gone.set()
+                except DISCONNECTED:
+                    gone.set()
                 self.close_connection = True
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -126,7 +135,7 @@ def test_one_deadline_bounds_it_however_ollama_stalls_and_ollama_is_told(ollama,
     started = time.monotonic()
     assert titles.title("hello", "hi", "nuru", 8192, base=fake.base, seconds=0.4) is None
     assert time.monotonic() - started < 0.4 + 0.3, "the whole of it, not each read"
-    assert fake.gone.wait(2), "the connection is cut, which stops Ollama's work on it"
+    assert fake.disconnects[0].wait(2), "the connection is cut, which stops Ollama's work on it"
 
 
 @pytest.mark.parametrize("framing", ["chunked", "close", "http10"])
@@ -137,11 +146,12 @@ def test_a_reply_that_never_ends_is_cut_at_the_deadline_and_on_stop_however_it_i
     started = time.monotonic()
     assert titles.title("hello", "hi", "nuru", 8192, base=fake.base, seconds=0.3) is None
     assert time.monotonic() - started < 0.3 + 0.3
-    assert fake.gone.wait(2)
+    assert fake.disconnects[0].wait(2)
     started = time.monotonic()
     assert titles.title("hello", "hi", "nuru", 8192, stop=lambda: time.monotonic() - started > 0.1,
                         base=fake.base, seconds=30) is None
     assert time.monotonic() - started < 0.5
+    assert fake.disconnects[1].wait(2), "the second request was cut too, by stop()"
 
 
 @pytest.mark.parametrize("framing", ["close", "http10"])
@@ -169,7 +179,7 @@ def test_stop_ends_it_at_once_well_before_the_deadline(ollama):
     started = time.monotonic()
     assert titles.title("hello", "hi", "nuru", 8192, stop=asked.is_set, base=fake.base, seconds=30) is None
     assert time.monotonic() - started < 1
-    assert fake.gone.wait(2)
+    assert fake.disconnects[0].wait(2)
 
 
 def test_a_rambling_answer_is_read_only_so_far(ollama):
@@ -196,46 +206,88 @@ def test_no_title_without_ollama():
 
 
 # ---------------------------------------------------------------------- on Claude
-def claude_chat(*parts, error=None, hold=None):
-    """Stands in for core.providers.claude.chat: yields `parts` (text, and dicts as the real one adds),
-    or waits for `hold`, or raises `error`; records what it was asked."""
-    asked = []
+def claude_chat(*parts, error=None, hold=None, endless=False):
+    """Stands in for core.providers.claude.chat: waits for `hold` if given, raises `error`, yields `parts`
+    (text, and dicts as the real one adds), or with `endless` text every 20 ms until closed. Records
+    what it was asked, and `closed` once its stream is closed (the real one then ends the request)."""
+    asked, closed = [], threading.Event()
     def chat(model, messages, **kwargs):
         asked.append((model, messages, kwargs))
-        if hold is not None:
-            hold.wait(5)
-        if error is not None:
-            raise error
-        yield from parts
-    chat.asked = asked
+        try:
+            if hold is not None:
+                assert hold.wait(5)
+            if error is not None:
+                raise error
+            yield from parts
+            while endless:
+                time.sleep(0.02)
+                yield "more "
+        finally:
+            closed.set()
+    chat.asked, chat.closed = asked, closed
     return chat
 
 
-def test_on_claude_the_conversations_model_names_it_without_thinking():
+@pytest.fixture
+def claude_ends():
+    """Each Claude test leaves no request behind for the next: one alive would hold off its titles."""
+    yield
+    if titles._claude_asking is not None:
+        titles._claude_asking.join(5)
+        assert not titles._claude_asking.is_alive()
+
+
+def test_on_claude_the_conversations_model_names_it_without_thinking_in_a_titles_tokens(claude_ends):
     chat = claude_chat("Lisbon ", "trip plan", {"prompt_tokens": 90, "completion_tokens": 4})
     assert titles.by_claude(chat, "claude-haiku-5-5", "plan my Lisbon trip " + "x" * 5000, "Flights are 400 EUR.") == "Lisbon trip plan"
     [(model, messages, kwargs)] = chat.asked
-    assert model == "claude-haiku-5-5" and kwargs == {"think": False}
+    assert model == "claude-haiku-5-5" and kwargs == {"think": False, "max_tokens": 64}
     assert messages[0]["role"] == "system" and "two to six words" in messages[0]["content"], \
         "its own instructions in place of Nuru's system prompt"
     assert "plan my Lisbon trip" in messages[1]["content"] and "Flights are 400 EUR." in messages[1]["content"]
     assert len(messages[1]["content"]) < 4200
 
 
-def test_on_claude_a_failed_slow_or_stopped_request_gives_no_title():
+def test_on_claude_a_failed_request_or_one_stopped_before_it_starts_gives_no_title(claude_ends):
     from core.providers.claude import ClaudeError
-    assert titles.by_claude(claude_chat(error=ClaudeError("overloaded")), "claude-haiku-5-5", "hi", "hello") is None
+    failing = claude_chat(error=ClaudeError("overloaded"))
+    assert titles.by_claude(failing, "claude-haiku-5-5", "hi", "hello") is None and failing.closed.is_set()
+    never = claude_chat("Never")
+    assert titles.by_claude(never, "claude-haiku-5-5", "hi", "hello", stop=lambda: True) is None
+    assert never.asked == [], "nothing is sent once stop() is true"
+
+
+def test_on_claude_a_stream_given_up_on_is_closed_at_its_next_event(claude_ends):
+    chat = claude_chat(endless=True)
+    started = time.monotonic()
+    assert titles.by_claude(chat, "claude-haiku-5-5", "hi", "hello", seconds=0.2) is None
+    assert time.monotonic() - started < 0.5
+    assert chat.closed.wait(1), "the request is ended, not left to run"
+    chat = claude_chat(endless=True)
+    started = time.monotonic()
+    assert titles.by_claude(chat, "claude-haiku-5-5", "hi", "hello", stop=lambda: time.monotonic() - started > 0.1) is None
+    assert chat.closed.wait(1)
+
+
+def test_on_claude_a_silent_request_holds_off_other_titles_rather_than_piling_up(claude_ends):
+    """Astra's r3 probe on #61: repeated give-ups must not grow the work left running."""
     hold = threading.Event()
+    silent = claude_chat("Late", hold=hold)
     try:
-        started = time.monotonic()
-        assert titles.by_claude(claude_chat("Late", hold=hold), "claude-haiku-5-5", "hi", "hello", seconds=0.3) is None
-        assert time.monotonic() - started < 0.6, "the deadline, though the request can't be cut"
-        started = time.monotonic()
-        assert titles.by_claude(claude_chat("Late", hold=hold), "claude-haiku-5-5", "hi", "hello",
-                                stop=lambda: time.monotonic() - started > 0.1, seconds=30) is None
-        assert time.monotonic() - started < 0.5
+        assert titles.by_claude(silent, "claude-haiku-5-5", "hi", "hello", seconds=0.1) is None
+        others = [claude_chat("Other") for _ in range(5)]
+        for other in others:
+            started = time.monotonic()
+            assert titles.by_claude(other, "claude-haiku-5-5", "hi", "hello", seconds=0.1) is None
+            assert time.monotonic() - started < 0.05, "skipped, not waited for"
+        assert [len(other.asked) for other in others] == [0] * 5
+        assert sum(t.name == "nuru-title-claude" for t in threading.enumerate()) == 1
     finally:
         hold.set()
+    assert silent.closed.wait(2)
+    titles._claude_asking.join(2)
+    assert titles.by_claude(claude_chat("Next ", "one"), "claude-haiku-5-5", "hi", "hello") == "Next one", \
+        "once it has ended, Claude names conversations again"
 
 
 @pytest.mark.parametrize("answer, title", [

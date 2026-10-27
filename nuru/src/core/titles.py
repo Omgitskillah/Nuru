@@ -29,6 +29,9 @@ _INPUT_CHARS = 2000  # of the message and of the reply: plenty to name it by
 _REPLY_CHARS = 1000  # what is read of the model's answer at most; a title is its first line
 _LINE_BYTES = 64 * 1024  # one streamed chunk of Ollama's, at most
 _POLL_SECONDS = 0.05  # how often the deadline and stop() are checked
+_CLAUDE_TOKENS = 64  # a title's worth, with thinking off
+_claude_lock = threading.Lock()
+_claude_asking: threading.Thread | None = None  # the Claude title request in this process, if any
 
 
 def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[[], bool] = lambda: False,
@@ -89,26 +92,41 @@ def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[
 def by_claude(chat, model: str, message: str, reply: str, *, stop: Callable[[], bool] = lambda: False,
               seconds: float = SECONDS) -> str | None:
     """The same title by Claude: `chat` is core.providers.claude.chat (which logs the request), with
-    thinking off. Its stream can't be cut from here, so it runs in a thread of its own that is left to
-    finish if the `seconds` run out or `stop()` is true: then, as for a failed request, there is no title."""
-    answer = {}
+    thinking off and a title's few tokens. Past the `seconds`, or once `stop()` is true, there is no
+    title, and the request is ended at its next event by closing its stream. One that sends nothing at
+    all can't be ended so: until it does, no other conversation is named by Claude (_claude_asking)."""
+    global _claude_asking
+    with _claude_lock:
+        if stop() or (_claude_asking is not None and _claude_asking.is_alive()):
+            return None
+        answer, given_up = {}, threading.Event()
 
-    def ask():
-        try:
-            answer["text"] = "".join(part for part in chat(model, [
-                {"role": "system", "content": _SYSTEM}, {"role": "user", "content": _prompt(message, reply)},
-            ], think=False) if isinstance(part, str))
-        except requests.RequestException:  # core.providers.claude.ClaudeError
-            pass
+        def ask():
+            stream = chat(model, [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": _prompt(message, reply)}],
+                          think=False, max_tokens=_CLAUDE_TOKENS)
+            try:
+                parts = []
+                for part in stream:
+                    if given_up.is_set():
+                        break
+                    if isinstance(part, str):
+                        parts.append(part)
+                answer["text"] = "".join(parts)
+            except requests.RequestException:  # core.providers.claude.ClaudeError
+                pass
+            finally:
+                stream.close()  # ends the request if it's still going
 
+        _claude_asking = threading.Thread(target=ask, name="nuru-title-claude", daemon=True)
+        _claude_asking.start()
+        asking = _claude_asking
     deadline = time.monotonic() + seconds
-    asking = threading.Thread(target=ask, name="nuru-title-claude", daemon=True)
-    asking.start()
     while asking.is_alive():
         if stop() or time.monotonic() >= deadline:
+            given_up.set()
             return None
         asking.join(_POLL_SECONDS)
-    return clean(answer.get("text", ""))
+    return None if given_up.is_set() else clean(answer.get("text", ""))
 
 
 def _prompt(message: str, reply: str) -> str:

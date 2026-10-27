@@ -182,9 +182,11 @@ def chat(
     fmt: dict | None = None,
     options: dict | None = None,
     system: str | None = None,
+    max_tokens: int = MAX_TOKENS,
 ):
     """See the module docstring. `num_ctx` is Nuru's own budget (the API has no such setting) and
-    `options` (sampling) is ignored: these models reject temperature, top_p and top_k."""
+    `options` (sampling) is ignored: these models reject temperature, top_p and top_k. A caller that
+    closes the stream early (core.titles) ends the request; the log says it was cancelled."""
     thinking, effort = _thinking(model, think)
     system = system_text(messages, system)
     output_config = {**({"effort": effort} if effort else {}),
@@ -193,7 +195,7 @@ def chat(
         "model": model,
         "messages": to_anthropic(messages),
         "system": [{"type": "text", "text": system, "cache_control": _CACHE}] if system else None,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": max_tokens,
         "tools": _tools(tools),
         "thinking": thinking,
         "output_config": output_config or None,
@@ -215,6 +217,9 @@ def chat(
     except anthropic.APIError as e:
         _log({**entry, "error": f"{type(e).__name__}: {e}", "duration_ms": round((time.monotonic() - started) * 1000)})
         raise ClaudeError(f"Claude API error ({type(e).__name__}): {e}") from e
+    except GeneratorExit:
+        _log({**entry, "cancelled": True, "duration_ms": round((time.monotonic() - started) * 1000)})
+        raise
 
     message = message or {}
     content = message.get("content") or []

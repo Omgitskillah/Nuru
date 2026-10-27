@@ -164,6 +164,17 @@ def test_an_api_error_is_a_request_exception_and_is_logged(fake, tmp_path, monke
     assert "APIConnectionError" in json.loads(log.read_text())["error"]
 
 
+def test_a_caller_may_ask_for_fewer_tokens_and_a_stream_it_closes_early_is_logged_as_cancelled(fake, tmp_path):
+    provider = fake(reply({"type": "text", "text": "Lisbon "}, {"type": "text", "text": "plan"}))
+    stream = claude.chat("claude-haiku-5-5", [{"role": "user", "content": "q"}], think=False, max_tokens=64)
+    assert next(stream) == "Lisbon "
+    stream.close()  # as core.titles does when it gives up
+    assert provider.requests[0]["max_tokens"] == 64
+    (log,) = tmp_path.glob("claude-requests-*.jsonl")
+    entry = json.loads(log.read_text())
+    assert entry["cancelled"] is True and "usage" not in entry
+
+
 def test_only_the_two_supported_models_are_accepted():
     assert claude.model_id("anthropic:claude-haiku-5-5") == "claude-haiku-5-5"
     assert claude.model_id("anthropic:claude-sonnet-5-5") == "claude-sonnet-5-5"

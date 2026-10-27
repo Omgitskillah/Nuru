@@ -128,7 +128,7 @@ def test_a_title_is_written_by_the_model_the_turn_ran_on_at_its_window(monkeypat
     s.use_model(HAIKU)
     assert s.title("hi", "hello", stop) == "Rome by Claude" and len(asked) == 2, \
         "on Claude, Claude names it: choosing it already sends it the conversation"
-    assert sent[0][0] == "claude-haiku-5-5" and "two to six words" in sent[0][1] and sent[0][2] == {"think": False}
+    assert sent[0][0] == "claude-haiku-5-5" and "two to six words" in sent[0][1] and sent[0][2] == {"think": False, "max_tokens": 64}
     s.close()
 
 

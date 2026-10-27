@@ -248,7 +248,17 @@ def load_profile(text: str) -> dict:
         raise ConfigError(f"the profile isn't valid YAML: {str(error)[:200]}") from None
     if not isinstance(entry, dict):
         raise ConfigError("the profile must be a mapping: think, default and sampling")
+    _names_only(entry)
     return entry
+
+
+def _names_only(mapping: dict) -> None:
+    """Every key in the profile, at every level, is a name: YAML also allows numbers, nulls and more."""
+    for key, value in mapping.items():
+        if not isinstance(key, str):
+            raise ConfigError(f"the profile's keys must be names, not {key!r}")
+        if isinstance(value, dict):
+            _names_only(value)
 
 
 # ---------------------------------------------------------------------- checking with Ollama
@@ -257,8 +267,8 @@ ERROR_CHARS = 500
 
 
 def check_build(rendered: str, *, build, remove, listed) -> str | None:
-    """Build `rendered` once under a fresh name of Nuru's own, then remove it: None if Ollama built it,
-    else what Ollama said (at most ERROR_CHARS). `build(model, rendered)` and `remove(model)` are
+    """Build `rendered` once under a fresh name of Nuru's own, then remove it: None if Ollama built it
+    and the name is gone again, else what went wrong (what Ollama said, at most ERROR_CHARS). `build(model, rendered)` and `remove(model)` are
     core.providers.ollama's build_model and remove_model, each with its own time limit; `listed()`
     gives the names Ollama has, so a name already there is never built over."""
     names = set(listed())
@@ -270,12 +280,16 @@ def check_build(rendered: str, *, build, remove, listed) -> str | None:
     except subprocess.TimeoutExpired as error:
         problem = f"Ollama took longer than {error.timeout:g} s to build it"
     except subprocess.CalledProcessError as error:
-        problem = ((error.stderr or error.stdout or "").strip() or f"ollama create failed ({error.returncode})")[-ERROR_CHARS:]
+        said = (error.stderr or error.stdout or "").strip() or f"ollama create failed ({error.returncode})"
+        problem = f"Ollama couldn't build it: {said[-ERROR_CHARS:]}"
     finally:
         try:
             remove(alias)
-        except (OSError, subprocess.SubprocessError) as error:  # what the build said matters more
+        except (OSError, subprocess.SubprocessError) as error:
             print(f"nuru: couldn't remove the check model {alias}: {error}", file=sys.stderr)
+            # What the build said matters more; with nothing else wrong, this is: nothing is saved
+            # while a model of Nuru's is left in Ollama, and the user is told its name.
+            problem = problem or f"Nuru couldn't remove the check model {alias} (remove it with `ollama rm {alias}`)"
     return problem
 
 
@@ -299,7 +313,7 @@ def save(family: str, expected: str, header: str, profile: str, *, base_model: s
     model_profile.users(load_profile(profile), family)
     problem = check(render_header(header, base_model, model_profile.PROFILES.parent / "system.md"))
     if problem:
-        raise ConfigError(f"Ollama couldn't build it: {problem}")
+        raise ConfigError(problem)
     return publish(family, expected, header, profile, directory)
 
 

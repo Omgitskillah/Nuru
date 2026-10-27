@@ -52,9 +52,12 @@ def _local() -> list[dict]:
     for name in sorted(m["name"] for m in tags):
         try:
             profile = model_profile.for_model(name)  # unsupported families and Nuru's own aliases fail here
-            can_think = "thinking" in model_info(name).get("capabilities", [])
+            shown = model_info(name)
         except (ValueError, requests.RequestException):
             continue
+        if user_models.base_problem(shown):  # this very model: a family's name says nothing of what it can do
+            continue
+        can_think = "thinking" in shown.get("capabilities", [])
         label = f"{name} (untested)" if user_models.custom(name) else name  # the user's own settings
         found.append(_choice(name, label, False, profile, can_think))
     return found

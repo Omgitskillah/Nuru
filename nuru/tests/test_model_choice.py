@@ -24,7 +24,7 @@ def test_thinking_offers_only_the_levels_that_differ():
 def test_choices_are_supported_pulled_models_then_claude_with_a_key(monkeypatch):
     tags = [{"name": n} for n in (GRANITE, QWEN, "nomic-embed-text-v2-moe:latest", "nuru:latest", "qwen35-planner:4b")]
     monkeypatch.setattr(main_models.requests, "get", lambda url, timeout: type("R", (), {"json": lambda self: {"models": tags}})())
-    monkeypatch.setattr(main_models, "model_info", lambda name: {"capabilities": ["completion", "thinking"]})
+    monkeypatch.setattr(main_models, "model_info", lambda name: {"capabilities": ["completion", "tools", "thinking"]})
     monkeypatch.setattr(main_models, "_cache", None)
     monkeypatch.setattr(main_models, "api_key", lambda: "key")
 

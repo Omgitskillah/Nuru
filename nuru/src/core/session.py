@@ -46,7 +46,7 @@ from core import tool_dispatch
 from core.tool_dispatch import ToolOutcome, MUTATIONS, written_path
 from claude_access.keys import api_key as claude_api_key
 from core import user_models
-from core.modelfile import render_header, render_system
+from core.modelfile import check_header, render_header, render_system
 from core.providers import claude as claude_provider
 from core.providers.ollama import chat as ollama_chat
 from core.providers.ollama import (
@@ -54,6 +54,7 @@ from core.providers.ollama import (
     create_model,
     ensure_model_loaded,
     ensure_server_running,
+    model_info as base_info,
     is_model_loaded,
     stop_server,
     unload_all_models,
@@ -141,6 +142,11 @@ def _build(alias: str, base_model: str) -> str:
     header = user_models.header(base_model)
     if header is None:
         return create_model(alias, base_model, _modelfile_for(base_model))
+    shown = base_info(base_model)  # what this very model can do, whatever was checked when it was saved
+    problem = user_models.base_problem(shown)
+    if problem:
+        raise ValueError(f"{base_model} can't run Nuru: {problem}")
+    check_header(header, set(shown.get("capabilities") or []))
     return build_model(alias, render_header(header, base_model, MODELFILES_DIR / "system.md"))
 
 

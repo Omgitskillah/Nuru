@@ -156,16 +156,16 @@ def test_a_family_name_can_never_reach_outside_the_folder(models):
 # ---------------------------------------------------------------------- what a process runs with
 def test_a_process_runs_with_the_bundles_it_read_first_and_a_later_save_waits_for_a_restart(models, monkeypatch, capsys):
     saved = user_models.publish("llama3.1", INITIAL, HEADER, PROFILE, models)
-    user_models.publish("gemma4", INITIAL, HEADER, PROFILE, models)
     (models / "broken.json").write_text("{")
     user_models.publish("mistral", INITIAL, "FROM __BASE_MODEL__\nSYSTEM mine\n", PROFILE, models)  # by hand, say
     user_models.publish("phi4", INITIAL, HEADER, "default: sometimes\n", models)
+    user_models.publish("gemma4", INITIAL, HEADER, PROFILE + "bad: 1\n1: 2\n", models)  # Astra's #62 probe
     (models / "Not A Family.json").write_text("{}")
     monkeypatch.setenv("NURU_MODELS_DIR", str(models))
     monkeypatch.setattr(user_models, "_active", None)
-    assert set(user_models.active()) == {"llama3.1", "gemma4"}
+    assert set(user_models.active()) == {"llama3.1"}
     err = capsys.readouterr().err
-    assert all(f"ignoring your settings for {f}" in err for f in ("broken", "mistral", "phi4")), err
+    assert all(f"ignoring your settings for {f}" in err for f in ("broken", "mistral", "phi4", "gemma4")), err
     assert user_models.header("llama3.1:8b") == HEADER and user_models.custom("llama3.1:70b")
     assert user_models.profile_entry("llama3.1:8b") == {"think": {"off": False, "low": True, "high": True}, "default": "off"}
 
@@ -206,8 +206,10 @@ def test_nuru_s_own_qwen_profile_round_trips_as_a_user_s(monkeypatch):
     ("- off\n- low\n", "must be a mapping"),
     ("think: [unclosed\n", "isn't valid YAML"),
     ("think: \x07\n", "control character"),
+    (PROFILE + "bad: 1\n1: 2\n", "keys must be names, not 1"),
+    ('think: {"off": false, low: true, high: true, null: false}\ndefault: "off"\n', "keys must be names, not None"),
     ("x: " + "a" * user_models.PROFILE_BYTES, "longer than 16 KiB"),
-], ids=["alias", "too-deep", "too-many", "list", "bad-yaml", "control", "huge"])
+], ids=["alias", "too-deep", "too-many", "list", "bad-yaml", "control", "number-key", "null-key", "huge"])
 def test_a_profile_beyond_the_limits_is_refused(text, problem):
     with pytest.raises(ConfigError if "KiB" not in problem and "control" not in problem else ValueError, match=problem):
         user_models.load_profile(text)
@@ -247,12 +249,14 @@ def test_a_failed_slow_or_unremovable_check_build_says_what_ollama_said(capsys):
         raise subprocess.TimeoutExpired(["ollama", "rm"], 60)
     removed = []
     problem = user_models.check_build("FROM x\n", build=fails, remove=removed.append, listed=list)
-    assert problem.endswith("x" * 10) and len(problem) == user_models.ERROR_CHARS and removed
+    assert problem == "Ollama couldn't build it: " + ("Error: " + "x" * 1000)[-user_models.ERROR_CHARS:] and removed
     assert user_models.check_build("FROM x\n", build=slow, remove=removed.append, listed=list) == \
         "Ollama took longer than 300 s to build it"
-    assert user_models.check_build("FROM x\n", build=fails, remove=stuck, listed=list).startswith("x"), \
+    assert user_models.check_build("FROM x\n", build=fails, remove=stuck, listed=list).startswith("Ollama couldn't build it: x"), \
         "the build's failure, not the cleanup's"
-    assert user_models.check_build("FROM x\n", build=lambda m, r: None, remove=stuck, listed=list) is None
+    left = user_models.check_build("FROM x\n", build=lambda m, r: None, remove=stuck, listed=list)
+    assert left.startswith("Nuru couldn't remove the check model nuru-check-") and "ollama rm nuru-check-" in left, \
+        "built, but a model of Nuru's is left: that is the problem then"
     assert "couldn't remove the check model nuru-check-" in capsys.readouterr().err
 
 
@@ -281,6 +285,16 @@ def test_a_stuck_ollama_create_is_killed_at_its_time_limit_and_the_check_name_re
         os.kill(pid, 0)  # killed and reaped, not left running
     create, remove = fake_ollama.read_text().splitlines()
     assert create.startswith("create nuru-check-") and remove == "rm " + create.split()[1]
+
+
+def test_build_model_returns_the_rendering_it_built_and_removes_its_file(fake_ollama, monkeypatch):
+    monkeypatch.setenv("FAKE_CREATE", 'cat "$4" >> ' + str(fake_ollama))
+    assert ollama.build_model("nuru-x", "FROM base\nPARAMETER top_k 5\n") == "FROM base\nPARAMETER top_k 5\n"
+    command, *built = fake_ollama.read_text().splitlines()
+    assert command.startswith("create nuru-x -f ") and built == ["FROM base", "PARAMETER top_k 5"]
+    assert not Path(command.split()[-1]).exists()
+    ollama.remove_model("nuru-x")
+    assert fake_ollama.read_text().splitlines()[-1] == "rm nuru-x"
 
 
 def test_build_model_passes_the_rendering_to_ollama_create_and_removes_its_file(fake_ollama, monkeypatch):
@@ -332,8 +346,19 @@ def test_a_save_that_fails_its_checks_writes_nothing_and_builds_nothing(models, 
 def test_a_save_ollama_cant_build_writes_nothing(models):
     with pytest.raises(ConfigError, match="Ollama couldn't build it: Error: unknown template"):
         user_models.save("llama3.1", INITIAL, HEADER, PROFILE, base_model="llama3.1:8b", capabilities={"tools"},
-                         check=checked("Error: unknown template"), directory=models)
+                         check=checked("Ollama couldn't build it: Error: unknown template"), directory=models)
     assert user_models.read("llama3.1", models) == Bundle("llama3.1", INITIAL)
+
+
+def test_a_save_whose_check_model_cant_be_removed_is_not_published(models):
+    before = user_models.publish("llama3.1", INITIAL, HEADER, PROFILE, models)
+    def stuck(model):
+        raise subprocess.TimeoutExpired(["ollama", "rm"], 60)
+    check = lambda rendered: user_models.check_build(rendered, build=lambda m, r: None, remove=stuck, listed=list)  # noqa: E731
+    with pytest.raises(ConfigError, match="couldn't remove the check model nuru-check-"):
+        user_models.save("llama3.1", before.revision, "FROM __BASE_MODEL__\n", PROFILE, base_model="llama3.1:8b",
+                         capabilities={"tools"}, check=check, directory=models)
+    assert user_models.read("llama3.1", models) == before
 
 
 def test_a_save_raced_by_another_while_it_builds_is_refused_and_overwrites_nothing(models):
@@ -379,6 +404,7 @@ def test_a_user_family_builds_from_its_header_is_listed_untested_and_runs_on_its
     user_models.publish("llama3.1", INITIAL, HEADER, PROFILE, models)
     monkeypatch.setattr(user_models, "_active", user_models.snapshot(models))
     built, created = [], []
+    monkeypatch.setattr(session, "base_info", lambda name: {"capabilities": ["completion", "tools"]})
     monkeypatch.setattr(session, "build_model", lambda model, rendered: built.append((model, rendered)) or rendered)
     monkeypatch.setattr(session, "create_model", lambda *args: created.append(args) or "SYSTEM \"\"\"x\"\"\"")
     rendered = session._build("nuru-llama3.1-8b", "llama3.1:8b")
@@ -387,13 +413,29 @@ def test_a_user_family_builds_from_its_header_is_listed_untested_and_runs_on_its
     assert created == [("nuru", "qwen3.5:4b", session._modelfile_for("qwen3.5:4b"))], "Nuru's own, as before"
 
     assert model_profile.for_model("llama3.1:8b").think_map == {"off": False, "low": True, "high": True}
-    tags = [{"name": n} for n in ("llama3.1:8b", "qwen3.5:4b")]
+    tags = [{"name": n} for n in ("llama3.1:8b", "qwen3.5:4b", "other/llama3.1:embed", "llama3.1:chat")]
     monkeypatch.setattr(main_models.requests, "get", lambda url, timeout: type("R", (), {"json": lambda self: {"models": tags}})())
-    monkeypatch.setattr(main_models, "model_info", lambda name: {"capabilities": ["completion", "tools", "thinking"]})
+    capabilities = {"other/llama3.1:embed": ["embedding"], "llama3.1:chat": ["completion"]}  # Astra's #62 probe
+    monkeypatch.setattr(main_models, "model_info", lambda name: {"capabilities": capabilities.get(name, ["completion", "tools", "thinking"])})
     monkeypatch.setattr(main_models, "_cache", None)
     monkeypatch.setattr(main_models, "api_key", lambda: None)
     labels = {c["id"]: c["label"] for c in main_models.choices("qwen3.5:4b")["choices"]}
     assert labels == {"qwen3.5:4b": "qwen3.5:4b", "llama3.1:8b": "llama3.1:8b (untested)"}
+
+
+@pytest.mark.parametrize("shown, header, problem", [
+    ({"capabilities": ["embedding"]}, HEADER, "other/llama3.1:embed can't run Nuru: it can't write text"),
+    ({"capabilities": ["completion", "tools"], "messages": [{"role": "user"}]}, HEADER, "its own conversation history"),
+    ({"capabilities": ["completion", "tools"]}, "FROM __BASE_MODEL__\nCAPABILITY thinking\n", "capability 'thinking'"),
+], ids=["embedding", "history", "capability"])
+def test_a_user_header_is_built_only_on_a_base_that_can_run_it(models, monkeypatch, shown, header, problem):
+    """Astra's #62 review: what was checked when it was saved says nothing of another model of the family."""
+    user_models.publish("llama3.1", INITIAL, header, PROFILE, models)
+    monkeypatch.setattr(user_models, "_active", user_models.snapshot(models))
+    monkeypatch.setattr(session, "base_info", lambda name: shown)
+    monkeypatch.setattr(session, "build_model", lambda *args: pytest.fail("built"))
+    with pytest.raises(ValueError, match=problem):
+        session._build("nuru-x", "other/llama3.1:embed")
 
 
 def test_a_header_saved_by_a_user_gets_nuru_s_prompt_whatever_the_base_had():

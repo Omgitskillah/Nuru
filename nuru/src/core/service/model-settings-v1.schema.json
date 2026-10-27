@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nuru.local/model-settings-v1.schema.json",
+  "title": "Nuru model settings, version 1 (TODO F22)",
+  "description": "Local administration of a local model family's settings: /v1/models/settings (GET ?model=, PUT, DELETE ?model=&expected_revision=) and /v1/models (POST). Only for a client signed in on this computer's own listener: the remote listener refuses them all. Errors are protocol v1's error body.",
+  "$defs": {
+    "model": {"type": "string", "minLength": 1, "maxLength": 256},
+    "revision": {"type": "string", "pattern": "^(initial|[0-9a-f]{32})$"},
+    "text": {"type": ["string", "null"], "maxLength": 65536},
+    "save_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "expected_revision", "header", "profile"],
+      "properties": {
+        "model": {"$ref": "#/$defs/model"},
+        "expected_revision": {"$ref": "#/$defs/revision"},
+        "header": {"type": "string", "maxLength": 65536},
+        "profile": {"type": "string", "maxLength": 16384}
+      }
+    },
+    "add_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {"model": {"$ref": "#/$defs/model"}}
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "family", "custom", "revision", "active_revision", "header", "profile", "nuru", "default"],
+      "properties": {
+        "model": {"$ref": "#/$defs/model"},
+        "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "custom": {"type": "boolean", "description": "The user's settings apply, not Nuru's"},
+        "revision": {"$ref": "#/$defs/revision", "description": "What is saved, shared by every Nuru on this computer"},
+        "active_revision": {"$ref": "#/$defs/revision", "description": "What this service runs with: a different one applies when it restarts"},
+        "header": {"$ref": "#/$defs/text", "description": "The saved header, else Nuru's; null if the family has neither"},
+        "profile": {"$ref": "#/$defs/text"},
+        "nuru": {
+          "description": "Nuru's own settings for the family, or null if it has none",
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["header", "profile"],
+             "properties": {"header": {"type": "string"}, "profile": {"type": "string"}}}
+          ]
+        },
+        "default": {"type": "boolean", "description": "The family of the model new conversations start on"},
+        "added": {"type": "boolean", "description": "POST /v1/models only: whether it set the family up"}
+      }
+    }
+  }
+}

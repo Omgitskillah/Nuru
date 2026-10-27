@@ -7,6 +7,7 @@ const path = require("node:path");
 const obsidian = require("obsidian");
 
 const { NuruSettings, fingerprint } = require("./envfiles");
+const { displayModels } = require("./models");
 const { tokenPath, vaultUuid, ConnectionProblem } = require("./connection");
 const { LaunchProblem, logPath, readInstall } = require("./launcher");
 const { RELEASE, SetupProblem, progress: downloading, setUp, thisSystem } = require("./setup");
@@ -480,6 +481,7 @@ class NuruSettingTab extends PluginSettingTab {
     // Only on request: the saved key goes to Anthropic when Check is clicked, never by itself.
     key.addButton((button) => button.setButtonText("Check").onClick(check));
     describe();
+    displayModels(this, containerEl);
   }
 }
 

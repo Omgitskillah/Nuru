@@ -51,3 +51,8 @@
 .nuru-chip { display: flex; align-items: center; gap: var(--size-4-1); background: var(--background-secondary); border-radius: var(--radius-s); padding: 0 var(--size-4-1); font-size: var(--font-ui-small); }
 /* Settings: how far a setup step is. */
 .nuru-progress { width: 100%; margin-top: var(--size-4-1); }
+
+/* Settings' Local models: a family's Modelfile header and profile (lib/models.js) */
+.nuru-model-text { width: 100%; font-family: var(--font-monospace); font-size: var(--font-ui-small); }
+.nuru-model-pending { color: var(--text-accent); }
+.nuru-model-buttons { display: flex; gap: var(--size-4-2); justify-content: flex-end; }

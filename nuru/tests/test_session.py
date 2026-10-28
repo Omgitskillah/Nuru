@@ -1485,3 +1485,54 @@ def test_close_releases_store_history_and_shadow_even_when_tools_fail(monkeypatc
     with pytest.raises(Exception, match='closed database'):
         s.store.get_messages(s.conversation_id)
     assert any('later shadow failure' in note for note in error.value.__notes__)
+
+
+# --- TODO F9: a new paragraph after a tool call ---
+def test_what_the_model_says_after_a_tool_call_starts_a_new_paragraph(monkeypatch):
+    """Seen in the WP01 live runs: "…in your notes.Here is…". The reply shown gets a paragraph break;
+    what is stored for each round stays as the model wrote it."""
+    rounds = iter([["Let me look in ", "your notes.", {"tool_calls": [tool_call("search", {"query": "car service"})]}],
+                   ["Your car was serviced in May.", {"prompt_tokens": 1, "completion_tokens": 1}]])
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        yield from next(rounds)
+
+    s = start_session(monkeypatch, chat=chat, tools=FakeMCPTools(tool_results={"search": "car.md: serviced 2026-05-02"}))
+    events = list(s.ask("When was my car serviced?"))
+    reply = "".join(e.text for e in events if isinstance(e, session.Text))
+    assert reply == "Let me look in your notes.\n\nYour car was serviced in May."
+    assert [type(e).__name__ for e in events if not isinstance(e, session.Text)] == ["ToolCall"]
+    assert s.store.get_recent_messages(s.conversation_id, 10_000)[-1]["content"] == "Your car was serviced in May."
+    s.close()
+
+
+@pytest.mark.parametrize("pieces, shown", [
+    (["Looking.", "call", "Found it."], "Looking.\n\nFound it."),
+    (["Looking.\n", "call", "Found it."], "Looking.\n\nFound it."),  # half a break there already
+    (["Looking.\n\n", "call", "Found it."], "Looking.\n\nFound it."),
+    (["call", "Found it."], "Found it."),  # nothing said before the call
+    (["  ", "call", "Found it."], "  Found it."),
+    (["One.", "call", "call", "Two.", "Three."], "One.\n\nTwo.Three."),  # once, and only after a call
+    (["One.", "call", "", "Two."], "One.\n\nTwo."),
+])
+def test_the_break_comes_once_after_a_call_and_only_where_something_was_said(pieces, shown):
+    events = (session.ToolCall("search", {}) if p == "call" else session.Text(p) for p in pieces)
+    out = list(session._paragraph_after_tools(events))
+    assert "".join(e.text for e in out if isinstance(e, session.Text)) == shown
+    assert sum(isinstance(e, session.ToolCall) for e in out) == pieces.count("call")
+
+
+def test_closing_the_reply_closes_the_turn_under_it():
+    closed = []
+
+    def turn():
+        try:
+            yield session.Text("One.")
+            yield session.Text("Two.")
+        finally:
+            closed.append(True)
+
+    shown = session._paragraph_after_tools(turn())
+    assert next(shown).text == "One."
+    shown.close()
+    assert closed == [True], "a cancelled turn still ends"

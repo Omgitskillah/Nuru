@@ -1,4 +1,5 @@
 import json
+import sys
 import pytest
 
 from core.vault_steward import VaultSteward
@@ -60,3 +61,106 @@ def test_bad_config_leaves_previous_report(tmp_path):
     with pytest.raises(ValueError):
         worker.run_once()
     assert worker.latest is first
+
+
+def test_from_env_needs_the_vault_and_config_and_reads_the_rest(tmp_path, monkeypatch):
+    """conftest stubs VaultSteward.from_env for every test, so this loads its own copy of the module."""
+    import importlib.util
+    from core import vault_steward as installed
+    spec = importlib.util.spec_from_file_location('steward_under_test', installed.__file__)
+    vault_steward = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vault_steward)
+    VaultSteward = vault_steward.VaultSteward
+    vault, config = fixture(tmp_path)
+    monkeypatch.setattr(vault_steward, 'ENV_DIR', tmp_path)  # no .env files there
+    for key in ['VAULT_PATH', 'OBSIDIAN_STEWARD_CONFIG', 'NURU_STEWARD_STATE', 'NURU_STEWARD_INTERVAL']:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('NURU_STEWARD_ENABLED', '0')
+    assert VaultSteward.from_env() is None
+    monkeypatch.setenv('NURU_STEWARD_ENABLED', '1')
+    with pytest.raises(ValueError, match='requires VAULT_PATH and OBSIDIAN_STEWARD_CONFIG'):
+        VaultSteward.from_env()
+    monkeypatch.setenv('VAULT_PATH', str(vault))
+    monkeypatch.setenv('OBSIDIAN_STEWARD_CONFIG', str(config))
+    worker = VaultSteward.from_env()
+    assert (worker.vault, worker.config_path, worker.state_path, worker.interval) == (vault, config, None, 30)
+    monkeypatch.setenv('NURU_STEWARD_STATE', str(tmp_path / 'state.sqlite3'))
+    monkeypatch.setenv('NURU_STEWARD_INTERVAL', '45')
+    worker = VaultSteward.from_env()
+    assert worker.state_path == tmp_path / 'state.sqlite3' and worker.interval == 45
+
+
+def test_background_failure_is_logged_once_and_a_later_pass_recovers(tmp_path, monkeypatch, capsys):
+    import threading
+    vault, config = fixture(tmp_path)
+    worker = VaultSteward(vault, config, interval=1)
+    recovered, attempts = threading.Event(), []
+    original = worker.run_once
+    def flaky():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise PermissionError('temporary denial')
+        report = original()
+        recovered.set()
+        return report
+    monkeypatch.setattr(worker, 'run_once', flaky)
+    monkeypatch.setattr(worker._stop, 'wait', lambda seconds: worker._stop.is_set())  # no 1 s waits between passes
+    worker.start()
+    try:
+        assert recovered.wait(5)
+    finally:
+        worker._stop.set()
+        worker._thread.join(5)
+    assert not worker._thread.is_alive()
+    assert capsys.readouterr().err.count('Nuru: stewardship unavailable: PermissionError: temporary denial') == 1
+    assert worker.error is None
+
+
+def test_a_pass_cancelled_by_stop_ends_the_background_worker_quietly(tmp_path, monkeypatch, capsys):
+    vault, config = fixture(tmp_path)
+    worker = VaultSteward(vault, config)
+    def cancelled():
+        worker._stop.set()
+        raise AuditCancelled()
+    monkeypatch.setattr(worker, 'run_once', cancelled)
+    worker.start()
+    worker._thread.join(3)
+    assert not worker._thread.is_alive() and worker.error is None
+    worker.stop()  # already stopped: returns at once
+    assert capsys.readouterr().err == ''
+
+
+def test_the_command_prints_one_report_and_runs_as_a_module(tmp_path, monkeypatch, capsys):
+    import runpy
+    vault, config = fixture(tmp_path)
+    (vault / 'a.md').write_text('text')
+    monkeypatch.setattr('sys.argv', ['nuru-steward', str(vault), '--config', str(config)])
+    monkeypatch.delitem(sys.modules, 'core.vault_steward')  # run as a fresh __main__, as `python -m` would
+    runpy.run_module('core.vault_steward', run_name='__main__')
+    report = json.loads(capsys.readouterr().out)
+    assert report['finding_count'] == 1 and report['model_calls'] == 0
+
+
+def test_watch_mode_prints_changed_reports_until_ctrl_c(tmp_path, monkeypatch, capsys):
+    from core import vault_steward
+    vault, config = fixture(tmp_path)
+    (vault / 'a.md').write_text('text')
+    made = []
+
+    class Watched(VaultSteward):
+        def start(self):
+            made.append(self)
+            super().start()
+            join = self._thread.join
+            def interrupt_after_a_report(timeout=None):
+                if self.changes and not getattr(self, 'interrupted', False):
+                    self.interrupted = True
+                    raise KeyboardInterrupt
+                return join(timeout)
+            self._thread.join = interrupt_after_a_report
+    monkeypatch.setattr(vault_steward, 'VaultSteward', Watched)
+    monkeypatch.setattr('sys.argv', ['nuru-steward', str(vault), '--config', str(config), '--watch', '--interval', '1'])
+    vault_steward.main()
+    assert not made[0]._thread.is_alive()
+    (line,) = capsys.readouterr().out.splitlines()
+    assert json.loads(line)['finding_count'] == 1

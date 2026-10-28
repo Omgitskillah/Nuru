@@ -295,3 +295,91 @@ def test_a_move_waits_for_every_session_using_the_history_to_close(legacy, vault
     with pytest.raises(vault_data.MigrationError, match="already holds conversations"):
         vault_data.adopt_legacy(vault_uuid)
     assert (legacy / "conversation.db").exists()
+
+
+# ------------------------------------------- what runs on every computer, Windows included: start-up recovery
+# A move only happens on POSIX, but every start recovers. These build each state a crash can leave directly,
+# so they run everywhere.
+def _crashed(vault_uuid, state=None, staging=False, replaced=False, live=True):
+    directory = vault_data.data_dir(vault_uuid)
+    if state is not None:
+        vault_data._set_state(directory, **state)
+    for name, wanted in (("db.staging", staging), ("db.replaced", replaced)):
+        if wanted:
+            (directory / name).mkdir()
+            (directory / name / "conversation.db").write_text(name)
+    if not live:
+        assert not (directory / "db").exists()
+    else:
+        vault_data.db_dir(vault_uuid)
+    return directory
+
+
+def test_a_start_discards_a_copy_cut_off_before_anything_was_recorded(legacy, vault_uuid):
+    directory = _crashed(vault_uuid, staging=True)
+    vault_data.recover(vault_uuid)
+    assert not (directory / "db.staging").exists() and (legacy / "conversation.db").exists()
+
+
+def test_a_start_undoes_a_move_that_never_renamed_and_puts_an_empty_history_back(legacy, vault_uuid):
+    directory = _crashed(vault_uuid, {"state": "staged"}, staging=True, replaced=True, live=False)
+    vault_data.recover(vault_uuid)
+    assert not (directory / "db.staging").exists() and not (directory / "migration.json").exists()
+    assert (directory / "db" / "conversation.db").read_text() == "db.replaced"  # the one moved aside
+    assert (legacy / "conversation.db").exists()  # the old files are still the ones in use
+
+
+def test_a_start_completes_a_move_that_renamed_retires_the_old_files_and_copies_logs_once(legacy, vault_uuid):
+    directory = _crashed(vault_uuid, {"state": "staged"}, replaced=True)
+    vault_data.recover(vault_uuid)
+    state = json.loads((directory / "migration.json").read_text())
+    assert state["state"] == "active" and state["logs"] == "copied"
+    assert not (directory / "db.replaced").exists()
+    assert not (legacy / "conversation.db").exists() and (legacy / ("conversation.db" + vault_data.LEGACY_SUFFIX)).exists()
+    assert sorted(p.name for p in vault_data.logs_dir(vault_uuid).iterdir()) == sorted(
+        p.name for p in vault_data.LEGACY_LOGS.iterdir())
+    (vault_data.LEGACY_LOGS / "20261018-000000_late.jsonl").write_text("{}\n")
+    vault_data.recover(vault_uuid)  # logs already copied: a later start copies nothing more
+    assert not (vault_data.logs_dir(vault_uuid) / "20261018-000000_late.jsonl").exists()
+
+
+def test_a_start_with_no_move_or_an_unreadable_record_changes_nothing(legacy, vault_uuid):
+    directory = vault_data.data_dir(vault_uuid)
+    vault_data.recover(vault_uuid)
+    (directory / "migration.json").write_text("{not json")
+    vault_data.recover(vault_uuid)
+    assert (legacy / "conversation.db").exists() and vault_data.legacy_waiting()
+    assert not vault_data.logs_dir(vault_uuid).exists()
+
+
+def test_an_active_move_without_old_logs_records_them_as_copied(legacy, vault_uuid, tmp_path, monkeypatch):
+    monkeypatch.setattr(vault_data, "LEGACY_LOGS", tmp_path / "no-logs")
+    directory = _crashed(vault_uuid, {"state": "active"})
+    vault_data.recover(vault_uuid)
+    assert json.loads((directory / "migration.json").read_text())["logs"] == "copied"
+    assert not vault_data.legacy_waiting()
+
+
+def test_a_start_waits_for_a_move_under_way_and_then_says_so(vault_uuid, monkeypatch):
+    monkeypatch.setattr(vault_data, "MIGRATE_WAIT_SECONDS", 0.2)
+    with vault_data._migration_lock(0):  # a move holding it
+        with pytest.raises(vault_data.MigrationBusy, match="being moved"):
+            with vault_data.opening(vault_uuid):
+                pytest.fail("opened during a move")
+    with vault_data.opening(vault_uuid):  # free again
+        pass
+
+
+def test_sessions_share_a_history_and_a_move_cannot_take_it_until_all_close(vault_uuid):
+    from core.service.store import ServiceBusy
+    db = vault_data.db_dir(vault_uuid) / "conversation.db"
+    first, second = vault_data.hold_history(db), vault_data.hold_history(db)
+    try:
+        with pytest.raises(ServiceBusy, match="a Nuru session is using"):
+            vault_data._history_lock(db, shared=False)
+        first.close()
+        with pytest.raises(ServiceBusy):
+            vault_data._history_lock(db, shared=False)
+    finally:
+        second.close()
+    vault_data._history_lock(db, shared=False).close()  # nobody left: a move may have it

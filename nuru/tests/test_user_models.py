@@ -7,6 +7,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -276,11 +277,25 @@ def fake_ollama(tmp_path, monkeypatch):
 
 
 def test_a_stuck_ollama_create_is_killed_at_its_time_limit_and_the_check_name_removed(fake_ollama, monkeypatch):
-    monkeypatch.setenv("FAKE_CREATE", "echo $$ > " + str(fake_ollama) + ".pid; exec sleep 30")
+    pid_file = Path(str(fake_ollama) + ".pid")
+    monkeypatch.setenv("FAKE_CREATE", f"echo $$ > {pid_file}; exec sleep 30")
+
+    class Started(subprocess.Popen):
+        """subprocess.run's time limit starts once Popen returns: wait, at most 10 s, for the child to
+        be running, so a slow start on a busy machine isn't mistaken for the stall under test."""
+        def __init__(self, args, *rest, **kwargs):
+            super().__init__(args, *rest, **kwargs)
+            if args[:2] == ["ollama", "create"]:
+                deadline = time.monotonic() + 10
+                while not (pid_file.exists() and pid_file.read_text().endswith("\n")):
+                    assert time.monotonic() < deadline, "the fake ollama create never started"
+                    time.sleep(0.01)
+
+    monkeypatch.setattr(subprocess, "Popen", Started)
     problem = user_models.check_build("FROM x\n", build=lambda m, r: ollama.build_model(m, r, timeout=0.5),
                                       remove=ollama.remove_model, listed=list)
     assert problem == "Ollama took longer than 0.5 s to build it"
-    pid = int(Path(str(fake_ollama) + ".pid").read_text())
+    pid = int(pid_file.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)  # killed and reaped, not left running
     create, remove = fake_ollama.read_text().splitlines()

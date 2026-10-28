@@ -45,13 +45,16 @@ from core.questions import Question
 from core import tool_dispatch
 from core.tool_dispatch import ToolOutcome, MUTATIONS, written_path
 from claude_access.keys import api_key as claude_api_key
-from core.modelfile import render_system
+from core import user_models
+from core.modelfile import check_header, render_header, render_system
 from core.providers import claude as claude_provider
 from core.providers.ollama import chat as ollama_chat
 from core.providers.ollama import (
+    build_model,
     create_model,
     ensure_model_loaded,
     ensure_server_running,
+    model_info as base_info,
     is_model_loaded,
     stop_server,
     unload_all_models,
@@ -131,6 +134,20 @@ def _modelfile_for(base_model: str) -> Path:
             f"Available families: {available}. Add {family}.Modelfile to run it."
         )
     return path
+
+
+def _build(alias: str, base_model: str) -> str:
+    """Builds `alias` from `base_model`'s header: the user's (core.user_models, as this process read them
+    when it started), else Nuru's checked-in one. Returns the rendering baked in."""
+    header = user_models.header(base_model)
+    if header is None:
+        return create_model(alias, base_model, _modelfile_for(base_model))
+    shown = base_info(base_model)  # what this very model can do, whatever was checked when it was saved
+    problem = user_models.base_problem(shown)
+    if problem:
+        raise ValueError(f"{base_model} can't run Nuru: {problem}")
+    check_header(header, set(shown.get("capabilities") or []))
+    return build_model(alias, render_header(header, base_model, MODELFILES_DIR / "system.md"))
 
 
 OBSIDIAN_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "obsidian")
@@ -523,7 +540,7 @@ class Session:
         if CLAUDE:  # no Modelfile: the same system.md goes out with each request instead
             system_text = render_system((MODELFILES_DIR / "system.md").read_text(encoding="utf-8"))
         else:
-            rendered = create_model(MODEL, BASE_MODEL, _modelfile_for(BASE_MODEL))
+            rendered = _build(MODEL, BASE_MODEL)
             system_text = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]
 
         decision_config = load_decision_config()  # refuses enforce on uncalibrated thresholds
@@ -699,7 +716,7 @@ class Session:
                 system = render_system((MODELFILES_DIR / "system.md").read_text(encoding="utf-8"))
             else:
                 alias = "nuru-" + re.sub(r"[^a-z0-9._-]+", "-", target.lower())
-                rendered = create_model(alias, target, _modelfile_for(target))
+                rendered = _build(alias, target)
                 main = {"id": target, "model": alias, "claude": False, "profile": model_profile.for_model(target),
                         "chat": ollama_chat}
                 system = rendered.split('SYSTEM """', 1)[1].rsplit('"""', 1)[0]

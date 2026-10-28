@@ -13,7 +13,7 @@ import requests
 from claude_access.keys import api_key
 from claude_access.models import MAIN_MODELS
 
-from core import model_profile
+from core import model_profile, user_models
 from core.providers import claude as claude_provider
 from core.providers.ollama import BASE, model_info
 
@@ -52,10 +52,14 @@ def _local() -> list[dict]:
     for name in sorted(m["name"] for m in tags):
         try:
             profile = model_profile.for_model(name)  # unsupported families and Nuru's own aliases fail here
-            can_think = "thinking" in model_info(name).get("capabilities", [])
+            shown = model_info(name)
         except (ValueError, requests.RequestException):
             continue
-        found.append(_choice(name, name, False, profile, can_think))
+        if user_models.base_problem(shown):  # this very model: a family's name says nothing of what it can do
+            continue
+        can_think = "thinking" in shown.get("capabilities", [])
+        label = f"{name} (untested)" if user_models.custom(name) else name  # the user's own settings
+        found.append(_choice(name, label, False, profile, can_think))
     return found
 
 

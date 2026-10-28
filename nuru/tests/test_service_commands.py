@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import signal
+import socket
 import sqlite3
 import threading
 from types import SimpleNamespace
@@ -361,3 +362,80 @@ def test_managed_stdin_read_failure_still_stops_the_service(tmp_path, capsys):
     assert json.loads(path.read_text(encoding="utf-8"))["stop_key"] == instance.stop_key
     server._forget_managed(path)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("payload", [b"not json", b'"\xff"'])
+def test_admin_json_rejects_malformed_and_non_utf8_without_exposing_payload(payload):
+    handler = server.Handler.__new__(server.Handler)
+    handler.read_body = lambda limit: payload
+    with pytest.raises(ProtocolError, match="invalid JSON") as refused:
+        handler.json_body(100)
+    assert str(refused.value) == "invalid JSON"
+
+
+@pytest.mark.parametrize("query", [{"limit": ["many"]}, {"limit": ["0"]}, {"limit": ["101"]}])
+def test_paging_bounds_reject_invalid_numbers(query):
+    with pytest.raises(ProtocolError):
+        server.Handler.number(query, "limit", 50, 1, 100)
+
+
+def test_invalid_history_cursor_is_refused_before_access():
+    with pytest.raises(ProtocolError, match="before: not in the required format"):
+        server.Handler.before({"before": ["../other-history"]})
+
+
+def test_revocation_is_rechecked_before_dispatching_a_body():
+    handler = server.Handler.__new__(server.Handler)
+    checked = []
+    handler.device = SimpleNamespace(digest="revoked-digest", kind="browser")
+    handler.server = SimpleNamespace(remote_origin="https://nuru.test.ts.net", remote_credentials=SimpleNamespace(
+        check_digest=lambda digest, kind: checked.append((digest, kind)) or False))
+    with pytest.raises(ProtocolError, match="expired or revoked"):
+        handler.ensure_active()
+    assert checked == [("revoked-digest", "browser")]
+
+
+def test_a_header_deadline_after_socket_close_is_harmless():
+    handler = server.Handler.__new__(server.Handler)
+    shutdown = []
+    def closed(how):
+        shutdown.append(how)
+        raise OSError("already closed")
+    handler.connection = SimpleNamespace(shutdown=closed)
+    handler._header_timeout()
+    assert shutdown == [socket.SHUT_RDWR]
+
+
+def test_failed_http_worker_dispatch_returns_the_connection_slot(monkeypatch):
+    """A thread-start failure cannot slowly exhaust all connection admission slots."""
+    instance = server.NuruServer.__new__(server.NuruServer)
+    instance.closing = False
+    instance._slots = threading.BoundedSemaphore(1)
+    def exhausted(*args):
+        raise RuntimeError("cannot start HTTP worker")
+    monkeypatch.setattr(server.ThreadingHTTPServer, "process_request", exhausted)
+    with pytest.raises(RuntimeError, match="cannot start HTTP worker"):
+        instance.process_request(object(), ("127.0.0.1", 1234))
+    assert instance._slots.acquire(blocking=False), "dispatch failure leaked the only slot"
+    instance._slots.release()
+
+
+def test_remote_listener_without_credential_registry_never_binds():
+    with pytest.raises(ValueError, match="remote credentials required"):
+        server.NuruServer(None, None, port=0, remote_origin="https://nuru.test.ts.net")
+
+
+@pytest.mark.parametrize("closing, available", [(True, 1), (False, 0)])
+def test_closing_or_full_listener_refuses_without_creating_a_worker(closing, available, monkeypatch):
+    instance = server.NuruServer.__new__(server.NuruServer)
+    instance.closing = closing
+    instance._slots = threading.BoundedSemaphore(available)
+    rejected = []
+    instance.shutdown_request = rejected.append
+    monkeypatch.setattr(server.ThreadingHTTPServer, "process_request", lambda *a: pytest.fail("admitted a refused request"))
+    connection = object()
+    instance.process_request(connection, ("127.0.0.1", 1234))
+    assert rejected == [connection]
+    if available:
+        assert instance._slots.acquire(blocking=False), "refusal consumed an admission slot"
+        instance._slots.release()

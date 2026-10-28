@@ -178,9 +178,13 @@ function type(input, value) {
   input.dispatchEvent(new window.Event("input"));
 }
 
+// POST /v1/models's answer, every field as model-settings-v1 has it.
+const added = (fields) => ({ model: "llama3.1:8b", family: "llama3.1", custom: true, revision: R1, active_revision: R1,
+  header: "FROM __BASE_MODEL__\n", profile: "think: {}\n", nuru: null, default: false, added: false, ...fields });
+
 test("adding a model Ollama lacks downloads it, remembers it for Remove Nuru, then has Nuru set its family up", async () => {
   const client = fakeClient();
-  client.added = { family: "llama3.1", added: true, custom: true };
+  client.added = added({ added: true, active_revision: "initial" });
   const { containerEl, ollama, remembered } = section({ client });
   const add = addRow(containerEl);
   type(add.input, "llama3.1:8b");
@@ -193,17 +197,28 @@ test("adding a model Ollama lacks downloads it, remembers it for Remove Nuru, th
 
 test("a model Ollama has isn't downloaded again, and a family Nuru already runs is said so", async () => {
   const client = fakeClient();
-  client.added = { family: "qwen3.5", added: false, custom: false };
+  client.added = added({ model: "qwen3.5:9b", family: "qwen3.5", custom: false, revision: "initial", active_revision: "initial",
+    nuru: { header: "FROM __BASE_MODEL__\n", profile: "think: {}\n" } });
   const { containerEl, ollama } = section({ client, ollama: fakeOllama({ have: ["qwen3.5:9b"] }) });
   const add = addRow(containerEl);
   type(add.input, "qwen3.5:9b");
   add.button.click();
   await until(() => add.desc() === "Nuru already runs qwen3.5 models: qwen3.5:9b is offered.");
   assert.deepEqual(ollama.pulled, []);
-  client.added = { family: "llama3.1", added: false, custom: true };
+  client.added = added({});
   type(add.input, "llama3.1:8b");
   add.button.click();
   await until(() => add.desc() === "Nuru already runs llama3.1 models: llama3.1:8b is offered with your settings.");
+});
+
+test("a family added before but not yet in use says to restart, not that the model is offered (Astra's #64 review)", async () => {
+  const client = fakeClient();
+  client.added = added({ revision: R2, active_revision: "initial" });
+  const { containerEl } = section({ client, ollama: fakeOllama({ have: ["llama3.1:8b"] }) });
+  const add = addRow(containerEl);
+  type(add.input, "llama3.1:8b");
+  add.button.click();
+  await until(() => add.desc() === "llama3.1 is set up already: restart Nuru to use llama3.1:8b.");
 });
 
 test("adding says what's wrong: not a name, no Ollama, a refusal, a blocked download", async () => {

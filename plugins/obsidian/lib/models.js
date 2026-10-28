@@ -140,8 +140,11 @@ function displayModels(tab, containerEl) {
       say(`Checking ${name} with Nuru…`);
       const { client } = await tab.plugin.connect();
       const result = await client.addModel(name);
+      // Offered only once this service runs with what is saved: added now, or saved earlier but not yet in use.
+      const pending = result.revision !== result.active_revision;
       say(result.added ? `Set up ${result.family}: restart Nuru to use ${name}.`
-        : `Nuru already runs ${result.family} models: ${name} is offered${result.custom ? " with your settings" : ""}.`);
+        : pending ? `${result.family} is set up already: restart Nuru to use ${name}.`
+          : `Nuru already runs ${result.family} models: ${name} is offered${result.custom ? " with your settings" : ""}.`);
     } catch (error) {
       const filter = tab.ollama.filterPage(error.message);
       if (filter) {

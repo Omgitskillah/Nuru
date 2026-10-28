@@ -206,11 +206,11 @@ def test_serve_managed_stdin_shutdown_releases_listeners_and_database_ownership(
         if not kwargs.get("remote_origin"):
             ready.set()
         return made
-    registered = []
+    registered, built = [], []
     monkeypatch.setattr(server, "Service", make_service)
     monkeypatch.setattr(server, "NuruServer", make_server)
     monkeypatch.setattr(server.signal, "signal", lambda sig, handler: registered.append((sig, handler)))
-    monkeypatch.setattr(server, "_session_factory", lambda vault: lambda cid: pytest.fail("status loaded a model"))
+    monkeypatch.setattr(server, "_session_factory", lambda vault: lambda cid: built.append((vault, cid)))
     read_fd, write_fd = os.pipe()
     with os.fdopen(read_fd, "rb") as stdin, os.fdopen(write_fd, "wb") as owner:
         monkeypatch.setattr(server.sys, "stdin", SimpleNamespace(buffer=stdin))
@@ -244,6 +244,7 @@ def test_serve_managed_stdin_shutdown_releases_listeners_and_database_ownership(
             peer.join(10)
     assert not timed_out.is_set(), "managed EOF failed to stop serve within its test deadline"
     assert not peer.is_alive() and not failures
+    assert built == [], "status must not create a Session on the service worker"
     assert answers[0][0] == 200 and answers[0][1]["vault"]["name"] == "vault"
     assert not (Credentials().directory / "managed.json").exists()
     assert all(instance.closing and instance.socket.fileno() == -1 for instance in servers)
@@ -324,7 +325,7 @@ def test_request_body_has_a_total_deadline_and_rejects_truncation(monkeypatch, m
     handler.headers["Content-Length"] = "2"
     clocks = iter([10.0, 11.0, 16.0])
     reads, timeouts = [], []
-    monkeypatch.setattr(server.time, "monotonic", lambda: next(clocks))
+    monkeypatch.setattr(server, "time", SimpleNamespace(monotonic=lambda: next(clocks, 16.0)))
     def read1(size):
         reads.append(size)
         if mode == "timeout":

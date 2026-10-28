@@ -10,12 +10,14 @@ from core.providers.mcp_tools import MCPTools
 # "server" is identified by its string.
 TOOLS: dict[str, list[SimpleNamespace]] = {}
 CALLS: list[tuple[str, str, dict]] = []
+TIMEOUTS: list[tuple[str, str, float | None]] = []  # (server, "session" or the tool, its read timeout)
 
 
 @pytest.fixture(autouse=True)
 def _reset_fake_servers():
     TOOLS.clear()
     CALLS.clear()
+    TIMEOUTS.clear()
 
 
 class _FakeStdioClient:
@@ -30,8 +32,9 @@ class _FakeStdioClient:
 
 
 class _FakeClientSession:
-    def __init__(self, read, write, client_info=None):
+    def __init__(self, read, write, client_info=None, read_timeout_seconds=None):  # the real SDK's parameters
         self._server_id = read
+        TIMEOUTS.append((read, "session", read_timeout_seconds))
 
     async def __aenter__(self):
         return self
@@ -45,8 +48,9 @@ class _FakeClientSession:
     async def list_tools(self):
         return SimpleNamespace(tools=TOOLS[self._server_id])
 
-    async def call_tool(self, name, arguments):
+    async def call_tool(self, name, arguments, read_timeout_seconds=None):
         CALLS.append((self._server_id, name, arguments))
+        TIMEOUTS.append((self._server_id, name, read_timeout_seconds))
         return SimpleNamespace(content=[SimpleNamespace(text=f"{self._server_id}:{name}")], is_error=name == "failing_tool")
 
 

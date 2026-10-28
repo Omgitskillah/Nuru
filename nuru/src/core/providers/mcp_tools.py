@@ -13,20 +13,47 @@ owns which tool.
 or one the model names anyway (from training, or an old prompt) - can't be reached
 until it is added here on purpose. Nuru's harness reaches every tool, the
 decision layer's included, through `call_harness_tool()`; the model never does.
+
+Every request has a deadline, and one runs at a time. A request that runs past its
+deadline, or is stopped through `cancel`, retires the whole wrapper: its servers are
+closed, since one may still be working on it, and every later request - including
+one already waiting its turn - fails with ToolsUnavailable without being sent. The
+owner (Session) starts a fresh wrapper for its next turn. A write that timed out or
+was stopped may or may not have happened; it is never retried here.
 """
 
 import asyncio
 import concurrent.futures
 import threading
+import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
-from mcp import ClientSession, StdioServerParameters, types
+from mcp import ClientSession, MCPError, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
+from mcp.types import REQUEST_TIMEOUT
 
 _CLOSE_SECONDS = 15
+_STARTUP_SECONDS = 30  # a server's initialize, and listing its tools
+_OPTIONAL_STARTUP_SECONDS = 120  # the same for an optional server, which may start cold (Docker, torch)
+_READ_SECONDS = 120  # a search may wait for Ollama to load a model
+_WRITE_SECONDS = 300  # a write takes milliseconds, but a false timeout leaves it uncertain
+_GRACE_SECONDS = 5  # past the SDK's own deadline, in case it never fires
+_POLL_SECONDS = 0.1  # how often a waiting request looks at `cancel`
 
 _CLIENT_INFO = types.Implementation(name="nuru-agent", version="0.1.0")
+
+
+class ToolsUnavailable(ConnectionError):
+    """The wrapper was retired or closed before this request was sent: it didn't run."""
+
+
+class ToolCallStopped(ConnectionError):
+    """`cancel` was set while the request ran: it may or may not have taken effect."""
+
+
+def _describe(params) -> str:
+    return " ".join([params.command, *params.args]) if hasattr(params, "command") else str(params)
 
 
 @dataclass(frozen=True)
@@ -38,9 +65,18 @@ class ToolResult:
 
 
 class MCPTools:
-    def __init__(self, server_params: list[StdioServerParameters], model_tools: frozenset[str]):
+    def __init__(self, server_params: list[StdioServerParameters], model_tools: frozenset[str], *,
+                 optional: list[StdioServerParameters] = (), writes: frozenset[str] = frozenset()):
+        """`optional` servers may fail to start without failing connect(): they're left out, and
+        listed in `unavailable`. A tool in `writes` gets the longer deadline."""
         self._server_params = server_params
+        self._optional = list(optional)
         self._model_tools = model_tools
+        self._writes = writes
+        self._admission = threading.Lock()  # one request at a time
+        self.retired: str | None = None  # why, once a request timed out or was stopped
+        self.unavailable: list[tuple[str, str]] = []  # (command, why) of optional servers that didn't start
+        self.cancel: threading.Event | None = None  # set by the owner for a turn: stops its running request
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._started = False
@@ -51,6 +87,7 @@ class MCPTools:
         self._tool_sessions: dict[str, ClientSession] = {}
         self._stop_event = asyncio.Event()
         self._closed_future: concurrent.futures.Future | None = None
+        self._owner: asyncio.Task | None = None
 
     def connect(self) -> None:
         started_here = False
@@ -65,7 +102,14 @@ class MCPTools:
                 self._started = True
                 started_here = True
                 self._thread.start()
-            self._sessions = self._sessions_ready.result()
+            limit = (len(self._server_params) * _STARTUP_SECONDS + len(self._optional) * _OPTIONAL_STARTUP_SECONDS
+                     + _GRACE_SECONDS)
+            try:
+                self._sessions = self._sessions_ready.result(timeout=limit)
+            except concurrent.futures.TimeoutError:
+                if self._sessions_ready.done():
+                    raise  # a server's own startup timeout
+                raise TimeoutError(f"the tool servers didn't start within {limit:g} s") from None
         except BaseException as error:
             if not started_here:
                 raise
@@ -88,16 +132,28 @@ class MCPTools:
     async def _run(self, sessions_ready: concurrent.futures.Future) -> None:
         """Owns every session for their whole life: entered and exited by this
         same task, since anyio's cancel scopes require that."""
+        self._owner = asyncio.current_task()
         failure = None
         try:
             async with AsyncExitStack() as stack:
                 sessions = []
-                for params in self._server_params:
-                    read, write = await stack.enter_async_context(stdio_client(params))
-                    session = await stack.enter_async_context(
-                        ClientSession(read, write, client_info=_CLIENT_INFO)
-                    )
-                    await session.initialize()
+                for params, optional in [(p, False) for p in self._server_params] + [(p, True) for p in self._optional]:
+                    peer = await stack.enter_async_context(AsyncExitStack())  # this server's, to close alone
+                    try:
+                        read, write = await peer.enter_async_context(stdio_client(params))
+                        session = await peer.enter_async_context(ClientSession(
+                            read, write, client_info=_CLIENT_INFO,
+                            read_timeout_seconds=_OPTIONAL_STARTUP_SECONDS if optional else _STARTUP_SECONDS))
+                        await session.initialize()
+                    except Exception as error:
+                        if not optional:
+                            raise
+                        try:
+                            await peer.aclose()
+                        except Exception as cleanup:
+                            error.add_note(f"closing it also failed: {type(cleanup).__name__}: {cleanup}")
+                        self.unavailable.append((_describe(params), f"{type(error).__name__}: {error}"))
+                        continue
                     sessions.append(session)
                 sessions_ready.set_result(sessions)
                 await self._stop_event.wait()
@@ -120,8 +176,10 @@ class MCPTools:
         """Ollama-format `tools` definitions for every tool every server exposes. For the harness."""
         tools = []
         self._tool_sessions = {}
+        if self.retired or self._closed:
+            raise ToolsUnavailable("the tools weren't listed: " + (self.retired or "the tools are closed"))
         for session in self._sessions:
-            result = asyncio.run_coroutine_threadsafe(session.list_tools(), self._loop).result()
+            result = self._request(lambda: session.list_tools(), _OPTIONAL_STARTUP_SECONDS, "listing the tools")
             for t in result.tools:
                 self._tool_sessions[t.name] = session
                 tools.append(
@@ -154,9 +212,63 @@ class MCPTools:
         if not self._tool_sessions:
             self.all_tools()
         session = self._tool_sessions[name]
-        result = asyncio.run_coroutine_threadsafe(session.call_tool(name, arguments), self._loop).result()
+        seconds = _WRITE_SECONDS if name in self._writes else _READ_SECONDS
+        result = self._request(lambda: session.call_tool(name, arguments, read_timeout_seconds=seconds),
+                               seconds, f"the {name} tool")
         text = "\n".join(block.text for block in result.content if hasattr(block, "text"))
         return ToolResult(text, bool(getattr(result, "is_error", False)))
+
+    def _request(self, start, seconds: float, what: str):
+        """Run the coroutine `start()` makes on the owner loop, alone, and wait for it: at most
+        `seconds` (the SDK's deadline) plus a grace, and only until `cancel` is set. Either retires
+        the wrapper. Nothing is sent once it's retired or closed."""
+        with self._admission:
+            if self.retired or self._closed or not self._started:
+                raise ToolsUnavailable(f"{what} wasn't run: " + (self.retired or "the tools are closed"))
+            if self.cancel is not None and self.cancel.is_set():
+                raise ToolsUnavailable(f"{what} wasn't run: the turn was stopped")
+            future = asyncio.run_coroutine_threadsafe(start(), self._loop)
+            deadline = time.monotonic() + seconds + _GRACE_SECONDS
+            while True:
+                done, _ = concurrent.futures.wait([future], timeout=_POLL_SECONDS)
+                if done:
+                    try:
+                        return future.result()
+                    except MCPError as error:
+                        if error.error.code != REQUEST_TIMEOUT:
+                            raise
+                        stopped = TimeoutError(f"{what} took longer than {seconds:g} s")
+                        self._retire(stopped, future)
+                        raise stopped from error
+                if self.cancel is not None and self.cancel.is_set():
+                    stopped = ToolCallStopped(f"{what} was stopped while it ran")
+                elif time.monotonic() > deadline:
+                    stopped = TimeoutError(f"{what} took longer than {seconds:g} s")
+                elif self._closed:  # closed under it: the loop is gone, so it can never finish
+                    raise ConnectionAbortedError(f"{what} was cut off: the tools were closed while it ran")
+                else:
+                    continue
+                self._retire(stopped, future)
+                raise stopped
+
+    def _retire(self, error: BaseException, future: concurrent.futures.Future) -> None:
+        """Stop `future`'s request and close every server: one may still be working on it."""
+        self.retired = f"an earlier request was abandoned ({error})"
+        future.cancel()
+        try:
+            self.close()
+        except BaseException as cleanup:
+            error.add_note(f"closing the tool servers also failed: {type(cleanup).__name__}: {cleanup}")
+
+    def _stop_owner(self) -> None:
+        """On the owner loop: let a started owner close its sessions in order; one still starting may
+        be waiting on a server that never answers, so it is cancelled instead."""
+        if self._owner is None:  # not running yet
+            self._loop.call_soon(self._stop_owner)
+        elif self._sessions_ready.done():
+            self._stop_event.set()
+        else:
+            self._owner.cancel()
 
     def close(self) -> None:
         """Close sessions in their owner task, then join and release its event loop.
@@ -173,7 +285,7 @@ class MCPTools:
                 return
             if self._thread.is_alive() and not self._closed_future.done():
                 try:
-                    self._loop.call_soon_threadsafe(self._stop_event.set)
+                    self._loop.call_soon_threadsafe(self._stop_owner)
                 except RuntimeError:
                     # The owner can finish between the liveness check and scheduling.
                     if not self._loop.is_closed():

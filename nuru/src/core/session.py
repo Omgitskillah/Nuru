@@ -393,6 +393,25 @@ class Text:
     text: str
 
 
+def _paragraph_after_tools(events: Iterator["Event"]) -> Iterator["Event"]:
+    """TODO F9: the model's words after a tool call start a new paragraph, so they never run on from what
+    it said before the call ("…in your notes.Here is…"). Only the reply shown changes: each round's own
+    text is stored as the model wrote it. Closing this closes the turn under it."""
+    said, after_call = "", False
+    try:
+        for event in events:
+            if isinstance(event, ToolCall):
+                after_call = True
+            elif isinstance(event, Text) and event.text:
+                if after_call and said.strip() and not said.endswith("\n\n"):
+                    yield Text("\n" if said.endswith("\n") else "\n\n")
+                after_call = False
+                said = (said + event.text)[-200:]
+            yield event
+    finally:
+        events.close()
+
+
 @dataclass(frozen=True)
 class ToolCall:
     """The model asked for a tool. It runs right after this is yielded. `call_id` names this call in
@@ -772,7 +791,14 @@ class Session:
         """Send `text` to the model, behind a line giving the current date and time, and yield what
         happens next: chunks of its reply, what it reasoned, and the tool calls it makes, then a
         Failure if the turn couldn't be completed. A turn that ends with reasoning but no reply of
-        its own says so in one line.
+        its own says so in one line. What the model says after a tool call starts a new paragraph
+        (_paragraph_after_tools).
+
+        See _ask for cancelling and the decision layer."""
+        return _paragraph_after_tools(self._ask(text, cancel))
+
+    def _ask(self, text: str, cancel: threading.Event | None = None) -> Iterator[Event]:
+        """Session.ask's turn.
 
         Setting `cancel` stops the turn at the next chunk (or once the running tool call
         returns); whatever the model had said by then is kept as its reply.

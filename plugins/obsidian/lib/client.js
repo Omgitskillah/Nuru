@@ -97,6 +97,17 @@ class NuruClient {
 
   cancel(turnId) { return this.post(`/v1/turns/${encodeURIComponent(turnId)}/cancel`, {}); }
 
+  // A local model family's settings (model-settings-v1.schema.json), only on this computer's own listener.
+  modelSettings(model) { return this.request("GET", `/v1/models/settings?model=${encodeURIComponent(model)}`); }
+
+  saveModelSettings(settings) { return this.request("PUT", "/v1/models/settings", settings); }
+
+  resetModelSettings(model, revision) {
+    return this.request("DELETE", `/v1/models/settings?model=${encodeURIComponent(model)}&expected_revision=${encodeURIComponent(revision)}`);
+  }
+
+  addModel(model) { return this.request("POST", "/v1/models", { model }); }
+
   answer(questionId, operation, chosen, other) {
     return this.post(`/v1/questions/${encodeURIComponent(questionId)}/answers`,
       { operation, chosen, ...(other ? { other } : {}) });

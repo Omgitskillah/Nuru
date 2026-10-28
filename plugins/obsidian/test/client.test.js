@@ -139,3 +139,25 @@ test("when no answer comes, the problem says what failed", async () => {
   await assert.rejects(connect({ vaultPath: vault, home: home("t"), fetch: async () => { throw new TypeError("Illegal invocation"); } }),
     (e) => e.kind === "no-service" && e.message.includes("TypeError: Illegal invocation"));
 });
+
+// TODO F22: the model settings routes (model-settings-v1.schema.json), each with its method, path and body,
+// and a refusal (a stale save's 409) as its code.
+test("model settings are read, saved, reset and added on their own routes, names and revisions escaped", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "t", fetch: async (url, init) => {
+    sent.push([init.method, url, init.body ? JSON.parse(init.body) : undefined]);
+    if (init.method === "PUT") return json(409, { v: 1, error: { code: "conflict", message: "reload them" } });
+    return json(200, { family: "llama3.1" });
+  } });
+  assert.deepEqual(await client.modelSettings("ns/llama3.1:8b"), { family: "llama3.1" });
+  await assert.rejects(client.saveModelSettings({ model: "llama3.1:8b", expected_revision: "initial", header: "h", profile: "p" }),
+    (error) => error instanceof NuruError && error.code === "conflict" && error.status === 409);
+  await client.resetModelSettings("llama3.1:8b", "a&b");
+  await client.addModel("llama3.1:8b");
+  assert.deepEqual(sent, [
+    ["GET", "http://x/v1/models/settings?model=ns%2Fllama3.1%3A8b", undefined],
+    ["PUT", "http://x/v1/models/settings", { model: "llama3.1:8b", expected_revision: "initial", header: "h", profile: "p" }],
+    ["DELETE", "http://x/v1/models/settings?model=llama3.1%3A8b&expected_revision=a%26b", undefined],
+    ["POST", "http://x/v1/models", { model: "llama3.1:8b" }],
+  ]);
+});

@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from dotenv import dotenv_values
 
-from core.service import protocol
+from core.service import model_settings, protocol
 from core.service import remote_contract, remote_access
 from core.service.remote_credentials import RemoteCredentials, COOKIE, csrf
 from core.service.capture import CaptureError
@@ -58,7 +58,13 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("GET", r"/v1/requests/([^/]+)", "request_state"),
     ("POST", r"/v1/service/stop", "stop_service"),
     ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
+    # Local administration (model-settings-v1.schema.json): refused on the remote listener (route()).
+    ("GET", r"/v1/models/settings", "model_settings"),
+    ("PUT", r"/v1/models/settings", "save_model_settings"),
+    ("DELETE", r"/v1/models/settings", "reset_model_settings"),
+    ("POST", r"/v1/models", "add_model"),
 ]
+_LOCAL_ONLY = re.compile(r"/v1/models(?:/.*)?")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -168,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.cors()
-        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Access-Control-Max-Age", "600")
@@ -203,6 +209,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.capture_answer(401, {"ok": False, "error": "unauthorized"})
         if self.server.remote_origin and remote_access.public_route(self, method, url.path):
             return
+        if self.server.remote_origin and _LOCAL_ONLY.fullmatch(url.path):
+            return self.refuse("not_found", "no such path")  # what model runs is this computer's to change
         identity = (remote_access.authenticate(self, method, is_capture) if self.server.remote_origin
                     else self.principal(capture=is_capture))
         if identity is None:
@@ -389,6 +397,30 @@ class Handler(BaseHTTPRequestHandler):
         self.answer(202, {"stopping": True})
         print("nuru-serve: stopping, as another vault asked", file=sys.stderr)
         self.server.stop()
+
+    # ------------------------------------------------------------------ model settings (TODO F22)
+    def _model_settings(self) -> "model_settings.ModelSettings":
+        return model_settings.ModelSettings((self.server.service.status().get("models") or {}).get("default"))
+
+    @staticmethod
+    def _one(query: dict, name: str) -> str:
+        values = query.get(name, [])
+        if len(values) != 1:
+            raise ProtocolError("invalid_request", f"{name}: give it once")
+        return values[0]
+
+    def on_model_settings(self, principal, query):
+        self.answer(200, self._model_settings().describe(self._one(query, "model")))
+
+    def on_save_model_settings(self, principal, query):
+        body = self.json_body(model_settings.MAX_BODY_BYTES)
+        self.answer(200, self._model_settings().save(body))
+
+    def on_reset_model_settings(self, principal, query):
+        self.answer(200, self._model_settings().reset(self._one(query, "model"), self._one(query, "expected_revision")))
+
+    def on_add_model(self, principal, query):
+        self.answer(200, self._model_settings().add(self.json_body(model_settings.MAX_BODY_BYTES)))
 
     def on_create_conversation(self, principal, query):
         self.answer(*self.server.service.create_conversation(principal, self.body("create_conversation")))

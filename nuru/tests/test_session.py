@@ -276,10 +276,15 @@ def test_start_closes_what_it_opened_when_a_later_step_fails(monkeypatch):
 
     monkeypatch.setattr(session, "ensure_model_loaded", failing_load)
 
+    opened = []
+    real_logger = session.CLILogger
+    monkeypatch.setattr(session, "CLILogger", lambda *a, **k: opened.append(real_logger(*a, **k)) or opened[-1])
+
     with pytest.raises(RuntimeError, match="model would not load"):
         Session.start()
 
     assert fake_tools.closed is True
+    assert opened and opened[0]._logger.handlers == []  # its log file is closed too
 
 
 def test_close_releases_the_tools_and_the_database_without_touching_ollama(monkeypatch):
@@ -292,8 +297,10 @@ def test_close_releases_the_tools_and_the_database_without_touching_ollama(monke
     monkeypatch.setattr(session, "unload_all_models", unexpected)
     monkeypatch.setattr(session, "stop_server", unexpected)
 
+    (log,) = s.logger._logger.handlers
     s.close()
 
+    assert log.stream is None and s.logger._logger.handlers == []
     assert fake_tools.closed is True
     with pytest.raises(Exception, match="closed database"):
         s.store.get_messages(s.conversation_id)

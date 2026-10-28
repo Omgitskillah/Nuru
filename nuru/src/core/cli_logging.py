@@ -32,9 +32,8 @@ class CLILogger:
         log_dir.mkdir(parents=True, exist_ok=True)
         self.session_id = uuid.uuid4().hex[:8]
 
-        # A uuid, not id(self): see access_logging.middleware for why.
-        self._logger = logging.getLogger(f"cli_logging.{uuid.uuid4().hex}")
-        self._logger.setLevel(logging.INFO)
+        # Not in logging's registry, which would keep it, and its open file, after the session ends.
+        self._logger = logging.Logger("cli_logging", logging.INFO)
         self._logger.propagate = False
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -205,3 +204,12 @@ class CLILogger:
                 "session_context_tokens": self._context_tokens,
             }
         )
+
+    def close(self) -> None:
+        """Close the log file. Safe to call again; later entries are dropped."""
+        for handler in list(self._logger.handlers):
+            self._logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass

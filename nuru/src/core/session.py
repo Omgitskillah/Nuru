@@ -611,6 +611,7 @@ class Session:
                 server_command=f"uv run obsidian-mcp; {' '.join([math.command, *math.args])}"
                 + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
             )
+            opened.callback(logger.close)
             store = ConversationStore(db_path)
             opened.callback(store.close)
             decision_log = DecisionLog(decision_config.database_path)
@@ -1569,7 +1570,7 @@ class Session:
         # the vault's history lock. Preserve the first failure for the caller.
         closers = [resource.stop for resource in (self.indexer, self.link_auditor, self.steward)
                    if resource is not None]
-        closers.extend((self.tools.close, self.store.close))
+        closers.extend((self.tools.close, self.store.close, self.logger.close))
         if self._in_use is not None:
             held = self._in_use
             self._in_use = None

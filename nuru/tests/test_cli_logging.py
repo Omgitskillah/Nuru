@@ -201,3 +201,57 @@ def test_logging_failure_does_not_raise(tmp_path, monkeypatch):
     monkeypatch.setattr(logger._logger, "info", broken_info)
 
     logger.turn_start("hi")  # must not raise
+
+
+def test_close_releases_the_file_and_leaves_other_sessions_logging(tmp_path):
+    import logging
+
+    first = CLILogger(tmp_path / "a", model="m", think=False, server_command="cmd")
+    second = CLILogger(tmp_path / "b", model="m", think=False, server_command="cmd")
+    (handler,) = first._logger.handlers
+    registered = set(logging.root.manager.loggerDict)
+
+    first.close()
+    first.close()  # again: nothing left to close
+    first.turn_start("after close")  # dropped, not raised
+    second.turn_start("still here")
+
+    assert handler.stream is None and first._logger.handlers == []
+    assert [e["event"] for e in read_entries(tmp_path / "a")] == ["session_start"]
+    assert [e["event"] for e in read_entries(tmp_path / "b")] == ["session_start", "turn_start"]
+    assert not any(name.startswith("cli_logging") for name in registered)  # nothing for the registry to keep
+
+
+def test_close_survives_a_handler_that_fails_to_close(tmp_path):
+    logger = CLILogger(tmp_path, model="m", think=False, server_command="cmd")
+    (handler,) = logger._logger.handlers
+    handler.close = lambda: (_ for _ in ()).throw(OSError("disk gone"))
+
+    logger.close()
+
+    assert logger._logger.handlers == []
+
+
+def test_a_log_file_that_cannot_open_logs_nothing_and_still_closes(tmp_path, monkeypatch):
+    import logging
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("read-only disk")
+
+    monkeypatch.setattr(logging, "FileHandler", refuse)
+    logger = CLILogger(tmp_path, model="m", think=False, server_command="cmd")
+    logger.turn_start("hi")
+    logger.close()
+
+    assert list(tmp_path.glob("*.jsonl")) == [] and logger._logger.handlers == []
+
+
+def test_stewardship_logs_counts_without_the_diagnostics(tmp_path):
+    logger = CLILogger(tmp_path, model="m", think=False, server_command="cmd")
+
+    logger.stewardship({"snapshot": "s1", "packages": 2, "complete": True, "counts": {"ok": 3},
+                        "finding_count": 1, "diagnostics": ["private detail", "another"]})
+
+    entry = read_entries(tmp_path)[-1]
+    assert entry["event"] == "stewardship" and entry["diagnostic_count"] == 2 and entry["model_calls"] == 0
+    assert "private detail" not in json.dumps(entry)

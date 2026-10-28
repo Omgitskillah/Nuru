@@ -1638,3 +1638,39 @@ def test_an_optional_server_that_did_not_start_is_said_once(monkeypatch, capsys)
     assert capsys.readouterr().err.count(
         "Nuru: cargo run --bin python-mcp didn't start, so its tools are unavailable this session: "
         "MCPError: Request 'initialize' timed out") == 1
+
+
+def test_renewed_tools_keep_the_turns_authorization_for_every_caller(monkeypatch, tmp_path):
+    """The service puts a live authorization check on session.tools before the turn; a renewal inside the
+    turn must carry it, or the decision shadow's direct harness calls would skip a revocation."""
+    import sys
+    from mcp import StdioServerParameters
+    from core.providers.mcp_tools import MCPTools
+
+    log = tmp_path / "searches.log"
+    log.touch()
+    peer = StdioServerParameters(command=sys.executable, args=["-c", _SEARCH_PEER, str(log)])
+    made = []
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: made.append(
+        MCPTools([peer], frozenset({"search"}), writes=kwargs["writes"])) or made[-1])
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
+    monkeypatch.setattr(session, "chat", scripted_chat([[tool_call("search", {"query": "tyres"})], "Nothing."]))
+    s = Session.start()
+    try:
+        allowed = {"now": True}
+        authorize = lambda name: allowed["now"]
+        s.authorize_tool = s.tools.authorize_tool = authorize  # as Service._turn does
+        made[0].retired = "an earlier request was abandoned"
+        made[0].close()
+
+        list(s.ask("anything about tyres?"))  # renews, then the authorized search runs
+        assert len(made) == 2 and made[1].authorize_tool is authorize
+        assert log.read_text().split() == ["tyres"]
+
+        allowed["now"] = False  # revoked mid-turn
+        refused = s.tools.call_harness_tool("search", {"query": "after revocation"})
+        assert refused.is_error and "permission" in refused.text
+        assert log.read_text().split() == ["tyres"]  # never reached the server
+    finally:
+        s.close()

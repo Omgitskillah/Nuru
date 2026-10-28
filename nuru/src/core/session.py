@@ -836,6 +836,7 @@ class Session:
         if not self.tools.retired or self._make_tools is None:
             return
         tools = self._make_tools()
+        tools.authorize_tool = getattr(self.tools, "authorize_tool", None)  # this turn's (Service._turn)
         tools.connect()
         try:
             server_tools = tools.list_tools()

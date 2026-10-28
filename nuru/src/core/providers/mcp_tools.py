@@ -84,6 +84,7 @@ class MCPTools:
         self._close_lock = threading.Lock()
         self._sessions_ready: concurrent.futures.Future | None = None
         self._sessions: list[ClientSession] = []
+        self._listings: list[tuple[ClientSession, list]] = []  # each server's tools, listed at startup
         self._tool_sessions: dict[str, ClientSession] = {}
         self._stop_event = asyncio.Event()
         self._closed_future: concurrent.futures.Future | None = None
@@ -105,7 +106,8 @@ class MCPTools:
             limit = (len(self._server_params) * _STARTUP_SECONDS + len(self._optional) * _OPTIONAL_STARTUP_SECONDS
                      + _GRACE_SECONDS)
             try:
-                self._sessions = self._sessions_ready.result(timeout=limit)
+                self._listings = self._sessions_ready.result(timeout=limit)
+                self._sessions = [session for session, _ in self._listings]
             except concurrent.futures.TimeoutError:
                 if self._sessions_ready.done():
                     raise  # a server's own startup timeout
@@ -145,6 +147,9 @@ class MCPTools:
                             read, write, client_info=_CLIENT_INFO,
                             read_timeout_seconds=_OPTIONAL_STARTUP_SECONDS if optional else _STARTUP_SECONDS))
                         await session.initialize()
+                        # Listed here, so a server that stalls listing is left out like one that stalls
+                        # starting, and listing later needs no request that could stall.
+                        listed = (await session.list_tools()).tools
                     except Exception as error:
                         if not optional:
                             raise
@@ -154,7 +159,7 @@ class MCPTools:
                             error.add_note(f"closing it also failed: {type(cleanup).__name__}: {cleanup}")
                         self.unavailable.append((_describe(params), f"{type(error).__name__}: {error}"))
                         continue
-                    sessions.append(session)
+                    sessions.append((session, listed))
                 sessions_ready.set_result(sessions)
                 await self._stop_event.wait()
         except BaseException as e:
@@ -178,9 +183,8 @@ class MCPTools:
         self._tool_sessions = {}
         if self.retired or self._closed:
             raise ToolsUnavailable("the tools weren't listed: " + (self.retired or "the tools are closed"))
-        for session in self._sessions:
-            result = self._request(lambda: session.list_tools(), _OPTIONAL_STARTUP_SECONDS, "listing the tools")
-            for t in result.tools:
+        for session, listed in self._listings:
+            for t in listed:
                 self._tool_sessions[t.name] = session
                 tools.append(
                     {
@@ -295,5 +299,6 @@ class MCPTools:
                 raise TimeoutError(f"MCP cleanup did not finish within {_CLOSE_SECONDS} seconds")
             self._closed = True
             self._sessions = []
+            self._listings = []
             self._tool_sessions = {}
             self._closed_future.result()

@@ -186,6 +186,52 @@ def test_an_optional_server_that_never_answers_or_cannot_start_is_left_out(peer,
     assert all(process.returncode is not None for process in processes)
 
 
+# Starts properly, then stalls or refuses listing its tools (argv[1]: "stall" or "error").
+_BAD_LISTING = '''
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("method") == "initialize":
+        result = {"protocolVersion": message["params"]["protocolVersion"], "capabilities": {"tools": {}},
+                  "serverInfo": {"name": "bad-listing", "version": "1"}}
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+    elif message.get("method") == "tools/list" and sys.argv[1] == "error":
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32603, "message": "no tools today"}}), flush=True)
+'''
+
+
+def _bad_listing(mode):
+    return StdioServerParameters(command=sys.executable, args=["-c", _BAD_LISTING, mode])
+
+
+@pytest.mark.parametrize("mode, why", [("stall", "timed out"), ("error", "no tools today")])
+def test_an_optional_server_that_fails_listing_its_tools_is_left_out_alone(peer, processes, monkeypatch, mode, why):
+    _short(monkeypatch, _OPTIONAL_STARTUP_SECONDS=0.5)
+    client = MCPTools([peer.params], frozenset({"echo"}), optional=[_bad_listing(mode)])
+    try:
+        client.connect()
+
+        ((command, reason),) = client.unavailable
+        assert command.endswith(mode) and why in reason
+        assert [t["function"]["name"] for t in client.list_tools()] == ["echo"]
+        assert client.call_tool("echo", {"text": "required still works"}) == "required still works"
+        assert client.retired is None and processes[1].returncode is not None
+    finally:
+        client.close()
+
+
+def test_a_required_server_that_stalls_listing_its_tools_fails_startup_in_bounded_time(processes, monkeypatch):
+    _short(monkeypatch, _STARTUP_SECONDS=0.5, _GRACE_SECONDS=5)
+    client = MCPTools([_bad_listing("stall")], frozenset())
+    started = time.monotonic()
+
+    with pytest.raises(BaseExceptionGroup) as raised:
+        client.connect()
+
+    assert raised.group_contains(MCPError, match="Request 'tools/list' timed out")
+    assert time.monotonic() - started < 5 and processes[0].returncode is not None
+
+
 # ------------------------------------------------- Nuru's own guard, past a deadline the SDK never enforces
 class Transport:
     async def __aenter__(self):

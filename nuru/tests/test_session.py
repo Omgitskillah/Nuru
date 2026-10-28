@@ -48,6 +48,9 @@ class FakeMCPTools:
         self.calls = []
         self.connected = False
         self.closed = False
+        self.retired = None  # MCPTools' own state, read by Session
+        self.unavailable = []
+        self.cancel = None
 
     def connect(self):
         self.connected = True
@@ -970,7 +973,7 @@ def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
-        seen["params"] = server_params
+        seen["params"], seen["optional"], seen["writes"] = server_params, kwargs["optional"], kwargs["writes"]
         return FakeMCPTools()
 
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
@@ -980,7 +983,9 @@ def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp", "laya-mcp"]  # this checkout: cargo
+    assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp"]  # this checkout: cargo
+    assert [p.args[-1] for p in seen["optional"]] == ["laya-mcp"]  # may fail alone (F05)
+    assert seen["writes"] == session.MUTATIONS  # they get the longer deadline
 
 
 def test_a_release_install_runs_its_prebuilt_calculator_and_never_asks_for_rust(monkeypatch, tmp_path):
@@ -1045,7 +1050,7 @@ def test_start_adds_the_python_server_when_it_can_run(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):
-        seen["params"] = server_params
+        seen["optional"] = kwargs["optional"]
         return FakeMCPTools()
 
     monkeypatch.setattr(session, "ensure_server_running", lambda: None)
@@ -1056,7 +1061,7 @@ def test_start_adds_the_python_server_when_it_can_run(monkeypatch):
 
     Session.start()
 
-    assert [p.args[-1] for p in seen["params"]][-1] == "python-mcp"
+    assert [p.args[-1] for p in seen["optional"]][-1] == "python-mcp"  # Docker may start cold, or not at all
 
 
 def test_index_change_reports_the_indexers_passes(monkeypatch):
@@ -1543,3 +1548,129 @@ def test_closing_the_reply_closes_the_turn_under_it():
     assert next(shown).text == "One."
     shown.close()
     assert closed == [True], "a cancelled turn still ends"
+
+
+_SEARCH_PEER = '''
+import sys, anyio
+from mcp.server.mcpserver import MCPServer
+server = MCPServer("search-test")
+@server.tool()
+async def search(query: str) -> str:
+    with open(sys.argv[1], "a") as f:
+        f.write(query + "\\n")
+    if query == "stall":
+        await anyio.sleep(3600)
+    return '{"matches": []}'
+server.run(transport="stdio")
+'''
+
+
+def test_a_stalled_search_stopped_mid_turn_ends_it_and_the_next_turn_runs_on_fresh_tools(monkeypatch, tmp_path):
+    """F05, end to end: stopping a turn reaches the tool call it's waiting on; the next turn gets new servers."""
+    import sys
+    import time
+    from mcp import StdioServerParameters
+    from core.providers.mcp_tools import MCPTools
+
+    log = tmp_path / "searches.log"
+    log.touch()
+    peer = StdioServerParameters(command=sys.executable, args=["-c", _SEARCH_PEER, str(log)])
+    made = []
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: made.append(
+        MCPTools([peer], frozenset({"search"}), writes=kwargs["writes"])) or made[-1])
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None):
+        if messages[-1]["role"] == "user":
+            yield {"tool_calls": [tool_call("search", {"query": "stall" if "stall" in messages[-1]["content"] else "tyres"})]}
+        else:
+            yield "Nothing in your notes."
+            yield {"prompt_tokens": 1, "completion_tokens": 1}
+
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
+    monkeypatch.setattr(session, "chat", chat)
+    s = Session.start()
+    try:
+        cancel = threading.Event()
+        def stop_once_searching():
+            deadline = time.monotonic() + 10
+            while "stall" not in log.read_text() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            cancel.set()
+        threading.Thread(target=stop_once_searching, daemon=True).start()
+        started = time.monotonic()
+        list(s.ask("search for stall", cancel))
+
+        assert time.monotonic() - started < 10  # not the 120 s read deadline
+        assert made[0].retired and made[0].cancel is None
+        replies = list(s.ask("anything about tyres?"))
+
+        assert len(made) == 2 and s.tools is made[1] and not made[1].retired
+        assert log.read_text().split() == ["stall", "tyres"]
+        assert Text("Nothing in your notes.") in replies
+    finally:
+        s.close()
+
+
+def test_a_reconnect_that_fails_fails_that_turn_and_the_next_turn_tries_again(monkeypatch):
+    s = start_session(monkeypatch, chat=scripted_chat(["Back again."]))
+    old = s.tools
+    old.retired = "an earlier request was abandoned (the search tool took longer than 120 s)"
+    broken, working = FakeMCPTools(), FakeMCPTools()
+    broken.list_tools = lambda: (_ for _ in ()).throw(ConnectionError("notes server gone"))
+    fresh = iter([broken, working])
+    s._make_tools = lambda: next(fresh)
+
+    with pytest.raises(ConnectionError, match="notes server gone"):
+        list(s.ask("hello"))
+    assert s.tools is old and broken.closed  # the half-started one isn't left running
+
+    assert list(s.ask("hello again"))[-1] == Text("Back again.")
+    assert s.tools is working and working.connected and working.cancel is None
+    s.close()
+
+
+def test_an_optional_server_that_did_not_start_is_said_once(monkeypatch, capsys):
+    tools = FakeMCPTools()
+    tools.unavailable = [("cargo run --bin python-mcp", "MCPError: Request 'initialize' timed out")]
+    start_session(monkeypatch, tools=tools).close()
+
+    assert capsys.readouterr().err.count(
+        "Nuru: cargo run --bin python-mcp didn't start, so its tools are unavailable this session: "
+        "MCPError: Request 'initialize' timed out") == 1
+
+
+def test_renewed_tools_keep_the_turns_authorization_for_every_caller(monkeypatch, tmp_path):
+    """The service puts a live authorization check on session.tools before the turn; a renewal inside the
+    turn must carry it, or the decision shadow's direct harness calls would skip a revocation."""
+    import sys
+    from mcp import StdioServerParameters
+    from core.providers.mcp_tools import MCPTools
+
+    log = tmp_path / "searches.log"
+    log.touch()
+    peer = StdioServerParameters(command=sys.executable, args=["-c", _SEARCH_PEER, str(log)])
+    made = []
+    monkeypatch.setattr(session, "MCPTools", lambda server_params, **kwargs: made.append(
+        MCPTools([peer], frozenset({"search"}), writes=kwargs["writes"])) or made[-1])
+    monkeypatch.setattr(session, "ensure_server_running", lambda: None)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: None)
+    monkeypatch.setattr(session, "chat", scripted_chat([[tool_call("search", {"query": "tyres"})], "Nothing."]))
+    s = Session.start()
+    try:
+        allowed = {"now": True}
+        authorize = lambda name: allowed["now"]
+        s.authorize_tool = s.tools.authorize_tool = authorize  # as Service._turn does
+        made[0].retired = "an earlier request was abandoned"
+        made[0].close()
+
+        list(s.ask("anything about tyres?"))  # renews, then the authorized search runs
+        assert len(made) == 2 and made[1].authorize_tool is authorize
+        assert log.read_text().split() == ["tyres"]
+
+        allowed["now"] = False  # revoked mid-turn
+        refused = s.tools.call_harness_tool("search", {"query": "after revocation"})
+        assert refused.is_error and "permission" in refused.text
+        assert log.read_text().split() == ["tyres"]  # never reached the server
+    finally:
+        s.close()

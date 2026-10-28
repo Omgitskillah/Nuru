@@ -44,6 +44,8 @@ class StubPredictor:
 class ShadowedTools:
     """The model's tools, faked; the harness tools are laya_mcp's real tool functions."""
 
+    retired, unavailable, cancel = None, (), None  # MCPTools' own state, read by Session
+
     def __init__(self, tools, results, laya_down=False):
         self._tools = tools
         self._results = results

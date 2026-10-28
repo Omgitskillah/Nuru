@@ -40,7 +40,7 @@ from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
 from core import model_profile, questions, titles
-from core.providers.mcp_tools import MCPTools, ToolResult
+from core.providers.mcp_tools import MCPTools, ToolResult, ToolsUnavailable
 from core.questions import Question
 from core import tool_dispatch
 from core.tool_dispatch import ToolOutcome, MUTATIONS, written_path
@@ -526,6 +526,7 @@ class Session:
         # and the calls Nuru makes for itself (the notes run_python reads) aren't reported.
         self.on_tool_outcome: Callable[[str, str, dict, ToolOutcome, bool], None] | None = None
         self._shown_call: str | None = None  # the call_id of the ToolCall last shown, until it runs
+        self._make_tools: Callable[[], MCPTools] | None = None  # fresh tools, once these are retired (start)
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
         self.indexer: VaultIndexer | None = None  # embeds changed notes in the background; None without a vault
         self._in_use = None  # the shared lock on this vault's history (core.vault_data.hold_history)
@@ -594,12 +595,13 @@ class Session:
             math = math_server_params()
             laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
             laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
-            tools = MCPTools(
-                [obsidian, math, *laya,
-                 *([python_server] if python_server else [])],
-                model_tools=MODEL_TOOLS,
-            )
+            def make_tools() -> MCPTools:  # Laya and Docker's Python may fail alone, and say so
+                return MCPTools([obsidian, math], model_tools=MODEL_TOOLS,
+                                optional=[*laya, *([python_server] if python_server else [])], writes=MUTATIONS)
+            tools = make_tools()
             tools.connect()
+            for command, why in tools.unavailable:
+                print(f"Nuru: {command} didn't start, so its tools are unavailable this session: {why}", file=sys.stderr)
             opened.callback(tools.close)
             server_tools = tools.list_tools()
             tool_definitions = _hide_injected_args(server_tools)
@@ -616,7 +618,9 @@ class Session:
             opened.callback(store.close)
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
-            shadow = DecisionShadow(tools.call_harness_tool, decision_log, logger.session_id)
+            # Through session.tools at call time: _renew_tools may replace them.
+            shadow = DecisionShadow(lambda name, arguments: session.tools.call_harness_tool(name, arguments),
+                                    decision_log, logger.session_id)
             shadow.off = laya_off
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
@@ -624,6 +628,7 @@ class Session:
             if conversation_id is None:
                 conversation_id = store.create_conversation()
             session = cls(tools, tool_definitions, logger, store, conversation_id, shadow, enforcement, system_text, server_tools)
+            session._make_tools = make_tools
             if vault is not None:
                 session._vault_scope = str(vault)
             if load_model:
@@ -813,7 +818,35 @@ class Session:
         (_paragraph_after_tools).
 
         See _ask for cancelling and the decision layer."""
-        return _paragraph_after_tools(self._ask(text, cancel))
+        return _paragraph_after_tools(self._stoppable(text, cancel))
+
+    def _stoppable(self, text: str, cancel: threading.Event | None) -> Iterator[Event]:
+        """_ask's turn, with fresh tools if the last ones were retired, and `cancel` reaching a running
+        tool call too, for this turn only."""
+        self._renew_tools()
+        self.tools.cancel = cancel
+        try:
+            yield from self._ask(text, cancel)
+        finally:
+            self.tools.cancel = None
+
+    def _renew_tools(self) -> None:
+        """A tool call that timed out or was stopped retired the tools (core.providers.mcp_tools): start
+        new servers for this turn. A failure here fails the turn, and the next one tries again."""
+        if not self.tools.retired or self._make_tools is None:
+            return
+        tools = self._make_tools()
+        tools.authorize_tool = getattr(self.tools, "authorize_tool", None)  # this turn's (Service._turn)
+        tools.connect()
+        try:
+            server_tools = tools.list_tools()
+        except BaseException:
+            tools.close()
+            raise
+        self.tools = tools
+        self.tool_definitions = _hide_injected_args(server_tools)
+        self._tool_validators = tool_dispatch.validators(self.tool_definitions)
+        self._server_validators = tool_dispatch.validators(server_tools)
 
     def _ask(self, text: str, cancel: threading.Event | None = None) -> Iterator[Event]:
         """Session.ask's turn.
@@ -1364,6 +1397,8 @@ class Session:
                 if name == _PYTHON_TOOL:
                     result = ToolResult(_python_result(result.text), result.is_error)
                 outcome = tool_dispatch.classify(name, result)
+            except ToolsUnavailable as e:  # never sent: a write here didn't happen
+                outcome = tool_dispatch.failure("transport", type(e).__name__, str(e), certainty="not_completed")
             except Exception as e:
                 # Do not confuse a programming error with repairable model arguments.
                 transport = isinstance(e, (OSError, TimeoutError, requests.exceptions.RequestException,

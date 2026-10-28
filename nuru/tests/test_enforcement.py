@@ -54,6 +54,8 @@ class ScriptedPredictor:
 class Tools:
     """The model's tools, faked; the harness tools are laya_mcp's real functions."""
 
+    retired, unavailable, cancel = None, (), None  # MCPTools' own state, read by Session
+
     def __init__(self, results):
         self.results = results
         self.calls = []
@@ -561,6 +563,26 @@ def test_forced_write_lost_response_cannot_replay(setup):
     assert isinstance(events[-1], Failure) and 'uncertain' in events[-1].message
     assert len([name for name, _ in tools.calls if name == 'write_note']) == 1
     assert s.store.pending_writes(s._vault_scope)[0]['state'] == 'uncertain'
+
+
+@pytest.mark.parametrize("raised, state", [("unsent", None), ("stopped", "uncertain")])
+def test_a_write_on_retired_tools_is_not_completed_and_one_stopped_mid_call_is_uncertain(setup, raised, state):
+    """F05: ToolsUnavailable means the write was never sent; ToolCallStopped means it was, and may have run.
+    Neither is retried."""
+    from core.providers.mcp_tools import ToolCallStopped, ToolsUnavailable
+    s, seen, tools = setup(['gate_write'], [[call('search', {'query': 'Priya'})],
+        [call('write_note', {'note': PRIYA, 'content': 'line'})], ['Done.']])
+    original = tools.call_tool_result
+    def failing(name, args):
+        if name == 'write_note':
+            tools.calls.append((name, args))
+            raise (ToolsUnavailable("the write_note tool wasn't run: retired") if raised == "unsent"
+                   else ToolCallStopped("the write_note tool was stopped while it ran"))
+        return original(name, args)
+    tools.call_tool_result = failing
+    list(s.ask(REQUEST))
+    assert len([name for name, _ in tools.calls if name == 'write_note']) == 1
+    assert [w['state'] for w in s.store.pending_writes(s._vault_scope)] == ([state] if state else [])
 
 
 def test_automatic_first_read_exception_uses_bounded_recovery(setup):

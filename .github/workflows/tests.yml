@@ -106,10 +106,10 @@ jobs:
           npm run build
 
       - name: Save plugin coverage
-        if: ${{ !inputs.windows_run && matrix.os == 'ubuntu-latest' }}
+        if: ${{ !inputs.windows_run }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: coverage-plugin
+          name: coverage-plugin-${{ matrix.os }}
           path: plugins/obsidian/lcov.info
           retention-days: 7
 
@@ -166,4 +166,5 @@ jobs:
           uv run --locked coverage combine --keep coverage/coverage-ubuntu-latest/.coverage coverage/coverage-windows-latest/.coverage
           uv run --locked coverage json -o coverage.json
           uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
-          uv run --locked python tools/coverage_gate.py --python coverage.json --lcov coverage/coverage-plugin/lcov.info --js-root plugins/obsidian
+          uv run --locked python tools/coverage_gate.py --python coverage.json --js-root plugins/obsidian \
+            --lcov coverage/coverage-plugin-ubuntu-latest/lcov.info --lcov coverage/coverage-plugin-windows-latest/lcov.info

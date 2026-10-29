@@ -56,6 +56,14 @@ def test_a_malformed_or_empty_python_report_fails_the_gate(tmp_path, monkeypatch
     assert problem in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("statements, covered", [(-1, 0), (10, 11), (10, -1), ("10", 10), (10, True)])
+def test_impossible_python_counts_fail_the_gate(tmp_path, monkeypatch, capsys, statements, covered):
+    report = python_report(tmp_path, a=(1, 1))
+    report.write_text(json.dumps({"files": {"src/a.py": {"summary": {"num_statements": statements, "covered_lines": covered}}}}))
+    assert check(tmp_path, monkeypatch, "--python", str(report), "--python-root", "src") == 2
+    assert "impossible counts" in capsys.readouterr().err
+
+
 def test_a_source_file_missing_from_the_python_report_fails_the_gate(tmp_path, monkeypatch, capsys):
     report = python_report(tmp_path, imported=(10, 10))
     (tmp_path / "src" / "never_imported.py").write_text("x = 1\n")
@@ -64,77 +72,130 @@ def test_a_source_file_missing_from_the_python_report_fails_the_gate(tmp_path, m
 
 
 # ---------------------------------------------------------------- the plugin's lcov reports
-def plugin(tmp_path, **files):
+# Node's report for a real run (node --test --experimental-test-coverage --test-reporter=lcov) of
+#   1 const slashOrStar = /[/*]/;        5 const note = `one
+#   2 function never() {                 6 // inside a template string
+#   3   throw new Error("not run");      7 three`;
+#   4 }                                  8 module.exports = { slashOrStar, never, note };
+# with a test that loads it and never calls never(). js_code_lines.js (esbuild) gives code lines 1-5 and 8.
+REAL_NODE = ("SF:lib/a.js\nFN:2,never\nFNDA:0,never\nFNF:1\nFNH:0\nBRDA:1,0,0,1\nBRF:1\nBRH:1\n"
+             "DA:1,1\nDA:2,0\nDA:3,0\nDA:4,0\nDA:5,1\nDA:6,1\nDA:7,1\nDA:8,1\nLH:5\nLF:8\nend_of_record\n")
+REAL_CODE = {"lib/a.js": [1, 2, 3, 4, 5, 8]}
+
+
+def plugin(tmp_path, code=REAL_CODE, **files):
     root = tmp_path / "plugin"
-    for name, text in files.items():
-        path = root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    return root
+    for name in {**{n: "" for n in code}, **files}:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("x();\n")
+    listing = tmp_path / "code-lines.json"
+    listing.write_text(json.dumps(code))
+    return root, listing
 
 
 def lcov(path, records):
-    """Write an lcov report: {source: {line: hits}}, each record complete as Node writes it."""
+    """An lcov report as Node writes it: {source: {line: hits}}."""
     lines = []
     for name, hits in records.items():
         lines += [f"SF:{name}", *(f"DA:{n},{h}" for n, h in sorted(hits.items())),
-                  f"LF:{len(hits)}", f"LH:{sum(1 for h in hits.values() if h)}", "end_of_record"]
+                  f"LH:{sum(1 for h in hits.values() if h)}", f"LF:{len(hits)}", "end_of_record"]
     path.write_text("\n".join(lines) + "\n")
     return path
 
 
-SOURCE = '// header comment\n"use strict";\n/* a block\n   of words, not code\n*/\nfunction a() {\n  return "// not a comment";\n}\n\nif (process.platform === "win32") a(); // Windows\n'
-# Code lines: 2, 6, 7, 8, 10. Node marks every line run, comments too, unless code around them didn't.
+def js(tmp_path, monkeypatch, reports, listing, root, *extra):
+    return check(tmp_path, monkeypatch, *[arg for r in reports for arg in ("--lcov", str(r))],
+                 "--js-code-lines", str(listing), "--js-root", str(root), "--js-source", "lib/*.js", *extra)
 
 
-def test_code_lines_skip_blank_lines_and_comments_but_not_strings_that_look_like_them():
-    assert gate.code_lines(SOURCE) == [2, 6, 7, 8, 10]
-    assert gate.code_lines('const s = "/* not a comment */"; /* one */ x();\nconst t = `a\\`b`; // c\n') == [1, 2]
+def test_an_uncalled_function_below_a_regex_counts_as_missed_in_a_real_node_report(tmp_path, monkeypatch, capsys):
+    """Node marks the comment-only and string lines run; only code lines count, and never() didn't run."""
+    root, listing = plugin(tmp_path)
+    (tmp_path / "lcov.info").write_text(REAL_NODE)
+    assert js(tmp_path, monkeypatch, [tmp_path / "lcov.info"], listing, root) == 1
+    assert capsys.readouterr().out.splitlines()[0] == "lib/a.js: 3/6 lines, 50.0%; needs 100% (small)"
 
 
-def test_a_line_run_on_either_system_counts_and_comments_never_do(tmp_path, monkeypatch, capsys):
-    root = plugin(tmp_path, **{"lib/a.js": SOURCE})
-    every = {n: 1 for n in range(1, 11)}
-    ubuntu = lcov(tmp_path / "ubuntu.info", {"lib/a.js": {**every, 10: 0}})  # the Windows-only line didn't run here
+def test_a_line_run_on_either_system_counts(tmp_path, monkeypatch, capsys):
+    root, listing = plugin(tmp_path, code={"lib/a.js": [1, 2, 3]})
+    ubuntu = lcov(tmp_path / "ubuntu.info", {"lib/a.js": {1: 1, 2: 1, 3: 0}})  # line 3 only runs on Windows
     # Another system's checkout: an absolute Windows path to the same file.
-    windows = lcov(tmp_path / "windows.info", {"D:\\a\\Nuru\\plugin\\lib\\a.js": {**every, 2: 0, 3: 0, 4: 0}})
-    argv = ["--js-root", str(root), "--js-source", "lib/*.js"]
-    assert check(tmp_path, monkeypatch, "--lcov", str(ubuntu), *argv) == 1
-    assert capsys.readouterr().out.splitlines()[0] == "lib/a.js: 4/5 lines, 80.0%; needs 100% (small)"
-    assert check(tmp_path, monkeypatch, "--lcov", str(ubuntu), "--lcov", str(windows), *argv) == 0
+    windows = lcov(tmp_path / "windows.info", {"D:\\a\\Nuru\\plugin\\lib\\a.js": {1: 1, 2: 0, 3: 1}})
+    assert js(tmp_path, monkeypatch, [ubuntu], listing, root) == 1
+    assert capsys.readouterr().out.splitlines()[0] == "lib/a.js: 2/3 lines, 66.7%; needs 100% (small)"
+    assert js(tmp_path, monkeypatch, [ubuntu, windows], listing, root) == 0
     assert capsys.readouterr().out == "1 of 1 modules meet the coverage rule\n"
 
 
 def test_tests_and_files_outside_the_sources_are_ignored(tmp_path, monkeypatch, capsys):
-    root = plugin(tmp_path, **{"lib/a.js": "x();\n", "test/a.test.js": "y();\n"})
+    root, listing = plugin(tmp_path, code={"lib/a.js": [1], "test/a.test.js": [1]})
     report = lcov(tmp_path / "lcov.info", {"lib/a.js": {1: 1}, "test/a.test.js": {1: 0}, "node_modules/x/i.js": {1: 0}})
-    assert check(tmp_path, monkeypatch, "--lcov", str(report), "--js-root", str(root), "--js-source", "lib/*.js") == 0
+    assert js(tmp_path, monkeypatch, [report], listing, root) == 0
     assert capsys.readouterr().out == "1 of 1 modules meet the coverage rule\n"
 
 
 def test_a_source_no_test_loads_fails_the_gate(tmp_path, monkeypatch, capsys):
-    root = plugin(tmp_path, **{"lib/a.js": "x();\n", "lib/unloaded.js": "y();\n"})
+    root, listing = plugin(tmp_path, code={"lib/a.js": [1], "lib/unloaded.js": [1]})
     report = lcov(tmp_path / "lcov.info", {"lib/a.js": {1: 1}})
-    assert check(tmp_path, monkeypatch, "--lcov", str(report), "--js-root", str(root), "--js-source", "lib/*.js") == 2
+    assert js(tmp_path, monkeypatch, [report], listing, root) == 2
     assert "no lcov report has lib/unloaded.js: no test loads it" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("text, problem", [("", "has no records in it"), ("TN:\n", "has no records in it"),
-                                           ("SF:lib/a.js\nend_of_record\n", "the record for lib/a.js has no line data"),
-                                           ("SF:lib/a.js\nDA:1,1\nend_of_record\n", "the record for lib/a.js has no line data"),
-                                           ("SF:lib/a.js\nLF:0\nLH:0\nend_of_record\n", "the record for lib/a.js has no line data")])
-def test_an_empty_report_or_an_incomplete_record_fails_the_gate(tmp_path, monkeypatch, capsys, text, problem):
-    root = plugin(tmp_path, **{"lib/a.js": "x();\n"})
-    (tmp_path / "lcov.info").write_text(text)
-    assert check(tmp_path, monkeypatch, "--lcov", "lcov.info", "--js-root", str(root), "--js-source", "lib/*.js") == 2
+def test_a_source_missing_from_the_code_line_listing_fails_the_gate(tmp_path, monkeypatch, capsys):
+    root, listing = plugin(tmp_path, code={"lib/a.js": [1]}, **{"lib/new.js": ""})
+    report = lcov(tmp_path / "lcov.info", {"lib/a.js": {1: 1}, "lib/new.js": {1: 1}})
+    assert js(tmp_path, monkeypatch, [report], listing, root) == 2
+    assert "has no code lines for lib/new.js" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("listing, problem", [("{not json", "isn't a code-line listing"), ('["lib/a.js"]', "isn't a code-line listing"),
+                                              ('{"lib/a.js": [0]}', "isn't a code-line listing"),
+                                              ('{"lib/a.js": ["1"]}', "isn't a code-line listing")])
+def test_a_malformed_code_line_listing_fails_the_gate(tmp_path, monkeypatch, capsys, listing, problem):
+    root, path = plugin(tmp_path)
+    path.write_text(listing)
+    (tmp_path / "lcov.info").write_text(REAL_NODE)
+    assert js(tmp_path, monkeypatch, [tmp_path / "lcov.info"], path, root) == 2
     assert problem in capsys.readouterr().err
+
+
+GOOD = "SF:lib/a.js\nDA:1,1\nLH:1\nLF:1\nend_of_record\n"
+
+
+@pytest.mark.parametrize("text, problem", [
+    ("", "has no records in it"), ("TN:\n", "has no records in it"),
+    ("SF:lib/a.js\nend_of_record\n", "doesn't add up"),
+    ("SF:lib/a.js\nDA:1,1\nend_of_record\n", "doesn't add up"),  # no LF or LH
+    ("SF:lib/a.js\nDA:1,1\nLF:999\nLH:0\nend_of_record\n", "doesn't add up"),
+    ("SF:lib/a.js\nDA:1,1\nLF:1\nLH:0\nend_of_record\n", "doesn't add up"),
+    (GOOD + "SF:lib/b.js\nDA:1,0\n", "the record for lib/b.js has no end_of_record"),
+    ("SF:lib/a.js\nDA:1,1\nSF:lib/b.js\nDA:1,1\nLF:1\nLH:1\nend_of_record\n", "the record for lib/a.js has no end_of_record"),
+    ("SF:lib/a.js\nDA:one,1\nLF:1\nLH:1\nend_of_record\n", "malformed line record"),
+    ("SF:lib/a.js\nDA:1,-1\nLF:1\nLH:0\nend_of_record\n", "impossible line record"),
+    ("SF:lib/a.js\nDA:1,1\nDA:1,1\nLF:1\nLH:1\nend_of_record\n", "impossible line record"),
+    ("SF:lib/a.js\nDA:1,1\nLF:x\nLH:1\nend_of_record\n", "malformed LF"),
+])
+def test_an_empty_report_or_an_incomplete_or_inconsistent_record_fails_the_gate(tmp_path, monkeypatch, capsys, text, problem):
+    root, listing = plugin(tmp_path, code={"lib/a.js": [1], "lib/b.js": [1]})
+    (tmp_path / "lcov.info").write_text(text)
+    assert js(tmp_path, monkeypatch, [tmp_path / "lcov.info"], listing, root) == 2
+    assert problem in capsys.readouterr().err
+
+
+def test_lcov_needs_its_code_line_listing(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exited:
+        gate.main(["--lcov", "lcov.info"])
+    assert exited.value.code == 2 and "--lcov needs --js-code-lines" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("argv, message", [([], "give --python, --lcov or both"),
                                            (["--python", "missing.json"], "isn't a coverage JSON report"),
-                                           (["--lcov", "missing.info"], "can't read missing.info")])
+                                           (["--lcov", "missing.info", "--js-code-lines", "listed.json"], "can't read missing.info"),
+                                           (["--lcov", "missing.info", "--js-code-lines", "missing.json"], "missing.json isn't a code-line listing")])
 def test_a_missing_report_fails_the_gate_and_says_why(tmp_path, monkeypatch, capsys, argv, message):
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "listed.json").write_text("{}")
     if not argv:
         with pytest.raises(SystemExit) as exited:
             gate.main(argv)

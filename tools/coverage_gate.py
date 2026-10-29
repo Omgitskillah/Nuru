@@ -3,12 +3,14 @@ module (at most SMALL). Both systems' runs count together, so each line counts o
 
 Python comes from a coverage JSON report (`coverage json`, after `coverage combine` of the Ubuntu and
 Windows data); every .py file under --python-root must be in it. The Obsidian plugin comes from Node's
-lcov reports, one per system. Node marks blank and comment lines as run, so a file's executable lines
-are its code lines (code_lines), and one is covered when any report ran it; every --js-source must have
-a record in some report, so a module no test loads fails rather than vanishing.
+lcov reports, one per system. Node marks blank and comment lines inside code that ran as run, so a
+file's executable lines are its code lines, from tools/js_code_lines.js (esbuild's parse), and one is
+covered when any report ran it; every --js-source must have a record in some report, so a module no
+test loads fails rather than vanishing.
 
     python tools/coverage_gate.py --python coverage.json [--python-root nuru/src ...]
-                                  --lcov ubuntu/lcov.info --lcov windows/lcov.info --js-root plugins/obsidian
+                                  --lcov ubuntu/lcov.info --lcov windows/lcov.info
+                                  --js-code-lines code-lines.json --js-root plugins/obsidian
 
 Prints each module that falls short and exits 1 if any does; 2 for a missing or malformed report.
 """
@@ -37,49 +39,18 @@ def short(statements: int, covered: int) -> bool:
     return covered * 100 / statements <= FLOOR
 
 
-def code_lines(text: str) -> list[int]:
-    """The 1-based numbers of the lines holding code: not blank, and not only comment. Strings are
-    read so a `//` or `/*` inside one isn't taken for a comment."""
-    lines, in_block = [], False
-    for number, line in enumerate(text.splitlines(), 1):
-        code, i, quote = False, 0, None
-        while i < len(line):
-            two = line[i:i + 2]
-            if in_block:
-                if two == "*/":
-                    in_block, i = False, i + 2
-                    continue
-                i += 1
-            elif quote:
-                if line[i] == "\\":
-                    i += 2
-                    continue
-                if line[i] == quote:
-                    quote = None
-                i += 1
-            elif two == "//":
-                break
-            elif two == "/*":
-                in_block, i = True, i + 2
-            else:
-                if line[i] in "'\"`":
-                    quote = line[i]
-                code = code or not line[i].isspace()
-                i += 1
-        if code:
-            lines.append(number)
-    return lines
-
-
 def python_modules(report: Path, roots: list[Path]) -> dict[str, tuple[int, int]]:
     try:
         files = json.loads(report.read_text(encoding="utf-8"))["files"]
-        modules = {name.replace("\\", "/"): (int(info["summary"]["num_statements"]), int(info["summary"]["covered_lines"]))
+        modules = {name.replace("\\", "/"): (info["summary"]["num_statements"], info["summary"]["covered_lines"])
                    for name, info in files.items()}
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         raise ReportError(f"{report} isn't a coverage JSON report: {error}") from None
     if not modules:
         raise ReportError(f"{report} has no files in it")
+    for name, (statements, covered) in modules.items():
+        if not (type(statements) is int and type(covered) is int and 0 <= covered <= statements):
+            raise ReportError(f"{report}: {name} has impossible counts ({covered} of {statements} statements)")
     missing = sorted(path.as_posix() for root in roots for path in root.rglob("*.py") if path.as_posix() not in modules)
     if missing:
         raise ReportError(f"{report} leaves out {len(missing)} source file(s), e.g. {missing[0]}: "
@@ -88,34 +59,63 @@ def python_modules(report: Path, roots: list[Path]) -> dict[str, tuple[int, int]
 
 
 def lcov_hits(report: Path) -> dict[str, set[int]]:
-    """{source file: the lines it ran}, from one lcov report. Each record must be complete."""
+    """{source file: the lines it ran}, from one lcov report. Every record must be complete and agree
+    with itself: LF lines found, LH of them hit, one DA per line, ended by end_of_record."""
     try:
         text = report.read_text(encoding="utf-8")
     except OSError as error:
         raise ReportError(f"can't read {report}: {error}") from None
     hits: dict[str, set[int]] = {}
-    name, seen, has_lf = None, set(), False
+    name = None
     for line in text.splitlines():
         if line.startswith("SF:"):
-            name, seen, has_lf = line[3:].replace("\\", "/"), set(), False
-        elif line.startswith("DA:") and name is not None:
-            number, count = (int(part) for part in line[3:].split(",")[:2])
-            if count > 0:
-                seen.add(number)
-            hits.setdefault(name, set())
-        elif line.startswith("LF:") and name is not None:
-            has_lf = True
-        elif line == "end_of_record" and name is not None:
-            if not has_lf or name not in hits:
-                raise ReportError(f"{report}: the record for {name} has no line data")
-            hits[name] |= seen
+            if name is not None:
+                raise ReportError(f"{report}: the record for {name} has no end_of_record")
+            name, counts, found, hit = line[3:].replace("\\", "/"), {}, None, None
+        elif name is None:
+            continue
+        elif line.startswith("DA:"):
+            try:
+                number, count = (int(part) for part in line[3:].split(",")[:2])
+            except ValueError:
+                raise ReportError(f"{report}: {name} has a malformed line record {line!r}") from None
+            if number < 1 or count < 0 or number in counts:
+                raise ReportError(f"{report}: {name} has an impossible line record {line!r}")
+            counts[number] = count
+        elif line.startswith(("LF:", "LH:")):
+            try:
+                value = int(line[3:])
+            except ValueError:
+                raise ReportError(f"{report}: {name} has a malformed {line[:2]} {line!r}") from None
+            found, hit = (value, hit) if line.startswith("LF:") else (found, value)
+        elif line == "end_of_record":
+            ran = {number for number, count in counts.items() if count}
+            if not counts or found != len(counts) or hit != len(ran):
+                raise ReportError(f"{report}: the record for {name} doesn't add up "
+                                  f"({len(counts)} lines, {len(ran)} run; LF {found}, LH {hit})")
+            hits.setdefault(name, set()).update(ran)
             name = None
+    if name is not None:
+        raise ReportError(f"{report}: the record for {name} has no end_of_record")
     if not hits:
         raise ReportError(f"{report} has no records in it")
     return hits
 
 
-def js_modules(reports: list[Path], root: Path, patterns: list[str]) -> dict[str, tuple[int, int]]:
+def code_lines(listing: Path) -> dict[str, list[int]]:
+    """tools/js_code_lines.js's output: {source: its code lines}."""
+    try:
+        lines = json.loads(listing.read_text(encoding="utf-8"))
+        if not isinstance(lines, dict) or not all(isinstance(v, list) and all(type(n) is int and n > 0 for n in v)
+                                                  for v in lines.values()):
+            raise ValueError("expected {source: [line numbers]}")
+    except (OSError, ValueError) as error:
+        raise ReportError(f"{listing} isn't a code-line listing: {error}") from None
+    return lines
+
+
+def js_modules(reports: list[Path], listing: Path, root: Path, patterns: list[str]) -> dict[str, tuple[int, int]]:
+    code_by_file = code_lines(listing)
     ran: dict[str, set[int]] = {}
     for report in reports:
         for name, lines in lcov_hits(report).items():
@@ -129,7 +129,9 @@ def js_modules(reports: list[Path], root: Path, patterns: list[str]) -> dict[str
             if not lines:
                 raise ReportError(f"no lcov report has {name}: no test loads it")
             run = set().union(*lines)
-            code = code_lines(path.read_text(encoding="utf-8"))
+            if name not in code_by_file:
+                raise ReportError(f"{listing} has no code lines for {name}")
+            code = code_by_file[name]
             modules[name] = (len(code), sum(1 for number in code if number in run))
     return modules
 
@@ -139,14 +141,17 @@ def main(argv=None) -> int:
     parser.add_argument("--python", type=Path)
     parser.add_argument("--python-root", type=Path, action="append", help="default: Nuru's source roots")
     parser.add_argument("--lcov", type=Path, action="append", help="one per system")
+    parser.add_argument("--js-code-lines", type=Path, help="tools/js_code_lines.js's output, needed with --lcov")
     parser.add_argument("--js-root", type=Path, default=Path("plugins/obsidian"), help="what lcov's paths are relative to")
     parser.add_argument("--js-source", action="append", help=f"glob under --js-root (default: {JS_SOURCES})")
     args = parser.parse_args(argv)
     if not args.python and not args.lcov:
         parser.error("give --python, --lcov or both")
+    if args.lcov and not args.js_code_lines:
+        parser.error("--lcov needs --js-code-lines")
     try:
         modules = {**(python_modules(args.python, args.python_root or [Path(r) for r in PYTHON_ROOTS]) if args.python else {}),
-                   **(js_modules(args.lcov, args.js_root, args.js_source or JS_SOURCES) if args.lcov else {})}
+                   **(js_modules(args.lcov, args.js_code_lines, args.js_root, args.js_source or JS_SOURCES) if args.lcov else {})}
     except ReportError as error:
         print(f"coverage gate: {error}", file=sys.stderr)
         return 2

@@ -92,3 +92,40 @@ test("a fingerprint tells keys apart without showing them", () => {
   assert.notEqual(fingerprint("sk-ant-a"), fingerprint("sk-ant-b"));
   assert.ok(!fingerprint("sk-ant-a").includes("sk-ant"));
 });
+
+// Failed saves preserve the old file and clean up the private staged replacement.
+test("a refused secret-file replacement preserves the original and removes only its staging file", (t) => {
+  const dir = folder({ ".env.deep-think": "CLAUDE_API_KEY=old\n", "keep.txt": "unrelated" });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, ".env.deep-think");
+  const failure = Object.assign(new Error("replacement denied"), { code: "EACCES" });
+  let staged;
+  t.mock.method(fs, "renameSync", (source, target) => {
+    assert.equal(target, file);
+    staged = source;
+    assert.equal(readEnv(source).CLAUDE_API_KEY, "new-secret");
+    if (POSIX) assert.equal(fs.statSync(source).mode & 0o777, 0o600);
+    throw failure;
+  });
+  assert.throws(() => setEnv(file, "CLAUDE_API_KEY", "new-secret", { secret: true }), (error) => error === failure);
+  assert.equal(fs.readFileSync(file, "utf8"), "CLAUDE_API_KEY=old\n");
+  assert.equal(fs.existsSync(staged), false);
+  assert.equal(fs.readFileSync(path.join(dir, "keep.txt"), "utf8"), "unrelated");
+  assert.deepEqual(fs.readdirSync(dir).sort(), [".env.deep-think", "keep.txt"]);
+});
+
+test("an unreadable settings file is not treated as empty or overwritten", (t) => {
+  const dir = folder({ ".env.nuru": "NURU_KEEP_ALIVE=30m\n" });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, ".env.nuru");
+  const failure = Object.assign(new Error("read denied"), { code: "EACCES" });
+  const originalRead = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (name, ...args) => {
+    if (name === file) throw failure;
+    return originalRead(name, ...args);
+  });
+  assert.throws(() => readEnv(file), (error) => error === failure);
+  assert.throws(() => setEnv(file, "NURU_KEEP_ALIVE", "-1"), (error) => error === failure);
+  assert.equal(originalRead(file, "utf8"), "NURU_KEEP_ALIVE=30m\n");
+  assert.deepEqual(fs.readdirSync(dir), [".env.nuru"]);
+});

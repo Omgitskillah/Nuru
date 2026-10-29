@@ -21,7 +21,7 @@ from mcp.client.stdio import get_default_environment
 
 from core import questions, session
 from cases import vault_snapshot, snapshot_changes
-from core.session import Ask, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
+from core.session import Ask, CallReasked, Failure, RetryWithoutThinking, Text, Thinking, ToolCall
 
 
 def main():
@@ -75,7 +75,7 @@ def main():
                 continue
             before = vault_snapshot(Path(os.environ["VAULT_PATH"]))
             turn_started, day = time.monotonic(), date.today().isoformat()
-            reply, tool_calls, thinking, retried, failure, asked = "", [], 0, False, None, None
+            reply, tool_calls, thinking, retried, failure, asked, reasked = "", [], 0, False, None, None, 0
             cancel = threading.Event()
             timer = threading.Timer(args.turn_timeout, cancel.set) if args.turn_timeout else None
             if timer:
@@ -89,6 +89,8 @@ def main():
                     thinking += 1
                 elif isinstance(event, RetryWithoutThinking):
                     retried = True
+                elif isinstance(event, CallReasked):
+                    reasked += 1
                 elif isinstance(event, Failure):
                     failure = event.message
                 elif isinstance(event, Ask):  # ends the turn; no scripted answers yet, so the next prompt is sent as is
@@ -101,7 +103,7 @@ def main():
             records.append({
                 "prompt": prompt, "think": args.think, "session_id": s.logger.session_id, "laya_state": laya_state,
                 "reply": reply, "tool_calls": tool_calls, "thinking_events": thinking,
-                "retried_without_thinking": retried, "failure": failure, "asked": asked, "timed_out": cancel.is_set(),
+                "retried_without_thinking": retried, "calls_reasked": reasked, "failure": failure, "asked": asked, "timed_out": cancel.is_set(),
                 "turn_seconds": round(time.monotonic() - turn_started, 1),
                 "shadow_failures": s.shadow.failures if s.shadow else None,
                 "expert_calls": sum(c["name"] == "ask_an_expert" for c in tool_calls),

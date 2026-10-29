@@ -39,7 +39,7 @@ from core.context_budget import ContextBudgetExceeded, available_tokens, estimat
 from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import model_profile, questions, titles
+from core import call_guard, model_profile, questions, titles
 from core.providers.mcp_tools import MCPTools, ToolResult, ToolsUnavailable
 from core.questions import Question
 from core import tool_dispatch
@@ -472,6 +472,13 @@ class Steered(RetryWithoutThinking):
 
 
 @dataclass(frozen=True)
+class CallReasked:
+    """The model wrote a tool call into its reply instead of making it, or made one Ollama couldn't
+    read (core.call_guard): the step is asked again under a schema that admits only a well-formed
+    call or an answer. What it wrote wasn't shown; what follows came from that second call."""
+
+
+@dataclass(frozen=True)
 class Failure:
     """The turn couldn't be completed. `message` says why, in words fit to show the user."""
 
@@ -486,7 +493,7 @@ class Ask:
     question: Question
 
 
-Event = Text | ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Steered | Failure | Ask
+Event = Text | ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Steered | CallReasked | Failure | Ask
 
 
 class Session:
@@ -800,6 +807,32 @@ class Session:
             kwargs["system"] = self._system_text()
         yield from self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
 
+    def _call_in_form(self, turn_id, messages, num_ctx, history_count, tools, cancel):
+        """The step again, under core.call_guard's schema: {"tool_call": ...} or {"answer": ...} as the
+        model chose, {} if the reply still didn't fit, None if the turn was cancelled meanwhile.
+        Thinking is off for it: the format applies to the reply, and the first call already reasoned."""
+        schema = call_guard.step_schema(tools)
+        text, usage, start = "", {}, time.monotonic()
+        for out in self._chat(self._model(), messages, num_ctx=num_ctx, history_count=history_count, think=False,
+                              tools=tools, fmt=schema, **self._profile().options(False)):
+            if _cancelled(cancel):
+                self._end_cancelled(turn_id, "")
+                return None
+            if isinstance(out, dict):
+                if not {"tool_calls", "thinking", "thinking_chunk", "provider_content"} & out.keys():
+                    usage = out
+                continue
+            text += out
+        step = call_guard.read_step(text, schema) or {}
+        self.logger.model_call(
+            turn_id=turn_id, duration_ms=(time.monotonic() - start) * 1000,
+            prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
+            stop_reason=usage.get("stop_reason"),
+            tool_calls_requested=[step["tool_call"]["function"]["name"]] if "tool_call" in step else [],
+            output_text=text,
+        )
+        return step
+
     def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
         budget = available_tokens(window, messages, system=self._system_text(), tools=tools, fmt=fmt)
         rows = self.store.get_recent_messages(self.conversation_id, budget, before_id=before_id)
@@ -980,6 +1013,10 @@ class Session:
             thinking = ""
             output_text = ""
             watch, steer = None, None
+            # A local model's reply that starts like a call written out is held back until it's
+            # clear (core.call_guard); Claude makes its calls through the API.
+            guarding = bool(tools_offered) and not self._claude() and not (final_answer or answer_after_failure)
+            held = guarding
             if self.shadow and self.enforcement and think:
                 watch = ThinkingWatch(self.enforcement.config.watch_thinking, think_tier(think), self.shadow.watch)
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
@@ -1013,6 +1050,11 @@ class Session:
                             usage = out
                         continue
                     output_text += out
+                    if held:
+                        if call_guard.may_be_call(output_text, tools_offered):
+                            continue
+                        held = False
+                        out = output_text  # what was held back, and this
                     if not hold_reply:
                         yield Text(out)
                 if steer:
@@ -1072,6 +1114,25 @@ class Session:
                 resume_think = think
                 think, steered = False, True
                 continue
+
+            if guarding and not tool_calls and (
+                    call_guard.looks_like_call(output_text, tools_offered)
+                    # tokens written and nothing came of them: a call Ollama's parser couldn't read
+                    or (not output_text.strip() and not thinking and usage.get("completion_tokens", 0) > 0)):
+                yield CallReasked()
+                step = self._call_in_form(turn_id, messages, num_ctx, history_count, tools_offered, cancel)
+                if step is None:
+                    return  # cancelled
+                if "tool_call" in step:
+                    tool_calls, output_text = [step["tool_call"]], ""
+                elif "answer" in step:
+                    output_text = step["answer"]
+                    if not hold_reply:
+                        yield Text(output_text)
+                elif held and output_text and not hold_reply:
+                    yield Text(output_text)  # no better step came: what it wrote is the reply
+            elif held and output_text and not hold_reply:
+                yield Text(output_text)  # held back as a possible call, and it ended as something else
 
             if (final_answer or answer_after_failure) and tool_calls and not tools_refused:
                 # Tools are closed but still listed: refuse the calls once and ask again.

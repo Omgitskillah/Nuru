@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from core import questions
 from core.conversation_store import ConversationStore
 from core.questions import MULTI, NO, YES, YES_NO, Question
-from core.session import Ask, Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ThinkingChunk, ToolCall
+from core.session import Ask, CallReasked, Event, RetryWithoutThinking, Session, Steered, Text, Thinking, ThinkingChunk, ToolCall
 
 HELP_TEXT = """Available commands:
   /help              Show this message.
@@ -57,6 +57,8 @@ def print_turn(events: Iterator[Event]) -> Question | None:
             print(f"[steer] Reasoning stopped ({event.reason}) - asking again with thinking off.")
         elif isinstance(event, RetryWithoutThinking):
             print("[retry] No reply was written - asking again with thinking off.")
+        elif isinstance(event, CallReasked):
+            print("[retry] The model wrote a tool call as text - asking again for a proper call.")
         elif isinstance(event, Ask):
             asked = event.question
         else:

@@ -1674,3 +1674,110 @@ def test_renewed_tools_keep_the_turns_authorization_for_every_caller(monkeypatch
         assert log.read_text().split() == ["tyres"]  # never reached the server
     finally:
         s.close()
+
+
+# ---- a tool call in the tools API's form (core.call_guard), with the tools Nuru really offers
+with open(os.path.join(os.path.dirname(__file__), "fixtures", "model_tools.json"), encoding="utf-8") as _f:
+    OFFERED_TOOLS = json.load(_f)  # MCPTools.list_tools() from the real servers, 2026-10-29 (see test_call_guard)
+
+
+def recorded_chat(*replies):
+    """One reply per model call, in order: each a list of what ollama.chat yields. Records every call's
+    think and format."""
+    calls = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None, fmt=None, **kwargs):
+        calls.append({"think": think, "fmt": fmt, "messages": [dict(m) for m in messages]})
+        yield from replies[len(calls) - 1]
+
+    return chat, calls
+
+
+def guarded_session(monkeypatch, chat, tools=None):
+    """A session on a local model offered the real tools, at the benchmark's 24k window (their
+    definitions and the step schema don't fit the fakes' default 8k)."""
+    return start_session(monkeypatch, chat=chat, tools=tools or FakeMCPTools(tools=OFFERED_TOOLS),
+                         model_info={"context_window": 24576})
+
+
+def test_a_call_written_as_text_is_never_shown_and_is_asked_again_as_a_call(monkeypatch):
+    chat, calls = recorded_chat(
+        ['sea', 'rch("car', ' service")', {"prompt_tokens": 9, "completion_tokens": 8}],  # what nemotron wrote
+        ['{"tool": "search", ', '"arguments": {"query": "car service"}}', {"prompt_tokens": 9, "completion_tokens": 12}],
+        ["It's due in March.", {"prompt_tokens": 20, "completion_tokens": 6}],
+    )
+    tools = FakeMCPTools(tools=OFFERED_TOOLS, tool_results={"search": '{"results": []}'})
+    s = guarded_session(monkeypatch, chat, tools)
+
+    events = list(s.ask("When is my car due for its next service?"))
+
+    assert events == [session.CallReasked(), ToolCall("search", {"query": "car service"}), Text("It's due in March.")]
+    assert tools.calls == [("search", {"query": "car service"})]
+    assert [c["fmt"] is not None for c in calls] == [False, True, False]  # only the second step was forced
+    assert calls[1]["think"] is False and calls[1]["fmt"] == session.call_guard.step_schema(OFFERED_TOOLS)
+    assert calls[1]["messages"] == calls[0]["messages"]  # the same step again: the text call isn't in it
+    assert not any('search("' in str(m.get("content")) for m in calls[2]["messages"])
+    saved = s.store.get_messages(s.conversation_id)
+    assert [(m["role"], m["content"]) for m in saved][-1] == ("nuru", "It's due in March.")
+
+
+def test_a_call_the_parser_dropped_is_asked_again_and_an_answer_is_the_reply(monkeypatch):
+    monkeypatch.setattr(session, "THINK", False)
+    chat, calls = recorded_chat(
+        [{"prompt_tokens": 9, "completion_tokens": 17}],  # tokens written, nothing came of them
+        ['{"answer": "Hello! How can I help?"}', {"prompt_tokens": 9, "completion_tokens": 9}],
+    )
+    s = guarded_session(monkeypatch, chat)
+
+    events = list(s.ask("Hello!"))
+
+    assert events == [session.CallReasked(), Text("Hello! How can I help?")]
+    assert len(calls) == 2
+    saved = s.store.get_messages(s.conversation_id)
+    assert [(m["role"], m["content"]) for m in saved] == [("user", "Hello!"), ("nuru", "Hello! How can I help?")]
+
+
+def test_a_reply_that_only_starts_like_a_tool_name_streams_once_it_is_clear(monkeypatch):
+    chat, calls = recorded_chat(["Search", " results show two notes", " about it.", {"prompt_tokens": 9, "completion_tokens": 7}])
+    s = guarded_session(monkeypatch, chat)
+
+    events = list(s.ask("anything on the router?"))
+
+    assert events == [Text("Search results show two notes"), Text(" about it.")]  # held, then streamed
+    assert len(calls) == 1
+
+
+def test_a_short_reply_still_held_when_it_ends_is_shown(monkeypatch):
+    chat, calls = recorded_chat(["Sea", {"prompt_tokens": 9, "completion_tokens": 1}])
+    s = guarded_session(monkeypatch, chat)
+
+    assert list(s.ask("one word for the ocean?")) == [Text("Sea")]
+    assert len(calls) == 1
+
+
+def test_when_the_forced_step_still_doesnt_fit_what_the_model_wrote_is_the_reply(monkeypatch):
+    chat, calls = recorded_chat(
+        ['tags()', {"prompt_tokens": 9, "completion_tokens": 3}],
+        ['{"tool": "tags"', {"prompt_tokens": 9, "completion_tokens": 3}],  # cut short: not JSON
+    )
+    s = guarded_session(monkeypatch, chat)
+
+    assert list(s.ask("What tags do I use?")) == [session.CallReasked(), Text("tags()")]
+    assert s.store.get_messages(s.conversation_id)[-1]["content"] == "tags()"
+
+
+def test_a_turn_cancelled_while_the_step_is_asked_again_ends_there(monkeypatch):
+    cancel = threading.Event()
+
+    def forced(*_):
+        cancel.set()
+        yield '{"tool": '
+
+    chat, calls = recorded_chat(['search("router")', {"prompt_tokens": 9, "completion_tokens": 4}], forced())
+    tools = FakeMCPTools(tools=OFFERED_TOOLS)
+    s = guarded_session(monkeypatch, chat, tools)
+
+    assert list(s.ask("the router?", cancel=cancel)) == [session.CallReasked()]
+    assert tools.calls == []
+    assert s.store.get_messages(s.conversation_id)[-1]["role"] == "nuru"
+

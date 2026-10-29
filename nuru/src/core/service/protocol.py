@@ -425,6 +425,8 @@ class TurnStream:
             return [self.emit("retry", {"reason": event.reason or "steered"})]
         if isinstance(event, session.RetryWithoutThinking):
             return [self.emit("retry", {"reason": "silent"})]
+        if isinstance(event, session.CallReasked):
+            return [self.emit("retry", {"reason": "call_format"})]
         if isinstance(event, session.ToolCall):  # the call's own ID, so its outcome finds it (on_tool_outcome)
             return [self.emit("tool_start", {"call_id": event.call_id or new_id(), "name": event.name,
                                              "arguments": shown_arguments(event.arguments)})]

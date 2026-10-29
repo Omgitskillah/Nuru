@@ -28,6 +28,8 @@ core = { workspace = true }
 # platform where it can run. Relative paths, with Windows' separators mapped, let them merge.
 [tool.coverage.run]
 relative_files = true
+# Every source file, so one no test imports is reported at 0%, not left out.
+source = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/laya/src", "servers/obsidian/src"]
 
 [tool.coverage.paths]
 nuru = ["nuru/src", "nuru\\src"]

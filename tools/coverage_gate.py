@@ -1,8 +1,10 @@
 """F13's coverage rule, per module: above 90% of its lines, and every line of a small one (at most
-SMALL lines). Python from a coverage JSON report (`coverage json`, after combining the Ubuntu and Windows
-runs, so each line counts on the platform where it can run); the Obsidian plugin from Node's lcov report.
+SMALL statements). Python from a coverage JSON report (`coverage json`, after combining the Ubuntu and
+Windows runs, so each line counts on the platform where it can run); the Obsidian plugin from Node's lcov
+report. Node counts every line, and marks blank and comment ones covered, so a JS file is measured by
+its code lines (read from the file under --js-root), with every line Node reports missed counted missed.
 
-    python tools/coverage_gate.py [--python coverage.json] [--lcov lcov.info]
+    python tools/coverage_gate.py [--python coverage.json] [--lcov lcov.info --js-root plugins/obsidian]
 
 Prints each module that falls short and exits 1 if any does.
 """
@@ -23,13 +25,19 @@ def short(statements: int, covered: int) -> bool:
     return covered * 100 / statements <= FLOOR
 
 
+def code_lines(path: Path) -> int:
+    """A JS file's lines that aren't blank or only a comment."""
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines()
+               if (text := line.strip()) and not text.startswith(("//", "/*", "*")))
+
+
 def python_modules(report: Path) -> dict[str, tuple[int, int]]:
     files = json.loads(report.read_text(encoding="utf-8"))["files"]
     return {name.replace("\\", "/"): (info["summary"]["num_statements"], info["summary"]["covered_lines"])
             for name, info in files.items()}
 
 
-def lcov_modules(report: Path) -> dict[str, tuple[int, int]]:
+def lcov_modules(report: Path, root: Path) -> dict[str, tuple[int, int]]:
     modules, name, found, hit = {}, None, 0, 0
     for line in report.read_text(encoding="utf-8").splitlines():
         if line.startswith("SF:"):
@@ -39,8 +47,9 @@ def lcov_modules(report: Path) -> dict[str, tuple[int, int]]:
         elif line.startswith("LH:"):
             hit = int(line[3:])
         elif line == "end_of_record" and name is not None:
-            if "/test/" not in name and "/node_modules/" not in name:
-                modules[name] = (found, hit)
+            if "/test/" not in f"/{name}" and "/node_modules/" not in f"/{name}":
+                code = code_lines(root / name)
+                modules[name] = (code, max(0, code - (found - hit)))
             name = None
     return modules
 
@@ -49,10 +58,15 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--python", type=Path)
     parser.add_argument("--lcov", type=Path)
+    parser.add_argument("--js-root", type=Path, default=Path("plugins/obsidian"), help="what lcov's paths are relative to")
     args = parser.parse_args(argv)
     if not args.python and not args.lcov:
         parser.error("give --python, --lcov or both")
-    modules = {**(python_modules(args.python) if args.python else {}), **(lcov_modules(args.lcov) if args.lcov else {})}
+    for report in (args.python, args.lcov):
+        if report is not None and not report.is_file():
+            parser.error(f"no coverage report at {report}: a test job didn't produce it")
+    modules = {**(python_modules(args.python) if args.python else {}),
+               **(lcov_modules(args.lcov, args.js_root) if args.lcov else {})}
     failing = sorted((name, statements, covered) for name, (statements, covered) in modules.items()
                      if short(statements, covered))
     for name, statements, covered in failing:

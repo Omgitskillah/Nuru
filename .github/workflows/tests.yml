@@ -138,9 +138,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The same pinned notes server as the tests: a workspace member, and sources for the report.
+      - name: Read pinned Obsidian revision
+        id: obsidian
+        run: echo "revision=$(git rev-parse HEAD:servers/obsidian)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Obsidian dependency
+        uses: actions/checkout@v5
+        with:
+          repository: Omgitskillah/obsidian-4-llms
+          ref: ${{ steps.obsidian.outputs.revision }}
+          path: servers/obsidian
+          token: ${{ secrets.OBSIDIAN_REPO_TOKEN || github.token }}
+
       - name: Install uv
         uses: astral-sh/setup-uv@v10.1.0
 
+      # This run's own artifacts only: both systems' tests passed for this commit, or this job doesn't run.
       - name: Fetch coverage
         uses: actions/download-artifact@v7
         with:
@@ -152,4 +166,4 @@ jobs:
           uv run --locked coverage combine --keep coverage/coverage-ubuntu-latest/.coverage coverage/coverage-windows-latest/.coverage
           uv run --locked coverage json -o coverage.json
           uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
-          uv run --locked python tools/coverage_gate.py --python coverage.json --lcov coverage/coverage-plugin/lcov.info
+          uv run --locked python tools/coverage_gate.py --python coverage.json --lcov coverage/coverage-plugin/lcov.info --js-root plugins/obsidian

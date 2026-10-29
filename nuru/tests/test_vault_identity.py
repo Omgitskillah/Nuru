@@ -187,3 +187,28 @@ def test_an_old_plugin_sees_v1_as_it_was(served):
     assert body["vault"]["id"] == protocol.vault_id(service.vault), "still the path hash"
     assert vault_uuid not in json.dumps(body), "a v1 client never sees the UUID"
     protocol.validate("status", body)
+
+
+def test_a_registry_save_that_fails_leaves_the_old_registry_and_no_temporary_file(tmp_path, monkeypatch):
+    registry = vault_identity.Registry()
+    first = tmp_path / "First"
+    first.mkdir()
+    registry.identify(first)
+    before = registry.path.read_text()
+
+    def refuse(source, target):
+        raise OSError("disk full")
+    monkeypatch.setattr(vault_identity.os, "replace", refuse)
+    second = tmp_path / "Second"
+    second.mkdir()
+    with pytest.raises(OSError, match="disk full"):
+        registry.identify(second)
+    assert registry.path.read_text() == before
+    assert not list(registry.path.parent.glob("registry.*.tmp"))
+
+
+def test_rebinding_a_folder_without_a_vault_id_is_refused(tmp_path):
+    plain = tmp_path / "Plain"
+    plain.mkdir()
+    with pytest.raises(ValueError, match="has no Nuru vault ID"):
+        vault_identity.Registry().rebind(plain)

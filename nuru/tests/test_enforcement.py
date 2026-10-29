@@ -606,3 +606,23 @@ def test_forced_repair_cannot_exceed_the_remaining_step_budget(setup):
     assert list(s.ask(REQUEST))[-1] == Text('I could not write it.')
     assert len(seen) == 2 and not tools.calls
     assert not any(call['fmt'] for call in seen)
+
+
+def test_at_the_step_cap_a_model_without_a_thinking_map_keeps_its_setting_and_asks_the_expert(tmp_path):
+    """F13: no profile map to translate the expert tier, so the session's own thinking setting stands."""
+    from core.tier_policy import TierPolicy
+
+    class Available:
+        def available(self):
+            return True
+
+    config = enforce_config(tmp_path, [], expert={"at_step_cap": True})
+    enforcement = Enforcement(config, None, Available())
+    assert enforcement.at_step_cap(TierPolicy(config.tiers.order), "high") == ("high", "expert")
+
+
+def test_without_an_expert_there_is_no_plan(tmp_path):
+    from core.expert import ExpertUnavailable
+    enforcement = Enforcement(enforce_config(tmp_path, []), None, None)
+    with pytest.raises(ExpertUnavailable, match="no expert is configured"):
+        enforcement.expert_plan("Find it", [], [], [])

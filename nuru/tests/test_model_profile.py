@@ -103,3 +103,23 @@ def test_every_checked_in_family_has_an_explicit_support_decision():
     claude = {"claude-haiku-5-5", "claude-sonnet-5-5"}  # API models: no Modelfile
     assert shipped | claude == set(raw) and not shipped & claude
     assert {name for name, entry in raw.items() if entry["supported"]} == {"qwen3.5", "granite4.2"} | claude
+
+
+# ---------------------------------------------------------------- F13: level translation's remaining edges
+def test_a_level_given_as_a_bool_passes_through_and_plain_words_translate_without_a_map_entry():
+    mapped = model_profile.ModelProfile(think_map={"off": False, "low": "low", "high": "high"})
+    assert mapped.think(True) is True and mapped.think(False) is False
+    assert mapped.think(" FALSE ") is False and mapped.think("true") is True
+
+
+def test_an_unknown_level_is_refused_with_a_map_and_passed_on_without_one():
+    with pytest.raises(ValueError, match="Unsupported thinking level 'medium'"):
+        model_profile.ModelProfile(think_map={"off": False, "low": "low", "high": "high"}).think("medium")
+    assert model_profile.ModelProfile().think("medium") == "medium"
+
+
+def test_a_profiles_file_that_is_not_a_mapping_is_refused(tmp_path):
+    path = tmp_path / "profiles.yaml"
+    path.write_text("- qwen3\n- granite\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="expected a mapping of model families"):
+        for_model("qwen3:8b", path)

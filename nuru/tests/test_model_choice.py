@@ -178,3 +178,31 @@ def test_a_service_without_a_model_list_refuses_a_model(tmp_path):
         h.submit(h.conversation(), model=GRANITE)
     assert "models" not in h.service.status()
     h.close()
+
+
+# ---------------------------------------------------------------- F13: the model list's remaining edges
+def test_a_family_whose_levels_all_send_the_same_value_offers_no_thinking_choice():
+    same = model_profile.ModelProfile(think_map={"off": True, "low": True, "high": True}, default="low")
+    assert main_models.thinking(same, True) == ([], None)
+
+
+@pytest.mark.parametrize("failure", [main_models.requests.ConnectionError("Ollama isn't running"), ValueError("not JSON")])
+def test_without_a_reachable_ollama_only_claude_is_offered(monkeypatch, failure):
+    def unreachable(url, timeout):
+        if isinstance(failure, ValueError):
+            return type("R", (), {"json": lambda self: (_ for _ in ()).throw(failure)})()
+        raise failure
+    monkeypatch.setattr(main_models.requests, "get", unreachable)
+    monkeypatch.setattr(main_models, "_cache", None)
+    monkeypatch.setattr(main_models, "api_key", lambda: "key")
+    listed = main_models.choices("claude:claude-haiku-5-5")["choices"]
+    assert listed and all(choice["cloud"] for choice in listed)
+
+
+def test_find_gives_a_listed_model_and_nothing_for_one_not_offered(monkeypatch):
+    monkeypatch.setattr(main_models.requests, "get", lambda url, timeout: (_ for _ in ()).throw(main_models.requests.ConnectionError()))
+    monkeypatch.setattr(main_models, "_cache", None)
+    monkeypatch.setattr(main_models, "api_key", lambda: "key")
+    haiku = main_models.claude_provider.PREFIX + "claude-haiku-5-5"
+    assert main_models.find(haiku, haiku)["label"] == "Claude Haiku 5.5"
+    assert main_models.find("llama3.1:8b", haiku) is None

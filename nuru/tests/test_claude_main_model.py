@@ -283,3 +283,43 @@ def test_an_ordinary_turn_runs_under_the_base_prompt(claude_session, monkeypatch
     s, provider = _claude_session_with_real_conversion(monkeypatch, fake, reply({"type": "text", "text": "Hello."}))
     list(s.ask("hi"))
     assert provider.requests[0]["system"][0]["text"] == s._system_text()
+
+
+# --- F13: the provider's remaining edges ---
+def test_one_provider_is_made_on_first_use_and_shared(monkeypatch):
+    made = []
+    monkeypatch.setattr(claude, "_provider", None)
+    monkeypatch.setattr(claude, "ClaudeProvider", lambda: made.append(object()) or made[-1])
+    assert claude.provider() is claude.provider() is made[0] and len(made) == 1
+
+
+def test_an_old_assistant_message_becomes_text_and_tool_uses_with_whatever_arguments_parse():
+    messages = [
+        {"role": "user", "content": "Find it"},
+        {"role": "assistant", "content": "Looking.", "tool_calls": [
+            {"function": {"name": "search", "arguments": "{not json"}},
+            {"function": {"name": "read_note", "arguments": ["not", "an", "object"]}}]},
+        {"role": "tool", "content": "found"},
+        {"role": "tool", "content": "a stray result with no call left to answer"},
+    ]
+    converted = claude.to_anthropic(messages)
+    assistant = converted[1]["content"]
+    assert assistant[0] == {"type": "text", "text": "Looking."}
+    assert [(b["name"], b["input"]) for b in assistant[1:]] == [("search", {}), ("read_note", {})]
+    results = converted[2]["content"]
+    assert results[0] == {"type": "tool_result", "tool_use_id": "toolu_nuru_1_0", "content": "found"}
+    assert results[1] == {"type": "tool_result", "tool_use_id": "toolu_nuru_1_1", "content": "a stray result with no call left to answer"}
+
+
+def test_a_tool_message_with_no_call_waiting_is_passed_on_as_text():
+    converted = claude.to_anthropic([{"role": "user", "content": "hi"}, {"role": "tool", "content": "late output"},
+                                     {"role": "tool", "content": "  "}])
+    assert converted == [{"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "text", "text": "late output"}]}]
+
+
+def test_a_request_log_that_cannot_be_written_never_stops_a_turn(monkeypatch, tmp_path):
+    blocked = tmp_path / "not-a-folder"
+    blocked.write_text("a file where the log folder should be")
+    monkeypatch.setattr(claude, "LOG_DIR", blocked)
+    claude._log({"model": "claude-haiku-5-5"})  # must not raise
+    assert blocked.read_text() == "a file where the log folder should be"

@@ -89,3 +89,26 @@ def test_write_plan_says_when_there_is_no_plan(monkeypatch):
 
     assert result["plan"] == "" and "no plan" in result["hint"]
     assert fake_provider.send_message.call_args.kwargs["output_config"] is None
+
+
+# ---------------------------------------------------------------- F13: the remaining edges
+def test_an_empty_request_is_refused_without_asking_the_planner(monkeypatch):
+    monkeypatch.setattr(server, "get_provider", lambda: pytest.fail("the planner was asked"))
+    with pytest.raises(ToolError, match="request is empty"):
+        server.write_plan(request="   ", instructions="You plan.")
+
+
+def test_a_plan_cut_off_by_its_token_limit_says_so(monkeypatch):
+    fake_provider = MagicMock(spec=Provider)
+    fake_provider.send_message.return_value = {"content": [{"type": "text", "text": "1. Read"}], "stop_reason": "max_tokens"}
+    monkeypatch.setattr(server, "get_provider", lambda: fake_provider)
+    result = server.write_plan(request="Plan this.", instructions="You plan.")
+    assert result["plan"] == "1. Read" and "ran out of room" in result["hint"]
+
+
+def test_the_server_runs_its_mcp_loop(monkeypatch):
+    import deep_think_mcp
+    ran = []
+    monkeypatch.setattr(server.mcp, "run", lambda: ran.append(True))
+    deep_think_mcp.main()
+    assert ran == [True]

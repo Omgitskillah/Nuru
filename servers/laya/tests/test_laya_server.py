@@ -50,3 +50,22 @@ def test_calls_before_startup_are_a_clear_error(monkeypatch):
     monkeypatch.setattr(server, "_layer", None)
     with pytest.raises(ToolError, match="not been started"):
         server.health()
+
+
+# ---------------------------------------------------------------- F13: start-up
+def test_the_server_builds_its_layer_starts_loading_laya_and_runs(monkeypatch, tmp_path):
+    import laya_mcp
+    from laya_mcp import server
+    started, ran = [], []
+    monkeypatch.setattr(server.LayaPredictor, "start", lambda self: started.append(self))
+    monkeypatch.setattr(server.mcp, "run", lambda: ran.append(server._layer))
+    config = server.load_config()
+    monkeypatch.setattr(server, "load_config", lambda: config.model_copy(update={"database": tmp_path / "d.sqlite3"}))
+    monkeypatch.setattr(server, "_layer", None)
+    laya_mcp.main()  # the package entry point
+    layer = server._layer
+    try:
+        assert len(started) == 1 and ran == [layer] and layer is not None
+        assert layer.predictor is started[0] and (tmp_path / "d.sqlite3").exists()
+    finally:
+        layer.log.close()

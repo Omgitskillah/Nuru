@@ -64,3 +64,14 @@ test("an answer reads as the service words it", () => {
   assert.equal(answerText([]), "None of these.");
   assert.match(newRequestId(), /^[A-Za-z0-9_-]{16,128}$/);
 });
+
+test("a saved display resumes from its cursor without showing replayed events twice", () => {
+  const events = FIXTURES.streams.completed_with_tools;
+  const initial = shown(events.slice(0, 3));
+  const resumed = Display.from(JSON.parse(JSON.stringify(initial)));
+  assert.ok(resumed instanceof Display);
+  assert.equal(resumed.seq, initial.seq);
+  for (const event of events) resumed.apply(event);
+  assert.deepEqual(resumed, shown(events));
+  assert.equal(resumed.ended, true);
+});

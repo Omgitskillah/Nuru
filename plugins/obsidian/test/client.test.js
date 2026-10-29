@@ -161,3 +161,83 @@ test("model settings are read, saved, reset and added on their own routes, names
     ["POST", "http://x/v1/models", { model: "llama3.1:8b" }],
   ]);
 });
+
+test("request lookup and question answers keep their route and payload contract", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    sent.push({ url, method: init.method, body: init.body && JSON.parse(init.body) });
+    return json(200, { ok: true });
+  } });
+  assert.deepEqual(await client.requestState("req/a?b", "submit_turn"), { ok: true });
+  await client.answer("question/a?b", "choose", ["one"], "my answer");
+  await client.answer("question/a?b", "choose", [], "");
+  assert.deepEqual(sent[0], { url: "http://local/v1/requests/req%2Fa%3Fb?operation=submit_turn", method: "GET", body: undefined });
+  assert.equal(sent[1].url, "http://local/v1/questions/question%2Fa%3Fb/answers");
+  assert.equal(sent[1].method, "POST");
+  assert.deepEqual({ ...sent[1].body, request_id: "chosen" },
+    { request_id: "chosen", operation: "choose", chosen: ["one"], other: "my answer" });
+  assert.ok(!Object.hasOwn(sent[2].body, "other"), "an empty free-text answer is omitted");
+  assert.notEqual(sent[1].body.request_id, sent[2].body.request_id);
+});
+
+test("event streaming passes the cursor and abort signal and delivers complete events", async () => {
+  const controller = new AbortController();
+  const event = { seq: 8, type: "text", data: { text: "hello" } };
+  const seen = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    assert.equal(url, "http://local/v1/turns/turn%2Fa%3Fb/events?after=7");
+    assert.equal(init.signal, controller.signal);
+    return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200 });
+  } });
+  await client.events("turn/a?b", 7, (received) => seen.push(received), controller.signal);
+  assert.deepEqual(seen, [event]);
+});
+
+for (const phase of ["request", "body"]) {
+  test(`an aborted ${phase} is propagated without retrying the POST`, async () => {
+    const aborted = Object.assign(new Error("cancelled"), { name: "AbortError" });
+    let attempts = 0;
+    const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async () => {
+      attempts += 1;
+      if (phase === "request") throw aborted;
+      return { ok: true, status: 202, text: async () => { throw aborted; } };
+    } });
+    await assert.rejects(client.submit("conversation", "hello"), (error) => error === aborted);
+    assert.equal(attempts, 1);
+  });
+}
+
+test("a repeatedly lost POST stops after three attempts and keeps its caller's request ID", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    sent.push(JSON.parse(init.body));
+    throw new TypeError("connection closed");
+  } });
+  await assert.rejects(client.submit("conversation", "hello", [], "req-owned-by-caller"),
+    (error) => error instanceof NuruError && error.status === 0);
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((body) => body.request_id === "req-owned-by-caller" && body.text === "hello"));
+});
+
+test("conversation list, detail, creation and cancellation use the public request contract", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    sent.push({ url, method: init.method, body: init.body && JSON.parse(init.body) });
+    return json(200, { ok: true });
+  } });
+  await client.conversations(7);
+  await client.conversation("conv/a?b", 12);
+  await client.createConversation("A title", "req-create-with-title");
+  await client.createConversation("", "req-create-untitled");
+  await client.cancel("turn/a?b");
+  assert.deepEqual(sent.slice(0, 2), [
+    { url: "http://local/v1/conversations?limit=7", method: "GET", body: undefined },
+    { url: "http://local/v1/conversations/conv%2Fa%3Fb?limit=12", method: "GET", body: undefined },
+  ]);
+  assert.deepEqual(sent[2], { url: "http://local/v1/conversations", method: "POST",
+    body: { request_id: "req-create-with-title", title: "A title" } });
+  assert.deepEqual(sent[3].body, { request_id: "req-create-untitled" });
+  assert.equal(sent[4].url, "http://local/v1/turns/turn%2Fa%3Fb/cancel");
+  assert.equal(sent[4].method, "POST");
+  assert.deepEqual(Object.keys(sent[4].body), ["request_id"]);
+});

@@ -1,6 +1,8 @@
 import json
 import socket
+import sys
 import threading
+import time
 
 import pytest
 
@@ -126,3 +128,79 @@ def test_standalone_nuru_command_needs_no_model(tmp_path, monkeypatch, capsys):
 def test_invalid_intervals_are_rejected(tmp_path, interval):
     with pytest.raises(ValueError):
         VaultLinkAuditor(tmp_path, interval=interval)
+
+
+def test_a_scan_cancelled_by_stop_ends_the_background_worker_quietly(tmp_path, monkeypatch, capsys):
+    worker = VaultLinkAuditor(tmp_path, interval=0.01)
+    def cancelled():
+        worker._stop.set()
+        raise AuditCancelled()
+    monkeypatch.setattr(worker, 'run_once', cancelled)
+    worker.start()
+    worker._thread.join(3)
+    assert not worker._thread.is_alive() and worker.error is None
+    assert capsys.readouterr().err == ''
+
+
+def _wait_until_made(made, deadline):
+    while not made and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert made, "the watch never made its worker"
+
+
+class Watched(VaultLinkAuditor):
+    """The CLI's worker, kept so the test can end the watch the way a user would."""
+    made = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        Watched.made.append(self)
+
+
+def test_watch_mode_prints_each_changed_report_until_stopped(tmp_path, monkeypatch, capsys):
+    (tmp_path / 'Source.md').write_text('[[Missing]]')
+    Watched.made = []
+    monkeypatch.setattr(vault_link_auditor, 'VaultLinkAuditor', Watched)
+    monkeypatch.setattr('sys.argv', ['nuru-vault-links', str(tmp_path), '--watch', '--interval', '0.01'])
+    cli = threading.Thread(target=vault_link_auditor.main, daemon=True)
+    cli.start()
+    deadline = time.monotonic() + 10
+    try:
+        while not (Watched.made and Watched.made[0].changes):
+            assert time.monotonic() < deadline, "watch mode never reported"
+            time.sleep(0.01)
+    finally:
+        _wait_until_made(Watched.made, deadline)
+        Watched.made[0].stop()
+        cli.join(5)
+    assert not cli.is_alive() and not Watched.made[0]._thread.is_alive()
+    (line,) = capsys.readouterr().out.splitlines()  # one changed report; unchanged passes print nothing
+    assert json.loads(line)['counts']['broken'] == 1
+
+
+def test_ctrl_c_in_watch_mode_stops_the_worker(tmp_path, monkeypatch, capsys):
+    class Interrupted(VaultLinkAuditor):
+        def start(self):
+            super().start()
+            join = self._thread.join
+            calls = []
+            def interrupt_once(timeout=None):
+                calls.append(timeout)
+                if len(calls) == 1:
+                    raise KeyboardInterrupt
+                return join(timeout)
+            self._thread.join = interrupt_once
+            Watched.made = [self]
+    monkeypatch.setattr(vault_link_auditor, 'VaultLinkAuditor', Interrupted)
+    monkeypatch.setattr('sys.argv', ['nuru-vault-links', str(tmp_path), '--watch', '--interval', '0.01'])
+    vault_link_auditor.main()
+    assert not Watched.made[0]._thread.is_alive()
+
+
+def test_the_module_runs_as_a_command(tmp_path, monkeypatch, capsys):
+    import runpy
+    (tmp_path / 'Source.md').write_text('[[Missing]]')
+    monkeypatch.setattr('sys.argv', ['vault_link_auditor', str(tmp_path)])
+    monkeypatch.delitem(sys.modules, 'core.vault_link_auditor')  # run as a fresh __main__, as `python -m` would
+    runpy.run_module('core.vault_link_auditor', run_name='__main__')
+    assert json.loads(capsys.readouterr().out)['counts']['broken'] == 1

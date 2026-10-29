@@ -143,3 +143,21 @@ def test_the_key_comes_from_the_environment_first_then_deep_thinks_env(monkeypat
     assert session.expert_api_key() == "from-deep-think"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-env")
     assert session.expert_api_key() == "from-env"
+
+
+def test_with_only_an_api_key_the_planner_builds_its_client_from_it(log, monkeypatch):
+    """F13: no client given: one is built, once a plan is asked for, from the configured key."""
+    from claude_access import claude
+    built, client = [], FakeClient()
+    monkeypatch.setattr(claude, "build_client", lambda key: built.append(key) or client)
+    planner = ExpertPlanner(ExpertSettings(model="m", daily_cap=5), log, api_key="sk-ant-test")
+    assert built == [] and planner.available()
+    assert planner.plan("brief") == "1. append_note(...)"
+    assert built == ["sk-ant-test"] and client.calls[0]["messages"] == [{"role": "user", "content": "brief"}]
+
+
+def test_without_an_api_key_the_expert_is_unavailable(log):
+    planner = ExpertPlanner(ExpertSettings(model="m", daily_cap=5), log, api_key=None)
+    assert not planner.available()
+    with pytest.raises(ExpertUnavailable, match="no API key is configured for the expert"):
+        planner.plan("brief")

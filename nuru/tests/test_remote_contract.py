@@ -135,3 +135,9 @@ def test_status_never_attaches_a_receipt_until_completion():
             contract.validate("capture_status", {**base, "state": state, "receipt": receipt})
     with pytest.raises(ValueError):
         contract.validate("capture_status", {**base, "state": "completed"})
+
+
+def test_an_unknown_capture_message_kind_is_refused_without_echoing_its_content():
+    with pytest.raises(ValueError, match="unknown capture message kind") as refused:
+        contract.validate("capture_secret", {"content": "private note text"})
+    assert "private note text" not in str(refused.value)

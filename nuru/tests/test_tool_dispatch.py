@@ -379,3 +379,16 @@ def test_exhausted_recovery_finishes_reasoning_only_answer_without_retry(monkeyp
     assert list(s.ask('compute'))[-1] == Text(session._NO_REPLY_NOTE)
     assert seen == [s.tool_definitions] * 4
     assert not tools.calls
+
+
+@pytest.mark.parametrize("outcome, message", [
+    (tool_dispatch.failure("transport", "TimeoutError", "no answer", certainty="uncertain"),
+     "The outcome of write_note is uncertain: no answer. Do not retry the write."),
+    (tool_dispatch.failure("replay", "WRITE_BLOCKED", "an earlier write is uncertain"),
+     "Further writes were blocked: an earlier write is uncertain."),
+    (tool_dispatch.failure("internal", "KeyError", ""), "write_note stopped because of an internal error: KeyError."),
+    (tool_dispatch.failure("arguments", "MISSING_NOTE", "note is required"), "write_note could not be completed: note is required."),
+])
+def test_each_kind_of_failure_tells_the_user_what_happened(outcome, message):
+    """F13: what the user is told; an uncertain write says not to retry it."""
+    assert outcome.user_message("write_note") == message

@@ -257,3 +257,17 @@ def test_data_persists_across_store_instances(tmp_path):
     messages = reopened.get_messages(conversation_id)
 
     assert [m["content"] for m in messages] == ["hello"]
+
+
+@pytest.mark.parametrize("call, message", [
+    (lambda store: store.finish_write(1, "maybe"), "invalid dispatched-write state"),
+    (lambda store: store.resolve_write(1, "vault", "uncertain"), "resolution must be completed or not_completed"),
+])
+def test_a_write_state_outside_the_ledgers_states_is_refused(tmp_path, call, message):
+    """F13: the write ledger only takes its own states, and an operator can't 'resolve' to uncertain."""
+    store = ConversationStore(tmp_path / "conversation.db")
+    try:
+        with pytest.raises(ValueError, match=message):
+            call(store)
+    finally:
+        store.close()

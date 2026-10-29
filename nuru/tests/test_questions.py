@@ -137,3 +137,9 @@ KNOWN_READ_ONLY = (
     "Find and read my internet-contract note. Identify the recorded",
     "Using the current date supplied for this run, calculate calendar days to the recorded",
 )
+
+
+@pytest.mark.parametrize("arguments", [["Which?"], '["Which?"]', "3", None])
+def test_ask_user_arguments_that_are_not_an_object_are_refused_for_the_model(arguments):
+    with pytest.raises(ValueError, match="arguments must be an object"):
+        questions.from_tool(arguments)

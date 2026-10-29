@@ -563,3 +563,18 @@ def test_chat_raises_on_http_error(monkeypatch):
 
     with pytest.raises(requests.HTTPError):
         list(ollama.chat("nonexistent-model", []))
+
+
+# --- F13: unload_model ---
+def test_unload_model_asks_ollama_to_drop_a_loaded_model_and_leaves_others_alone(monkeypatch):
+    posted = []
+
+    class Response:
+        def raise_for_status(self):
+            posted.append("checked")
+
+    monkeypatch.setattr(ollama.requests, "post", lambda url, json, timeout: posted.append((url, json)) or Response())
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "qwen3:8b"}])
+    ollama.unload_model("qwen3:8b")
+    ollama.unload_model("llama3.1:8b")  # not loaded: nothing to send
+    assert posted == [(f"{ollama.BASE}/api/generate", {"model": "qwen3:8b", "keep_alive": 0}), "checked"]

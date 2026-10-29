@@ -426,3 +426,48 @@ def test_main_streams_the_reasoning_on_one_line_and_does_not_repeat_it(monkeypat
         "[thinking] found\n"
         "[nuru] Found it.\n"
     ) in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- F13: the CLI's remaining edges
+def test_main_says_when_reasoning_was_stopped_and_asked_again(monkeypatch, capsys, fake_session):
+    from core.session import Steered
+    fake_session(turns=[[Steered(reason="over its thinking budget"), Text("4")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["what is 2+2?"]))
+    cli.main()
+    assert ("[steer] Reasoning stopped (over its thinking budget) - asking again with thinking off.\n"
+            "[nuru] 4\n") in capsys.readouterr().out
+
+
+def test_context_usage_is_zero_when_the_window_is_unknown(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    try:
+        assert cli._context_usage_percent(store, store.create_conversation(), 0) == 0
+    finally:
+        store.close()
+
+
+def test_a_choice_question_left_unanswered_is_none(monkeypatch):
+    question = questions.Question("Which?", questions.SINGLE, (questions.Option("A"), questions.Option("B")))
+    monkeypatch.setattr("builtins.input", fake_input([]))  # EOF at the prompt
+    assert cli.answer(question) is None
+
+
+@pytest.mark.parametrize("command", ["/resolve-write 1", "/resolve-write one completed", "/resolve-write 1 maybe"])
+def test_a_malformed_write_reconciliation_is_an_error_and_records_nothing(monkeypatch, capsys, fake_session, command):
+    s = fake_session()
+    s._vault_scope = "vault"
+    monkeypatch.setattr(builtins, "input", fake_input([command]))
+    cli.main()
+    out = capsys.readouterr().out
+    assert "[error]" in out and "Write reconciliation recorded" not in out
+    assert s.asked == []
+
+
+def test_the_module_runs_as_the_nuru_command(monkeypatch, fake_session):
+    import runpy
+    import sys
+    s = fake_session()
+    monkeypatch.setattr(builtins, "input", fake_input([]))
+    monkeypatch.delitem(sys.modules, "core.cli")  # a fresh __main__, as `python -m core.cli` runs it
+    runpy.run_module("core.cli", run_name="__main__")
+    assert s.calls == ["close"]

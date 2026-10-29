@@ -92,3 +92,33 @@ def test_export_writes_jsonl(log, tmp_path, capsys):
 def test_no_log_yet_is_a_clear_message(tmp_path):
     with pytest.raises(SystemExit, match="No decision log"):
         label_cli.main(["--db", str(tmp_path / "missing.sqlite3"), "label"])
+
+
+# ---------------------------------------------------------------- F13: the labelling tool's remaining edges
+def test_an_empty_queue_says_there_is_nothing_to_label(log):
+    assert run(log, []) == (0, "Nothing to label.")
+
+
+def test_a_score_question_is_labelled_by_level_even_when_laya_gave_no_answer(log):
+    decision_id = log.record_decision(
+        decision_point="assess_effort", question_set="assess_effort", question_set_version=1, state={"request": "x"},
+        questions={"effort": {"type": "score", "instructions": "How hard?", "criteria": ["trivial", "some", "hard"]}},
+        answers={}, status="ok", mode="shadow", proposed_action="low", checkpoint="english")
+    done, shown = run(log, ["3"])
+    assert done == 1 and "     3. 2" in shown and "(Laya" not in shown
+    row = log._conn.execute("SELECT label FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    assert json.loads(row["label"]) == {"effort": "2"}
+
+
+def test_a_state_that_is_not_json_is_shown_as_it_is_and_a_long_one_is_cut(log):
+    decision_id = record(log)
+    log._conn.execute("UPDATE decisions SET state_text = ? WHERE id = ?", ("plain words " * 200, decision_id))
+    log._conn.commit()
+    _, shown = run(log, ["q"])
+    assert "    plain words plain words" in shown
+    assert f"... ({len('plain words ' * 200) - label_cli._STATE_PREVIEW_CHARS} more characters)" in shown
+
+
+def test_the_label_command_reviews_the_given_log(log, tmp_path, capsys):
+    label_cli.main(["--db", str(tmp_path / "d.sqlite3"), "label", "--point", "tool_gate"])
+    assert capsys.readouterr().out.strip() == "Nothing to label."

@@ -1,7 +1,8 @@
 import json
-import sys
 import socket
+import sys
 import threading
+import time
 
 import pytest
 
@@ -141,6 +142,12 @@ def test_a_scan_cancelled_by_stop_ends_the_background_worker_quietly(tmp_path, m
     assert capsys.readouterr().err == ''
 
 
+def _wait_until_made(made, deadline):
+    while not made and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert made, "the watch never made its worker"
+
+
 class Watched(VaultLinkAuditor):
     """The CLI's worker, kept so the test can end the watch the way a user would."""
     made = []
@@ -155,14 +162,18 @@ def test_watch_mode_prints_each_changed_report_until_stopped(tmp_path, monkeypat
     Watched.made = []
     monkeypatch.setattr(vault_link_auditor, 'VaultLinkAuditor', Watched)
     monkeypatch.setattr('sys.argv', ['nuru-vault-links', str(tmp_path), '--watch', '--interval', '0.01'])
-    cli = threading.Thread(target=vault_link_auditor.main)
+    cli = threading.Thread(target=vault_link_auditor.main, daemon=True)
     cli.start()
-    deadline = threading.Event()
-    while not (Watched.made and Watched.made[0].changes) and not deadline.wait(0.01):
-        pass
-    Watched.made[0].stop()
-    cli.join(3)
-    assert not cli.is_alive()
+    deadline = time.monotonic() + 10
+    try:
+        while not (Watched.made and Watched.made[0].changes):
+            assert time.monotonic() < deadline, "watch mode never reported"
+            time.sleep(0.01)
+    finally:
+        _wait_until_made(Watched.made, deadline)
+        Watched.made[0].stop()
+        cli.join(5)
+    assert not cli.is_alive() and not Watched.made[0]._thread.is_alive()
     (line,) = capsys.readouterr().out.splitlines()  # one changed report; unchanged passes print nothing
     assert json.loads(line)['counts']['broken'] == 1
 

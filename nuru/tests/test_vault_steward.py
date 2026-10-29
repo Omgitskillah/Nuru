@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import pytest
 
 from core.vault_steward import VaultSteward
@@ -151,9 +152,10 @@ def test_watch_mode_prints_changed_reports_until_ctrl_c(tmp_path, monkeypatch, c
         def start(self):
             made.append(self)
             super().start()
-            join = self._thread.join
+            join, deadline = self._thread.join, time.monotonic() + 10
             def interrupt_after_a_report(timeout=None):
-                if self.changes and not getattr(self, 'interrupted', False):
+                # Ctrl-C once a report is out, or after 10 s without one, so a regression fails, not hangs.
+                if (self.changes or time.monotonic() > deadline) and not getattr(self, 'interrupted', False):
                     self.interrupted = True
                     raise KeyboardInterrupt
                 return join(timeout)

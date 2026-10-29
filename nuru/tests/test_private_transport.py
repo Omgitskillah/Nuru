@@ -104,7 +104,7 @@ def test_inspect_finds_the_cli_on_path_then_in_the_mac_app_and_says_when_neither
     monkeypatch.setattr(private_transport.shutil, "which", lambda name: None)
     monkeypatch.setattr(private_transport.Path, "exists", lambda self: True)
     inspect(ORIGIN)
-    assert calls[-1][0] == "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    assert calls[-1][0] == str(private_transport.Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"))  # native separators
 
     monkeypatch.setattr(private_transport.Path, "exists", lambda self: False)
     with pytest.raises(ValueError, match="Tailscale CLI is unavailable"):

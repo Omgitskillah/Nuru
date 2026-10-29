@@ -24,7 +24,8 @@ async function readEvents(body, onEvent) {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      // Normalized across the whole buffer: a CRLF split between two reads still joins up.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
       let end;
       while ((end = buffer.indexOf("\n\n")) >= 0) {
         const frame = buffer.slice(0, end);

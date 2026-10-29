@@ -87,3 +87,16 @@ def test_only_notes_in_nuru_can_be_replaced():
     assert check_write("write_note", {"note": "nuru/x.md", "content": "c", "mode": "replace"}, set()) == []
     assert "only Nuru's own notes can be replaced" in check_write(
         "write_note", {"note": "shared/plan.md", "content": "c", "mode": "replace"}, set())[0]
+
+
+# ---------------------------------------------------------------- F13: the remaining refusals
+def test_a_write_mode_other_than_append_or_replace_is_blocked():
+    reasons = check_write("write_note", {"note": "x", "content": "c", "mode": "overwrite"}, set())
+    assert "mode 'overwrite' is not append or replace" in reasons
+
+
+@pytest.mark.parametrize("target, problem", [(3, "targets 3 is not a note ID"), ("not-an-id", "targets 'not-an-id' is not a note ID"),
+                                             (UNKNOWN, f"targets {UNKNOWN} was not returned by any search this session")])
+def test_every_target_must_be_a_note_id_the_session_has_seen(target, problem):
+    reasons = check_write("write_note", {"note": "x", "content": "c", "targets": [KNOWN, target]}, {KNOWN})
+    assert any(reason.startswith(problem) for reason in reasons) and not any(KNOWN in r for r in reasons)

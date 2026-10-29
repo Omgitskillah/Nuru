@@ -68,3 +68,25 @@ def test_render_refuses_missing_or_empty_request_time_options():
         s.render()
     with pytest.raises(ValueError, match="no options"):
         s.render({"tools": {}})
+
+
+# ---------------------------------------------------------------- F13: refusals
+@pytest.mark.parametrize("question, message", [
+    ({"type": "choice", "instructions": "Which?", "criteria": []}, "a choice question needs at least one option"),
+    ({"type": "choice", "instructions": "Which?"}, "exactly one of criteria / criteria_from"),
+    ({"type": "noul", "instructions": "Is it?", "criteria_from": "notes"}, "criteria_from is only for choice questions"),
+])
+def test_a_malformed_question_is_refused(question, message):
+    with pytest.raises(ValueError, match=message):
+        qset(q=question)
+
+
+def test_a_set_without_questions_is_refused():
+    with pytest.raises(ValueError, match="a question set needs at least one question"):
+        QuestionSet.model_validate({**BASE, "questions": {}})
+
+
+def test_a_question_file_that_does_not_validate_names_itself(tmp_path):
+    (tmp_path / "broken.yaml").write_text("name: broken\nversion: 0\ncheckpoint: english\nmax_state_tokens: 400\nquestions: {}\n")
+    with pytest.raises(ValueError, match="broken.yaml: "):
+        load_question_sets(tmp_path)

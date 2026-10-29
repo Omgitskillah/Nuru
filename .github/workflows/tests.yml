@@ -67,6 +67,16 @@ jobs:
           NURU_STEWARD_ENABLED: '0'
         run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov-report=term-missing
 
+      # For the coverage gate below, which combines both systems' runs.
+      - name: Save Python coverage
+        if: ${{ !inputs.windows_run }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 7
+
       # The Obsidian plugin: unit tests, then end to end against the real nuru-serve over scripted
       # scenarios (nuru/tests/scripted_serve.py, run with the uv environment above), then the bundle.
       - name: Set up Node
@@ -91,9 +101,20 @@ jobs:
         working-directory: plugins/obsidian
         run: |
           npm ci
-          npm test
+          npm run test:coverage
+          node ../../tools/js_code_lines.js > code-lines.json
           npm run test:e2e
           npm run build
+
+      - name: Save plugin coverage
+        if: ${{ !inputs.windows_run }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-plugin-${{ matrix.os }}
+          path: |
+            plugins/obsidian/lcov.info
+            plugins/obsidian/code-lines.json
+          retention-days: 7
 
       - name: Coverage summary
         if: always() && !inputs.windows_run
@@ -110,3 +131,44 @@ jobs:
           name: stewardship-scale-results
           path: ${{ runner.temp }}/steward-results.json
           retention-days: 7
+
+  # F13: every module above 90% of its lines, every line of a small one (tools/coverage_gate.py), with the
+  # Ubuntu and Windows runs combined so each line counts on the system where it can run.
+  coverage-gate:
+    needs: tests
+    if: ${{ !inputs.windows_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The same pinned notes server as the tests: a workspace member, and sources for the report.
+      - name: Read pinned Obsidian revision
+        id: obsidian
+        run: echo "revision=$(git rev-parse HEAD:servers/obsidian)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Obsidian dependency
+        uses: actions/checkout@v5
+        with:
+          repository: Omgitskillah/obsidian-4-llms
+          ref: ${{ steps.obsidian.outputs.revision }}
+          path: servers/obsidian
+          token: ${{ secrets.OBSIDIAN_REPO_TOKEN || github.token }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+
+      # This run's own artifacts only: both systems' tests passed for this commit, or this job doesn't run.
+      - name: Fetch coverage
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: coverage
+
+      - name: Check every module
+        run: |
+          uv run --locked coverage combine --keep coverage/coverage-ubuntu-latest/.coverage coverage/coverage-windows-latest/.coverage
+          uv run --locked coverage json -o coverage.json
+          uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+          uv run --locked python tools/coverage_gate.py --python coverage.json --js-root plugins/obsidian \
+            --lcov coverage/coverage-plugin-ubuntu-latest/lcov.info --lcov coverage/coverage-plugin-windows-latest/lcov.info \
+            --js-code-lines coverage/coverage-plugin-ubuntu-latest/code-lines.json

@@ -23,3 +23,17 @@ claude-access = { workspace = true }
 laya-mcp = { workspace = true }
 access-logging = { path = "servers/obsidian/vendor/access-logging" }
 core = { workspace = true }
+
+# F13: the Ubuntu and Windows runs are combined (tools/coverage_gate.py), so each line counts on the
+# platform where it can run. Relative paths, with Windows' separators mapped, let them merge.
+[tool.coverage.run]
+relative_files = true
+# Every source file, so one no test imports is reported at 0%, not left out.
+source = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/laya/src", "servers/obsidian/src"]
+
+[tool.coverage.paths]
+nuru = ["nuru/src", "nuru\\src"]
+claude_access = ["packages/claude-access/src", "packages\\claude-access\\src"]
+deep_think = ["servers/deep-think/src", "servers\\deep-think\\src"]
+laya = ["servers/laya/src", "servers\\laya\\src"]
+obsidian = ["servers/obsidian/src", "servers\\obsidian\\src"]

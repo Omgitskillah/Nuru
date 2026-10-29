@@ -110,7 +110,10 @@ class Plugin extends Component {
 
   registerView(type, factory) { this.app.views = { ...(this.app.views || {}), [type]: factory }; }
 
-  addRibbonIcon() { return make("div"); }
+  addRibbonIcon(icon, title, callback) {
+    this.app.ribbon = [...(this.app.ribbon || []), { icon, title, callback }];
+    return make("div");
+  }
 
   addCommand(command) { this.app.commands = [...(this.app.commands || []), command]; }
 
@@ -213,9 +216,13 @@ function setIcon(el, name) { el.empty(); el.dataset.icon = name; }
 
 const Keymap = { isModEvent: (event) => Boolean(event && (event.metaKey || event.ctrlKey)) };
 
+// Obsidian's addIcon: the icons registered, by name.
+const icons = {};
+function addIcon(name, svg) { icons[name] = svg; }
+
 // Obsidian's requestUrl; a test sets obsidian.requestUrl.handler to answer it.
 async function requestUrl(request) { return requestUrl.handler(request); }
 requestUrl.handler = async () => ({ status: 200 });
 
-module.exports = { requestUrl, Component, ItemView, Modal, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
+module.exports = { addIcon, icons, requestUrl, Component, ItemView, Modal, Plugin, PluginSettingTab, Setting, Notice, MarkdownView, Menu, Keymap, setIcon,
   window };

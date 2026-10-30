@@ -129,6 +129,22 @@ def test_a_bare_call_is_nothing_but_the_call(text, bare):
     assert not call_guard.bare_call(text, [])
 
 
+PRETTY = json.dumps({"tool": "search", "arguments": {"query": "router"}}, indent=2)
+
+
+@pytest.mark.parametrize("text,bare", [
+    (PRETTY, True),  # laid out over lines, still nothing but a call
+    ("```json\n" + PRETTY + "\n```", True),
+    (PRETTY + " -> 2 notes", True),
+    (PRETTY[:-12], True),  # cut off before it closed
+    (PRETTY + "\nThis is just an example of the call.", False),  # JSON, then an explanation of it
+    ('{"name": "search", "arguments": {"query": "x"}} is how a call looks.', False),
+])
+def test_a_json_call_is_measured_by_where_the_object_ends(text, bare):
+    assert call_guard.looks_like_call(text, TOOLS)
+    assert call_guard.bare_call(text, TOOLS) is bare
+
+
 @pytest.mark.parametrize("text,thinking,tokens,expected", [
     ('search("router")', "", 4, call_guard.TEXT_CALL),
     ('search("router")', "it needs a search", 4, call_guard.TEXT_CALL),

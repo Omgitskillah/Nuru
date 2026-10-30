@@ -1760,6 +1760,7 @@ def test_a_short_reply_still_held_when_it_ends_is_shown(monkeypatch):
     ['{"tool": "tags"', {"prompt_tokens": 9, "completion_tokens": 3}],  # cut short: not JSON
     ['{"answer": "tags()"}', {"prompt_tokens": 9, "completion_tokens": 5}],  # the same call written out as an "answer"
     ['{"answer": "  "}', {"prompt_tokens": 9, "completion_tokens": 2}],  # blank is no reply
+    [json.dumps({"answer": json.dumps({"tool": "tags", "arguments": {}}, indent=2)}), {"prompt_tokens": 9, "completion_tokens": 14}],  # a JSON call, laid out
     [{"prompt_tokens": 9, "completion_tokens": 0}],  # nothing at all
     [{"tool_calls": [tool_call("search", {})]}, {"prompt_tokens": 9, "completion_tokens": 4}],  # native, arguments don't fit
 ])

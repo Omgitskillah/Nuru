@@ -32,7 +32,7 @@ HOLD_CHARS = 200
 TEXT_CALL, EMPTY_REPLY = "text_call", "empty_reply"
 _ANSWER = {"type": "object", "properties": {"answer": {"type": "string", "minLength": 1}},
            "required": ["answer"], "additionalProperties": False}
-_LEAD = r"\s*(?:`+\s*|action:\s*|call\s+|<\|tool_call>\s*|call:\s*)*"
+_LEAD = r"\s*(?:`+(?:json)?\s*|action:\s*|call\s+|<\|tool_call>\s*|call:\s*)*"
 
 
 def _names(tools: list[dict]) -> str:
@@ -69,7 +69,13 @@ def bare_call(text: str, tools: list[dict]) -> bool:
     if start is None:
         return False
     rest = text[start.end():]
-    if start.group(0).rstrip().endswith(("(", "{")):  # find where the brackets close
+    body = text[re.match(_LEAD, text, re.IGNORECASE).end():]
+    if body.startswith("{"):  # a JSON call: where the object ends, however it's laid out
+        try:
+            rest = body[json.JSONDecoder().raw_decode(body)[1]:]
+        except ValueError:
+            return True  # never closed: a cut-off call
+    elif start.group(0).rstrip().endswith(("(", "{")):  # find where the brackets close
         depth, quote, i = 1, None, 0
         while i < len(rest) and depth:
             c = rest[i]
@@ -88,7 +94,7 @@ def bare_call(text: str, tools: list[dict]) -> bool:
         if depth:
             return True  # never closed: a cut-off call
         rest = rest[i:]
-    else:  # "name with ...", or a JSON object: one line of it
+    else:  # "name with ...": one line of it
         return "\n" not in text.strip()
     rest = rest.strip().strip("`").strip()
     return not rest or rest.startswith("->")

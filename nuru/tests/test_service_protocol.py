@@ -176,6 +176,7 @@ def test_every_session_event_has_a_protocol_event():
     for event in samples.values():
         assert turn.session_event(event)
     assert turn.events[-1]["type"] == "retry" and turn.events[-1]["data"] == {"reason": "call_format"}
+    assert turn.session_event(session.CallReasked("empty_reply"))[0]["data"] == {"reason": "call_lost"}
     asked = turn.session_event(session.Ask(questions.yes_no("Go on?", recommend="Yes")))
     assert asked[0]["data"] == {"reply": "Hi ", "ask": {"kind": "yes_no", "text": "Go on?",
                                                          "options": [{"label": "Yes", "recommended": True}, {"label": "No"}]}}

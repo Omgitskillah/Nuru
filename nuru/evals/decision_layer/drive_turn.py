@@ -75,7 +75,7 @@ def main():
                 continue
             before = vault_snapshot(Path(os.environ["VAULT_PATH"]))
             turn_started, day = time.monotonic(), date.today().isoformat()
-            reply, tool_calls, thinking, retried, failure, asked, reasked = "", [], 0, False, None, None, 0
+            reply, tool_calls, thinking, retried, failure, asked, reasked = "", [], 0, False, None, None, []
             cancel = threading.Event()
             timer = threading.Timer(args.turn_timeout, cancel.set) if args.turn_timeout else None
             if timer:
@@ -90,7 +90,7 @@ def main():
                 elif isinstance(event, RetryWithoutThinking):
                     retried = True
                 elif isinstance(event, CallReasked):
-                    reasked += 1
+                    reasked.append(event.trigger)  # text_call, or empty_reply (a suspected dropped call)
                 elif isinstance(event, Failure):
                     failure = event.message
                 elif isinstance(event, Ask):  # ends the turn; no scripted answers yet, so the next prompt is sent as is

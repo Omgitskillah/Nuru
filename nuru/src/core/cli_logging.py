@@ -82,6 +82,13 @@ class CLILogger:
                    "num_ctx": num_ctx, "history_messages": history_messages,
                    "omitted_result_tokens": omitted_result_tokens})
 
+    def call_guard(self, turn_id: str, trigger: str, outcome: str, usage: dict[str, Any]) -> None:
+        """A step asked again under core.call_guard's schema: why (text_call, or empty_reply: tokens and
+        nothing to show, a suspected dropped call), how it ended (call, answer, unrepaired,
+        request_failed, cancelled), and what the first reply's usage said."""
+        self._log({"event": "call_guard", "turn_id": turn_id, "trigger": trigger, "outcome": outcome,
+                   "stop_reason": usage.get("stop_reason"), "completion_tokens": usage.get("completion_tokens", 0)})
+
     def model_lifecycle(self, server_spawned: bool, model_info: dict[str, Any] | None) -> None:
         """Logs the model/server startup info once per session, however many
         times ensure_server_running/ensure_model_loaded get re-checked."""

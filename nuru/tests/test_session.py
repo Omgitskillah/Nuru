@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import requests
 
 from core import session, tool_dispatch
 from core.conversation_store import ConversationStore
@@ -1731,7 +1732,7 @@ def test_a_call_the_parser_dropped_is_asked_again_and_an_answer_is_the_reply(mon
 
     events = list(s.ask("Hello!"))
 
-    assert events == [session.CallReasked(), Text("Hello! How can I help?")]
+    assert events == [session.CallReasked("empty_reply"), Text("Hello! How can I help?")]
     assert len(calls) == 2
     saved = s.store.get_messages(s.conversation_id)
     assert [(m["role"], m["content"]) for m in saved] == [("user", "Hello!"), ("nuru", "Hello! How can I help?")]
@@ -1755,29 +1756,135 @@ def test_a_short_reply_still_held_when_it_ends_is_shown(monkeypatch):
     assert len(calls) == 1
 
 
-def test_when_the_forced_step_still_doesnt_fit_what_the_model_wrote_is_the_reply(monkeypatch):
-    chat, calls = recorded_chat(
-        ['tags()', {"prompt_tokens": 9, "completion_tokens": 3}],
-        ['{"tool": "tags"', {"prompt_tokens": 9, "completion_tokens": 3}],  # cut short: not JSON
-    )
-    s = guarded_session(monkeypatch, chat)
-
-    assert list(s.ask("What tags do I use?")) == [session.CallReasked(), Text("tags()")]
-    assert s.store.get_messages(s.conversation_id)[-1]["content"] == "tags()"
-
-
-def test_a_turn_cancelled_while_the_step_is_asked_again_ends_there(monkeypatch):
-    cancel = threading.Event()
-
-    def forced(*_):
-        cancel.set()
-        yield '{"tool": '
-
-    chat, calls = recorded_chat(['search("router")', {"prompt_tokens": 9, "completion_tokens": 4}], forced())
+@pytest.mark.parametrize("forced", [
+    ['{"tool": "tags"', {"prompt_tokens": 9, "completion_tokens": 3}],  # cut short: not JSON
+    ['{"answer": "tags()"}', {"prompt_tokens": 9, "completion_tokens": 5}],  # the same call written out as an "answer"
+    ['{"answer": "  "}', {"prompt_tokens": 9, "completion_tokens": 2}],  # blank is no reply
+    [{"prompt_tokens": 9, "completion_tokens": 0}],  # nothing at all
+    [{"tool_calls": [tool_call("search", {})]}, {"prompt_tokens": 9, "completion_tokens": 4}],  # native, arguments don't fit
+])
+def test_a_call_that_cant_be_repaired_ends_the_turn_saying_so_and_is_never_shown(monkeypatch, tmp_path, forced):
+    monkeypatch.setattr(session, "LOG_DIR", tmp_path)
+    chat, calls = recorded_chat(['tags()', {"prompt_tokens": 9, "completion_tokens": 3}], forced)
     tools = FakeMCPTools(tools=OFFERED_TOOLS)
     s = guarded_session(monkeypatch, chat, tools)
 
-    assert list(s.ask("the router?", cancel=cancel)) == [session.CallReasked()]
-    assert tools.calls == []
-    assert s.store.get_messages(s.conversation_id)[-1]["role"] == "nuru"
+    events = list(s.ask("What tags do I use?"))
 
+    assert events == [session.CallReasked("text_call"), Failure(session._UNREADABLE_CALL)]
+    assert len(calls) == 2 and tools.calls == []  # asked again once, never more; nothing ran
+    assert s.store.get_messages(s.conversation_id)[-1]["content"] == session._UNREADABLE_CALL
+    guard = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text().splitlines()
+             if json.loads(line)["event"] == "call_guard"]
+    assert [(g["trigger"], g["outcome"], g["completion_tokens"]) for g in guard] == [("text_call", "unrepaired", 3)]
+
+
+def test_an_explanation_that_starts_with_a_call_is_answered_not_run(monkeypatch):
+    """A prefix can't tell an attempt from an explanation: asked again, the model may answer, and an
+    answer that is more than the call is the reply."""
+    explained = 'search("router") finds every note that mentions the router.'
+    chat, calls = recorded_chat([explained, {"prompt_tokens": 9, "completion_tokens": 12}],
+                                [json.dumps({"answer": explained}), {"prompt_tokens": 9, "completion_tokens": 14}])
+    tools = FakeMCPTools(tools=OFFERED_TOOLS)
+    s = guarded_session(monkeypatch, chat, tools)
+
+    assert list(s.ask("How do I search my notes for the router?")) == [session.CallReasked("text_call"), Text(explained)]
+    assert tools.calls == []
+
+
+def test_a_native_call_in_reply_to_the_forced_step_runs(monkeypatch):
+    chat, calls = recorded_chat(['search{query: "router"}', {"prompt_tokens": 9, "completion_tokens": 5}],
+                                [{"tool_calls": [tool_call("search", {"query": "router"})]}, {"prompt_tokens": 9, "completion_tokens": 4}],
+                                ["Found it.", {"prompt_tokens": 9, "completion_tokens": 2}])
+    tools = FakeMCPTools(tools=OFFERED_TOOLS, tool_results={"search": "{}"})
+    s = guarded_session(monkeypatch, chat, tools)
+
+    assert list(s.ask("the router?")) == [session.CallReasked("text_call"), ToolCall("search", {"query": "router"}), Text("Found it.")]
+    assert tools.calls == [("search", {"query": "router"})]
+
+
+def test_held_call_junk_beside_a_native_call_is_dropped_and_the_call_runs_once(monkeypatch):
+    chat, calls = recorded_chat(['search("router")', {"tool_calls": [tool_call("search", {"query": "router"})]},
+                                 {"prompt_tokens": 9, "completion_tokens": 4}],
+                                ["Found it.", {"prompt_tokens": 9, "completion_tokens": 2}])
+    tools = FakeMCPTools(tools=OFFERED_TOOLS, tool_results={"search": "{}"})
+    s = guarded_session(monkeypatch, chat, tools)
+
+    assert list(s.ask("Find the router note")) == [ToolCall("search", {"query": "router"}), Text("Found it.")]
+    assert tools.calls == [("search", {"query": "router"})] and len(calls) == 2
+    assert not any('search("' in str(m.get("content")) for m in calls[1]["messages"])  # nor in what the model sees it said
+
+
+def test_words_held_back_ahead_of_a_native_call_are_still_shown(monkeypatch):
+    chat, calls = recorded_chat(['Sea', {"tool_calls": [tool_call("search", {"query": "sea"})]},
+                                 {"prompt_tokens": 9, "completion_tokens": 4}],
+                                ["Found it.", {"prompt_tokens": 9, "completion_tokens": 2}])
+    s = guarded_session(monkeypatch, chat, FakeMCPTools(tools=OFFERED_TOOLS, tool_results={"search": "{}"}))
+
+    assert list(s.ask("the sea?")) == [Text("Sea"), ToolCall("search", {"query": "sea"}), Text("\n\n"), Text("Found it.")]
+
+
+@pytest.mark.parametrize("error", [requests.exceptions.ConnectionError("repair request failed"),
+                                   ConnectionError("repair request failed"),
+                                   session.ContextBudgetExceeded("the schema doesn't fit")])
+def test_a_failed_repair_request_is_a_normal_turn_failure(monkeypatch, error):
+    def broken():
+        raise error
+        yield
+
+    chat, calls = recorded_chat(['search("router")', {"prompt_tokens": 9, "completion_tokens": 4}], broken())
+    s = guarded_session(monkeypatch, chat)
+
+    events = list(s.ask("Find the router note"))
+
+    assert events[0] == session.CallReasked("text_call") and len(events) == 2
+    assert isinstance(events[1], Failure) and events[1].message.startswith(session._UNREADABLE_CALL)
+    assert "repair request failed" in events[1].message or "doesn't fit" in events[1].message
+    saved = s.store.get_messages(s.conversation_id)  # the turn is kept, as any failed turn is
+    assert [m["role"] for m in saved] == ["user", "nuru"] and saved[-1]["content"] == events[1].message
+
+
+def test_a_failed_repair_after_a_write_says_what_was_written_and_repeats_nothing(monkeypatch):
+    def broken():
+        raise requests.exceptions.ConnectionError("down")
+        yield
+
+    chat, calls = recorded_chat(
+        ["", {"tool_calls": [tool_call("write_note", {"note": "summary.md", "content": "- one"})]}, {"prompt_tokens": 9, "completion_tokens": 9}],
+        ['read_note("summary.md")', {"prompt_tokens": 9, "completion_tokens": 4}],
+        broken())
+    tools = FakeMCPTools(tools=OFFERED_TOOLS, tool_results={"write_note": "Created nuru/summary.md"})
+    s = guarded_session(monkeypatch, chat, tools)
+
+    events = list(s.ask("Save a summary to my notes, then read it back."))
+
+    assert [e for e in events if isinstance(e, ToolCall)] == [ToolCall("write_note", {"note": "summary.md", "content": "- one"})]
+    assert isinstance(events[-1], Failure) and "write_note" in events[-1].message
+    assert tools.calls == [("write_note", {"note": "summary.md", "content": "- one"})]  # run once, never again
+
+
+@pytest.mark.parametrize("when", ["before", "during", "after"])
+def test_a_turn_cancelled_around_the_repair_ends_there_and_runs_nothing(monkeypatch, when):
+    cancel = threading.Event()
+
+    def first():
+        yield 'search("router")'
+        yield {"prompt_tokens": 9, "completion_tokens": 4}
+        if when == "before":
+            cancel.set()  # as the first reply ends, before the repair is asked
+
+    def forced():
+        if when == "during":
+            cancel.set()
+        yield '{"tool": "search", "arguments": {"query": "router"}}'
+        yield {"prompt_tokens": 9, "completion_tokens": 9}
+        if when == "after":
+            cancel.set()
+
+    chat, calls = recorded_chat(first(), forced())
+    tools = FakeMCPTools(tools=OFFERED_TOOLS)
+    s = guarded_session(monkeypatch, chat, tools)
+
+    assert list(s.ask("the router?", cancel=cancel)) == [session.CallReasked("text_call")]
+    assert tools.calls == [] and len(calls) == (1 if when == "before" else 2)
+    assert s.store.get_messages(s.conversation_id)[-1]["role"] == "nuru"

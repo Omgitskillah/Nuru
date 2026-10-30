@@ -94,8 +94,55 @@ def test_the_schema_resolves_definitions_from_its_root_and_leaves_the_tools_alon
 
 def test_a_reply_under_the_schema_becomes_a_call_or_an_answer():
     schema = call_guard.step_schema(TOOLS)
-    assert call_guard.read_step('{"tool": "calculate", "arguments": {"expression": "2340 * 0.175"}}', schema) == {
+    assert call_guard.read_step('{"tool": "calculate", "arguments": {"expression": "2340 * 0.175"}}', schema, TOOLS) == {
         "tool_call": {"function": {"name": "calculate", "arguments": {"expression": "2340 * 0.175"}}}}
-    assert call_guard.read_step('{"answer": "Hello!"}', schema) == {"answer": "Hello!"}
-    for broken in ("", "not json", '{"tool": "search", "arguments": {}}', "[1]"):
-        assert call_guard.read_step(broken, schema) is None
+    assert call_guard.read_step('{"answer": "Hello!"}', schema, TOOLS) == {"answer": "Hello!"}
+    explained = 'search("router") finds every note that mentions the router.'  # an explanation, asked for
+    assert call_guard.read_step(json.dumps({"answer": explained}), schema, TOOLS) == {"answer": explained}
+    for broken in ("", "not json", '{"tool": "search", "arguments": {}}', "[1]", '{"tool": "search"',
+                   '{"answer": "   "}',  # blank is no reply
+                   '{"answer": "search(\\"router\\")"}',  # the same call written out again
+                   '{"answer": "calculate(expression=\\"2 * 3\\") -> 6"}'):
+        assert call_guard.read_step(broken, schema, TOOLS) is None, broken
+
+
+def test_a_native_call_in_reply_to_the_forced_step_is_taken_if_its_arguments_fit():
+    schema = call_guard.step_schema(TOOLS)
+    call = {"function": {"name": "search", "arguments": {"query": "router"}}}
+    assert call_guard.native_step(call, schema, TOOLS) == {"tool_call": call}
+    for bad in ({"function": {"name": "search", "arguments": {}}}, {"function": {"name": "remember", "arguments": {}}},
+                {"function": {"name": "search"}}, {}):
+        assert call_guard.native_step(bad, schema, TOOLS) is None
+
+
+@pytest.mark.parametrize("text,bare", [
+    ('search("router")', True), ('search("router") ', True), ('calculate(expression="2 * 3") -> 6', True),
+    ('```search("a (b) c")```', True), ('search{query: "router"}', True), ('tags()', True),
+    ('statistics(numbers=[1, 2], x=[0, 1])', True), ('statistics(numbers=[1, 2]) gives the mean.', False),
+    ('search(query="router"', True),  # cut off before it closed
+    ('search with "car service"', True), ('{"name": "search", "arguments": {"query": "x"}}', True),
+    ('search("router") finds every note that mentions it.', False), ('search with "x"\nand then read the best match', False),
+    ('search(")") is fine', False), ("The router note says hi.", False), ('search(\'it\\\'s\')', True),
+])
+def test_a_bare_call_is_nothing_but_the_call(text, bare):
+    assert call_guard.bare_call(text, TOOLS) is bare
+    assert not call_guard.bare_call(text, [])
+
+
+@pytest.mark.parametrize("text,thinking,tokens,expected", [
+    ('search("router")', "", 4, call_guard.TEXT_CALL),
+    ('search("router")', "it needs a search", 4, call_guard.TEXT_CALL),
+    ("", "", 17, call_guard.EMPTY_REPLY),  # tokens, and nothing came of them
+    ("  \n", "", 3, call_guard.EMPTY_REPLY),
+    ("", "only reasoning", 17, None),  # the silent-turn retry's case
+    ("", "", 0, None),  # nothing was written at all
+    ("The router note says hi.", "", 9, None),
+])
+def test_what_makes_a_step_be_asked_again(text, thinking, tokens, expected):
+    assert call_guard.trigger(text, TOOLS, thinking, tokens) == expected
+
+
+def test_a_reply_that_reads_as_a_call_is_held_to_its_end_however_long():
+    long_call = 'write_note(content="' + "x" * (2 * call_guard.HOLD_CHARS) + '")'
+    assert call_guard.may_be_call(long_call, TOOLS)
+    assert call_guard.may_be_call(long_call + "\nand more", TOOLS)

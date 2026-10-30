@@ -58,7 +58,8 @@ def print_turn(events: Iterator[Event]) -> Question | None:
         elif isinstance(event, RetryWithoutThinking):
             print("[retry] No reply was written - asking again with thinking off.")
         elif isinstance(event, CallReasked):
-            print("[retry] The model wrote a tool call as text - asking again for a proper call.")
+            print("[retry] The model's tool call was lost - asking again for a proper call." if event.trigger == "empty_reply"
+                  else "[retry] The model wrote a tool call as text - asking again for a proper call.")
         elif isinstance(event, Ask):
             asked = event.question
         else:

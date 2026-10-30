@@ -129,8 +129,12 @@ function argumentLines(args) {
 }
 
 // A retry's reason in words. "silent": the model only reasoned, so it was asked again without thinking.
+// "call_format": it wrote a tool call as text; "call_lost": its reply came back empty although it wrote
+// something, perhaps a call that couldn't be read. Either way it was asked again for a proper call.
 function retryWords(reason) {
   if (reason === "silent") return "Nuru only reasoned and wrote nothing: asked again without thinking";
+  if (reason === "call_format") return "Nuru wrote a tool call as text: asked again for a proper call";
+  if (reason === "call_lost") return "Nuru's reply came back empty (a tool call may have been lost): asked again for a proper call";
   return `Thinking stopped (${reason}): going on without it`;
 }
 

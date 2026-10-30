@@ -60,11 +60,29 @@ def _ollama_model(name: str) -> dict:
             "parameter_size": details.get("parameter_size")}
 
 
+def _modelfile(session) -> dict:
+    """Which Modelfile the base model runs with: Nuru's checked-in one, or the user's settings for a
+    family added in Settings (core.user_models, TODO F22), rendered as Nuru builds it."""
+    from core import user_models
+    from core.modelfile import render_header
+
+    header = user_models.header(session.BASE_MODEL)
+    if header is None:
+        modelfile = session._modelfile_for(session.BASE_MODEL)
+        return {"modelfile": str(modelfile.relative_to(REPO)), "modelfile_sha256": _sha256(modelfile),
+                "rendered_modelfile_sha256": hashlib.sha256(render_modelfile(modelfile, session.BASE_MODEL).encode()).hexdigest()}
+    bundle = user_models.active()[user_models.family_of(session.BASE_MODEL)]
+    rendered = render_header(header, session.BASE_MODEL, session.MODELFILES_DIR / "system.md")
+    return {"modelfile": f"user settings: {user_models.family_of(session.BASE_MODEL)} revision {bundle.revision}",
+            "modelfile_sha256": hashlib.sha256(header.encode()).hexdigest(),
+            "rendered_modelfile_sha256": hashlib.sha256(rendered.encode()).hexdigest()}
+
+
 def build(args: dict, decision_config: Path) -> dict:
     """The manifest for a batch started now with `args` (run_suite's arguments)."""
     from core import session  # the same settings and Modelfile choice Nuru itself uses
 
-    modelfile = session._modelfile_for(session.BASE_MODEL)
+    model = _modelfile(session)
     dirty = _git("status", "--porcelain")
     obsidian = {**dotenv_values(REPO / ".env.obsidian"), **os.environ}
     semantic = load_semantic_config(DUMMY_VAULT, obsidian)
@@ -78,9 +96,7 @@ def build(args: dict, decision_config: Path) -> dict:
                  "submodules": {line.split()[1]: line.split()[0].lstrip("+-U")
                                 for line in _git("submodule", "status").splitlines() if line.strip()}},
         "model": {"main": session.MAIN_MODEL or "ollama", "base": session.BASE_MODEL, **_ollama_model(session.BASE_MODEL),
-                  "modelfile": str(modelfile.relative_to(REPO)), "modelfile_sha256": _sha256(modelfile),
-                  "rendered_modelfile_sha256": hashlib.sha256(
-                      render_modelfile(modelfile, session.BASE_MODEL).encode()).hexdigest(),
+                  **model,
                   "profile": {"think_map": session.PROFILE.think_map, "default": session.PROFILE.default,
                               "sampling": session.PROFILE.sampling},
                   "max_num_ctx": session.MAX_NUM_CTX},

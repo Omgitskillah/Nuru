@@ -57,6 +57,8 @@ test("a retry is a step, and closes the thinking before it", () => {
     { kind: "retry", reason: "silent" },
   ]);
   assert.match(retryWords("silent"), /only reasoned.*again without thinking/);
+  assert.match(retryWords("call_format"), /tool call as text.*proper call/);
+  assert.match(retryWords("call_lost"), /came back empty.*may have been lost.*proper call/);
   assert.equal(retryWords("over budget"), "Thinking stopped (over budget): going on without it");
 });
 

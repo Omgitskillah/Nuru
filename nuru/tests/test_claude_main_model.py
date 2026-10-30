@@ -323,3 +323,20 @@ def test_a_request_log_that_cannot_be_written_never_stops_a_turn(monkeypatch, tm
     monkeypatch.setattr(claude, "LOG_DIR", blocked)
     claude._log({"model": "claude-haiku-5-5"})  # must not raise
     assert blocked.read_text() == "a file where the log folder should be"
+
+
+def test_with_claude_a_reply_that_looks_like_a_call_is_left_alone(claude_session, monkeypatch):
+    """Claude makes its calls through the API: core.call_guard watches local models only."""
+    calls = []
+
+    def chat(model, messages, num_ctx=8192, think=True, tools=None, system=None, fmt=None, **kwargs):
+        calls.append(fmt)
+        yield 'search("router") is what I would run.'
+        yield {"prompt_tokens": 1, "completion_tokens": 8}
+
+    tools = FakeMCPTools(tools=[{"type": "function", "function": {"name": "search", "parameters": {
+        "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}])
+    s = start_session(monkeypatch, chat=chat, tools=tools)
+    assert list(s.ask("the router?")) == [session.Text('search("router") is what I would run.')]
+    assert calls == [None]
+    s.shutdown("test")

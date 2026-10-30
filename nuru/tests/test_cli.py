@@ -438,6 +438,17 @@ def test_main_says_when_reasoning_was_stopped_and_asked_again(monkeypatch, capsy
             "[nuru] 4\n") in capsys.readouterr().out
 
 
+def test_main_says_when_a_call_was_asked_again_and_why(monkeypatch, capsys, fake_session):
+    from core.session import CallReasked
+    fake_session(turns=[[CallReasked("text_call"), ToolCall("search", {"query": "router"}), Text("Found it.")],
+                        [CallReasked("empty_reply"), Text("Hello.")]])
+    monkeypatch.setattr(builtins, "input", fake_input(["the router?", "hi"]))
+    cli.main()
+    out = capsys.readouterr().out
+    assert "[retry] The model wrote a tool call as text - asking again for a proper call.\n" in out
+    assert "[retry] The model's reply came back empty (a tool call may have been lost) - asking again for a proper call.\n" in out
+
+
 def test_context_usage_is_zero_when_the_window_is_unknown(tmp_path):
     store = ConversationStore(tmp_path / "conversation.db")
     try:

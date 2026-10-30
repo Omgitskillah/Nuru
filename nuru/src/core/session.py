@@ -39,7 +39,7 @@ from core.context_budget import ContextBudgetExceeded, available_tokens, estimat
 from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
 from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
-from core import model_profile, questions, titles
+from core import call_guard, model_profile, questions, titles
 from core.providers.mcp_tools import MCPTools, ToolResult, ToolsUnavailable
 from core.questions import Question
 from core import tool_dispatch
@@ -268,6 +268,8 @@ _ROLE_TO_API = {"user": "user", "nuru": "assistant"}
 # Stands in for the reply when the model ended a turn having written only its thinking, which is
 # out as a Thinking event of its own by then.
 _NO_REPLY_NOTE = "(No reply was written.)"
+# The turn's end when a tool call couldn't be read even under core.call_guard's schema.
+_UNREADABLE_CALL = "The model tried to use a tool, but its call couldn't be read, even when asked again. Nothing was run for that step."
 
 # Put in place of a tool result that made the next request longer than the context window, so
 # the model hears what happened instead of the turn ending on Ollama's 400.
@@ -472,6 +474,16 @@ class Steered(RetryWithoutThinking):
 
 
 @dataclass(frozen=True)
+class CallReasked:
+    """The model wrote a tool call into its reply instead of making it (`trigger` TEXT_CALL), or wrote
+    tokens and nothing came of them, likely a call Ollama couldn't read (EMPTY_REPLY; core.call_guard):
+    the step is asked again under a schema that admits only a well-formed call or an answer. What it
+    wrote wasn't shown; what follows came from that second call."""
+
+    trigger: str = call_guard.TEXT_CALL
+
+
+@dataclass(frozen=True)
 class Failure:
     """The turn couldn't be completed. `message` says why, in words fit to show the user."""
 
@@ -486,7 +498,7 @@ class Ask:
     question: Question
 
 
-Event = Text | ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Steered | Failure | Ask
+Event = Text | ToolCall | Thinking | ThinkingChunk | RetryWithoutThinking | Steered | CallReasked | Failure | Ask
 
 
 class Session:
@@ -800,6 +812,38 @@ class Session:
             kwargs["system"] = self._system_text()
         yield from self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
 
+    def _call_in_form(self, turn_id, messages, num_ctx, history_count, tools, cancel):
+        """The step again, under core.call_guard's schema: {"tool_call": ...} or {"answer": ...} as the
+        model chose, {} if the reply still didn't fit (or was blank, or a call written out again),
+        None if the turn was cancelled before or during it. Thinking is off for it: the format applies
+        to the reply, and the first call already reasoned. A failed request raises, as _chat does."""
+        if _cancelled(cancel):
+            return None
+        schema = call_guard.step_schema(tools)
+        text, usage, native, start = "", {}, None, time.monotonic()
+        for out in self._chat(self._model(), messages, num_ctx=num_ctx, history_count=history_count, think=False,
+                              tools=tools, fmt=schema, **self._profile().options(False)):
+            if _cancelled(cancel):
+                return None
+            if isinstance(out, dict):
+                if "tool_calls" in out:
+                    native = out["tool_calls"][0] if out["tool_calls"] else None
+                elif not {"thinking", "thinking_chunk", "provider_content"} & out.keys():
+                    usage = out
+                continue
+            text += out
+        if _cancelled(cancel):
+            return None
+        step = (call_guard.native_step(native, schema, tools) if native else call_guard.read_step(text, schema, tools)) or {}
+        self.logger.model_call(
+            turn_id=turn_id, duration_ms=(time.monotonic() - start) * 1000,
+            prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
+            stop_reason=usage.get("stop_reason"),
+            tool_calls_requested=[step["tool_call"]["function"]["name"]] if "tool_call" in step else [],
+            output_text=text,
+        )
+        return step
+
     def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
         budget = available_tokens(window, messages, system=self._system_text(), tools=tools, fmt=fmt)
         rows = self.store.get_recent_messages(self.conversation_id, budget, before_id=before_id)
@@ -980,6 +1024,10 @@ class Session:
             thinking = ""
             output_text = ""
             watch, steer = None, None
+            # A local model's reply that starts like a call written out is held back until it's
+            # clear (core.call_guard); Claude makes its calls through the API.
+            guarding = bool(tools_offered) and not self._claude() and not (final_answer or answer_after_failure)
+            held = guarding
             if self.shadow and self.enforcement and think:
                 watch = ThinkingWatch(self.enforcement.config.watch_thinking, think_tier(think), self.shadow.watch)
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
@@ -1013,6 +1061,11 @@ class Session:
                             usage = out
                         continue
                     output_text += out
+                    if held:
+                        if call_guard.may_be_call(output_text, tools_offered):
+                            continue
+                        held = False
+                        out = output_text  # what was held back, and this
                     if not hold_reply:
                         yield Text(out)
                 if steer:
@@ -1072,6 +1125,37 @@ class Session:
                 resume_think = think
                 think, steered = False, True
                 continue
+
+            reason = (call_guard.trigger(output_text, tools_offered, thinking, usage.get("completion_tokens", 0))
+                      if guarding and not tool_calls else None)
+            if reason:
+                yield CallReasked(reason)
+                try:
+                    step = self._call_in_form(turn_id, messages, num_ctx, history_count, tools_offered, cancel)
+                except (ContextBudgetExceeded, OSError) as e:  # OSError: requests' errors too
+                    self.logger.call_guard(turn_id, reason, "request_failed", usage)
+                    yield from self._abort_turn(turn_id, f"{_UNREADABLE_CALL} Asking again failed: {e}")
+                    return
+                if step is None:
+                    self.logger.call_guard(turn_id, reason, "cancelled", usage)
+                    self._end_cancelled(turn_id, "")
+                    return
+                if not step:  # still not a call or an answer: never shown as if it were the reply
+                    self.logger.call_guard(turn_id, reason, "unrepaired", usage)
+                    yield from self._abort_turn(turn_id, _UNREADABLE_CALL)
+                    return
+                self.logger.call_guard(turn_id, reason, "call" if "tool_call" in step else "answer", usage)
+                if "tool_call" in step:
+                    tool_calls, output_text = [step["tool_call"]], ""
+                else:
+                    output_text = step["answer"]
+                    if not hold_reply:
+                        yield Text(output_text)
+            elif held and output_text:
+                if tool_calls and call_guard.looks_like_call(output_text, tools_offered):
+                    output_text = ""  # a native call came too: what was held back was a call written out
+                elif not hold_reply:
+                    yield Text(output_text)  # held back as a possible call, and it was something else
 
             if (final_answer or answer_after_failure) and tool_calls and not tools_refused:
                 # Tools are closed but still listed: refuse the calls once and ask again.

@@ -1,0 +1,425 @@
+[
+ {
+  "type": "function",
+  "function": {
+   "name": "browse",
+   "description": "List notes newest first - to get oriented, see what's in a folder, or answer \"what's my latest daily\". folder: optional, a folder's path or name (e.g. 'nuru/People' or 'People'). type: optional, one of correction, daily, directives, index, person, preferences, profile, project, session, topic, transcript. limit: how many notes (default 10, max 50). Returns {folder, count, notes, files, hint}: notes are {path, id, type, title}, count is the total that match; with a folder, files lists its other files (images, PDFs). Newest = when write_note made it, or last-modified for notes made in Obsidian; with type daily, transcript or session it is the latest date / session number instead. Excludes Templates/ and trash/. Pass path to read_note or write_note.",
+   "parameters": {
+    "properties": {
+     "type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Type"
+     },
+     "limit": {
+      "default": 10,
+      "title": "Limit",
+      "type": "integer"
+     },
+     "folder": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Folder"
+     }
+    },
+    "type": "object",
+    "title": "browseArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "search",
+   "description": "Find notes. query: words, a name, a date, or a plain description of what you want. Returns {query, exact_count, matches, hint}, at most 10 matches: first every note containing all the words (match: exact, with a snippet), then notes found by meaning (match: meaning, with the passage and a score; 1 is closest). Meaning matches always appear, even when nothing in the vault is relevant: check each one really answers the request before using it. Pass path to read_note or write_note. For an exact phrase, number or code use find_in_notes. Excludes Templates/ and trash/.",
+   "parameters": {
+    "properties": {
+     "query": {
+      "title": "Query",
+      "type": "string"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object",
+    "title": "searchArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "find_in_notes",
+   "description": "Find the lines in notes that match a regular expression, like grep - for an exact phrase, number, id or code, where search matches words. pattern: a regex (ripgrep syntax), ignoring case; escape ( ) [ ] { } . * + ? ^ $ | \\ with ONE backslash to match them literally, or set literal=true to match pattern as plain text with nothing to escape (e.g. pattern '[[' with literal=true). A pattern that isn't a valid regex is searched as plain text. Returns {pattern, count, matches, hint}: up to 10 matches, each {path, lines: [{line, text}]} with up to 5 matching lines per note; count is the total number of matching notes. Pass path to read_note. Excludes Templates/.",
+   "parameters": {
+    "properties": {
+     "pattern": {
+      "title": "Pattern",
+      "type": "string"
+     },
+     "literal": {
+      "default": false,
+      "title": "Literal",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "pattern"
+    ],
+    "type": "object",
+    "title": "find_in_notesArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "tags",
+   "description": "Tags. No arguments: every tag in use and how many notes carry it, most-used first. tag: the notes carrying that tag, newest first (with or without '#', any case; a parent tag matches nested ones). note: that note's tags (a path, title or id, as for read_note). Pass tag or note, not both. Reads frontmatter tags and inline #tags, lowercased. Excludes Templates/ and trash/.",
+   "parameters": {
+    "properties": {
+     "tag": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Tag"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Note"
+     }
+    },
+    "type": "object",
+    "title": "tagsArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "read_note",
+   "description": "Return a note's Markdown content. name: a path, filename, title, alias or id - case and punctuation don't matter ('nuru mcp' finds Nuru-MCP.md); if nothing matches, the error lists the closest notes. section: optional heading text (e.g. 'Decisions') to return just that part of a long note, through to the next heading of the same or higher level; an unknown section lists the note's headings. Set include_revision=true for a whole-note {path, content, revision} result before replacement; this mode rejects ambiguous names (use an exact path) and cannot select a section. Ordinary reads pick the first alphabetical match. For a note's tags, links and open tasks without its text, use note_info.",
+   "parameters": {
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "section": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Section"
+     },
+     "include_revision": {
+      "default": false,
+      "title": "Include Revision",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object",
+    "title": "read_noteArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "note_info",
+   "description": "What surrounds one note, without its text (read_note gives the text). name: a path, title or id, as for read_note. Returns {note, revision, tags, outgoing, backlinks, todos, todo_count, hint}: tags are its frontmatter and inline #tags; outgoing is each [[link]] in it as {link, path}, path null when no note has that name; backlinks are the notes that link to it; todos are its open tasks (unticked checkboxes and TODO lines) as {line, text}. Each list is capped at 25.",
+   "parameters": {
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object",
+    "title": "note_infoArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "write_note",
+   "description": "Write to a note, creating it if it doesn't exist. note: an existing note's path, title or id; or, for a new note, a title (it goes in nuru/) or a path under nuru/ or shared/ such as 'nuru/People/Dana Lee' (folders are made as needed). content: Markdown; a task is a list item with a checkbox, '- [ ] call Dana' ('- [x]' when done). mode: 'append' (default) adds content to the end - send ONLY the new text. For replace, first call read_note with include_revision=true and supply its revision as expected_revision. 'replace' makes content the note's whole new text (frontmatter kept), so send the complete note - only for notes in nuru/, and the old version is kept. type (optional, for a new note; default topic): topic = a subject being learned, tracked or thought about; person = about one person: who they are, their role, how to reach them, what they are like; project = work with a goal and tasks, often shared; session = a record of one working session: what was done and decided; transcript = the record of a conversation or meeting, close to what was said; index = a list of links to other notes on one theme; profile = who the user is: background, skills, history; preferences = how the user likes things done; correction = says another note is wrong and gives the right information. type=daily (no note) writes to your own daily note for today - use it for reminders too. author (optional): nuru (default) or both. A correction is a new note whose content links the note it corrects as [[its title]]. tags, supersedes (id of a note this replaces), targets (ids of the notes a correction corrects - found from its [[links]] if left out) and session (YYYY-MM-DD-NN) only apply to a new note. Nothing in user/ can be written, nor archived notes. Returns {done, path, id, created}: done says in words what happened.",
+   "parameters": {
+    "properties": {
+     "content": {
+      "default": "",
+      "title": "Content",
+      "type": "string"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Note"
+     },
+     "mode": {
+      "default": "append",
+      "title": "Mode",
+      "type": "string"
+     },
+     "type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Type"
+     },
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Author"
+     },
+     "tags": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Tags"
+     },
+     "supersedes": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Supersedes"
+     },
+     "targets": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Targets"
+     },
+     "session": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Session"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Expected Revision"
+     }
+    },
+    "type": "object",
+    "title": "write_noteArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "rename_or_move_file",
+   "description": "Rename or move a file within the vault. source_path: a vault-relative path, or a note's title or id. destination_path: the new vault-relative path, or just 'archive' or 'trash' to move it there under its own folder path (nuru/x.md -> archive/nuru/x.md). Archive keeps a note visible but read-only; only move a note out of the archive when the user asks to restore it. Trash is final: use it to delete; nothing comes back out of trash. Returns {done, from, to}: done says in words what happened.",
+   "parameters": {
+    "properties": {
+     "source_path": {
+      "title": "Source Path",
+      "type": "string"
+     },
+     "destination_path": {
+      "title": "Destination Path",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_path",
+     "destination_path"
+    ],
+    "type": "object",
+    "title": "rename_or_move_fileArguments"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "calculate",
+   "description": "Evaluate one strict scalar mathematical expression. Send only the expression, without prose, Markdown, LaTeX, or JSON wrapping. Returns a versioned result or stable correction error.",
+   "parameters": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "expression": {
+      "description": "One strict scalar expression, without prose, Markdown, or JSON wrapping.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "expression"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "statistics",
+   "description": "Return count, compensated sum, mean, median, sample standard deviation (n-1), minimum, and maximum for 2 to 10,000 finite numbers. Pass x values too to get a least-squares line fit (slope, intercept, R\u00b2, residuals), and a reference_line to compare another line with the data.",
+   "parameters": {
+    "$defs": {
+     "ReferenceLine": {
+      "additionalProperties": false,
+      "description": "A supplied straight line to compare with the data.",
+      "properties": {
+       "intercept": {
+        "description": "Intercept of the reference line.",
+        "format": "double",
+        "type": "number"
+       },
+       "slope": {
+        "description": "Slope of the reference line.",
+        "format": "double",
+        "type": "number"
+       }
+      },
+      "required": [
+       "slope",
+       "intercept"
+      ],
+      "type": "object"
+     }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+     "numbers": {
+      "description": "Between 2 and 10,000 finite numbers; y values when x is supplied.",
+      "items": {
+       "format": "double",
+       "type": "number"
+      },
+      "maxItems": 10000,
+      "minItems": 2,
+      "type": "array"
+     },
+     "reference_line": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/ReferenceLine"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A line to compare with the x values and y values; requires x."
+     },
+     "x": {
+      "description": "x values paired with numbers as y values, requesting a least-squares line fit.",
+      "items": {
+       "format": "double",
+       "type": "number"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "numbers"
+    ],
+    "type": "object"
+   }
+  }
+ }
+]

@@ -24,6 +24,8 @@ git submodule update --init --checkout nuru/evals
 uv run --locked pytest nuru/evals/tests
 ```
 
+A checkout from before the move still has an untracked `nuru/evals` folder (its `.runs/` batches), which the submodule can't check out into. `uv run --locked python tools/fetch_bench.py` fetches it anyway: the old folder goes to a new backup under `.runs/`, which it never deletes, and its `.runs/` folders come back where they were, never over an existing one.
+
 Its [README](https://github.com/Omgitskillah/nuru-bench#readme) says how to run the suite.
 
 ## Generated files

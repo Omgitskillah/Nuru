@@ -3,7 +3,7 @@ import pytest
 from core.context_budget import ContextBudgetExceeded, available_tokens, estimate_tokens, require_fit
 
 
-@pytest.mark.parametrize("text,expected", [("", 0), ("x", 1), ("x" * 10, 2), ("ü" * 4, 5), ("😀", 2),
+@pytest.mark.parametrize("text,expected", [("", 0), ("x", 1), ("x" * 10, 2), ("ü" * 4, 5), ("😀", 3),
                                            ("12.5", 6), ("| a | b |\n", 6)])
 def test_nonempty_content_has_a_nonzero_estimate(text, expected):
     assert estimate_tokens(text) == expected
@@ -37,6 +37,20 @@ def test_numbers_and_symbols_cost_more_than_prose_of_the_same_length():
     prose = "The modem stays in connected mode for most of the hour after a retry.\n"
     assert estimate_tokens(row) / len(row) > 2 * estimate_tokens(prose) / len(prose)
     assert estimate_tokens(row * 216) > len((row * 216).encode()) / 2
+
+
+@pytest.mark.parametrize("filler", ["_", " ", "\t", "\u00a0", "-"])
+def test_no_run_of_any_character_is_free(filler):
+    """Review of #81: a request carrying 10,000 of these must not fit a 1,000-token window."""
+    with pytest.raises(ContextBudgetExceeded):
+        require_fit(1000, [{"role": "user", "content": filler * 10000}])
+
+
+def test_base64_and_emoji_cost_what_they_measured():
+    """2026-11-01, the largest of three tokenizers: 2,000 base64 characters cost 1,481 tokens, 800 emoji 2,204."""
+    import base64, random
+    assert estimate_tokens(base64.b64encode(random.Random(81).randbytes(1500)).decode()) >= 1481
+    assert estimate_tokens("🔋⚡️📈🧪✅❌🙂🚀" * 100) >= 2204
 
 
 def test_a_long_run_of_letters_is_not_one_token():

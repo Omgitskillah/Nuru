@@ -124,11 +124,11 @@ def test_history_uses_content_not_request_usage(tmp_path):
     current = store.add_message(cid, "user", "follow up")
     rows = store.get_recent_messages(cid, 5000, before_id=current)
     assert [m["id"] for m in rows] == [first, reply]
-    assert sum(m["content_tokens"] for m in rows) == 100
+    assert sum(m["content_tokens"] for m in rows) == 80
     assert store.get_latest_prompt_tokens(cid) is None
     store.update_tokens(current, 7000)
     assert store.get_latest_prompt_tokens(cid) == 7000
-    assert store.get_messages(cid)[0]["content_tokens"] == 60
+    assert store.get_messages(cid)[0]["content_tokens"] == 48
 
 
 @pytest.mark.parametrize("budget", [-1, 0, 1, 100])

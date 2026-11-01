@@ -15,6 +15,17 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 
 A variable already set in the environment always wins over the file. Nuru hands its servers only what they need, since MCP servers start with a stripped-down environment.
 
+## The benchmark
+
+The vault test suite, its sample vault and the other evals are in their own repo, [nuru-bench](https://github.com/Omgitskillah/nuru-bench), at `nuru/evals` as a submodule that a clone skips (`update = none`, so `git clone --recursive` doesn't fetch it). To work on them:
+
+```sh
+git submodule update --init --checkout nuru/evals
+uv run --locked pytest nuru/evals/tests
+```
+
+Its [README](https://github.com/Omgitskillah/nuru-bench#readme) says how to run the suite.
+
 ## Generated files
 
 Everything Nuru and its servers write at runtime goes into a **hidden** (dot-prefixed) file or folder, and all of it is gitignored - it holds conversation history, vault content and API bookkeeping, and never leaves this machine. Every path can be moved with the environment variable next to it.
@@ -25,7 +36,7 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 | `nuru/.db/decisions.sqlite3` (+ `-wal`, `-shm`) | laya-mcp and Nuru's harness | Laya's decisions with their state text, the tools the harness ran, labels, the classify cache | `database` in [`config/decision_layer.yaml`](config/decision_layer.yaml) |
 | `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes. With Claude as the main model, also `claude-requests-<date>.jsonl`: every request whole, as sent (the notes it carried included), with its usage | `NURU_LOG_DIR` |
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |
-| `nuru/evals/**/.runs/` | the eval scripts | Raw eval results and scratch vault copies (see [decision-layer evals](nuru/evals/decision_layer/README.md)) | - |
+| `nuru/evals/**/.runs/` | the eval scripts (the bench, below) | Raw eval results and scratch vault copies | - |
 | `<vault>/.obsidian-mcp-index.sqlite3` | obsidian-mcp | Note id -> path for notes `write_note` created | - |
 | `<vault>/.obsidian-mcp-semantic.sqlite3` | obsidian-mcp and Nuru's indexer | Semantic-search chunks and their vectors | `OBSIDIAN_SEMANTIC_DB` |
 

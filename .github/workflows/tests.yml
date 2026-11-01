@@ -7,10 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      stewardship_scale:
-        description: Run model-free 1K/10K stewardship scale evaluation
-        type: boolean
-        default: false
       windows_run:
         description: "Short Windows-only run of one command, e.g. 'uv run --locked pytest -v nuru/tests/test_x.py' or 'cd plugins/obsidian && npm ci && npm run test:e2e'; empty runs everything"
         type: string
@@ -119,18 +115,6 @@ jobs:
       - name: Coverage summary
         if: always() && !inputs.windows_run
         run: uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Model-free stewardship scale evaluation
-        if: github.event_name == 'workflow_dispatch' && inputs.stewardship_scale
-        run: uv run --locked python nuru/evals/vault_steward/steward_eval.py --sizes 1000,10000 --repeats 5 --output "$RUNNER_TEMP/steward-results.json"
-
-      - name: Save stewardship scale results
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.stewardship_scale
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: stewardship-scale-results
-          path: ${{ runner.temp }}/steward-results.json
-          retention-days: 7
 
   # F13: every module above 90% of its lines, every line of a small one (tools/coverage_gate.py), with the
   # Ubuntu and Windows runs combined so each line counts on the system where it can run.

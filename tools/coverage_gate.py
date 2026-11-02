@@ -2,8 +2,8 @@
 module (at most SMALL). Both systems' runs count together, so each line counts on the one where it can run.
 
 Python comes from a coverage JSON report (`coverage json`, after `coverage combine` of the Ubuntu and
-Windows data); every .py file under --python-root must be in it. The Obsidian plugin comes from Node's
-lcov reports, one per system. Node marks blank and comment lines inside code that ran as run, so a
+Windows data); every .py file under --python-root (a folder, or one file) must be in it. The Obsidian
+plugin comes from Node's lcov reports, one per system. Node marks blank and comment lines inside code that ran as run, so a
 file's executable lines are its code lines, from tools/js_code_lines.js (esbuild's parse), and one is
 covered when any report ran it; every --js-source must have a record in some report, so a module no
 test loads fails rather than vanishing.
@@ -22,7 +22,7 @@ from pathlib import Path
 SMALL = 150
 FLOOR = 90.0
 PYTHON_ROOTS = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/laya/src",
-                "servers/obsidian/src"]
+                "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py"]
 # What the plugin ships (main.js and lib/, bundled by build.js) and installs with; not its benchmarks.
 JS_SOURCES = ["main.js", "build.js", "install.js", "lib/*.js"]
 
@@ -51,7 +51,8 @@ def python_modules(report: Path, roots: list[Path]) -> dict[str, tuple[int, int]
     for name, (statements, covered) in modules.items():
         if not (type(statements) is int and type(covered) is int and 0 <= covered <= statements):
             raise ReportError(f"{report}: {name} has impossible counts ({covered} of {statements} statements)")
-    missing = sorted(path.as_posix() for root in roots for path in root.rglob("*.py") if path.as_posix() not in modules)
+    missing = sorted(path.as_posix() for root in roots for path in (root.rglob("*.py") if root.is_dir() else [root])
+                     if path.as_posix() not in modules)
     if missing:
         raise ReportError(f"{report} leaves out {len(missing)} source file(s), e.g. {missing[0]}: "
                           "was coverage's `source` setting used?")

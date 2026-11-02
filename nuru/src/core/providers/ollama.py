@@ -254,6 +254,10 @@ def chat(
         "stream": True,
         "think": think,
         "options": {**(options or {}), "num_ctx": num_ctx},
+        # Ollama otherwise cuts a request longer than num_ctx down to its last half - system
+        # prompt first - without a word (0.40.11, 2026-10-31). Off, it answers 400 "exceeds the
+        # available context size", which the session already recovers from.
+        "truncate": False,
         **_keep_alive(),
     }
     if tools:

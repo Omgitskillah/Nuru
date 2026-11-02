@@ -749,8 +749,9 @@ def test_ask_runs_no_more_tools_once_cancelled(monkeypatch):
     assert len(chats) == 1  # and the model wasn't asked to continue
 
 
-def test_estimate_tokens_uses_chars_per_token_heuristic():
-    assert session._estimate_tokens("a" * 400) == 100
+def test_estimate_tokens_is_the_context_budget_estimate():
+    from core.context_budget import estimate_tokens
+    assert session._estimate_tokens("| 1 | 2.5 |") == estimate_tokens("| 1 | 2.5 |") > 0
 
 
 def test_token_budget_reserves_the_response_fraction():
@@ -1119,16 +1120,16 @@ def test_oversized_continuation_omits_evidence_and_completes(monkeypatch):
     s = start_session(monkeypatch, tools=tools, chat=chat)
     assert list(s.ask("read big"))[-1] == Text("The large note is unresolved.")
     assert len(calls) == 2
-    assert calls[1][-1]["content"].startswith("[left out: ~25000 tokens")
+    assert calls[1][-1]["content"].startswith("[left out: ~20000 tokens")
     entries = [json.loads(line) for log in session.LOG_DIR.glob("*.jsonl") for line in log.read_text().splitlines()]
     reduction = next(e for e in entries if e["event"] == "context_reduction")
-    assert reduction["omitted_result_tokens"] == [25000] and reduction["turn_id"] == "t-1"
+    assert reduction["omitted_result_tokens"] == [20000] and reduction["turn_id"] == "t-1"
     assert calls[1][-2]["tool_calls"][0]["function"]["name"] == "read_note"
     assert s.store.get_messages(s.conversation_id)[-1]["content"] == "The large note is unresolved."
 
 
 def test_continuation_evicts_complete_old_exchange_and_keeps_tool_pair(monkeypatch):
-    tools = FakeMCPTools(tool_results={"read_note": "x" * 12000})
+    tools = FakeMCPTools(tool_results={"read_note": "x" * 10000})
     calls = []
     def chat(model, messages, **kwargs):
         calls.append([dict(m) for m in messages])
@@ -1137,13 +1138,13 @@ def test_continuation_evicts_complete_old_exchange_and_keeps_tool_pair(monkeypat
         else:
             yield "done"
     s = start_session(monkeypatch, tools=tools, chat=chat)
-    s.store.add_message(s.conversation_id, "user", "old" * 1400)
-    s.store.add_message(s.conversation_id, "nuru", "answer" * 700)
+    s.store.add_message(s.conversation_id, "user", "old" * 1750)
+    s.store.add_message(s.conversation_id, "nuru", "answer" * 875)
     assert list(s.ask("read big"))[-1] == Text("done")
     assert len(calls[0]) == 3
     assert [m["role"] for m in calls[1]] == ["user", "assistant", "tool"]
     assert calls[1][1]["tool_calls"][0]["function"]["name"] == "read_note"
-    assert calls[1][2]["content"] == "x" * 12000
+    assert calls[1][2]["content"] == "x" * 10000
 
 def test_system_budget_uses_exact_build_rendering_without_reading_again(monkeypatch):
     monkeypatch.setattr(session, "create_model", lambda *args: 'FROM test\nSYSTEM """startup prompt"""\n')

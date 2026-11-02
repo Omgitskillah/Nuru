@@ -464,6 +464,8 @@ def test_chat_sends_think_and_num_ctx_options(monkeypatch):
     assert seen["json"]["think"] is False
     assert seen["json"]["options"] == {"num_ctx": 4096}
     assert seen["json"]["stream"] is True
+    # Without it Ollama silently keeps only the last half of an over-long request (system prompt lost).
+    assert seen["json"]["truncate"] is False
 
 
 def test_chat_sends_sampling_options_alongside_num_ctx(monkeypatch):

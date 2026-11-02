@@ -124,11 +124,11 @@ def test_history_uses_content_not_request_usage(tmp_path):
     current = store.add_message(cid, "user", "follow up")
     rows = store.get_recent_messages(cid, 5000, before_id=current)
     assert [m["id"] for m in rows] == [first, reply]
-    assert sum(m["content_tokens"] for m in rows) == 100
+    assert sum(m["content_tokens"] for m in rows) == 80
     assert store.get_latest_prompt_tokens(cid) is None
     store.update_tokens(current, 7000)
     assert store.get_latest_prompt_tokens(cid) == 7000
-    assert store.get_messages(cid)[0]["content_tokens"] == 60
+    assert store.get_messages(cid)[0]["content_tokens"] == 48
 
 
 @pytest.mark.parametrize("budget", [-1, 0, 1, 100])
@@ -138,6 +138,17 @@ def test_never_forces_oversized_exchange_into_history(tmp_path, budget):
     store.add_message(cid, "user", "x" * 1000)
     store.add_message(cid, "nuru", "y" * 1000)
     assert store.get_recent_messages(cid, budget) == []
+
+
+@pytest.mark.parametrize("filler", ["_", " ", "\t", " \t"])
+def test_a_long_message_of_underscores_or_spaces_still_takes_its_room(tmp_path, filler):
+    """Review of #81: runs of these once cost nothing, so a 10,000-character one fit any budget."""
+    store = ConversationStore(tmp_path / "conversation.db")
+    cid = store.create_conversation()
+    store.add_message(cid, "user", "see:" + filler * 5000)
+    store.add_message(cid, "nuru", "ok")
+    assert store.get_recent_messages(cid, 500) == []
+    assert len(store.get_recent_messages(cid, 100_000)) == 2
 
 
 def test_history_skips_orphans_and_preserves_empty_replies(tmp_path):

@@ -22,7 +22,8 @@ from pathlib import Path
 SMALL = 150
 FLOOR = 90.0
 PYTHON_ROOTS = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/laya/src",
-                "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py"]
+                "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py", "tools/local_checks.py",
+                "tools/windows_selection.py"]
 # What the plugin ships (main.js and lib/, bundled by build.js) and installs with; not its benchmarks.
 JS_SOURCES = ["main.js", "build.js", "install.js", "lib/*.js"]
 

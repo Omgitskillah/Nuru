@@ -11,7 +11,10 @@ A checkout from before the bench became a submodule still has a nuru/evals folde
 3. moves every .runs/ folder from the backup back to the same place in the checkout - unless one is
    already there, which it never overwrites - and lists what it restored and what it left in the backup.
    Everything else the old folder held stays in the backup.
-A checkout whose nuru/evals is already the bench, or has no nuru/evals yet, just gets the submodule.
+A checkout with no nuru/evals yet (or an empty one) just gets the submodule. One whose nuru/evals has
+git metadata is left exactly as it is: if it's the bench - its own work tree, at the commit this checkout
+pins, every tracked file as committed - there is nothing to do; if not (a stale or broken .git, another
+repository, another commit, a checkout that is incomplete or changed), this says why and changes nothing.
 """
 import subprocess
 import sys
@@ -22,8 +25,27 @@ from pathlib import Path
 EVALS = Path("nuru") / "evals"
 
 
-def _is_checked_out(evals: Path) -> bool:
-    return (evals / ".git").exists()
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+
+
+def _not_the_bench(root: Path, evals: Path) -> str | None:
+    """Why the nuru/evals that has git metadata isn't the bench checked out at its pin; None if it is."""
+    top = _git(evals, "rev-parse", "--show-toplevel")
+    if top.returncode:
+        return f"git can't read it ({top.stderr.strip().splitlines()[0] if top.stderr.strip() else 'no reason given'})"
+    if Path(top.stdout.strip()).resolve() != evals.resolve():
+        return f"its git metadata is for the work tree at {top.stdout.strip()}"
+    pin = _git(root, "rev-parse", f"HEAD:{EVALS.as_posix()}").stdout.strip()
+    head = _git(evals, "rev-parse", "--verify", "-q", "HEAD").stdout.strip()
+    if head != pin:
+        if _git(evals, "cat-file", "-e", f"{pin}^{{commit}}").returncode:
+            return f"it doesn't have the pinned commit {pin[:7]}: it isn't the bench, or isn't fully fetched"
+        return f"it's at {head[:7]}, not the pinned {pin[:7]}"
+    changed = _git(evals, "status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    if changed:
+        return f"{len(changed)} tracked file(s) differ from the pinned commit: an incomplete or changed checkout"
+    return None
 
 
 def _fetch(root: Path) -> None:
@@ -33,8 +55,12 @@ def _fetch(root: Path) -> None:
 def fetch(root: Path) -> list[str]:
     """Do the above in the checkout at `root`; returns what it did, one line each."""
     evals = root / EVALS
-    if _is_checked_out(evals):
-        return [f"{EVALS.as_posix()} is already the bench: nothing to do"]
+    if (evals / ".git").exists():
+        problem = _not_the_bench(root, evals)
+        if problem:
+            raise RuntimeError(f"{EVALS.as_posix()} has git metadata, but {problem}. Nothing was changed: look at it "
+                               f"(git -C {EVALS.as_posix()} status), move it aside if it isn't needed, and run this again")
+        return [f"{EVALS.as_posix()} is already the bench at its pinned commit: nothing to do"]
     if not evals.exists() or not any(evals.iterdir()):
         _fetch(root)
         return [f"fetched the bench into {EVALS.as_posix()}"]

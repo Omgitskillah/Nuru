@@ -71,6 +71,21 @@ def test_a_source_file_missing_from_the_python_report_fails_the_gate(tmp_path, m
     assert "leaves out 1 source file(s), e.g. src/never_imported.py" in capsys.readouterr().err
 
 
+def test_a_root_can_be_one_file_which_must_be_in_the_report(tmp_path, monkeypatch, capsys):
+    report = python_report(tmp_path, a=(10, 10))
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "script.py").write_text("x = 1\n")
+    (tmp_path / "tools" / "not_gated.py").write_text("x = 1\n")
+    argv = ["--python", str(report), "--python-root", "src", "--python-root", "tools/script.py"]
+    assert check(tmp_path, monkeypatch, *argv) == 2
+    assert "leaves out 1 source file(s), e.g. tools/script.py" in capsys.readouterr().err
+    files = json.loads(report.read_text())
+    files["files"]["tools/script.py"] = {"summary": {"num_statements": 4, "covered_lines": 3}}
+    report.write_text(json.dumps(files))
+    assert check(tmp_path, monkeypatch, *argv) == 1
+    assert "tools/script.py: 3/4 lines, 75.0%; needs 100% (small)" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------- the plugin's lcov reports
 # Node's report for a real run (node --test --experimental-test-coverage --test-reporter=lcov) of
 #   1 const slashOrStar = /[/*]/;        5 const note = `one
@@ -207,8 +222,12 @@ def test_a_missing_report_fails_the_gate_and_says_why(tmp_path, monkeypatch, cap
 
 def test_the_default_inventories_are_nurus_sources_and_the_shipped_plugin(monkeypatch):
     assert gate.PYTHON_ROOTS == ["nuru/src", "packages/claude-access/src", "servers/deep-think/src",
-                                 "servers/laya/src", "servers/obsidian/src"]
+                                 "servers/laya/src", "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py"]
     repo = _PATH.parents[1]
+    import tomllib
+    measured = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]["run"]["source"]
+    for root in gate.PYTHON_ROOTS:  # each gated root exists and is measured, or the gate fails on it
+        assert (repo / root).exists() and any(root == m or root.startswith(m + "/") for m in measured), root
     shipped = {p.relative_to(repo / "plugins/obsidian").as_posix() for pattern in gate.JS_SOURCES
                for p in (repo / "plugins/obsidian").glob(pattern)}
     assert {"main.js", "build.js", "install.js", "lib/protocol.js"} <= shipped and "bench/follow.js" not in shipped

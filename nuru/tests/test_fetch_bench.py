@@ -1,8 +1,8 @@
 """tools/fetch_bench.py with real git: a checkout made before the bench became a submodule keeps
 everything its old nuru/evals held - .runs/ batches back in place, the rest in a backup it never
-deletes - and a failed fetch leaves the old folder as it was."""
+deletes - and a failed fetch leaves the old folder as it was. A nuru/evals with git metadata that isn't
+the bench at its pin (broken, stale, another repository, another commit, changed) is refused, untouched."""
 import importlib.util
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -98,8 +98,9 @@ def test_two_runs_never_share_a_backup_and_an_existing_runs_is_never_overwritten
 def test_a_failed_fetch_puts_the_old_folder_back_as_it_was(checkout, monkeypatch):
     evals = old_folder(checkout)
     before = sorted(p.relative_to(evals).as_posix() for p in evals.rglob("*"))
-    shutil.rmtree(checkout.parent / "bench")  # the bench can't be reached
-    shutil.rmtree(checkout / ".git" / "modules")  # and git has no copy of it to check out instead
+    # Moved, not deleted: git's objects are read-only, which Windows won't delete.
+    (checkout.parent / "bench").rename(checkout.parent / "bench-gone")  # the bench can't be reached
+    (checkout / ".git" / "modules").rename(checkout / ".git" / "modules-gone")  # and git has no copy to check out
     with pytest.raises(RuntimeError, match="is as it was"):
         fetch_bench.fetch(checkout)
     assert sorted(p.relative_to(evals).as_posix() for p in evals.rglob("*")) == before
@@ -135,6 +136,74 @@ def test_a_fetch_that_fails_halfway_says_where_the_old_folder_is(checkout, monke
     assert (backup / "evals" / "decision_layer" / ".runs" / "suite-x" / "results.jsonl").exists()
 
 
+def tree(folder):
+    return sorted((p.relative_to(folder).as_posix(), p.read_bytes() if p.is_file() else None) for p in folder.rglob("*"))
+
+
+def refused(checkout, reason):
+    """fetch refuses, naming `reason`, and changes nothing: not nuru/evals, and no backup is made."""
+    evals = checkout / "nuru" / "evals"
+    before = tree(evals)
+    with pytest.raises(RuntimeError, match=reason) as failed:
+        fetch_bench.fetch(checkout)
+    assert "Nothing was changed" in str(failed.value)
+    assert tree(evals) == before and not (checkout / ".runs").exists()
+
+
+def test_a_folder_whose_git_file_is_broken_isnt_taken_for_the_bench(checkout):
+    evals = old_folder(checkout)
+    (evals / ".git").write_text("not a git repository\n")
+    refused(checkout, "git can't read it")
+
+
+def test_after_a_fetch_that_failed_halfway_a_retry_refuses_the_stale_checkout_and_the_backup_stays(checkout, monkeypatch):
+    evals = old_folder(checkout)
+
+    def half(root):  # the clone wrote its gitfile, then failed before the repository it points to existed
+        (root / "nuru" / "evals").mkdir()
+        (root / "nuru" / "evals" / ".git").write_text("gitdir: ../../.git/modules/nuru/evals-unfinished\n")
+        raise subprocess.CalledProcessError(128, "git")
+
+    monkeypatch.setattr(fetch_bench, "_fetch", half)
+    with pytest.raises(RuntimeError, match="the old folder is at"):
+        fetch_bench.fetch(checkout)
+    [backup] = (checkout / ".runs").glob("evals-backup-*")
+    kept = tree(backup)
+    monkeypatch.setattr(fetch_bench, "_fetch", lambda root: pytest.fail("a retry must not fetch over it"))
+    with pytest.raises(RuntimeError, match="git can't read it"):
+        fetch_bench.fetch(checkout)
+    assert [p.name for p in evals.iterdir()] == [".git"]
+    assert tree(backup) == kept and (backup / "evals" / "decision_layer" / ".runs" / "suite-x").is_dir()
+
+
+def test_another_repository_at_nuru_evals_isnt_the_bench(checkout):
+    evals = checkout / "nuru" / "evals"
+    git(checkout, "init", "-q", str(evals))
+    (evals / "mine.txt").write_text("someone's own work\n")
+    git(evals, "add", "-A")
+    git(evals, "commit", "-q", "-m", "mine")
+    refused(checkout, "doesn't have the pinned commit")
+
+
+def test_the_bench_at_another_commit_or_with_changed_files_is_left_alone(checkout):
+    evals = checkout / "nuru" / "evals"
+    fetch_bench.fetch(checkout)
+    (evals / "decision_layer" / "run_suite.py").write_text("# edited\n")
+    refused(checkout, r"1 tracked file\(s\) differ from the pinned commit")
+    git(evals, "commit", "-q", "-am", "a newer bench")
+    refused(checkout, "not the pinned")
+    git(evals, "checkout", "-q", "HEAD~1")
+    assert fetch_bench.fetch(checkout) == ["nuru/evals is already the bench at its pinned commit: nothing to do"]
+
+
+def test_git_metadata_for_another_work_tree_isnt_this_checkouts_bench(checkout, tmp_path):
+    fetch_bench.fetch(checkout)
+    git(checkout, "config", "-f", str(checkout / ".git" / "modules" / "nuru" / "evals" / "config"),
+        "core.worktree", str(tmp_path / "elsewhere"))
+    (tmp_path / "elsewhere").mkdir()
+    refused(checkout, "its git metadata is for the work tree at")
+
+
 @pytest.mark.parametrize("state", ["empty", "missing", "bench"])
 def test_with_no_old_folder_it_just_fetches(checkout, state):
     evals = checkout / "nuru" / "evals"
@@ -144,7 +213,7 @@ def test_with_no_old_folder_it_just_fetches(checkout, state):
         fetch_bench.fetch(checkout)
     done = fetch_bench.fetch(checkout)
     assert (evals / "decision_layer" / "run_suite.py").exists()
-    assert done == (["nuru/evals is already the bench: nothing to do"] if state == "bench"
+    assert done == (["nuru/evals is already the bench at its pinned commit: nothing to do"] if state == "bench"
                     else ["fetched the bench into nuru/evals"])
     assert not (checkout / ".runs").exists()
 

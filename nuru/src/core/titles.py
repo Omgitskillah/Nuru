@@ -67,6 +67,7 @@ def title(message: str, reply: str, model: str, num_ctx: int, *, stop: Callable[
             "model": model, "system": _SYSTEM, "stream": True, "think": False,
             "prompt": _prompt(message, reply),
             "options": {"num_ctx": num_ctx, "num_predict": 24, "temperature": 0.2}, **_keep_alive(),
+            "truncate": False,  # too long is refused (non-200: the title stays), never cut silently
         }), {"content-type": "application/json"})
         response = connection.getresponse()
         if response.status != 200:

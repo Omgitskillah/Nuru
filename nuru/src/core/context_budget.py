@@ -5,6 +5,7 @@ Ollama can still reject a request, so callers retain bounded overflow recovery.
 """
 import json
 import math
+import re
 
 RESPONSE_RESERVE = 0.2
 MESSAGE_FRAMING = 16
@@ -20,9 +21,46 @@ class ContextBudgetExceeded(ValueError):
     pass
 
 
+_DIGIT = re.compile(r"\d")
+_SYMBOL = re.compile(r"[^\w\s]|_")
+_LETTERS = re.compile(r"[^\W\d_]+")
+_NON_ASCII = re.compile(r"[^\x00-\x7f]")
+_ASTRAL = re.compile(r"[\U00010000-\U0010ffff]")
+_SPACE_RUN = re.compile(r"[^\S\n]{2,}")
+_SYMBOL_RUN = re.compile(r"([^\w\s]|_)\1{3,}")
+_CHUNK = re.compile(r"\S{16,}")
+_MIXED = (re.compile(r"[a-z]"), re.compile(r"[A-Z]"), re.compile(r"\d"))
+
+
+def _by_class(text: str) -> float:
+    repeated = [len(run.group(0)) for run in _SYMBOL_RUN.finditer(text)]
+    symbols = len(_SYMBOL.findall(text)) - sum(repeated) + sum(max(1.0, n / 8) for n in repeated)
+    letters = sum(max(1.0, len(run) / 5) for run in _LETTERS.findall(text))
+    spaces = sum(len(run) / 8 for run in _SPACE_RUN.findall(text))
+    return (1.5 * len(_DIGIT.findall(text)) + symbols + letters + spaces + text.count("\n")
+            + len(_NON_ASCII.findall(text)) + len(_ASTRAL.findall(text)))
+
+
 def estimate_tokens(text: str) -> int:
-    # UTF-8 bytes make Unicode less optimistic than the English chars/4 heuristic.
-    return math.ceil(len(text.encode("utf-8")) / 4)
+    """Tokens by what the text is made of: 1.5 a digit; 1 a symbol (punctuation, |, _, JSON quotes),
+    but a run of 4+ of the same one its length / 8; a run of letters 1, or its length / 5 if longer;
+    1 a newline; a run of 2+ other spaces its length / 8; 1 more for each non-ASCII character and 1
+    more again for each outside the BMP (emoji). A string of 16+ characters with no space that mixes
+    lower and upper case and digits (base64, keys) costs at least its length / 1.2: it barely merges.
+    A single space between them is free (tokenizers fold it into the next token), so no run of any
+    character is free, however long.
+
+    An estimate, not a tokenizer. Measured 2026-11-01 against the Qwen3.5, Granite4.2 and Nemotron
+    tokenizers (Ollama prompt_eval_count of each text alone; script, raw counts and versions in
+    nuru-bench token_estimate/): at least the largest count on every text there, adversarial ones
+    included, and at most 1.22x it on the vault, prompt and tool texts. The old 4 bytes a token came to
+    0.33x on a numeric table. Other text can still come out under: Ollama then refuses the request
+    (chat and titles send truncate: false) instead of cutting it."""
+    total = _by_class(text)
+    for chunk in _CHUNK.findall(text):
+        if all(kind.search(chunk) for kind in _MIXED):
+            total += max(0.0, len(chunk) / 1.2 - _by_class(chunk))
+    return math.ceil(total)
 
 
 def message_tokens(message: dict) -> int:

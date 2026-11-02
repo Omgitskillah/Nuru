@@ -120,6 +120,7 @@ def test_the_turns_model_names_the_conversation_at_the_turns_window(ollama, monk
     assert sent["model"] == "nuru" and sent["options"]["num_ctx"] == 32768, \
         "the model the turn ran on, at its window: another window would make Ollama reload it"
     assert sent["think"] is False and sent["stream"] is True
+    assert sent["truncate"] is False, "too long a prompt is refused, not cut down to its last half"
     assert sent["keep_alive"] == "30m", "Nuru's keep-alive, so the title doesn't shorten the model's stay"
     assert "two to six words" in sent["system"], "its own instructions, not Nuru's tool prompt"
     assert "plan my Lisbon trip" in sent["prompt"] and "Flights are about 400 EUR." in sent["prompt"]

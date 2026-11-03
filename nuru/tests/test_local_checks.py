@@ -2,6 +2,7 @@
 here, with uv, npm, node and gh stood in for: what it runs, where the evidence goes, and that it refuses
 to vouch for uncommitted changes or a commit CI hasn't passed."""
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 
@@ -69,10 +70,19 @@ def head(root):
     return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
 
 
+def attempts(root):
+    return sorted((root / ".runs" / "local-checks" / head(root)).glob("attempt-*"))
+
+
+def manifest(root):
+    path = root / ".runs" / "local-checks" / head(root) / "passed.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def test_tests_runs_every_suite_and_keeps_its_evidence_under_the_commit(checkout, tools, capsys):
     fake = tools()
     assert lc.main(["tests"]) == 0
-    out = checkout / ".runs" / "local-checks" / head(checkout)
+    [out] = attempts(checkout)
     plugin = checkout / "plugins" / "obsidian"
     [pytest_call, *rest] = fake.calls
     command, cwd, coverage_file, vault = pytest_call
@@ -84,6 +94,8 @@ def test_tests_runs_every_suite_and_keeps_its_evidence_under_the_commit(checkout
         (["node", "../../tools/js_code_lines.js"], plugin), (["npm", "run", "test:e2e"], plugin),
         (["npm", "run", "build"], plugin)]
     assert sorted(p.name for p in out.iterdir()) == [".coverage", "code-lines.json", "lcov.info"]
+    assert manifest(checkout) == {"commit": head(checkout), "attempt": out.name, "sha256": {
+        name: lc._hash(out / name) for name in [".coverage", "lcov.info", "code-lines.json"]}}
     assert capsys.readouterr().out.endswith(f"tests: passed for {head(checkout)[:7]}\n")
 
 
@@ -111,7 +123,7 @@ def test_gate_adds_the_commits_windows_coverage_to_the_local_run_and_judges_both
     lc.main(["tests"])
     fake.calls.clear()
     assert lc.main(["gate"]) == 0
-    sha, out = head(checkout), checkout / ".runs" / "local-checks" / head(checkout)
+    sha, [out] = head(checkout), attempts(checkout)
     [listed, download, combine, report, gate] = [c for c, _, _, _ in fake.calls]
     assert listed[:3] == ["gh", "run", "list"] and listed[listed.index("--commit") + 1] == sha
     assert "success" in listed and download[:4] == ["gh", "run", "download", "41537739301"]
@@ -143,7 +155,80 @@ def test_gate_without_a_passed_ci_run_says_what_to_do(tools, capsys):
 def test_gate_without_a_local_run_for_this_commit_says_so(tools, capsys):
     tools()
     assert lc.main(["gate"]) == 2
-    assert "run `tests` first" in capsys.readouterr().err
+    assert "no passed local run" in capsys.readouterr().err
+
+
+def gate_refuses(fake, capsys, why):
+    """gate fails before it fetches, combines or judges anything."""
+    fake.calls.clear()
+    assert lc.main(["gate"]) == 2
+    assert fake.calls == [] and why in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("step", ["uv run --locked pytest", "test:coverage", "js_code_lines", "test:e2e", "build"])
+def test_a_first_attempt_that_fails_at_any_step_certifies_nothing_and_keeps_what_it_wrote(checkout, tools, capsys, step):
+    fake = tools(fail=step)
+    assert lc.main(["tests"]) == 3
+    assert manifest(checkout) is None and len(attempts(checkout)) == 1
+    if step in ("test:e2e", "build"):  # every coverage file was written before the failure
+        assert sorted(p.name for p in attempts(checkout)[0].iterdir()) == [".coverage", "code-lines.json", "lcov.info"]
+    gate_refuses(fake, capsys, "no passed local run")
+
+
+def test_a_failed_rerun_withdraws_the_earlier_success_and_both_attempts_stay(checkout, tools, capsys):
+    tools()
+    assert lc.main(["tests"]) == 0
+    fake = tools(fail="test:e2e")
+    assert lc.main(["tests"]) == 3
+    assert manifest(checkout) is None and len(attempts(checkout)) == 2
+    gate_refuses(fake, capsys, "no passed local run")
+
+
+def test_an_interrupted_attempt_certifies_nothing(checkout, tools, monkeypatch, capsys):
+    fake = tools()
+    assert lc.main(["tests"]) == 0
+
+    def interrupted(*command, **kwargs):
+        if "build" in command:
+            raise KeyboardInterrupt
+        return real(*command, **kwargs)
+    real = lc.run
+    monkeypatch.setattr(lc, "run", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        lc.main(["tests"])
+    assert manifest(checkout) is None
+    gate_refuses(fake, capsys, "no passed local run")
+
+
+@pytest.mark.parametrize("damage", ["changed", "removed", "manifest", "other commit"])
+def test_evidence_changed_after_it_passed_isnt_judged(checkout, tools, capsys, damage):
+    fake = tools()
+    assert lc.main(["tests"]) == 0
+    [out] = attempts(checkout)
+    record = checkout / ".runs" / "local-checks" / head(checkout) / "passed.json"
+    if damage == "changed":
+        (out / "lcov.info").write_text("SF:other.js\n")
+    elif damage == "removed":
+        (out / ".coverage").unlink()
+    elif damage == "manifest":
+        record.write_text("{not json")
+    else:
+        record.write_text(json.dumps(manifest(checkout) | {"commit": "0" * 40}))
+    gate_refuses(fake, capsys, "has changed since it passed")
+
+
+def test_an_earlier_runs_plugin_coverage_cant_stand_in_for_this_ones(checkout, tools, monkeypatch):
+    (checkout / "plugins" / "obsidian" / "lcov.info").write_text("SF:stale.js\n")
+    fake = tools()
+
+    def coverage_without_a_report(command, cwd=None, **kwargs):
+        if command[-1] == "test:coverage":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return Tools.__call__(fake, command, cwd=cwd, **kwargs)
+    monkeypatch.setattr(lc.subprocess, "run", coverage_without_a_report)
+    with pytest.raises(FileNotFoundError):
+        lc.main(["tests"])
+    assert manifest(checkout) is None
 
 
 def test_a_failing_gate_fails_the_command(tools):

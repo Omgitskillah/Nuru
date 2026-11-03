@@ -14,6 +14,26 @@ file or a test's node id) and the plugin's `npm run test:windows` files. A test 
 
     python tools/windows_selection.py --windows full-windows.coverage --local .coverage
 
+A line run outside any test, as a module is imported, counts for any selected test that imports it.
+
+The plugin's selection is behaviour, not lines: no plugin line runs only on Windows (its platform
+checks mostly take the platform as a parameter, so tests run each branch anywhere; lib/install.js's
+uv.exe choice is one line either way, which line coverage can't tell apart), but its paths, process starts, installs and the end
+to end run against nuru-serve behave as Windows makes them only there. Hence the files that name the
+platform or start processes, and those that write the install's files: build, envfiles, install,
+install-script, launcher, ollama, remove, settings, setup, unpack and e2e/scenarios.
+
+What this can't see, and so when to refresh the coverage comparison (a `full: windows-latest` run,
+then this command against a whole local run on that commit):
+- the regex reads test bodies, decorators and pytestmark, not fixtures, helpers or conftest.py: a test
+  that depends on the platform only through one of those is found only by the coverage comparison;
+- that comparison is of the code as it was: a later change can add a Windows-only branch, or a
+  Windows-only import-time line, that no selected test runs. Refresh it in any change that adds or
+  moves code behind a platform check (os.name, sys.platform, msvcrt, ctypes.windll, a POSIX-only
+  module's absence) or a fixture or helper that branches on the platform, and before each release;
+- the coverage gate (tools/local_checks.py gate) is the backstop between refreshes: a Windows-only
+  line no selected test runs counts as missed, and fails a module that it takes below the rule.
+
 nuru/tests/test_windows_selection.py checks the first kind on every local run. This command checks both:
 it prints each test that names the platform and isn't selected, each Windows-only line no selected
 test runs (with a test that does), and each entry that names no test file, and exits 1 if there are any.

@@ -1,14 +1,22 @@
 name: Tests
 
+# Hosted runs cost minutes, so CI checks only what needs Windows: the tests in tools/windows_tests.txt
+# (Python) and plugins/obsidian's test:windows. Everything else, and the coverage gate, runs locally
+# before a pull request (tools/local_checks.py), which adds this run's Windows coverage to the local one.
 on:
-  # Once per change: a pull request's branch, then main when it merges. Runs cost minutes.
+  # Once per change: a pull request's branch, then main when it merges.
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
+      full:
+        description: "The whole suite on this system, recording which test ran each line (to re-check tools/windows_tests.txt), instead of the Windows selection"
+        type: choice
+        options: ['', windows-latest, ubuntu-latest]
+        default: ''
       windows_run:
-        description: "Short Windows-only run of one command, e.g. 'uv run --locked pytest -v nuru/tests/test_x.py' or 'cd plugins/obsidian && npm ci && npm run test:e2e'; empty runs everything"
+        description: "Short Windows-only run of one command, e.g. 'uv run --locked pytest -v nuru/tests/test_x.py' or 'cd plugins/obsidian && npm ci && npm run test:e2e'; empty runs the selection"
         type: string
         default: ''
 
@@ -19,12 +27,8 @@ concurrency:
 
 jobs:
   tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(inputs.windows_run && '["windows-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30  # Windows takes about 8 min for Python alone
+    runs-on: ${{ inputs.full || 'windows-latest' }}
+    timeout-minutes: 30  # Windows takes about 8 min for the whole Python suite
     defaults:
       run:
         shell: bash
@@ -61,20 +65,21 @@ jobs:
           VAULT_PATH: ${{ runner.temp }}/ci-vault
           OBSIDIAN_SEMANTIC_DB: ''
           NURU_STEWARD_ENABLED: '0'
-        run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov=tools --cov-report=term-missing
+          # Python 3.14's default tracer records only the first test to run each line; the full run needs them all.
+          COVERAGE_CORE: ${{ inputs.full && 'ctrace' || 'sysmon' }}
+          TESTS: ${{ inputs.full && '--cov-context=test nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests' || '@tools/windows_tests.txt' }}
+        run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 $TESTS --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov=tools --cov-report=term-missing
 
-      # For the coverage gate below, which combines both systems' runs.
+      # For the coverage gate (tools/local_checks.py), which adds it to the local run's.
       - name: Save Python coverage
         if: ${{ !inputs.windows_run }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage-${{ inputs.full && format('full-{0}', inputs.full) || 'windows-latest' }}
           path: .coverage
           include-hidden-files: true
           retention-days: 7
 
-      # The Obsidian plugin: unit tests, then end to end against the real nuru-serve over scripted
-      # scenarios (nuru/tests/scripted_serve.py, run with the uv environment above), then the bundle.
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
@@ -93,7 +98,15 @@ jobs:
         run: timeout 600 bash -c "$COMMAND"
 
       - name: Obsidian plugin
-        if: ${{ !inputs.windows_run }}
+        if: ${{ !inputs.windows_run && !inputs.full }}
+        working-directory: plugins/obsidian
+        run: |
+          npm ci
+          npm run test:windows
+
+      # The whole plugin suite, end to end and the bundle too, with its coverage.
+      - name: Obsidian plugin, all of it
+        if: ${{ !inputs.windows_run && inputs.full }}
         working-directory: plugins/obsidian
         run: |
           npm ci
@@ -103,10 +116,10 @@ jobs:
           npm run build
 
       - name: Save plugin coverage
-        if: ${{ !inputs.windows_run }}
+        if: ${{ !inputs.windows_run && inputs.full }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: coverage-plugin-${{ matrix.os }}
+          name: coverage-plugin-full-${{ inputs.full }}
           path: |
             plugins/obsidian/lcov.info
             plugins/obsidian/code-lines.json
@@ -115,44 +128,3 @@ jobs:
       - name: Coverage summary
         if: always() && !inputs.windows_run
         run: uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
-
-  # F13: every module above 90% of its lines, every line of a small one (tools/coverage_gate.py), with the
-  # Ubuntu and Windows runs combined so each line counts on the system where it can run.
-  coverage-gate:
-    needs: tests
-    if: ${{ !inputs.windows_run }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      # The same pinned notes server as the tests: a workspace member, and sources for the report.
-      - name: Read pinned Obsidian revision
-        id: obsidian
-        run: echo "revision=$(git rev-parse HEAD:servers/obsidian)" >> "$GITHUB_OUTPUT"
-
-      - name: Check out Obsidian dependency
-        uses: actions/checkout@v5
-        with:
-          repository: Omgitskillah/obsidian-4-llms
-          ref: ${{ steps.obsidian.outputs.revision }}
-          path: servers/obsidian
-          token: ${{ secrets.OBSIDIAN_REPO_TOKEN || github.token }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.1.0
-
-      # This run's own artifacts only: both systems' tests passed for this commit, or this job doesn't run.
-      - name: Fetch coverage
-        uses: actions/download-artifact@v7
-        with:
-          pattern: coverage-*
-          path: coverage
-
-      - name: Check every module
-        run: |
-          uv run --locked coverage combine --keep coverage/coverage-ubuntu-latest/.coverage coverage/coverage-windows-latest/.coverage
-          uv run --locked coverage json -o coverage.json
-          uv run --locked coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
-          uv run --locked python tools/coverage_gate.py --python coverage.json --js-root plugins/obsidian \
-            --lcov coverage/coverage-plugin-ubuntu-latest/lcov.info --lcov coverage/coverage-plugin-windows-latest/lcov.info \
-            --js-code-lines coverage/coverage-plugin-ubuntu-latest/code-lines.json

@@ -36,7 +36,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - A real model turn checked the same day (dark).
   - History turn checked the same day: reopened from the picker, **Show all steps** brought every step back.
   - **Done when:** a live turn and a history turn show their steps in real Obsidian, and the line and status line read right.
-- [ ] **WP01-ACT2** Later, if wanted: ui-state's data that v1 doesn't carry (thinking against the watch's budget, step against the step cap, turns Nuru ended itself, Laya's view, model/thinking level/expert budget in the status). Needs a protocol change.
+- [ ] **WP01-ACT2** Later, if wanted: ui-state's data that v1 doesn't carry (thinking against the watch's budget, step against the step cap, turns Nuru ended itself, model and thinking level in the status). Needs a protocol change. In 1.0.5 (see the queue below).
 
 ## Now: WP02; next WP03
 
@@ -47,6 +47,24 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - [ ] **WP02-M4** Phone chat and request-aware shortcuts. **Done when:** browser fault tests and real iPhone/Android acceptance cover resume, approvals and captures.
   - [ ] **WP02-M5** Opt-in macOS operation and release. **Done when:** model-free restart/recovery checks, release evidence and authorized login/reboot acceptance (or an explicit incomplete gate) are recorded.
 - [ ] **WP03** Vault maintenance reports and review in Nuru. Plan: [03-vault-maintenance-ui.md](nuru/docs/obsidian-remote/03-vault-maintenance-ui.md)
+
+## 1.0.5: the UI/UX queue (the user, 2026-11-02)
+
+Astra builds these one at a time, in this order, and Claude reviews each PR; each has a Trello card (TODO, then DOING, then DONE). The items themselves are below, under their IDs.
+1. F32: a model added in Settings shows up right away.
+2. F30: select, copy and paste in the chat panel; Up for earlier messages.
+3. F33: clickable sources under a reply.
+4. F25: summarised conversation titles.
+5. R14: history panel extras (delete, rename, search, backfill titles, no empty conversations).
+6. F18: how full the context window is, and a notice when something was left out.
+7. F9: the repeated answer after a tool call (find the cause first).
+8. WP01-ACT2: the status data v1 doesn't carry (thinking and step budgets, model and thinking level).
+9. F31: a local history of every file Nuru changes, with Restore.
+10. F22: other local models, set up from Settings.
+11. F23: customisable frontmatter for notes Nuru creates.
+12. F24: Canvas files.
+
+Not in this queue: WP02 and WP03 (their own plans), and the expert's items (there's no expert any more).
 
 ## Follow-ups (F)
 
@@ -117,7 +135,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   Fix: POST /v1/models (and a settings save or reset) clears the choices cache; Settings redraws the list after Add; a model set up but not yet in use is listed as "added: restart Nuru to use it" with the **Restart Nuru** button beside it; the panel refreshes its model list right after Settings changes one.
 
   **Done when:** after Add, a model of a family Nuru already runs is in Settings and the picker within a few seconds, and one of a new family is listed at once as waiting for a restart, then offered after it; plugin and service tests cover both (including the cache being cleared).
-- [ ] **F33** **Clickable sources: the notes Nuru read, under its reply** (the user, 2026-10-31; R19's "source chips", made concrete). Today only notes Nuru *wrote* are links (`plugins/obsidian/lib/view.js` `noteLink`: the "Vaulted" list and applied receipts). Notes it *read* show as plain text in the steps, and a reply names them as `code` paths, which can't be clicked.
+- [ ] **F33** **Clickable sources: the notes Nuru read, under its reply** (the user, 2026-10-31). Today only notes Nuru *wrote* are links (`plugins/obsidian/lib/view.js` `noteLink`: the "Vaulted" list and applied receipts). Notes it *read* show as plain text in the steps, and a reply names them as `code` paths, which can't be clicked.
   - **A Sources row under each reply:** one link per note the turn actually read (read_note, a search passage it was shown, note_info, run_python's notes), deduplicated, in reading order, opened in Obsidian by `onLinkClick` (Cmd/Ctrl-click: a new tab). A section read opens at that heading. Only paths a tool returned successfully, never one the model typed, and nothing from trash/.
   - **Paths in the reply become links:** a path in the reply that matches a note read this turn (`nuru/x.md`, with or without `.md`, in backticks or not) is rendered as a link to it; anything else stays text.
   - **The steps:** each read's path in the turn's steps is a link too.
@@ -139,7 +157,13 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - Works with F18 (how full the window is, in the panel).
 
   **Done when:** on this 16 GB Mac and on a Windows machine with and without a GPU, Nuru picks a window that loads without swapping (no swap growth while a model runs; `ollama ps` shows it on the GPU where there is one), a too-big model is refused or warned about with the reason, the override still works, and tests cover the choice for sample memory sizes and models.
-- [ ] **F36** **Move the benchmark suite, sample vaults and evals into their own repo, added to Nuru as a submodule only on request** (the user, 2026-11-01). The repo is [Omgitskillah/nuru-bench](https://github.com/Omgitskillah/nuru-bench): public until we confirm Nuru doesn't need it, then private. Anyone cloning Nuru, or installing it for a friend, shouldn't get the test suite. Today it's in this repo (`nuru/evals/`: 197 tracked files, the suite, scorers, cases, fixtures, results write-ups, steward and planner evals) or outside any repo (`~/Desktop/dummyVault`, which every suite run copies, so a run can't be reproduced from git).
+- [x] **F36** **Move the benchmark suite, sample vaults and evals into their own repo, added to Nuru as a submodule only on request** (the user, 2026-11-01). The repo is [Omgitskillah/nuru-bench](https://github.com/Omgitskillah/nuru-bench): public until we confirm Nuru doesn't need it, then private. Anyone cloning Nuru, or installing it for a friend, shouldn't get the test suite. Today it's in this repo (`nuru/evals/`: 197 tracked files, the suite, scorers, cases, fixtures, results write-ups, steward and planner evals) or outside any repo (`~/Desktop/dummyVault`, which every suite run copies, so a run can't be reproduced from git). (done 2026-11-02, #82; nuru-bench#1)
+- [ ] **F37** **Deadlines and cleanup in the bench's live route runner** (nuru-bench `obsidian_remote/live_wp01.py`; found in the bench#2 review, 2026-11-02; they predate it):
+  - `run_plugin` waits for nuru-serve's port with no deadline (`for line in serve.stderr`), so a service that hangs at start without printing or exiting hangs the batch. The turn's timeout covers only the plugin client.
+  - On a timeout, the plugin client is killed but never reaped (`follow.kill()` with no `follow.wait()`).
+  - `run_direct` kills the child's process group only on a timeout. After a crash (non-zero exit, or no output file), the session's MCP servers can outlive it.
+
+  **Done when:** a silent start-up hang ends at a start deadline, a timed-out client is reaped, and a crashed child's process group is killed, each with a test that fails without the fix. Then the bench README's "Follow-up" section can go.
   - **The new repo:** `nuru/evals/` with its history (`git filter-repo`/subtree split, so blame and dates survive), dummyVault and the other sample vaults as versioned fixtures, the eval tests from `nuru/tests` that import evals (sequence evals, manifest, score 32, steward evaluation, claim/decision checks…), and its own CI. `.runs/` stays ignored there.
   - **On request:** add it as a submodule at `nuru/evals` (so the suite's paths stay as they are) with `update = none` in `.gitmodules`, so `git clone --recursive` and `git submodule update --init --recursive` skip it and people without access see no auth error; we fetch it with `git submodule update --init --checkout nuru/evals`. Document that in the README for contributors only. Decide whether instead to leave it out of `.gitmodules` entirely and have a script clone it.
   - **Untangle:** the suite imports Nuru (`core.*`, `REPO`, the servers) and runs against a checkout, so it reads the parent's path rather than its own; its manifest records both commits. Nuru's CI step that runs `vault_steward/steward_eval.py` and any test needing fixtures move to nuru-bench's CI, or to a Nuru job that gets the submodule with a deploy key. Nuru's own tests and coverage gate must pass without it.
@@ -162,8 +186,6 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
 - [ ] **R14** History panel extras: delete and rename, search, backfill titles, stop creating empty conversations. Port it onto main fresh; `ui-state` (7d526ff) is parked.
 - [ ] **R15** Broken links as a system function that runs after renames and moves, not a model tool.
 - [ ] **R17** A separate date-time tool, only if `run_python`'s `datetime` isn't enough. (Python tool done 2026-10-05.)
-- [ ] **R18** A log of the vault notes sent to the expert: what, when, conversation and turn, model. Viewable in the UI.
-- [ ] **R19** UI improvements. Start with source chips under replies (now F33), a "Changed N notes" card and a "Sent to expert" badge. Later: a `[[` note picker, regenerate/edit, and thumbs up/down saved as Laya labels. The Obsidian status line was completed in WP01-ACT.
 - [ ] **R20** Run on macOS, Windows and Linux.
   - Known gaps:
     - the Obsidian mutations server uses `fcntl`, `dir_fd` and `O_NOFOLLOW`
@@ -177,7 +199,7 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   - **Keep everything else:** the same `MODEL_TOOLS` through the same dispatch, write checks and step cap, ask-user questions, the conversation store, `nuru-serve` and the Obsidian plugin. Today Ollama is hard-wired (`core/providers/ollama.py`, `session.BASE_MODEL`), and the expert only plans (`core/expert.py`) and handles step-cap escalation.
   - **Work out:**
     - **Provider interface:** a provider layer that maps Ollama and Anthropic tool calls, streaming and thinking levels (off/low/high → effort).
-    - **Privacy:** every note the model reads leaves the machine. Make it opt-in, show it clearly in the UI, and log it (R18).
+    - **Privacy:** every note the model reads leaves the machine. Make it opt-in, show it clearly in the UI, and log it.
     - **Cost:** reuse the daily expert budget, cache the system prompt and tool list, and cap tokens per turn.
     - **Outages and rate limits:** fall back to the local model or stop with a clear message.
     - **Expert-only paths:** turn off the expert planner and step-cap escalation, or point them at a stronger model.
@@ -191,5 +213,5 @@ Plan: [nuru/docs/obsidian-remote/01-local-obsidian-chat.md](nuru/docs/obsidian-r
   1. **Inside Ollama first:** check whether the `LLAMA_ARG_*` variables Ollama passes to `llama-server` (checkpoint count and spacing, and probably `--cache-ram`) change the cache test's numbers (`scratchpad cache_test.py`: new session ~252 tokens / 1.0 s, follow-up ~286 / 1.1 s on GGUF q8).
   2. **Then `llama-server` directly, as a small trial:** `--cache-ram` (cap), `--ctx-checkpoints` / `--checkpoint-min-step` (checkpoint placement), and `--slot-save-path` with `POST /slots/{id}?action=save|restore`: save the state after the system prompt and tools once, restore it at each session start. Check save/restore works with Qwen 3.5's hybrid layers. This needs a provider beside Ollama (shared with R21): OpenAI-style chat, `response_format` for schemas, `enable_thinking` in the template, the system prompt sent by Nuru, and Nuru starting the server on the GGUF.
   3. **MLX directly (`mlx_lm.server`) only if needed:** `--prompt-cache-bytes` / `--prompt-cache-size` cap it, but it needs MLX weights and a check of Qwen's tool calls there.
-- [ ] **R25** **What Claude may see (sending rules).** With Claude as the main model every note a tool returns is sent to the API; for now it's evaluated as if it were a local model. Decide which notes stay local (e.g. `user/`, a `#private` tag, confidential content like MT09's), and whether such a result is withheld ("content withheld") or the turn goes to the local model; enforce it in code, test that protected text never appears in a request, and show a "cloud model" marker in the UI. The local request log (`nuru/.logs/claude-requests-<date>.jsonl`) already records what went out (part of R18).
+- [ ] **R25** **What Claude may see (sending rules).** With Claude as the main model every note a tool returns is sent to the API; for now it's evaluated as if it were a local model. Decide which notes stay local (e.g. `user/`, a `#private` tag, confidential content like MT09's), and whether such a result is withheld ("content withheld") or the turn goes to the local model; enforce it in code, test that protected text never appears in a request, and show a "cloud model" marker in the UI. The local request log (`nuru/.logs/claude-requests-<date>.jsonl`) already records what went out.
 - [ ] **R26** **One service for several vaults at once.** Today `nuru-serve` serves the one vault it started with, and the Obsidian plugin switches it between vaults. Serving several needs: conversations, devices and background jobs (semantic indexer, link auditor) tied to a vault; requests that name their vault; the queue shared across vaults (one model). Where each vault's data lives is under discussion on the board ("Keeping each vault's Nuru data with the vault").

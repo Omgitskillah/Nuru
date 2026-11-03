@@ -10,6 +10,7 @@
     "test": "node --test --test-timeout=60000 test/*.test.js",
     "test:coverage": "node --test --test-timeout=60000 --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=lcov.info test/*.test.js",
     "test:e2e": "node --test --test-timeout=60000 test/e2e/*.test.js",
+    "test:windows": "node --test --test-timeout=60000 test/build.test.js test/envfiles.test.js test/install.test.js test/install-script.test.js test/launcher.test.js test/ollama.test.js test/remove.test.js test/settings.test.js test/setup.test.js test/unpack.test.js test/e2e/scenarios.test.js",
     "build": "node build.js"
   },
   "devDependencies": {

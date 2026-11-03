@@ -222,7 +222,8 @@ def test_a_missing_report_fails_the_gate_and_says_why(tmp_path, monkeypatch, cap
 
 def test_the_default_inventories_are_nurus_sources_and_the_shipped_plugin(monkeypatch):
     assert gate.PYTHON_ROOTS == ["nuru/src", "packages/claude-access/src", "servers/deep-think/src",
-                                 "servers/laya/src", "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py"]
+                                 "servers/laya/src", "servers/obsidian/src", "tools/coverage_gate.py", "tools/fetch_bench.py",
+                                 "tools/local_checks.py", "tools/windows_selection.py"]
     repo = _PATH.parents[1]
     import tomllib
     measured = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]["run"]["source"]

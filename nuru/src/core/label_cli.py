@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--db", type=Path, help="decision log (default: `database` in config/decision_layer.yaml)")
     commands = parser.add_subparsers(dest="command", required=True)
     label_cmd = commands.add_parser("label", help="label logged decisions, disagreements first")
-    label_cmd.add_argument("--point", help="only this decision point (tool_gate, assess_effort, ...)")
+    label_cmd.add_argument("--point", help="only this decision point (step_cap, gate_write, watch_thinking, ...)")
     label_cmd.add_argument("--limit", type=int, default=20)
     label_cmd.add_argument("--source", choices=LABEL_SOURCES, default="user")
     export_cmd = commands.add_parser("export", help="write labelled decisions as JSONL for fine-tuning")

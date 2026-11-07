@@ -1,7 +1,7 @@
 import itertools
 
 from core.thinking_watch import ThinkingWatch, repeated_sentence
-from laya_mcp.config import WatchSettings
+from core.decision_config import WatchSettings
 
 SETTINGS = WatchSettings(check_every_tokens=100, budgets={"low": 300, "high": 1000}, repeat_min_chars=40,
                          repeat_count=3, tail_chars=400, repeat_calls=3)
@@ -28,7 +28,7 @@ def test_short_repeated_phrases_are_not_a_loop():
 
 
 def test_the_budget_fires_past_the_tiers_limit_and_only_once():
-    watch = ThinkingWatch(SETTINGS, "low", None)
+    watch = ThinkingWatch(SETTINGS, "low")
     signals = [watch.feed(fresh_text(120)) for _ in range(4)]
     fired = [s for s in signals if s]
     assert len(fired) == 1 and fired[0].kind == "budget" and fired[0].source == "code"
@@ -36,7 +36,7 @@ def test_the_budget_fires_past_the_tiers_limit_and_only_once():
 
 
 def test_repetition_is_caught_before_the_budget():
-    watch = ThinkingWatch(SETTINGS, "high", None)
+    watch = ThinkingWatch(SETTINGS, "high")
     loop = "I should recompute the overlap between the radio and the sensor duty cycles first. " * 3
     signal = None
     for _ in range(3):
@@ -44,25 +44,17 @@ def test_repetition_is_caught_before_the_budget():
     assert signal.kind == "repeating" and "recompute the overlap" in signal.detail
 
 
-def test_laya_is_asked_only_at_checks_and_only_with_the_tail():
-    asked = []
-
-    def ask(tail):
-        asked.append(tail)
-        return {"signal": "ready"} if len(asked) == 2 else {"signal": "progressing"}
-
-    watch = ThinkingWatch(SETTINGS, "high", ask)
-    signals = [watch.feed(fresh_text(60)) for _ in range(8)]
-    assert [s.kind for s in signals if s] == ["ready"]
-    assert len(asked) == 2 and all(len(t) <= 400 for t in asked)
+def test_watch_has_no_external_model_callback():
+    import inspect
+    assert list(inspect.signature(ThinkingWatch).parameters) == ["settings", "tier"]
 
 
 def test_without_a_tier_there_is_no_budget():
-    watch = ThinkingWatch(SETTINGS, "medium", lambda tail: None)
+    watch = ThinkingWatch(SETTINGS, "medium")
     assert watch.budget is None
     assert all(watch.feed(fresh_text(200)) is None for _ in range(10))
 
 
-def test_laya_down_leaves_only_the_code_checks():
-    watch = ThinkingWatch(SETTINGS, "high", lambda tail: None)
+def test_progress_below_the_budget_produces_no_signal():
+    watch = ThinkingWatch(SETTINGS, "high")
     assert watch.feed(fresh_text(150)) is None

@@ -1,8 +1,8 @@
 [tool.uv.workspace]
-members = ["packages/claude-access", "servers/obsidian", "servers/deep-think", "servers/laya", "nuru"]
+members = ["packages/claude-access", "servers/obsidian", "servers/deep-think", "nuru"]
 
 [tool.pytest.ini_options]
-testpaths = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests", "servers/laya/tests", "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
+testpaths = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests", "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
 
 [dependency-groups]
 dev = [
@@ -10,7 +10,6 @@ dev = [
     "obsidian-mcp",
     "deep-think-mcp",
     "claude-access",
-    "laya-mcp",
     "access-logging",
     "core",
     "pytest-cov>=7.1.0",
@@ -20,7 +19,6 @@ dev = [
 obsidian-mcp = { workspace = true }
 deep-think-mcp = { workspace = true }
 claude-access = { workspace = true }
-laya-mcp = { workspace = true }
 access-logging = { path = "servers/obsidian/vendor/access-logging" }
 core = { workspace = true }
 
@@ -29,7 +27,7 @@ core = { workspace = true }
 [tool.coverage.run]
 relative_files = true
 # Every source file, so one no test imports is reported at 0%, not left out.
-source = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/laya/src", "servers/obsidian/src", "tools"]
+source = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", "servers/obsidian/src", "tools"]
 # tools/logging is its own package, with its own tests and lock file.
 omit = ["tools/logging/*"]
 
@@ -37,6 +35,5 @@ omit = ["tools/logging/*"]
 nuru = ["nuru/src", "nuru\\src"]
 claude_access = ["packages/claude-access/src", "packages\\claude-access\\src"]
 deep_think = ["servers/deep-think/src", "servers\\deep-think\\src"]
-laya = ["servers/laya/src", "servers\\laya\\src"]
 obsidian = ["servers/obsidian/src", "servers\\obsidian\\src"]
 tools = ["tools", "tools\\"]

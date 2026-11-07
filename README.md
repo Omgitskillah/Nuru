@@ -10,7 +10,7 @@ Every subsystem's settings live in the repo root, one file each, and every one i
 | File | Read by | Holds |
 |---|---|---|
 | `.env.nuru` | Nuru (`nuru-serve`, CLI, evals) | the models (`NURU_BASE_MODEL`, `MODEL`, or `NURU_MAIN_MODEL` for Claude), context size |
-| `.env.obsidian` | the obsidian server, and Nuru's indexer and laya server (for the same vault) | `VAULT_PATH`, the embedding model |
+| `.env.obsidian` | the obsidian server and Nuru's indexer (for the same vault) | `VAULT_PATH`, the embedding model |
 | `.env.deep-think` | Nuru's expert tier and Claude as the main model ([claude-access](packages/claude-access)) | `CLAUDE_API_KEY` |
 
 A variable already set in the environment always wins over the file. Nuru hands its servers only what they need, since MCP servers start with a stripped-down environment.
@@ -35,7 +35,7 @@ Everything Nuru and its servers write at runtime goes into a **hidden** (dot-pre
 | Path | Written by | What it holds | Override |
 |---|---|---|---|
 | `nuru/.db/conversation.db` | Nuru (`nuru-serve` and CLI) | Every conversation and message | `NURU_DB_PATH` |
-| `nuru/.db/decisions.sqlite3` (+ `-wal`, `-shm`) | laya-mcp and Nuru's harness | Laya's decisions with their state text, the tools the harness ran, labels, the classify cache | `database` in [`config/decision_layer.yaml`](config/decision_layer.yaml) |
+| `nuru/.db/decisions.sqlite3` (+ `-wal`, `-shm`) | Nuru's harness | local safeguard decisions, actual tool calls and historical labels | `database` in [`config/decision_layer.yaml`](config/decision_layer.yaml) |
 | `nuru/.logs/` | Nuru | One JSONL log per session: turns, model calls, tool calls, indexing passes. With Claude as the main model, also `claude-requests-<date>.jsonl`: every request whole, as sent (the notes it carried included), with its usage | `NURU_LOG_DIR` |
 | `servers/<name>/.logs/` | each MCP server | One access log per client session (see [servers](servers/README.md)); the MCP Inspector's own logs too, when started as that README shows | `<NAME>_MCP_LOG_DIR` |
 | `nuru/evals/**/.runs/` | the eval scripts (the bench, below) | Raw eval results and scratch vault copies | - |
@@ -46,6 +46,6 @@ Not hidden, on purpose:
 
 - **`<vault>/Templates/`** - Obsidian's own "Insert template" has to see it; no tool writes it.
 - **`<vault>/archive/` and `<vault>/trash/`** - where `rename_or_move_file` puts archived and deleted notes. Visible in Obsidian, so a person can review, restore or empty them; the tools see `archive/` but never `trash/`.
-- **Tooling caches** - `.venv/`, `__pycache__/`, `.pytest_cache/` (already hidden or conventional), and Laya's checkpoints in the Hugging Face cache (`~/.cache/huggingface/`, outside the repo; `uv run laya-mcp-fetch` fills it).
+- **Tooling caches** - `.venv/`, `__pycache__/`, `.pytest_cache/` (already hidden or conventional).
 
 Before 2026-09-28 these were written without the dot (`logs/`, `db/`, `file_cache.db`). Those names stay gitignored, so a server still running the old code (a Claude Desktop session, say) can't leave untracked files behind; move their contents across once it has restarted.

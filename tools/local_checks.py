@@ -22,9 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "obsidian"
-SOURCES = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src", 
+SOURCES = ["nuru/src", "packages/claude-access/src", "servers/deep-think/src",
            "servers/obsidian/src", "tools"]
-TESTS = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests", 
+TESTS = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests",
          "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
 
 

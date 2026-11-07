@@ -49,7 +49,7 @@ from coverage import CoverageData
 
 ROOT = Path(__file__).resolve().parents[1]
 SELECTION = ROOT / "tools" / "windows_tests.txt"
-PYTHON_TESTS = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests", 
+PYTHON_TESTS = ["nuru/tests", "packages/claude-access/tests", "servers/deep-think/tests",
                 "servers/obsidian/tests", "servers/obsidian/vendor/access-logging/tests"]
 PLUGIN = ROOT / "plugins" / "obsidian"
 PLATFORM = re.compile(r"sys\.platform|os\.name\b|platform\.system|_WINDOWS\b|IS_WINDOWS\b|win32|[\"']nt[\"']")

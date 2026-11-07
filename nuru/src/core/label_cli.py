@@ -1,11 +1,11 @@
 """`nuru label` and `nuru export`: review the decision layer's logged decisions and label them, for
-calibrating thresholds now and fine-tuning Laya later.
+historical decision review. This CLI never starts a decision model.
 
     uv run nuru label [--point tool_gate] [--limit 20] [--source user|claude]
     uv run nuru export labels.jsonl
 
-`label` shows the unlabelled decisions Laya answered - the ones where what Nuru did differs from
-what Laya proposed first - and asks for the right answer to each of its questions. A label is
+`label` shows the unlabelled decisions the policy recorded - the ones where what Nuru did differs from
+what the policy proposed first - and asks for the right answer to each of its questions. A label is
 stored as JSON, {question: answer}; a question left blank is left out. The source is `user` or
 `claude`, never the local model.
 """
@@ -16,8 +16,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from laya_mcp.config import load_config
-from laya_mcp.decision_log import LABEL_SOURCES, DecisionLog
+from core.decision_config import load_config
+from core.decision_log import LABEL_SOURCES, DecisionLog
 
 _STATE_PREVIEW_CHARS = 1500
 
@@ -46,7 +46,7 @@ def _show(row, out: Callable[[str], None]) -> None:
     out("")
     out(f"#{row['id']}  {row['decision_point']} / {row['question_set']} v{row['question_set_version']}"
         f"  [{row['checkpoint']}, {row['mode']}]  {row['ts']}")
-    out(f"  Laya proposed: {row['proposed_action']}    Nuru did: {row['action_taken'] or '(not recorded)'}"
+    out(f"  Policy proposed: {row['proposed_action']}    Nuru did: {row['action_taken'] or '(not recorded)'}"
         + (f"    outcome: {row['outcome']}" if row["outcome"] else ""))
     state = row["state_text"]
     try:
@@ -68,7 +68,7 @@ def _ask_label(row, read: Callable[[str], str], out: Callable[[str], None]) -> d
         p = _probabilities(answers.get(qid))
         out(f"  {qid}: {question['instructions']}")
         for i, option in enumerate(options, 1):
-            out(f"    {i:>2}. {option}" + (f"  (Laya {p[option]:.2f})" if option in p else ""))
+            out(f"    {i:>2}. {option}" + (f"  (model {p[option]:.2f})" if option in p else ""))
         while True:
             reply = read(f"  {qid} - number or name, Enter to skip, q to quit: ").strip()
             if reply == "q":

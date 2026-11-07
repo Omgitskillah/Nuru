@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from core.expert import ExpertPlanner, ExpertUnavailable, FoundNote, build_brief, notes_found
-from laya_mcp.config import ExpertSettings
-from laya_mcp.decision_log import DecisionLog
+from core.decision_config import ExpertSettings
+from core.decision_log import DecisionLog
 
 PRIYA_ID = "01M2X9M15NDE1FJYDMC0SPGRVA"
 TOOLS = [{"type": "function", "function": {"name": "append_note", "description": "Append.",

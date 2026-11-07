@@ -1,7 +1,7 @@
 import pytest
 from ulid import ULID
 
-from laya_mcp.checks import check_write, find_note_ids, invented_ids
+from core.write_checks import check_write, find_note_ids, invented_ids
 
 KNOWN = str(ULID())
 UNKNOWN = str(ULID())

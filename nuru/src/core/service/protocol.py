@@ -413,7 +413,7 @@ class TurnStream:
     def session_event(self, event) -> list[dict]:
         """A Session event as protocol events. A tool's result and write receipt don't come from here:
         Session reports them through its on_tool_outcome hook (the service's Service._tool_outcome)."""
-        from core import session  # heavy (MCP, Ollama, Laya); the protocol alone doesn't need it
+        from core import session  # heavy (MCP, Ollama); the protocol alone doesn't need it
 
         if isinstance(event, session.Text):
             return self.text(event.text)

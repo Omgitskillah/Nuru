@@ -57,7 +57,7 @@ jobs:
 
       # A file opened without an encoding is in Windows' code page there, not UTF-8.
       - name: Every file opened with an encoding
-        run: uvx ruff@0.17.2 check --preview --select PLW1514 nuru/src packages/claude-access/src servers/deep-think/src servers/laya/src servers/obsidian/src
+        run: uvx ruff@0.17.2 check --preview --select PLW1514 nuru/src packages/claude-access/src servers/deep-think/src servers/obsidian/src
 
       - name: Run tests
         if: ${{ !inputs.windows_run }}
@@ -67,8 +67,8 @@ jobs:
           NURU_STEWARD_ENABLED: '0'
           # Python 3.14's default tracer records only the first test to run each line; the full run needs them all.
           COVERAGE_CORE: ${{ inputs.full && 'ctrace' || 'sysmon' }}
-          TESTS: ${{ inputs.full && '--cov-context=test nuru/tests packages/claude-access/tests servers/deep-think/tests servers/laya/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests' || '@tools/windows_tests.txt' }}
-        run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 $TESTS --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/laya/src --cov=servers/obsidian/src --cov=tools --cov-report=term-missing
+          TESTS: ${{ inputs.full && '--cov-context=test nuru/tests packages/claude-access/tests servers/deep-think/tests servers/obsidian/tests servers/obsidian/vendor/access-logging/tests' || '@tools/windows_tests.txt' }}
+        run: timeout 1200 uv run --locked pytest -v -o faulthandler_timeout=180 $TESTS --cov=nuru/src --cov=packages/claude-access/src --cov=servers/deep-think/src --cov=servers/obsidian/src --cov=tools --cov-report=term-missing
 
       # For the coverage gate (tools/local_checks.py), which adds it to the local run's.
       - name: Save Python coverage

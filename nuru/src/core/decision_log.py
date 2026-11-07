@@ -1,9 +1,7 @@
-"""The decision log: every Laya decision, the tools the harness actually ran, and the labels that
-fine-tuning will need later. One SQLite file (config `database`), gitignored, never leaves this
-machine - it holds state text, which can include vault content.
+"""Local policy decisions, actual tool calls and historical labels in one SQLite file.
 
-Written by two processes - the Laya server (decisions) and Nuru's harness (tool calls, what it
-did with a decision) - so it runs in WAL mode.
+The existing schema and WAL behavior are preserved so older logs remain readable.
+State text may contain vault content; this database stays on the local machine.
 """
 
 import hashlib
@@ -83,15 +81,15 @@ def canonical(value: Any) -> str:
 
 
 def as_seen(value: Any) -> str:
-    """JSON in the order Laya was given it. Laya reads a state's keys and a question's options in
-    order and its answers change with it, so a replay or a training example must keep that order;
-    `canonical` (sorted) is only for hashing."""
+    """JSON preserving the original key order in stored state; canonical is only for hashing."""
     return json.dumps(value, ensure_ascii=False)
 
 
 def redact_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: {"chars": len(value), "sha256": sha256(value)} if key in _BODY_ARGUMENTS and isinstance(value, str) else value
+        key: {"chars": len(value), "sha256": sha256(value)}
+        if key in _BODY_ARGUMENTS and isinstance(value, str)
+        else value
         for key, value in arguments.items()
     }
 
@@ -100,7 +98,9 @@ class DecisionLog:
     def __init__(self, path: Path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(
+            path, check_same_thread=False, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
@@ -114,7 +114,9 @@ class DecisionLog:
         columns = ", ".join(row)
         marks = ", ".join("?" for _ in row)
         with self._lock:
-            return self._conn.execute(f"INSERT INTO {table} ({columns}) VALUES ({marks})", list(row.values())).lastrowid
+            return self._conn.execute(
+                f"INSERT INTO {table} ({columns}) VALUES ({marks})", list(row.values())
+            ).lastrowid
 
     def record_decision(
         self,
@@ -146,7 +148,9 @@ class DecisionLog:
                 "question_set": question_set,
                 "question_set_version": question_set_version,
                 "checkpoint": checkpoint,
-                "state_hash": sha256(state if isinstance(state, str) else canonical(state)),
+                "state_hash": sha256(
+                    state if isinstance(state, str) else canonical(state)
+                ),
                 "state_text": state_text,
                 "questions_json": as_seen(questions),
                 "answers_json": canonical(answers) if answers is not None else None,
@@ -158,7 +162,9 @@ class DecisionLog:
             },
         )
 
-    def set_action_taken(self, decision_id: int, action: str, outcome: str | None = None) -> None:
+    def set_action_taken(
+        self, decision_id: int, action: str, outcome: str | None = None
+    ) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE decisions SET action_taken = ?, outcome = COALESCE(?, outcome) WHERE id = ?",
@@ -194,7 +200,9 @@ class DecisionLog:
 
     def set_label(self, decision_id: int, label: str, source: str) -> None:
         if source not in LABEL_SOURCES:
-            raise ValueError(f"label source must be one of {LABEL_SOURCES}, never the local model; got {source!r}")
+            raise ValueError(
+                f"label source must be one of {LABEL_SOURCES}, never the local model; got {source!r}"
+            )
         with self._lock:
             updated = self._conn.execute(
                 "UPDATE decisions SET label = ?, label_source = ?, labelled_at = ? WHERE id = ?",
@@ -203,8 +211,10 @@ class DecisionLog:
         if not updated:
             raise KeyError(f"no decision with id {decision_id}")
 
-    def review_queue(self, limit: int = 20, decision_point: str | None = None) -> list[sqlite3.Row]:
-        """Unlabelled decisions that Laya answered, disagreements with what was done first."""
+    def review_queue(
+        self, limit: int = 20, decision_point: str | None = None
+    ) -> list[sqlite3.Row]:
+        """Historical unlabelled decisions, disagreements with what was done first."""
         query = (
             "SELECT * FROM decisions WHERE label IS NULL AND status = 'ok'"
             + (" AND decision_point = ?" if decision_point else "")
@@ -241,8 +251,18 @@ class DecisionLog:
         """One call to the cloud expert - counted whether or not it produced a plan."""
         from datetime import date
 
-        self._insert("expert_calls", {"ts": _now(), "day": date.today().isoformat(), "model": model,
-                                      "stop_reason": stop_reason, "ok": int(ok)})
+        self._insert(
+            "expert_calls",
+            {
+                "ts": _now(),
+                "day": date.today().isoformat(),
+                "model": model,
+                "stop_reason": stop_reason,
+                "ok": int(ok),
+            },
+        )
 
     def expert_calls_on(self, day: str) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM expert_calls WHERE day = ?", (day,)).fetchone()[0]
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM expert_calls WHERE day = ?", (day,)
+        ).fetchone()[0]

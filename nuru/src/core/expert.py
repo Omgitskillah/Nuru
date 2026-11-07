@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from laya_mcp.config import ExpertSettings
-from laya_mcp.decision_log import DecisionLog
+from core.decision_config import ExpertSettings
+from core.decision_log import DecisionLog
 
 # Search tools whose results name notes; only their titles and IDs reach the brief.
 SEARCH_TOOLS = frozenset({"search", "find_in_notes", "browse", "tags"})

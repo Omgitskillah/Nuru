@@ -11,7 +11,6 @@ dependencies = [
     "jsonschema>=4.26.0",
     "anyio>=4",
     "obsidian-mcp",
-    "laya-mcp",
     "claude-access",
 ]
 
@@ -24,7 +23,6 @@ nuru-serve = "core.service.server:main"
 
 [tool.uv.sources]
 obsidian-mcp = { workspace = true }
-laya-mcp = { workspace = true }
 claude-access = { workspace = true }
 
 [build-system]

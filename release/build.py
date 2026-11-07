@@ -1,5 +1,6 @@
 """Builds Nuru's release bundle, nuru-<version>.zip: this commit's files, and each server repository's at
-the commit this one pins, under one nuru-<version>/ folder. Then, once the release workflow has built the
+the commit this one pins (not one a clone leaves out, `update = none` in .gitmodules: the opt-in bench),
+under one nuru-<version>/ folder. Then, once the release workflow has built the
 plugin with the bundle's sha256 in it and put its main.js, manifest.json and styles.css beside it,
 SHA256SUMS for every file in the out folder.
 
@@ -44,13 +45,23 @@ def files(root: Path, commit: str, prefix: str):
                 yield prefix + member.name, bool(member.mode & 0o100), archive.extractfile(member).read()
 
 
+def left_out(root: Path, commit: str) -> set[str]:
+    """The submodules a clone never checks out (`update = none` in the commit's .gitmodules)."""
+    config = git(root, "config", "--blob", f"{commit}:.gitmodules", "-z", "--get-regexp", r"\.(path|update)$")
+    settings = dict(item.split("\n", 1) for item in config.decode("utf-8").split("\0") if item)
+    return {settings[key[:-len(".update")] + ".path"] for key, value in settings.items()
+            if key.endswith(".update") and value == "none"}
+
+
 def bundle(root: Path, version: str, out: Path) -> Path:
     head = git(root, "rev-parse", "HEAD").decode().strip()
     entries = list(files(root, head, ""))
+    skip = left_out(root, head)
     for line in git(root, "ls-tree", "-r", "-z", head).split(b"\0"):
         if line.startswith(b"160000 "):  # a server repository, at the commit pinned here
             meta, path = line.decode("utf-8").split("\t", 1)
-            entries += files(root / path, meta.split()[2], f"{path}/")
+            if path not in skip:
+                entries += files(root / path, meta.split()[2], f"{path}/")
     when = datetime.fromtimestamp(int(git(root, "log", "-1", "--format=%ct", head)), timezone.utc)
     target = out / f"nuru-{version}.zip"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:

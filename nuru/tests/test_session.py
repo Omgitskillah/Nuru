@@ -985,7 +985,7 @@ def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
     Session.start()
 
     assert [p.args[-1] for p in seen["params"]] == ["obsidian-mcp", "math-mcp"]  # this checkout: cargo
-    assert [p.args[-1] for p in seen["optional"]] == ["laya-mcp"]  # may fail alone (F05)
+    assert seen["optional"] == []  # the learned decision server is retired
     assert seen["writes"] == session.MUTATIONS  # they get the longer deadline
 
 

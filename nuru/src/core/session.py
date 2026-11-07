@@ -27,17 +27,16 @@ import requests
 import anyio
 from mcp.shared.exceptions import MCPError
 from dotenv import dotenv_values, load_dotenv
-from laya_mcp.config import load_config as load_decision_config
-from laya_mcp.checks import WRITE_TOOLS
-from laya_mcp.decision_log import DecisionLog
+from core.decision_config import load_config as load_decision_config
+from core.decision_log import DecisionLog
 from mcp import StdioServerParameters
 from mcp.client.stdio import get_default_environment
 
 from core.cli_logging import CLILogger
 from core.conversation_store import ConversationStore
 from core.context_budget import ContextBudgetExceeded, available_tokens, estimate_tokens, input_budget, require_fit
-from core.decision_shadow import LAYA_POINTS, DecisionShadow, think_tier
-from core.enforcement import REGENERATE, STEER, STOP, STOPPED, UNVERIFIED, WARNING, Enforcement, ExpertUnavailable, log_lines
+from core.decision_shadow import DecisionShadow, think_tier
+from core.enforcement import STEER, STOP, STOPPED, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
 from core import model_profile, questions, titles
 from core.providers.mcp_tools import MCPTools, ToolResult, ToolsUnavailable
@@ -65,7 +64,6 @@ from core.vault_link_auditor import VaultLinkAuditor
 from core.vault_steward import VaultSteward
 from core.thinking_watch import ThinkingWatch
 from core.tool_contract import MODEL_TOOLS
-from core.write_args import ask_for_arguments, validate_arguments
 
 # Every subsystem's settings live in the repo root, one file each (.env.nuru, .env.obsidian,
 # .env.deep-think, ...; the .example beside each is the template). Gitignored.
@@ -219,13 +217,6 @@ def python_server_params() -> StdioServerParameters | None:
                                  cwd=PYTHON_DIR, env={**get_default_environment(), **settings})
 
 
-LAYA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "servers", "laya")
-# Laya reads no notes, so it gets no vault. NURU_DECISION_CONFIG, when set (an eval run's own
-# config, logging to the run's own decision database), is passed on so both ends use it.
-_laya_env = get_default_environment()
-if _decision_config := os.environ.get("NURU_DECISION_CONFIG"):
-    _laya_env["NURU_DECISION_CONFIG"] = _decision_config
-LAYA_SERVER_PARAMS = StdioServerParameters(command="uv", args=["run", "laya-mcp"], cwd=LAYA_DIR, env=_laya_env)
 
 # Set only to override (tests, evals): otherwise each vault's own, in ~/.nuru/vaults/<uuid>/ (core.vault_data).
 LOG_DIR = Path(os.environ["NURU_LOG_DIR"]) if os.environ.get("NURU_LOG_DIR") else None
@@ -514,7 +505,7 @@ class Session:
         self.conversation_id = conversation_id
         self.shadow = shadow  # asks the decision layer at every decision point and logs its answers
         self.enforcement = enforcement  # acts on those answers, for the points set to enforce
-        # Asked when an enforced gate_write says a write needs the user's OK; None means nobody is
+        # Optional explicit write confirmation callback; None means nobody is
         # there to ask (the UI, an eval run), and such a write is blocked.
         self.confirm_write: Callable[[str, dict], bool] | None = None
         # Asked a question code raises mid-turn (a write to OK, a save the message ruled out); returns
@@ -593,11 +584,9 @@ class Session:
                 obsidian = obsidian.model_copy(update={"env": {**obsidian.env,
                                                                "OBSIDIAN_SEMANTIC_DB": semantic_db(configured_vault())}})
             math = math_server_params()
-            laya_off = {point for point in LAYA_POINTS if decision_config.mode(point) == "off"}
-            laya = [LAYA_SERVER_PARAMS] if laya_off != LAYA_POINTS else []  # all off: Laya isn't started
-            def make_tools() -> MCPTools:  # Laya and Docker's Python may fail alone, and say so
+            def make_tools() -> MCPTools:
                 return MCPTools([obsidian, math], model_tools=MODEL_TOOLS,
-                                optional=[*laya, *([python_server] if python_server else [])], writes=MUTATIONS)
+                                optional=([python_server] if python_server else []), writes=MUTATIONS)
             tools = make_tools()
             tools.connect()
             for command, why in tools.unavailable:
@@ -611,7 +600,7 @@ class Session:
                 model=MODEL,
                 think=THINK,
                 server_command=f"uv run obsidian-mcp; {' '.join([math.command, *math.args])}"
-                + ("; uv run laya-mcp" if laya else "") + ("; cargo run --bin python-mcp" if python_server else ""),
+                + ("; cargo run --bin python-mcp" if python_server else ""),
             )
             opened.callback(logger.close)
             store = ConversationStore(db_path)
@@ -619,9 +608,7 @@ class Session:
             decision_log = DecisionLog(decision_config.database_path)
             opened.callback(decision_log.close)
             # Through session.tools at call time: _renew_tools may replace them.
-            shadow = DecisionShadow(lambda name, arguments: session.tools.call_harness_tool(name, arguments),
-                                    decision_log, logger.session_id)
-            shadow.off = laya_off
+            shadow = DecisionShadow(decision_log, logger.session_id)
             planner = ExpertPlanner(decision_config.expert, decision_log, api_key=expert_api_key())
             enforcement = Enforcement(decision_config, PROFILE.think_map, planner)
 
@@ -871,10 +858,9 @@ class Session:
         self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
         turn_id = self.logger.turn_start(text)
-        decisions = self.shadow.begin(text, turn_id) if self.shadow else None
+        self.shadow.begin(text, turn_id) if self.shadow else None
         enforcing = self.enforcement if self.enforcement and self.enforcement.any and self.shadow else None
         policy = enforcing.new_task() if enforcing else None
-        first_read = enforcing.first_tool(decisions.gate) if enforcing and decisions else None
         failure = False  # a failure signal since the last model call (enforced tiers move up on it)
         tool_rounds = 0
         answer_after_failure = False
@@ -909,18 +895,7 @@ class Session:
             tools_offered = self.tool_definitions
             if ASK_USER:
                 tools_offered = [*tools_offered, questions.TOOL]
-            hold_reply = False  # check_claim enforced: nothing is shown until the reply is checked
             if enforcing:
-                if first_read:
-                    first_outcome = yield from self._run_first_read(first_read, text, messages, turn_id, enforcing)
-                    if first_outcome.must_stop or (not first_outcome.success and not first_outcome.repairable):
-                        yield from self._abort_turn(turn_id, first_outcome.user_message(first_read))
-                        return
-                    if not first_outcome.success:
-                        repair_pending[first_read] = first_outcome
-                    first_read = None
-                    tool_rounds += 1
-                    decisions = self.shadow.before_next_call()
                 capped = enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap
                 if repair_pending and recovery_calls >= 2:
                     # A failed correction must get its final answer, not a tier escalation.
@@ -932,7 +907,7 @@ class Session:
                     if tier == STOP:  # no expert, or not at the cap: answer from what the turn has
                         next_think, tier = think, _FINAL
                 else:
-                    next_think, tier = enforcing.think_for(policy, decisions.effort if decisions else None, failure, think)
+                    next_think, tier = enforcing.think_for(policy, failure, think)
                 failure = False
                 if tier == STOP:
                     reason = (f"it reached the {enforcing.step_cap}-step limit" if capped else
@@ -956,9 +931,6 @@ class Session:
                     messages.append({"role": "user", "content": _FINAL_ANSWER.format(limit=enforcing.step_cap)})
                     final_answer = True
                 think = False if steered else next_think
-                if not final_answer and tier != "expert" and not enforcing.offer_tools(decisions.gate if decisions else None):
-                    tools_offered = None
-                hold_reply = enforcing.on("check_claim")
 
             # Once tools close (a final answer, or an answer after a refused call) the tool list still
             # goes out unchanged: it sits at the start of the prompt, so dropping it made Ollama re-read
@@ -981,7 +953,7 @@ class Session:
             output_text = ""
             watch, steer = None, None
             if self.shadow and self.enforcement and think:
-                watch = ThinkingWatch(self.enforcement.config.watch_thinking, think_tier(think), self.shadow.watch)
+                watch = ThinkingWatch(self.enforcement.config.watch_thinking, think_tier(think))
                 self.shadow.watch_enforced = self.enforcement.on("watch_thinking")
             start = time.monotonic()
             try:
@@ -996,8 +968,8 @@ class Session:
                             if watch and (signal := watch.feed(out["thinking_chunk"])):
                                 if signal.source == "code":
                                     self.shadow.watch_signal(signal.kind, signal.tokens, signal.detail)
-                                # Code signals act when the watch is enforced; Laya's only when watch_laya is too.
-                                if self.shadow.watch_enforced and (signal.source == "code" or self.enforcement.on("watch_laya")):
+                                # Deterministic signals act only when the watch is enforced.
+                                if self.shadow.watch_enforced:
                                     steer = signal
                                     break
                             continue
@@ -1013,8 +985,7 @@ class Session:
                             usage = out
                         continue
                     output_text += out
-                    if not hold_reply:
-                        yield Text(out)
+                    yield Text(out)
                 if steer:
                     stream.close()  # stops the model mid-thought
                     usage = {"stop_reason": f"steered: {steer.kind}"}
@@ -1117,17 +1088,12 @@ class Session:
                     yield Text(_NO_REPLY_NOTE)
                     if self.shadow:
                         self.shadow.end(_NO_REPLY_NOTE)
-                elif hold_reply:
-                    output_text = yield from self._checked_reply(output_text, messages, num_ctx, think, policy, enforcing)
-                    self.shadow.finish()
-                elif self.shadow:
+                if self.shadow:
                     self.shadow.end(output_text)
                 self.store.add_message(self.conversation_id, "nuru", output_text, usage.get("completion_tokens"))
                 self.logger.turn_end(turn_id)
                 return
 
-            if hold_reply and output_text:
-                yield Text(output_text)  # words ahead of a tool call aren't the reply being checked
             tool_rounds += 1
             messages.append(_tool_call_message(tool_calls, thinking, output_text, provider_content))
             last_results = []
@@ -1170,14 +1136,6 @@ class Session:
                     else:
                         yield from self._stop(turn_id, stop)
                         return
-                elif enforcing and enforcing.on("gate_write") and name in WRITE_TOOLS:
-                    before_repair = self._repair_rounds
-                    outcome = yield from self._forced_write(fn, args, messages[:-1], num_ctx, think, turn_id,
-                        allow_repair=not (enforcing.on("step_cap") and tool_rounds >= enforcing.step_cap)
-                                     and (not correcting or recovery_calls < 2))
-                    tool_rounds += self._repair_rounds - before_repair
-                    if correcting:
-                        recovery_calls += self._repair_rounds - before_repair
                 else:
                     outcome = self._call_tool(turn_id, name, args, None, enforcing)
                 messages.append({"role": "tool", "content": outcome.text})
@@ -1209,8 +1167,6 @@ class Session:
                 if _cancelled(cancel):
                     self._end_cancelled(turn_id, output_text)
                     return
-            if self.shadow:
-                decisions = self.shadow.before_next_call()
 
     # ------------------------------------------------------------------ running one tool
     def pending_writes(self) -> list[dict]:
@@ -1276,7 +1232,7 @@ class Session:
         return ("shared", shared) if shared else ("private", "")
 
     def _confirmed(self, turn_id: str, name: str, args: dict) -> bool | None:
-        """The user's OK for a write gate_write wants confirmed; None if nobody was there to give it."""
+        """The user's explicit write confirmation; None if nobody was there to give it."""
         if questions.no_save_phrase(self._turn_text) or self._write_scope(name, args)[0] != "private":
             return True  # the "do not save" or shared/ question asks instead, once (_call_tool)
         if self.confirm_write:
@@ -1301,23 +1257,13 @@ class Session:
         return (not failed_evidence and outcome is not None
                 and outcome.certainty in {"not_dispatched", "not_completed"})
 
-    def _before_tool(self, name: str, args: dict, enforcing: Enforcement | None) -> tuple[dict, dict | None, int | None]:
-        """Before a tool runs: Laya's note type for a write_note (filled in when note_type is
-        enforced) and gate_write for a write. Returns the arguments to run with, the write gate's
-        verdict and its decision id."""
-        typed = self.shadow.note_type(args) if self.shadow and name == "write_note" else None
-        if (typed and typed.get("type") and typed["type"] != "correction" and not args.get("type")
-                and enforcing and enforcing.on("note_type")):
-            # Laya decides a new note's type when the model gave none (an existing note keeps its own;
-            # the server ignores it). Never a correction: that needs targets only the model can give.
-            args = {**args, "type": typed["type"]}
-            self.shadow.gate_action(typed, f"filled:{typed['type']}")
-        write_gate = self.shadow.before_tool(name, args) if self.shadow else None
-        return args, write_gate, write_gate["decision_id"] if write_gate else None
+    def _before_tool(self, name: str, args: dict, enforcing: Enforcement | None):
+        gate = self.shadow.before_tool(name, args) if self.shadow else None
+        return args, gate, gate["decision_id"] if gate else None
 
     def _write_blocked(self, write_gate: dict | None) -> bool:
         """Code found a hard problem with a write (an invented note ID, a blocked tool, a protected
-        path) and write_checks is enforced: the write doesn't run, whatever Laya would say."""
+        path) and write_checks is enforced: the write doesn't run, regardless of model output."""
         return bool(write_gate and write_gate.get("source") == "code" and self.enforcement
                     and self.enforcement.on("write_checks"))
 
@@ -1343,14 +1289,6 @@ class Session:
                 self.shadow.gate_action(write_gate, "blocked")
             else:
                 args, outcome = tool_dispatch.validate(name, args, self._tool_validators)
-            if outcome is None and name in MUTATIONS and enforcing and enforcing.on("gate_write"):
-                verdict = write_gate["verdict"] if write_gate else "ask"
-                if verdict == "block":
-                    outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: write gate blocked it.")
-                elif verdict == "ask" and not self._confirmed(turn_id, name, args):
-                    outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: confirmation was not given.")
-                if outcome and self.shadow:
-                    self.shadow.gate_action(write_gate, "blocked")
         # Worded for the model, which reads them; a hint addressed to "the user" gets repeated to them.
         if outcome is None and name in MUTATIONS and (said := questions.no_save_phrase(self._turn_text)):
             answer = self._answer(turn_id, questions.against_no_save(name, args, said))
@@ -1418,10 +1356,8 @@ class Session:
         self.logger.tool_call(turn_id, name, shown_args, "ok" if outcome.success else "refused" if outcome.kind in {"policy", "repair", "dependency", "replay"} else "error",
                               outcome.hint, duration_ms, outcome=outcome)
         if self.shadow:
-            reranked = self.shadow.after_tool(name, shown_args, ToolResult(outcome.text, not outcome.success),
+            self.shadow.after_tool(name, shown_args, ToolResult(outcome.text, not outcome.success),
                                              duration_ms, gate_id, error=outcome.hint)
-            if outcome.success and reranked and enforcing and enforcing.on("rerank"):
-                outcome = replace(outcome, text=reranked)
         if self.on_tool_outcome and call_id:
             self.on_tool_outcome(call_id, name, shown_args, outcome, name in MUTATIONS)
         return outcome
@@ -1450,112 +1386,6 @@ class Session:
             self.shadow.finish()
         self.logger.turn_end(turn_id)
         yield Failure(reply)
-
-    # ------------------------------------------------------------------ enforcement
-    def _run_first_read(self, tool: str, query: str, messages: list[dict], turn_id: str, enforcing: Enforcement):
-        """tool_gate enforced: the harness runs the first search itself, as if the model had."""
-        args = {"query": query}
-        yield self._show(tool, args)
-        outcome = self._call_tool(turn_id, tool, args, None, enforcing)
-        messages += [
-            {"role": "assistant", "tool_calls": [{"function": {"name": tool, "arguments": args}}]},
-            {"role": "tool", "content": outcome.text},
-        ]
-        return outcome
-
-    def _forced_write(self, fn: dict, args: dict, context: list[dict], num_ctx: int, think, turn_id: str, *, allow_repair: bool = True):
-        """gate_write enforced: the write's arguments come from a forced schema (IDs only from the
-        last search), are validated, and go through gate_write. Returns the shared tool outcome."""
-        name = fn["name"]
-        authorize = getattr(self, "authorize_tool", None)
-        if authorize is not None and not authorize(name):
-            return self._call_tool(turn_id, name, args, None, self.enforcement)
-        schema = next(t["function"].get("parameters", {}) for t in self.tool_definitions if t["function"]["name"] == name)
-
-        def chat_json(msgs: list[dict], fmt: dict, think_value) -> str:
-            self._repair_rounds += 1
-            started, output, usage = time.monotonic(), "", {}
-            try:
-                for out in self._chat(self._model(), msgs, num_ctx=num_ctx, think=think_value, fmt=fmt, **self._profile().options(think_value)):
-                    if isinstance(out, str):
-                        output += out
-                    elif "stop_reason" in out:
-                        usage = out
-            except ContextBudgetExceeded:
-                return ""
-            self.logger.model_call(turn_id, (time.monotonic() - started) * 1000,
-                usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), usage.get("stop_reason"), [], output,
-                cache_read_tokens=usage.get("cache_read_tokens", 0), cache_write_tokens=usage.get("cache_write_tokens", 0))
-            return output
-
-        def not_run(reason: str, failed: bool, gate: dict | None = None, action: str | None = None):
-            outcome = tool_dispatch.failure("policy", "NOT_RUN", f"{name} was not run: {reason}", repairable=failed)
-            if action:
-                self.shadow.gate_action(gate, action)
-            return self._call_tool(turn_id, name, args, None, self.enforcement, refusal=outcome)
-
-        # The model's own arguments first, under the same rules; the forced schema only if they fail.
-        # Re-asking arguments that were already right made the model take the cannot_do way out
-        # (enforced quick suite, 2026-09-28) - validation alone is what keeps invented IDs out.
-        forced = validate_arguments(name, args, set(self.shadow.last_search_ids))
-        if forced.problems and not allow_repair:
-            return not_run("the step limit left no room for argument repair", False)
-        if forced.problems:
-            forced = ask_for_arguments(chat_json, context, name, schema, self.shadow.last_search_ids, think)
-        if forced.problems:
-            self.shadow.note_failure("schema_failures")
-            return not_run(f"no valid arguments ({'; '.join(forced.problems)})", True)
-        if forced.cannot_do is not None:
-            self.shadow.note_failure("cannot_do")
-            return not_run(f"the model couldn't do it ({forced.cannot_do})", True)
-        args = forced.arguments
-        fn["arguments"] = args  # the conversation shows the call that actually runs
-        gate = self.shadow.before_tool(name, args)
-        verdict = gate["verdict"] if gate else "ask"  # the decision layer down: ask
-        if verdict == "block":
-            return not_run(f"blocked ({'; '.join(gate.get('reasons') or []) or 'it did not match the request'})", False, gate, "blocked")
-        if verdict == "ask":
-            confirmed = self._confirmed(turn_id, name, args)
-            if confirmed is None:
-                return not_run("it needs your confirmation, and nobody was there to give it", False, gate, "blocked_unattended")
-            if not confirmed:
-                return not_run("you declined it", False, gate, "declined")
-        yield self._show(name, args)
-        return self._call_tool(turn_id, name, args, gate["decision_id"] if gate else None, self.enforcement, gate_checked=True)
-
-    def _checked_reply(self, draft: str, messages: list[dict], num_ctx: int, think, policy, enforcing: Enforcement):
-        """check_claim enforced: show the reply only once it's checked. A failed one is written again
-        once, with the log in view; if that fails too, it is shown with a warning and the log."""
-        claim = self.shadow.check_reply(draft, "shown")
-        if claim is None:
-            yield Text(draft + UNVERIFIED)
-            return draft + UNVERIFIED
-        if claim["passed"]:
-            final = draft + ("" if claim["verified"] else UNVERIFIED)
-            yield Text(final)
-            return final
-        self.shadow.record_claim_action(claim, "regenerated")
-        self.shadow.note_failure("claim_failures")
-        log = log_lines(self.shadow.executed if self.shadow else [])
-        if enforcing.tiers_enforced:  # a failure signal: one tier up for the rewrite, but no further
-            up, tier = enforcing.think_for(policy, None, True, think)
-            think = up if tier not in (STOP, "expert") else think
-        retry = [*messages, {"role": "assistant", "content": draft},
-                 {"role": "user", "content": REGENERATE.format(failures="; ".join(claim["failures"]), log=log)}]
-        try:
-            second = "".join(out for out in self._chat(self._model(), retry, num_ctx=num_ctx, think=think, **self._profile().options(think))
-                             if isinstance(out, str))
-        except (requests.exceptions.RequestException, ContextBudgetExceeded):
-            second = ""
-        second_claim = self.shadow.check_reply(second, "shown") if second.strip() else None
-        if second_claim and second_claim["passed"]:
-            final = second + ("" if second_claim["verified"] else UNVERIFIED)
-        else:
-            self.shadow.record_claim_action(second_claim, "shown_with_warning")
-            failures = (second_claim or claim)["failures"]
-            final = (second.strip() or draft) + WARNING.format(failures="; ".join(failures), log=log)
-        yield Text(final)
-        return final
 
     def _repeated_call(self, tool: str, arguments: dict, calls_seen: Counter) -> str | None:
         """Counts the call; the reason to stop the turn if it is a loop - the same tool, the same

@@ -71,6 +71,27 @@ def test_the_bundle_holds_the_tagged_commit_and_each_pinned_server_and_the_check
     assert capsys.readouterr().out.split() == [str(out / "nuru-0.2.0.zip"), str(out / "SHA256SUMS")]
 
 
+def test_a_submodule_a_clone_leaves_out_is_left_out_of_the_bundle(nuru, tmp_path):
+    """The opt-in bench: `update = none`, so a clone (the release workflow's too) never checks it out."""
+    bench = tmp_path / "bench"
+    write(bench / "cases.json", "{}\n")
+    git(tmp_path, "init", "bench")
+    git(bench, "add", ".")
+    git(bench, "commit", "-m", "bench")
+    git(nuru, "submodule", "add", bench.as_uri(), "nuru/evals")
+    git(nuru, "config", "-f", ".gitmodules", "submodule.nuru/evals.update", "none")
+    git(nuru, "add", ".gitmodules")
+    git(nuru, "commit", "-m", "the bench, opt-in")
+    git(nuru, "submodule", "deinit", "-f", "nuru/evals")
+
+    assert build.main(["bundle", "0.2.0", str(tmp_path / "out")], root=nuru) == 0
+
+    with zipfile.ZipFile(tmp_path / "out/nuru-0.2.0.zip") as bundle:
+        names = bundle.namelist()
+    assert "nuru-0.2.0/servers/math/run.sh" in names
+    assert not [name for name in names if name.startswith("nuru-0.2.0/nuru/evals/")]
+
+
 def test_the_same_commit_builds_the_same_bundle(nuru, tmp_path):
     for out in ("a", "b"):
         assert build.main(["bundle", "0.2.0", str(tmp_path / out)], root=nuru) == 0

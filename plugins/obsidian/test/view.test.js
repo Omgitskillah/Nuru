@@ -53,7 +53,7 @@ test.afterEach(async () => {
 });
 
 async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status, launcher,
-  autoStart = Boolean(launcher) } = {}) {
+  autoStart = Boolean(launcher), ownerDocument } = {}) {
   const opened = [];
   // The note being edited; `editing.active = false` is the panel having the focus instead.
   const editing = { selection, active: true };
@@ -79,6 +79,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     },
   };
   const view = new ChatView({ app }, plugin);
+  if (ownerDocument) ownerDocument.adoptNode(view.containerEl);
   views.push(view);
   await view.open();
   return { view, opened, plugin, editing, note };
@@ -1050,24 +1051,32 @@ test("history leaves multiline cursor movement, selections, modified arrows and 
   assert.equal(view.input.value, "older");
 });
 
-test("editing a recalled message preserves it as the new draft, and navigation cannot recall another conversation", async () => {
-  const client = fakeClient({ history: historyMessages("old") });
+test("editing or pasting into recall preserves the original draft and each recalled edit", async () => {
+  const client = fakeClient({ history: historyMessages("older", "newer") });
   const { view } = await open({ client });
-  assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
+  view.input.value = "my original draft";
+  view.input.setSelectionRange(3, 3);
   arrow(view, "ArrowUp");
-  view.input.value = "edited old";
+  view.input.value = "newer edited";
   view.input.dispatchEvent(new window.Event("input", { bubbles: true }));
   view.input.setSelectionRange(0, 0);
   arrow(view, "ArrowUp");
-  assert.equal(view.input.value, "old");
+  assert.equal(view.input.value, "older");
+  view.input.value = "older pasted text";
+  view.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  view.input.setSelectionRange(view.input.value.length, view.input.value.length);
   arrow(view, "ArrowDown");
-  assert.equal(view.input.value, "edited old");
-  view.input.setSelectionRange(0, 0);
-  arrow(view, "ArrowUp"); // leave browsing active when navigation starts
+  assert.equal(view.input.value, "newer edited");
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "my original draft");
+  assert.equal(view.input.selectionStart, 3);
+  assert.deepEqual([...view.turns.values()].map((turn) => turn.text), ["older", "newer"], "saved turns stay unchanged");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "newer", "session edits do not rewrite history");
   await view.openConversation(null);
   assert.equal(arrow(view, "ArrowUp").defaultPrevented, false);
   assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
-  assert.equal(view.input.value, "old", "navigation retains the existing composer, but clears recall state");
+  assert.equal(view.input.value, "newer", "navigation retains the existing composer, but clears recall state");
 });
 
 test("accepted sends join recalled history once; failed sends remain drafts", async () => {
@@ -1234,4 +1243,83 @@ test("an answer placed in the composer replaces recall state even if sending fai
   assert.notEqual(answer, "original draft");
   assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
   assert.equal(view.input.value, answer, "failed answer is kept, not replaced by the old draft");
+});
+
+test("a timed question, countdown, and failed state stay live while reply text is selected", async (t) => {
+  const client = fakeClient();
+  const { view } = await open({ client });
+  const turn = view.addTurn("timed-selection", "question");
+  turn.runner.display.reply = "Select this while the model works";
+  await until(() => turn.renderedReply === turn.runner.display.reply);
+  const selection = selectText(t, view, turn.replyEl.firstChild.firstChild);
+  const question = FIXTURES.streams.write_approved.find((e) => e.type === "question").data;
+  turn.runner.display.question = { ...question, expires_at: new Date(Date.now() + 9000).toISOString() };
+  turn.runner.display.state = "running";
+  view.update(turn);
+  assert.match(turn.questionEl.textContent, new RegExp(question.question.text));
+  const yes = [...turn.questionEl.querySelectorAll("button")].find((b) => b.textContent.startsWith("Yes"));
+  assert.ok(yes && !yes.disabled);
+  const countdown = turn.questionEl.querySelector(".nuru-countdown");
+  assert.match(countdown.textContent, /s to answer/);
+  const held = selection.toString();
+  countdown.setAttribute("data-expires", new Date(Date.now() - 1000).toISOString());
+  view.tick();
+  assert.match(countdown.textContent, /Time's up/);
+  assert.equal(yes.disabled, true);
+  assert.equal(selection.toString(), held);
+  turn.runner.display.question = null;
+  turn.runner.display.state = "failed";
+  turn.runner.display.message = "connection failed";
+  view.update(turn);
+  assert.equal(turn.questionEl.childNodes.length, 0);
+  assert.match(turn.stateEl.textContent, /Failed: connection failed/);
+  assert.equal(selection.toString(), held);
+});
+
+test("clearing a completed reply selection in a popout document catches up without a global event", async (t) => {
+  const { JSDOM } = require("jsdom");
+  const popout = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  t.after(() => popout.window.close());
+  const doc = popout.window.document;
+  const { view } = await open({ client: fakeClient(), ownerDocument: doc });
+  doc.body.appendChild(view.containerEl);
+  const turn = view.addTurn("popout-turn", "x");
+  turn.runner.display.reply = "popout selected text";
+  await until(() => turn.renderedReply === "popout selected text");
+  const selection = doc.getSelection();
+  selection.selectAllChildren(turn.replyEl);
+  turn.runner.display.reply = "final popout answer";
+  turn.runner.display.state = "completed";
+  view.update(turn);
+  assert.equal(selection.toString().trim(), "popout selected text");
+  selection.removeAllRanges();
+  doc.dispatchEvent(new popout.window.Event("selectionchange"));
+  await until(() => turn.renderedReply === "final popout answer");
+  assert.match(turn.replyEl.textContent, /final popout answer/);
+});
+
+test("sending a recalled message clears browsing so the newest accepted message is recalled", async () => {
+  const client = fakeClient({ history: historyMessages("oldest", "newest") });
+  const { view } = await open({ client });
+  arrow(view, "ArrowUp");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "oldest");
+  await view.send();
+  assert.equal(view.input.value, "");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "oldest", "just-sent text, not the old browse position");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "newest", "the prior turn comes before the newly accepted turn");
+});
+
+test("a runner callback after navigation cannot update a forgotten turn", async () => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("late-runner", "x");
+  await view.openConversation(null);
+  const before = turn.el.innerHTML, timer = turn.renderTimer;
+  turn.runner.display.state = "failed";
+  turn.runner.display.message = "late failure";
+  turn.runner.onChange(turn.runner);
+  assert.equal(turn.el.innerHTML, before);
+  assert.equal(turn.renderTimer, timer);
 });

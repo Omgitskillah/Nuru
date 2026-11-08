@@ -77,7 +77,7 @@ class ChatView extends ItemView {
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
     this.registerDomEvent(this.messagesEl, "click", (event) => this.onLinkClick(event));
     this.registerDomEvent(this.messagesEl, "contextmenu", (event) => this.copyMenu(event));
-    this.registerDomEvent(document, "selectionchange", () => {
+    this.registerDomEvent(root.ownerDocument, "selectionchange", () => {
       for (const turn of this.turns.values()) if (turn.selectionDeferred && !this.selected(turn.el)) this.update(turn);
     });
 
@@ -87,12 +87,16 @@ class ChatView extends ItemView {
     this.selection = null;
     this.sentSelection = null;
     // Table cells selected in Live Preview change no text selection: they're marked in the page.
-    for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(document, type, () => this.trackSelection());
+    for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(root.ownerDocument, type, () => this.trackSelection());
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.trackSelection()));
     this.chipsEl = composer.createDiv({ cls: "nuru-attachments" });
     this.input = composer.createEl("textarea", { cls: "nuru-input", attr: { rows: "3", "aria-label": "Message to Nuru",
       placeholder: "Message Nuru (Enter to send, Shift+Enter for a new line)" } });
-    this.registerDomEvent(this.input, "input", () => { this.messageHistory = null; });
+    this.registerDomEvent(this.input, "input", () => {
+      // Edits belong to this browsing session, never to the saved turn or the original draft.
+      const history = this.messageHistory;
+      if (history) history.messages[history.index] = this.input.value;
+    });
     this.registerDomEvent(this.input, "keydown", (event) => {
       if (this.recallMessage(event)) return;
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -481,8 +485,6 @@ class ChatView extends ItemView {
   update(turn) {
     if (turn.forgotten) return;
     this.updateButtons(); // Stop stays usable while selected text is held still.
-    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
-    turn.selectionDeferred = false;
     const display = turn.runner.display;
     if (turn.namesConversation && display.state === "completed" && !turn.forgotten) {
       turn.namesConversation = false; // once
@@ -497,6 +499,9 @@ class ChatView extends ItemView {
     turn.stateEl.setText(words);
     turn.stateEl.toggleClass("nuru-error", display.state === "failed" || turn.runner.connection === "lost");
 
+    this.renderQuestion(turn); // timed questions must appear even while reply text is selected
+    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
+    turn.selectionDeferred = false;
     this.renderActivity(turn);
     // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
     // the notes that were written, and any write whose outcome is unknown, since that note needs checking.
@@ -519,7 +524,6 @@ class ChatView extends ItemView {
       turn.receiptsEl.createDiv({ cls: "nuru-decision", text: `Answered: ${decision.decision}` +
         (decision.outcome === "answered" ? "" : ` (${decision.outcome === "expired" ? "no answer in time" : "stopped"})`) });
     }
-    this.renderQuestion(turn);
     this.scheduleRender(turn);
     this.updateButtons();
   }
@@ -861,19 +865,19 @@ class ChatView extends ItemView {
       .catch(() => {}) // the turn's own stream reports a lost service
       .finally(() => {
         this.statusCheck = null;
-        for (const turn of this.turns.values()) if (this.following(turn) && !this.selected(turn.stateEl)) turn.stateEl.setText(this.stepWords(turn));
+        for (const turn of this.turns.values()) if (this.following(turn)) turn.stateEl.setText(this.stepWords(turn));
       });
   }
 
   tick() {
     this.ticks += 1;
     const live = [...this.turns.values()].filter((turn) => this.following(turn));
-    for (const turn of live) if (!this.selected(turn.stateEl)) turn.stateEl.setText(this.stepWords(turn));
+    for (const turn of live) turn.stateEl.setText(this.stepWords(turn));
     const loading = live.some((turn) => !turn.runner.activity.steps.length && !turn.runner.display.reply);
     if (loading || this.ticks % STATUS_SECONDS === 0) this.checkStatus();
     for (const el of this.contentEl.querySelectorAll(".nuru-countdown")) {
       const left = Math.max(0, Math.round((Date.parse(el.getAttribute("data-expires")) - Date.now()) / 1000));
-      if (!this.selected(el)) el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");
+      el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");
       if (!left) for (const button of el.parentElement.querySelectorAll("button")) button.disabled = true;
     }
   }

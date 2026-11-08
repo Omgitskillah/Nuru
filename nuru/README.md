@@ -133,7 +133,7 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 
 `core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
 
-`core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
+`core.enforcement`, `core.tier_policy`, `core.expert` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
 

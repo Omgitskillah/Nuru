@@ -359,3 +359,29 @@ def test_the_turn_is_identical_with_or_without_the_audit_shadow(setup):
     s2.shadow = None
     after = list(s2.ask("Find Priya")), seen2[:], tools2.calls[:]
     assert before == after
+
+
+@pytest.mark.parametrize("ending", ["recovery", "step_cap"])
+def test_final_answer_cannot_loop_on_reasoning_only_with_tiers_enforced(setup, monkeypatch, ending):
+    rounds = ([call("read_note", {"name": 1}), call("search", {"query": "a"}),
+               call("search", {"query": "b"})] if ending == "recovery" else
+              [call("search", {"query": q}) for q in "ab"])
+    points = ["step_cap"] if ending == "step_cap" else []
+    s, seen, tools = setup(points, [], tool_gate={"step_cap": 2}, tiers={"enforce": True})
+
+    def chat(model, messages, **kwargs):
+        seen.append({"think": kwargs["think"], "tools": kwargs["tools"]})
+        assert len(seen) <= len(rounds) + 1, "reasoning-only final answer looped"
+        if len(seen) <= len(rounds):
+            yield rounds[len(seen) - 1]
+        else:
+            # Even a model ignoring think=False must terminate without another call.
+            yield {"thinking": "The available evidence remains incomplete."}
+
+    monkeypatch.setattr(session, "chat", chat)
+    events = list(s.ask("Find it"))
+    assert isinstance(events[-1], Text)
+    assert len(seen) == len(rounds) + 1
+    assert seen[0]["think"] == "low"
+    assert seen[-1]["think"] is False and seen[-1]["tools"] == seen[0]["tools"]
+    assert len(tools.calls) == 2

@@ -54,7 +54,7 @@ Only Qwen3.5 and Granite4.2 are supported. The other five files above retain leg
 | `granite4.2` | `false` / `"low"` / `"high"` | `low` (the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high, 2026-09-29) | none - the Modelfile's |
 | `qwen3.5` | `false` / `true` / `true` - it has no levels | `off` (on, it thought 13 s over "what is 2+3") | thinking: `temperature 0.6`, `top_p 0.95`; not: `temperature 0.7`, `top_p 0.8`; both `top_k 20`, no presence penalty - a starting point, not yet measured |
 
-A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
+A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. Deterministic thinking tiers (`tiers.enforce`, when enabled) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
 
 `core.providers.ollama.create_model(model, base_model, modelfile_path)` resolves the shared SYSTEM text and `__BASE_MODEL__`, validates tool references, and runs `ollama create` with a temporary rendered file. `Session.start()` calls this on every startup before connecting to any MCP server. Eval manifests include the rendered Modelfile's hash, so edits to the shared source change the recorded prompt identity.
 
@@ -131,7 +131,7 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 - **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
 
-`core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
+`core.decision_shadow` - `DecisionShadow` maintains the local audit and deterministic safeguard evidence: `begin` resets per-turn state; `model_called` counts model rounds; `before_tool` checks writes; `after_tool` tracks returned note IDs, results and execution history. Thinking-watch signals and safeguard actions are logged locally. Audit-sink failures are counted in `failures` and swallowed; evidence tracking continues independently so a log failure cannot weaken write checks. No model or classifier is called.
 
 `core.enforcement`, `core.tier_policy`, `core.expert` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 

@@ -20,7 +20,8 @@
               "family",
               "models",
               "revision",
-              "active_revision"
+              "active_revision",
+              "removed"
             ],
             "properties": {
               "family": {
@@ -39,6 +40,10 @@
               },
               "active_revision": {
                 "$ref": "#/$defs/revision"
+              },
+              "removed": {
+                "type": "boolean",
+                "description": "The saved reset removes a custom family that has no Nuru defaults"
               }
             }
           }

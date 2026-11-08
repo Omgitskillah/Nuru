@@ -58,13 +58,13 @@ function fakeOllama({ running = true, have = ["qwen3.5:4b"], pull } = {}) {
   return fake;
 }
 
-function section({ client = fakeClient(), choices, connect, ollama = fakeOllama(), launcher = {} } = {}) {
+function section({ client = fakeClient(), choices, connect, ollama = fakeOllama(), launcher = {}, views = [] } = {}) {
   const containerEl = document.createElement("div");
   const remembered = [];
   const notifications = [];
   const tab = {
     app: {}, ollama, removal: { remember: (home, what) => remembered.push([home, what]) },
-    plugin: { launcher: { home: "/home/me", ...launcher }, modelsChanged: async () => { notifications.push(true); }, views: () => [],
+    plugin: { launcher: { home: "/home/me", ...launcher }, modelsChanged: async () => { notifications.push(true); }, views: () => views,
       connect: connect || (async () => ({ client, status: { models: { choices: choices || [
         { id: "qwen3.5:4b", label: "qwen3.5:4b", cloud: false },
         { id: "llama3.1:8b", label: "llama3.1:8b (untested)", cloud: false },
@@ -318,4 +318,68 @@ test("a successful pending-row restart reloads models and clears the pending row
   await until(() => named(containerEl, "llama3.1:8b"));
   await until(() => notifications.length === 1);
   assert.equal(named(containerEl, "llama3.1"), undefined);
+});
+
+
+test("an older successful refresh cannot replace a newer Add redraw", async () => {
+  const client = fakeClient(); client.added = added({});
+  let finishOld;
+  let reads = 0;
+  client.pendingModelSettings = () => ++reads === 1 ? new Promise((resolve) => { finishOld = resolve; }) : Promise.resolve({ pending: [] });
+  let connects = 0;
+  const connect = async () => ({ client, status: { models: { choices: [{ id: ++connects === 1 ? "old:4b" : "new:8b", label: connects === 1 ? "Old list" : "New list", cloud: false }] } } });
+  const { containerEl } = section({ client, connect });
+  await until(() => finishOld);
+  const add = addRow(containerEl); type(add.input, "llama3.1:8b"); add.button.click();
+  await until(() => named(containerEl, "New list"));
+  finishOld({ pending: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(named(containerEl, "New list")); assert.equal(named(containerEl, "Old list"), undefined);
+});
+
+
+test("an active pending family is one row rather than duplicated usable tags", async () => {
+  const client = fakeClient();
+  client.pending = [{ family: "qwen3.5", models: ["qwen3.5:4b", "qwen3.5:9b"], revision: R2, active_revision: R1 }];
+  const { containerEl } = section({ client, choices: [{ id: "qwen3.5:4b", label: "qwen3.5:4b", cloud: false },
+    { id: "qwen3.5:9b", label: "qwen3.5:9b", cloud: false }] });
+  await until(() => named(containerEl, "qwen3.5"));
+  assert.equal(named(containerEl, "qwen3.5:4b"), undefined);
+  assert.equal(named(containerEl, "qwen3.5:9b"), undefined);
+  assert.ok(named(containerEl, "qwen3.5").textContent.includes("Saved: restart"));
+});
+
+for (const operation of ["Save", "Reset to Nuru's"]) {
+  test(`${operation} redraws Settings and notifies panels`, async () => {
+    const client = fakeClient({ "qwen3.5:4b": { ...QWEN, custom: true, revision: R1, active_revision: R1 } });
+    const method = operation === "Save" ? "saveModelSettings" : "resetModelSettings";
+    const act = client[method];
+    client[method] = async (...args) => { const result = await act(...args); client.pending = [{ family: "qwen3.5", models: ["qwen3.5:4b"], revision: R2, active_revision: R1 }]; return result; };
+    const { containerEl, notifications } = section({ client });
+    await until(() => named(containerEl, "qwen3.5:4b"));
+    named(containerEl, "qwen3.5:4b").querySelector("button").click();
+    await until(() => areas().length === 2);
+    dialogButton(operation).click();
+    await until(() => named(containerEl, "qwen3.5"));
+    await until(() => notifications.length === 1);
+    assert.ok(named(containerEl, "qwen3.5").textContent.includes("Saved: restart"));
+  });
+}
+
+test("pending-row restart reconnects all panels before redrawing", async () => {
+  const client = fakeClient(); client.pending = [{ family: "llama3.1", models: [], revision: R1, active_revision: "initial" }];
+  const calls = [];
+  const views = [1, 2].map((n) => ({ reconnect: async () => { calls.push(n); } }));
+  const { containerEl, notifications } = section({ client, views, launcher: { restart: async () => { client.pending = []; } } });
+  await until(() => named(containerEl, "llama3.1"));
+  [...named(containerEl, "llama3.1").querySelectorAll("button")].find((b) => b.textContent === "Restart Nuru").click();
+  await until(() => notifications.length === 1);
+  assert.deepEqual(calls, [1, 2]); assert.equal(named(containerEl, "llama3.1"), undefined);
+});
+
+test("a reset removing a custom family says removed rather than saved", async () => {
+  const client = fakeClient(); client.pending = [{ family: "llama3.1", models: [], revision: R2, active_revision: R1, removed: true }];
+  const { containerEl } = section({ client });
+  await until(() => named(containerEl, "llama3.1"));
+  assert.ok(named(containerEl, "llama3.1").textContent.includes("Removed: after a restart Nuru no longer offers it."));
 });

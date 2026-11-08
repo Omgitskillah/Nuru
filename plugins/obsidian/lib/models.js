@@ -134,8 +134,10 @@ function displayModels(tab, containerEl) {
       }
       for (const row of pending) {
         const known = local.some((choice) => choice.id.split("/").pop().split(":")[0] === row.family);
+        const message = row.removed ? "Removed: after a restart Nuru no longer offers it."
+          : known ? "Saved: restart Nuru to use these settings." : "Added: restart Nuru to use it.";
         const setting = new Setting(list).setName(row.family)
-          .setDesc(`${row.models.length ? row.models.join(", ") + ": " : ""}${known ? "Saved: restart Nuru to use these settings." : "Added: restart Nuru to use it."}`);
+          .setDesc(`${row.models.length ? row.models.join(", ") + ": " : ""}${message}`);
         if (row.models.length) setting.addButton((button) => button.setButtonText("Edit").onClick(() =>
           new ModelSettingsModal(tab.app, client, row.models[0], changed).open()));
         setting.addButton((button) => button.setButtonText("Restart Nuru").onClick(async () => {

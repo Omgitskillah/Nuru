@@ -70,7 +70,8 @@ class ModelSettings:
             active_revision = running.revision if running else user_models.INITIAL
             if bundle.revision != active_revision:
                 pending.append({"family": family, "revision": bundle.revision,
-                                "active_revision": active_revision, "models": []})
+                                "active_revision": active_revision, "models": [],
+                                "removed": not bundle.custom and nuru_settings(family) is None})
         if pending:
             try:
                 names = self.names()

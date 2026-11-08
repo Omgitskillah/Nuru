@@ -369,3 +369,30 @@ def test_failed_build_never_invalidates_or_publishes_a_new_family(admin, monkeyp
     assert client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[0] == 400
     assert main_models._cache is cached
     assert user_models.snapshot(directory) == {}
+
+
+def test_saved_edit_of_an_active_family_stays_pending_with_its_active_revision(admin, monkeypatch):
+    client, _, directory, *_ = admin
+    added = client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[1]
+    monkeypatch.setattr(user_models, "_active", user_models.snapshot(directory))
+    saved = client.call("PUT", "/v1/models/settings", {"model": added["model"], "expected_revision": added["revision"],
+        "header": added["header"] + "PARAMETER temperature 0.4\n", "profile": added["profile"]})[1]
+    [row] = client.call("GET", "/v1/models/settings/pending")[1]["pending"]
+    assert row["family"] == "llama3.1" and row["revision"] == saved["revision"]
+    assert row["active_revision"] == added["revision"] and row["removed"] is False
+    assert user_models.active()["llama3.1"].revision == added["revision"], "the running snapshot is unchanged"
+    reset = client.call("DELETE", "/v1/models/settings?model=llama3.1:8b&expected_revision=" + saved["revision"])[1]
+    [row] = client.call("GET", "/v1/models/settings/pending")[1]["pending"]
+    assert row["revision"] == reset["revision"] != "initial", "reset writes a fresh tombstone revision"
+    assert row["removed"] is True and row["active_revision"] == added["revision"]
+
+
+def test_reset_to_builtin_settings_is_pending_but_does_not_remove_the_family(admin, monkeypatch):
+    client, _, directory, *_ = admin
+    initial = get(client, "qwen3.5:4b")[1]
+    saved = client.call("PUT", "/v1/models/settings", {"model": initial["model"], "expected_revision": initial["revision"],
+        "header": initial["header"], "profile": initial["profile"]})[1]
+    monkeypatch.setattr(user_models, "_active", user_models.snapshot(directory))
+    assert client.call("DELETE", "/v1/models/settings?model=qwen3.5:4b&expected_revision=" + saved["revision"])[0] == 200
+    [row] = client.call("GET", "/v1/models/settings/pending")[1]["pending"]
+    assert row["family"] == "qwen3.5" and row["removed"] is False

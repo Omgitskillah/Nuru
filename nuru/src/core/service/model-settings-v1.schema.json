@@ -2,8 +2,49 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nuru.local/model-settings-v1.schema.json",
   "title": "Nuru model settings, version 1 (TODO F22)",
-  "description": "Local administration of a local model family's settings: /v1/models/settings (GET ?model=, PUT, DELETE ?model=&expected_revision=) and /v1/models (POST). Only for a client signed in on this computer's own listener: the remote listener refuses them all. Errors are protocol v1's error body.",
+  "description": "Local administration of a local model family's settings: /v1/models/settings (GET ?model=, PUT, DELETE ?model=&expected_revision=) and /v1/models (POST). GET /v1/models/settings/pending lists saved families whose settings need a restart, with installed tags (possibly empty); it never adds selectable choices. Only for a client signed in on this computer's own listener: the remote listener refuses them all. Errors are protocol v1's error body.",
   "$defs": {
+    "administration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pending"
+      ],
+      "properties": {
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "family",
+              "models",
+              "revision",
+              "active_revision"
+            ],
+            "properties": {
+              "family": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+              },
+              "models": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/model"
+                }
+              },
+              "revision": {
+                "$ref": "#/$defs/revision"
+              },
+              "active_revision": {
+                "$ref": "#/$defs/revision"
+              }
+            }
+          }
+        }
+      }
+    },
     "model": {"type": "string", "minLength": 1, "maxLength": 256},
     "revision": {"type": "string", "pattern": "^(initial|[0-9a-f]{32})$"},
     "text": {"type": ["string", "null"], "maxLength": 65536},

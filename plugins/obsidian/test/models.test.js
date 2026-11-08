@@ -26,6 +26,7 @@ class Refused extends Error {
 function fakeClient(settings = { "qwen3.5:4b": QWEN }) {
   const client = {
     settings, calls: [], refuse: {},
+    async pendingModelSettings() { return { pending: client.pending || [] }; },
     async modelSettings(model) { client.calls.push(["get", model]); return client.answer("get", () => client.settings[model]); },
     async saveModelSettings(body) {
       client.calls.push(["save", body]);
@@ -57,19 +58,20 @@ function fakeOllama({ running = true, have = ["qwen3.5:4b"], pull } = {}) {
   return fake;
 }
 
-function section({ client = fakeClient(), choices, connect, ollama = fakeOllama() } = {}) {
+function section({ client = fakeClient(), choices, connect, ollama = fakeOllama(), launcher = {} } = {}) {
   const containerEl = document.createElement("div");
   const remembered = [];
+  const notifications = [];
   const tab = {
     app: {}, ollama, removal: { remember: (home, what) => remembered.push([home, what]) },
-    plugin: { launcher: { home: "/home/me" },
+    plugin: { launcher: { home: "/home/me", ...launcher }, modelsChanged: async () => { notifications.push(true); }, views: () => [],
       connect: connect || (async () => ({ client, status: { models: { choices: choices || [
         { id: "qwen3.5:4b", label: "qwen3.5:4b", cloud: false },
         { id: "llama3.1:8b", label: "llama3.1:8b (untested)", cloud: false },
         { id: "anthropic:claude-haiku-5-5", label: "Claude Haiku 5.5", cloud: true }] } } })) },
   };
   displayModels(tab, containerEl);
-  return { containerEl, client, ollama, remembered };
+  return { containerEl, client, ollama, remembered, notifications };
 }
 
 // A setting's row, as the stand-in Setting draws it: a div whose first child holds its name, the next its description.
@@ -249,4 +251,71 @@ test("adding says what's wrong: not a name, no Ollama, a refusal, a blocked down
   await until(() => /network filter \(gateway\.zscaler\.net\) stopped the download/.test(filtered.desc()));
   assert.ok(filtered.desc().includes('run "ollama pull llama3.1:8b" in a terminal, then click Add again.'));
   assert.ok(filtered.desc().includes("check with your IT"));
+});
+
+
+test("Add redraws a same-family tag immediately and explicitly notifies the panel", async () => {
+  const client = fakeClient();
+  const choices = [{ id: "qwen3.5:4b", label: "qwen3.5:4b", cloud: false }];
+  client.added = added({ model: "qwen3.5:9b", family: "qwen3.5", revision: "initial", active_revision: "initial" });
+  const addModel = client.addModel;
+  client.addModel = async (model) => { const result = await addModel(model); choices.push({ id: model, label: model, cloud: false }); return result; };
+  const { containerEl, notifications } = section({ client, choices });
+  await until(() => named(containerEl, "qwen3.5:4b"));
+  const row = addRow(containerEl);
+  type(row.input, "qwen3.5:9b"); row.button.click();
+  await until(() => named(containerEl, "qwen3.5:9b"));
+  await until(() => notifications.length === 1);
+});
+
+test("pending families survive reopening, group tags, and stay visible without any installed tag", async () => {
+  const client = fakeClient();
+  client.pending = [{ family: "llama3.1", models: ["llama3.1:8b", "llama3.1:70b"], revision: R1, active_revision: "initial" },
+    { family: "offline", models: [], revision: R2, active_revision: "initial" }];
+  for (let i = 0; i < 2; i += 1) {
+    const { containerEl } = section({ client, choices: [] });
+    await until(() => named(containerEl, "llama3.1"));
+    const row = named(containerEl, "llama3.1");
+    assert.ok(row.textContent.includes("llama3.1:8b, llama3.1:70b"));
+    assert.ok(row.textContent.includes("Added: restart Nuru to use it."));
+    assert.ok([...row.querySelectorAll("button")].some((b) => b.textContent === "Restart Nuru"));
+    assert.ok(named(containerEl, "offline").textContent.includes("Restart Nuru"));
+  }
+});
+
+test("restart from a pending row reports a busy turn and keeps the pending row", async () => {
+  const client = fakeClient();
+  client.pending = [{ family: "llama3.1", models: [], revision: R1, active_revision: "initial" }];
+  let restarts = 0;
+  const { containerEl, notifications } = section({ client, launcher: { restart: async () => { restarts += 1; throw new Error("Nuru is busy with a turn"); } } });
+  await until(() => named(containerEl, "llama3.1"));
+  const row = named(containerEl, "llama3.1");
+  const restart = [...row.querySelectorAll("button")].find((b) => b.textContent === "Restart Nuru");
+  restart.click();
+  await until(() => row.textContent.includes("Couldn't restart Nuru: Nuru is busy with a turn"));
+  assert.equal(restarts, 1); assert.equal(restart.disabled, false); assert.deepEqual(notifications, []);
+});
+
+test("failed Add leaves the usable list and emits no model-change notification", async () => {
+  const client = fakeClient(); client.refuse.add = new Refused("invalid_request", "not a tools model");
+  const { containerEl, notifications } = section({ client });
+  await until(() => named(containerEl, "qwen3.5:4b"));
+  const row = addRow(containerEl); type(row.input, "gemma4:e2b"); row.button.click();
+  await until(() => row.desc() === "not a tools model");
+  assert.ok(named(containerEl, "qwen3.5:4b")); assert.deepEqual(notifications, []);
+});
+
+test("a successful pending-row restart reloads models and clears the pending row", async () => {
+  const client = fakeClient();
+  client.pending = [{ family: "llama3.1", models: ["llama3.1:8b"], revision: R1, active_revision: "initial" }];
+  const choices = [];
+  const { containerEl, notifications } = section({ client, choices, launcher: { restart: async () => {
+    client.pending = [];
+    choices.push({ id: "llama3.1:8b", label: "llama3.1:8b", cloud: false });
+  } } });
+  await until(() => named(containerEl, "llama3.1"));
+  [...named(containerEl, "llama3.1").querySelectorAll("button")].find((b) => b.textContent === "Restart Nuru").click();
+  await until(() => named(containerEl, "llama3.1:8b"));
+  await until(() => notifications.length === 1);
+  assert.equal(named(containerEl, "llama3.1"), undefined);
 });

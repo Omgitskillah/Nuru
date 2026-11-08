@@ -88,3 +88,12 @@ test("unloading releases the service this plugin started", async (t) => {
   plugin.onunload();
   assert.equal(release.mock.callCount(), 1);
 });
+
+test("a Settings model-change notification refreshes every open panel", async (t) => {
+  const { plugin } = await loaded(t);
+  const calls = [];
+  plugin.views = () => [{ refreshModels: async () => { calls.push("first"); } },
+    { refreshModels: async () => { calls.push("second"); } }];
+  await plugin.modelsChanged();
+  assert.deepEqual(calls, ["first", "second"]);
+});

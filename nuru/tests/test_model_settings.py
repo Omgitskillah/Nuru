@@ -250,6 +250,7 @@ def test_this_computer_s_client_needs_its_own_token_and_the_preflight_allows_put
 
 @pytest.mark.skipif(sys.platform == "win32", reason="remote access waits for a later release on Windows")
 @pytest.mark.parametrize("method, path", [
+    ("GET", "/v1/models/settings/pending"),
     ("GET", "/v1/models/settings?model=qwen3.5:4b"), ("PUT", "/v1/models/settings"),
     ("DELETE", "/v1/models/settings?model=qwen3.5:4b&expected_revision=initial"), ("POST", "/v1/models"),
 ])
@@ -279,3 +280,92 @@ def test_no_remote_device_can_reach_model_settings_whatever_its_credentials(admi
         server.server_close()
         thread.join(2)
         credentials.close()
+
+
+@pytest.mark.parametrize("model", ["qwen3.5:4b", "llama3.1:8b"])
+def test_successful_add_invalidates_choices_even_without_a_settings_write(admin, monkeypatch, model):
+    from core import main_models
+    client, *_ = admin
+    monkeypatch.setattr(main_models, "_cache", (0, []))
+    assert client.call("POST", "/v1/models", {"model": model})[0] == 200
+    assert main_models._cache is None
+
+
+def test_failed_add_preserves_choices_cache(admin, monkeypatch):
+    from core import main_models
+    client, *_ = admin
+    cached = (0, [])
+    monkeypatch.setattr(main_models, "_cache", cached)
+    assert client.call("POST", "/v1/models", {"model": "gemma4:e2b"})[0] == 400
+    assert main_models._cache is cached
+
+
+def test_pending_administration_groups_tags_and_survives_settings_reopening(admin):
+    client, _, _, _, _, _ = admin
+    assert client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[0] == 200
+    first = client.call("GET", "/v1/models/settings/pending")[1]
+    second = client.call("GET", "/v1/models/settings/pending")[1]
+    assert first == second
+    [row] = first["pending"]
+    assert row["family"] == "llama3.1"
+    assert row["models"] == ["llama3.1:70b", "llama3.1:8b"]
+    assert row["revision"] != row["active_revision"]
+
+
+@pytest.mark.parametrize("unreachable", [False, True])
+def test_pending_family_remains_without_installed_tags_or_ollama(admin, unreachable):
+    import requests
+    client, _, directory, *_ = admin
+    assert client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[0] == 200
+    def names():
+        if unreachable:
+            raise requests.ConnectionError("Ollama is down")
+        return []
+    settings = model_settings.ModelSettings(None, directory=directory, names=names)
+    [row] = settings.administration()["pending"]
+    assert row["family"] == "llama3.1" and row["models"] == []
+    assert row["revision"] != row["active_revision"]
+
+
+def test_pending_listing_clears_after_process_snapshot_advances_and_ignores_bad_tags(admin, monkeypatch):
+    client, _, directory, *_ = admin
+    assert client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[0] == 200
+    settings = model_settings.ModelSettings(None, directory=directory, names=lambda: ["bad tag", "llama3.1:8b"])
+    assert settings.administration()["pending"][0]["models"] == ["llama3.1:8b"]
+    monkeypatch.setattr(user_models, "_active", user_models.snapshot(directory))
+    settings.names = lambda: pytest.fail("no pending families: no Ollama I/O needed")
+    assert settings.administration() == {"pending": []}
+
+
+@pytest.mark.parametrize("operation", ["save", "reset"])
+def test_successful_setting_change_invalidates_choices_and_failures_preserve_it(admin, monkeypatch, operation):
+    from core import main_models
+    client, *_ = admin
+    body = get(client, "qwen3.5:4b")[1]
+    cached = (0, [])
+    monkeypatch.setattr(main_models, "_cache", cached)
+    if operation == "save":
+        request = {"model": body["model"], "expected_revision": body["revision"], "header": body["header"], "profile": body["profile"]}
+        assert client.call("PUT", "/v1/models/settings", request)[0] == 200
+    else:
+        assert client.call("DELETE", "/v1/models/settings?model=qwen3.5:4b&expected_revision=initial")[0] == 200
+    assert main_models._cache is None
+    main_models._cache = cached
+    # The original revision is now stale; a refused write must leave the current cache alone.
+    if operation == "save":
+        assert client.call("PUT", "/v1/models/settings", request)[0] == 409
+    else:
+        assert client.call("DELETE", "/v1/models/settings?model=qwen3.5:4b&expected_revision=initial")[0] == 409
+    assert main_models._cache is cached
+
+
+def test_failed_build_never_invalidates_or_publishes_a_new_family(admin, monkeypatch):
+    import subprocess
+    from core import main_models
+    client, _, directory, _, failing, _ = admin
+    cached = (0, [])
+    monkeypatch.setattr(main_models, "_cache", cached)
+    failing["error"] = subprocess.CalledProcessError(1, ["ollama"], stderr="build refused")
+    assert client.call("POST", "/v1/models", {"model": "llama3.1:8b"})[0] == 400
+    assert main_models._cache is cached
+    assert user_models.snapshot(directory) == {}

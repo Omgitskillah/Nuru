@@ -241,3 +241,13 @@ test("conversation list, detail, creation and cancellation use the public reques
   assert.equal(sent[4].method, "POST");
   assert.deepEqual(Object.keys(sent[4].body), ["request_id"]);
 });
+
+test("pending model administration is read from the local-only endpoint with authentication", async () => {
+  const seen = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "local", fetch: async (url, init) => {
+    seen.push([url, init.method, init.headers.Authorization]);
+    return json(200, { pending: [{ family: "llama3.1", models: [] }] });
+  } });
+  assert.deepEqual(await client.pendingModelSettings(), { pending: [{ family: "llama3.1", models: [] }] });
+  assert.deepEqual(seen, [["http://x/v1/models/settings/pending", "GET", "Bearer local"]]);
+});

@@ -8,6 +8,7 @@ IDs are what NURU_BASE_MODEL / NURU_MAIN_MODEL take: an Ollama tag, or anthropic
 """
 
 import time
+import threading
 
 import requests
 from claude_access.keys import api_key
@@ -21,6 +22,16 @@ LEVELS = ("off", "low", "high")
 _LABELS = {"claude-haiku-5-5": "Claude Haiku 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5"}
 _CACHE_SECONDS = 30  # clients ask for the status every few seconds; pulling a model is rare
 _cache: tuple[float, list[dict]] | None = None
+_cache_generation = 0
+_cache_lock = threading.Lock()
+
+
+def invalidate() -> None:
+    """A successful model administration operation changed installed tags or settings."""
+    global _cache, _cache_generation
+    with _cache_lock:
+        _cache_generation += 1
+        _cache = None
 
 
 def thinking(profile: model_profile.ModelProfile, can_think: bool) -> tuple[list[dict], str | None]:
@@ -73,9 +84,19 @@ def _cloud() -> list[dict]:
 def choices(default_id: str) -> dict:
     """{"default": default_id, "choices": [...]}: the configured model first, then the rest."""
     global _cache
-    if _cache is None or time.monotonic() - _cache[0] > _CACHE_SECONDS:
-        _cache = (time.monotonic(), _local() + _cloud())
-    listed = _cache[1]
+    while True:
+        with _cache_lock:
+            generation = _cache_generation
+            if _cache is not None and time.monotonic() - _cache[0] <= _CACHE_SECONDS:
+                listed = _cache[1]
+                break
+        loaded = _local() + _cloud()  # don't hold the lock across Ollama I/O
+        with _cache_lock:
+            if generation != _cache_generation:
+                continue  # an Add/Save/Reset completed while the old list was loading
+            _cache = (time.monotonic(), loaded)
+            listed = loaded
+            break
     first = [c for c in listed if c["id"] == default_id]
     return {"default": default_id, "choices": first + [c for c in listed if c["id"] != default_id]}
 

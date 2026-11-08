@@ -11,10 +11,11 @@ const { commandSafe } = require("./remove");
 
 // One family's settings, to read, change and save, or reset to Nuru's.
 class ModelSettingsModal extends Modal {
-  constructor(app, client, model) {
+  constructor(app, client, model, changed = async () => {}) {
     super(app);
     this.client = client;
     this.model = model;
+    this.changed = changed;
   }
 
   onOpen() {
@@ -85,6 +86,7 @@ class ModelSettingsModal extends Modal {
         const saved = await this.client.saveModelSettings({ model: this.model, expected_revision: settings.revision,
           header: header.value, profile: profile.value });
         this.show(saved, "Saved: restart Nuru to use them.");
+        await this.changed();
       } catch (error) {
         tell(error);
       }
@@ -95,6 +97,7 @@ class ModelSettingsModal extends Modal {
           const reset = await this.client.resetModelSettings(this.model, settings.revision);
           this.show(reset, settings.nuru ? "Back to Nuru's: restart Nuru to use them."
             : "Removed: after a restart Nuru no longer offers it.");
+          await this.changed();
         } catch (error) {
           tell(error);
         }
@@ -108,16 +111,53 @@ class ModelSettingsModal extends Modal {
 function displayModels(tab, containerEl) {
   new Setting(containerEl).setName("Local models").setHeading();
   const list = containerEl.createDiv({ cls: "nuru-models" });
-  tab.plugin.connect().then(({ client, status }) => {
-    const local = (status.models?.choices || []).filter((choice) => !choice.cloud);
-    if (!local.length) list.createEl("p", { cls: "setting-item-description", text: "Nuru offers no local model yet." });
-    for (const choice of local) {
-      new Setting(list).setName(choice.label).setDesc(choice.label.endsWith("(untested)") ? "Your settings: Nuru hasn't tested this one." : "")
-        .addButton((button) => button.setButtonText("Edit").onClick(() => new ModelSettingsModal(tab.app, client, choice.id).open()));
+  let refreshId = 0;
+  const refresh = async () => {
+    const id = ++refreshId;
+    try {
+      const { client, status } = await tab.plugin.connect();
+      const { pending } = await client.pendingModelSettings();
+      if (id !== refreshId) return;
+      list.empty();
+      const local = (status.models?.choices || []).filter((choice) => !choice.cloud);
+      const pendingFamilies = new Set(pending.map((row) => row.family));
+      if (!local.length && !pending.length) list.createEl("p", { cls: "setting-item-description", text: "Nuru offers no local model yet." });
+      const changed = async () => {
+        await refresh();
+        await tab.plugin.modelsChanged();
+      };
+      for (const choice of local) {
+        const family = choice.id.split("/").pop().split(":")[0];
+        if (pendingFamilies.has(family)) continue; // a pending row includes every installed tag
+        new Setting(list).setName(choice.label).setDesc(choice.label.endsWith("(untested)") ? "Your settings: Nuru hasn't tested this one." : "")
+          .addButton((button) => button.setButtonText("Edit").onClick(() => new ModelSettingsModal(tab.app, client, choice.id, changed).open()));
+      }
+      for (const row of pending) {
+        const known = local.some((choice) => choice.id.split("/").pop().split(":")[0] === row.family);
+        const setting = new Setting(list).setName(row.family)
+          .setDesc(`${row.models.length ? row.models.join(", ") + ": " : ""}${known ? "Saved: restart Nuru to use these settings." : "Added: restart Nuru to use it."}`);
+        if (row.models.length) setting.addButton((button) => button.setButtonText("Edit").onClick(() =>
+          new ModelSettingsModal(tab.app, client, row.models[0], changed).open()));
+        setting.addButton((button) => button.setButtonText("Restart Nuru").onClick(async () => {
+          button.setDisabled(true);
+          try {
+            await tab.plugin.launcher.restart(); // refuses busy turns; never kills one silently
+            for (const view of tab.plugin.views()) await view.reconnect();
+            await changed();
+          } catch (error) {
+            setting.setDesc(`Couldn't restart Nuru: ${error.message}`);
+          } finally {
+            button.setDisabled(false);
+          }
+        }));
+      }
+    } catch (error) {
+      if (id !== refreshId) return;
+      list.empty();
+      list.createEl("p", { cls: "setting-item-description", text: `Start Nuru to see and change its models. Couldn't refresh: ${error.message}` });
     }
-  }).catch(() => {
-    list.createEl("p", { cls: "setting-item-description", text: "Start Nuru to see and change its models." });
-  });
+  };
+  void refresh();
 
   const add = new Setting(containerEl).setName("Add a model");
   const say = (text) => { add.setDesc(text); }; // returns nothing: see the top of this file
@@ -128,6 +168,7 @@ function displayModels(tab, containerEl) {
   add.addButton((button) => button.setButtonText("Add").onClick(async () => {
     const name = typed;
     if (!commandSafe(name)) return say("That isn't an Ollama model name: lowercase, like llama3.1:8b.");
+    button.setDisabled(true);
     try {
       say("Checking Ollama…");
       const found = await tab.ollama.check([name]);
@@ -142,6 +183,8 @@ function displayModels(tab, containerEl) {
       const result = await client.addModel(name);
       // Offered only once this service runs with what is saved: added now, or saved earlier but not yet in use.
       const pending = result.revision !== result.active_revision;
+      await refresh();
+      await tab.plugin.modelsChanged();
       say(result.added ? `Set up ${result.family}: restart Nuru to use ${name}.`
         : pending ? `${result.family} is set up already: restart Nuru to use ${name}.`
           : `Nuru already runs ${result.family} models: ${name} is offered${result.custom ? " with your settings" : ""}.`);
@@ -153,6 +196,8 @@ function displayModels(tab, containerEl) {
           "your browser, or " : ""}run "ollama pull ${name}" in a terminal, then click Add again.`);
       }
       say(error.message);
+    } finally {
+      button.setDisabled(false);
     }
   }));
 }

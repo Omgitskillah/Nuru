@@ -1,111 +1,36 @@
-# Nuru's decision layer: Laya answers typed questions, this file and the code decide what to do
-# with the answers. Every threshold lives here; none live in code or in Laya.
-#
-# A threshold is only trusted once it has been calibrated on held-out labelled data. Until then
-# its `calibration` is blank, and a decision point that uses it refuses to run in `enforce` mode
-# (the config fails to load). `shadow` only logs what Laya would have done.
-
-# SQLite decision log and labels. Relative paths are relative to the repo root. Kept next to
-# Nuru's conversation history in the hidden, gitignored nuru/.db/; it never leaves this machine.
+# Deterministic safeguards and local audit; no learned decision model.
+# The database remains local and gitignored; keep existing history intact.
 database: nuru/.db/decisions.sqlite3
 
-laya:
-  device: auto              # auto | mps | cpu
-  checkpoints: [english, multilingual]   # preloaded at startup, kept loaded for the process life
-  revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851   # pinned Hugging Face commit
-  offline: true             # never reach the Hub at runtime; `uv run laya-mcp-fetch` downloads
-
-# off | shadow | enforce, per decision point. Switching is a human decision.
-# off: not asked at all; shadow: Laya is asked and logged, nothing changes; enforce: acted on.
-# A point that asks Laya can only be enforced once its thresholds are calibrated. step_cap,
-# write_checks and watch_thinking are decided by code alone, so they can be enforced now
-# (enforced 2026-09-30, at the user's request).
-#
-# Laya is off on main (2026-10-14, the user's call): every point that asks it is `off`, so Nuru
-# doesn't start or load Laya at all; write_checks still runs, in Nuru. The system with Laya in
-# shadow is kept on the `laya` branch; its code stays here, and setting a point back to shadow
-# starts it again.
+# All three enforced since 2026-09-30, at the user's request.
 decision_points:
-  tool_gate: "off"         # Laya: read / write / answer, and what to do next
-  step_cap: enforce        # code: a turn stops after tool_gate.step_cap rounds of tool calls
-  assess_effort: "off"     # Laya's thinking tier - off since 2026-09-30: THINK=low for every call
-                           # (the fixed default matched its savings; the code stays, for later)
-  gate_write: "off"        # Laya: does this write match the request (proceed / ask / block)
-  write_checks: enforce    # code: no invented note IDs, blocked tools or protected paths in a write
-  check_claim: "off"       # Laya: what the reply claims, checked against the log - after calibration
-  rerank: "off"            # Laya: reorder search's matches by meaning
-  watch_thinking: enforce  # code: thinking budget, repeated sentences, repeated tool calls
-  watch_laya: "off"        # Laya: the watch's own reading of the thinking
-  note_type: "off"         # Laya: a new note's type, from its title and text (enforced: fills it in
-                           # when the model gives none)
+  step_cap: enforce
+  write_checks: enforce
+  watch_thinking: enforce
 
-# Watching the model's reasoning as it streams (core.thinking_watch). Code checks every
-# `check_every_tokens`: past the tier's budget, or a sentence of `repeat_min_chars`+ seen
-# `repeat_count` times, is a signal; otherwise Laya is asked (watch_thinking). Enforced, a signal
-# stops the call and asks again with thinking off - for that one call; the next may think again.
-# The same tool called with the same arguments `repeat_calls` times in a turn is a loop too:
-# enforced, the turn stops before that call runs. Budgets are thinking tokens per model call,
-# per tier; high's is above what passing turns used (argument steps averaged ~1,650 tokens) and
-# below the runaways (5,990-8,192 in the 2026-09-28 shadow run).
+# Check streamed reasoning for budgets and repeated sentences. Enforced signals
+# stop the call and retry without thinking for one call; later calls may think again.
+# Budgets are thinking tokens per call. High is above passing argument steps
+# (~1,650 tokens), below runaways (5,990-8,192, 2026-09-28 shadow run).
 watch_thinking:
   check_every_tokens: 400
   budgets: {low: 1200, high: 4000}
   repeat_min_chars: 40
   repeat_count: 3
-  tail_chars: 1200
   repeat_calls: 3
 
 tool_gate:
-  step_cap: 10   # rounds of tool calls; 6 cut off passing test 32 runs (7-8 rounds at low,
-                 # 2026-09-29/30); past 10 were only loops (10-24 rounds)
-  default_first_read: search   # the first tool for a read or write request: search first
+  # Six cut off passing test 32 (7-8 rounds at low, 2026-09-29/30).
+  # Beyond ten rounds, observed turns were loops (10-24 rounds).
+  step_cap: 10
 
 tiers:
   order: ["off", low, high, expert]
-  default: low              # Nuru's default level since 2026-09-29
-  # How each tier becomes an Ollama `think` value is the model's: nuru/modelfiles/profiles.yaml.
+  default: low  # Nuru's default since 2026-09-29
+  enforce: false  # Optional deterministic escalation, no learned effort classifier
+  # Model-specific think values: nuru/modelfiles/profiles.yaml.
 
 expert:
   model: claude-opus-5
-  daily_cap: 10             # calls per local day; the API key comes only from ANTHROPIC_API_KEY
-  at_step_cap: false        # 2026-10-05: measure Nuru without the expert's help at the step cap
-
-rerank:
-  top_k: 5
-
-# min_p per question set -> question -> option (`true` for a noul question; `any` for whichever
-# option Laya picked). `calibration` records when, and on how many labels (and how many of them
-# held out), the value was fitted; blank means uncalibrated. rerank only sorts, so it has none.
-thresholds:
-  tool_gate_start:
-    mode:
-      answer: {min_p: 0.95, calibration: {date: null, labels: 0, held_out: 0}}
-      write: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-      ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
-  tool_gate_next:
-    next:
-      answer: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-      ask_user: {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
-      continue: {min_p: 0.70, calibration: {date: null, labels: 0, held_out: 0}}
-  assess_effort:
-    tier:
-      "off": {min_p: 0.90, calibration: {date: null, labels: 0, held_out: 0}}
-      low: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-      high: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
-      expert: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-  gate_write:
-    matches_request:
-      "true": {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
-    verdict:
-      proceed: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-  check_claim:
-    claim:
-      made_change: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
-  watch_thinking:
-    state:
-      repeating: {min_p: 0.80, calibration: {date: null, labels: 0, held_out: 0}}
-      ready: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
-      stuck: {min_p: 0.85, calibration: {date: null, labels: 0, held_out: 0}}
-  note_type:
-    note_type:
-      any: {min_p: 0.50, calibration: {date: null, labels: 0, held_out: 0}}
+  daily_cap: 10  # Calls per local day; API key only from ANTHROPIC_API_KEY
+  at_step_cap: false  # Since 2026-10-05: measure Nuru without expert rescue at the cap

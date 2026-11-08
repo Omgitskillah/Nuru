@@ -1,4 +1,4 @@
-"""The checks code can decide on its own, run before Laya is ever asked.
+"""The checks code can decide on its own, run before a write is dispatched.
 
 gate_write's order is: tool allowlist -> the Obsidian server's permission rules -> path rules ->
 note ID validity. The permission rules are mirrored from obsidian_mcp.server (which still enforces
@@ -61,27 +61,49 @@ def check_write(tool: str, arguments: dict[str, Any], known_ids: set[str]) -> li
     if tool == "rename_or_move_file":
         for field in ("source_path", "destination_path"):
             value = arguments.get(field)
-            if isinstance(value, str) and PurePosixPath(value).parts[:1] == (PROTECTED_FOLDER,):
-                reasons.append(f"'{value}' is under {PROTECTED_FOLDER}/, which {tool} may not touch")
+            if isinstance(value, str) and PurePosixPath(value).parts[:1] == (
+                PROTECTED_FOLDER,
+            ):
+                reasons.append(
+                    f"'{value}' is under {PROTECTED_FOLDER}/, which {tool} may not touch"
+                )
         source = arguments.get("source_path")
-        if isinstance(source, str) and PurePosixPath(source).parts[:1] == (TRASH_FOLDER,):
-            reasons.append(f"'{source}' is in {TRASH_FOLDER}/, and nothing comes back out of trash")
+        if isinstance(source, str) and PurePosixPath(source).parts[:1] == (
+            TRASH_FOLDER,
+        ):
+            reasons.append(
+                f"'{source}' is in {TRASH_FOLDER}/, and nothing comes back out of trash"
+            )
     if tool == "write_note":
         note_type = arguments.get("type")
         if note_type is not None and note_type not in TYPE_FOLDER:
             reasons.append(f"type {note_type!r} is not one of {sorted(TYPE_FOLDER)}")
         elif note_type and TYPE_FOLDER[note_type] == PROTECTED_FOLDER:
-            reasons.append(f"a {note_type} note lives in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes")
+            reasons.append(
+                f"a {note_type} note lives in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes"
+            )
         if arguments.get("mode", "append") not in ("append", "replace"):
             reasons.append(f"mode {arguments.get('mode')!r} is not append or replace")
         note = arguments.get("note")
-        if (arguments.get("mode") == "replace" and isinstance(note, str) and "/" in note
-                and PurePosixPath(note).parts[:1] != ("nuru",)):
-            reasons.append(f"'{note}' isn't in nuru/: only Nuru's own notes can be replaced")
-        if isinstance(note, str) and PurePosixPath(note).parts[:1] == (PROTECTED_FOLDER,):
-            reasons.append(f"'{note}' is in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes")
+        if (
+            arguments.get("mode") == "replace"
+            and isinstance(note, str)
+            and "/" in note
+            and PurePosixPath(note).parts[:1] != ("nuru",)
+        ):
+            reasons.append(
+                f"'{note}' isn't in nuru/: only Nuru's own notes can be replaced"
+            )
+        if isinstance(note, str) and PurePosixPath(note).parts[:1] == (
+            PROTECTED_FOLDER,
+        ):
+            reasons.append(
+                f"'{note}' is in {PROTECTED_FOLDER}/, the user's own folder, which Nuru never writes"
+            )
         if isinstance(note, str) and PurePosixPath(note).parts[:1] == (ARCHIVE_FOLDER,):
-            reasons.append(f"'{note}' is archived; move it out of {ARCHIVE_FOLDER}/ before writing to it")
+            reasons.append(
+                f"'{note}' is archived; move it out of {ARCHIVE_FOLDER}/ before writing to it"
+            )
 
     # Path rules.
     for field in PATH_ARGUMENTS:
@@ -92,16 +114,17 @@ def check_write(tool: str, arguments: dict[str, Any], known_ids: set[str]) -> li
     # ID validity: every note ID a write names must have come back from a search.
     if tool == "write_note":
         note = arguments.get("note")
-        if isinstance(note, str) and NOTE_ID.fullmatch(note) and (problem := _id_problem("note", note, known_ids)):
+        if (
+            isinstance(note, str)
+            and NOTE_ID.fullmatch(note)
+            and (problem := _id_problem("note", note, known_ids))
+        ):
             reasons.append(problem)
-        if arguments.get("supersedes") and (problem := _id_problem("supersedes", arguments["supersedes"], known_ids)):
+        if arguments.get("supersedes") and (
+            problem := _id_problem("supersedes", arguments["supersedes"], known_ids)
+        ):
             reasons.append(problem)
         for target in arguments.get("targets") or []:
             if problem := _id_problem("targets", target, known_ids):
                 reasons.append(problem)
     return reasons
-
-
-def invented_ids(reply: str, known_ids: set[str]) -> list[str]:
-    """Note IDs the reply mentions that neither the tool log nor any search result contains."""
-    return sorted(find_note_ids(reply) - known_ids)

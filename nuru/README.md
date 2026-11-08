@@ -54,7 +54,7 @@ Only Qwen3.5 and Granite4.2 are supported. The other five files above retain leg
 | `granite4.2` | `false` / `"low"` / `"high"` | `low` (the quick suite passed 8/8 at low in 17 s a turn, against 47 s at high, 2026-09-29) | none - the Modelfile's |
 | `qwen3.5` | `false` / `true` / `true` - it has no levels | `off` (on, it thought 13 s over "what is 2+3") | thinking: `temperature 0.6`, `top_p 0.95`; not: `temperature 0.7`, `top_p 0.8`; both `top_k 20`, no presence penalty - a starting point, not yet measured |
 
-A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. The decision layer's thinking tiers (`assess_effort`, when enforced) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
+A missing or unsupported profile fails with a named error instead of sending an unverified thinking value. The derived `MODEL` tag (including its implicit `:latest`) inherits `NURU_BASE_MODEL`'s profile. Deterministic thinking tiers (`tiers.enforce`, when enabled) use the same translation. Evals pick a level per run with `run_suite.py --tiers`.
 
 `core.providers.ollama.create_model(model, base_model, modelfile_path)` resolves the shared SYSTEM text and `__BASE_MODEL__`, validates tool references, and runs `ollama create` with a temporary rendered file. `Session.start()` calls this on every startup before connecting to any MCP server. Eval manifests include the rendered Modelfile's hash, so edits to the shared source change the recorded prompt identity.
 
@@ -88,30 +88,25 @@ uv run nuru-cli
 
 History is scoped to one conversation per run of `nuru` - each launch starts a new conversation row in the database, but earlier conversations are kept, not deleted.
 
-5. **Decision layer** - at every decision point the harness also asks [Laya](../servers/laya) what it would do - what kind of request this is, whether to go on after a tool result, how much thinking the next step needs, whether a write should go ahead, whether the reply matches what actually ran - and logs that next to what Nuru actually did, in `.db/decisions.sqlite3`. Every tool Nuru runs is logged there too, from what actually ran (note text in a write is kept as its length and hash, not the text).
+5. **Deterministic safeguards and audit** — the harness runs local write checks, step limits and the thinking watch. There is no learned decision server. Every tool call and safeguard event is recorded in `.db/decisions.sqlite3`; write bodies are represented by their length and hash. The existing database schema is retained, so historical logs remain readable.
 
-   Each decision point is `off` (not asked), `shadow` (logged, changes nothing - if the Laya server is down or still loading, the turn runs exactly the same) or `enforce`, set per point in [`config/decision_layer.yaml`](../config/decision_layer.yaml). A point that asks Laya can't be enforced until its thresholds are calibrated on held-out labelled data; a point decided by code alone can. **Enforced today** (since 2026-09-30):
-   - **watch_thinking** - the thinking watch's code checks ([`thinking_watch.py`](src/core/thinking_watch.py)): a call past its thinking budget (low 1,200 tokens) or repeating a sentence 3 times is stopped, and the model asked to act with thinking off for that one call; the same tool called with the same arguments (ignoring case) 3 times in a turn stops the turn.
-   - **step_cap** - a turn stops after 10 rounds of tool calls (after one expert attempt if the budget allows), with the log of what ran.
-   - **write_checks** - a write naming a note ID no search returned, a blocked tool or a protected path doesn't run; the model is told why.
+   [`config/decision_layer.yaml`](../config/decision_layer.yaml) retains three safeguards:
+   - `write_checks`: invented note IDs, protected paths and blocked write operations are refused before dispatch. Server permissions remain an independent backstop.
+   - `step_cap`: after the configured number of tool rounds, the model gets a final answer opportunity; any subsequent tool call is refused.
+   - `watch_thinking`: budget and repeated-reasoning signals stop generation and retry once with thinking off; repeated identical tool calls stop a loop.
 
-   **Off:** `assess_effort` (Laya's thinking tier): every call thinks at its model's default level (its [profile](#the-custom-model-and-its-settings)). The code stays for when Laya is trained. **Shadow:** `tool_gate`, `gate_write`, `check_claim`, `rerank` and `watch_laya` (the watch's Laya question). Enforced later ([`enforcement.py`](src/core/enforcement.py)):
-   - **tool_gate** - a read or write request starts with the harness running the search itself (the request as its query); `answer` / `ask_user` get no tools.
-   - **assess_effort** - every model call's thinking level comes from the tier policy ([`tier_policy.py`](src/core/tier_policy.py)): only up within a turn, one tier up on a failure signal (a `cannot_do`, a schema failing twice, an empty reply, a failed claim check), and past `high` the expert plans ([`expert.py`](src/core/expert.py) - it sees the request, the tools, note titles and IDs, never note contents; key from `ANTHROPIC_API_KEY`, capped per day). Without the expert, the turn stops and says why.
-   - **gate_write** - a write's arguments are asked for again under a forced schema whose note IDs can only be ones the last search returned ([`write_args.py`](src/core/write_args.py)), validated, then gate_write decides: go ahead, ask you (`[confirm] Run ...? [y/N]` in the CLI; the UI has no prompt yet, so there it's blocked), or block.
-   - **check_claim** - the reply is held until checked against what ran; a false claim is written again once, then shown with a warning.
+   Each safeguard can be `off`, `shadow` (record only) or `enforce`. All three ship enforced. Tier order/default and the expert's step-limit setting remain available. `tiers.enforce` is false by default, preserving the previous default model thinking behavior; enabling it uses the configured tier policy and failure signals, without a classifier.
 
-## Reviewing the decision layer
+   For a custom `NURU_DECISION_CONFIG`, remove the obsolete `laya`, `rerank` and `thresholds` blocks, the learned decision points and `tool_gate.default_first_read`. Retain the database path, all three safeguard modes, tool-round cap, watch budgets, tier order/default and expert settings. Invalid old configuration fails at startup rather than silently disabling a safeguard. Do not delete an existing decision database.
+
+## Reviewing historical decisions
 
 ```bash
-uv run nuru label                  # label logged decisions, disagreements with what Nuru did first
-uv run nuru label --point gate_write --limit 10
-uv run nuru export labels.jsonl    # the labelled decisions, for calibrating and fine-tuning later
+uv run nuru label                  # inspect and label retained historical decisions
+uv run nuru export labels.jsonl    # export existing labels
 ```
 
-In the CLI, an enforced gate_write that wants your OK asks before the write runs.
-
-`label` shows each decision - what Laya proposed, what Nuru did, the state Laya saw - and asks for the right answer to each of its questions (a number or a name; Enter skips one, `q` stops). Labels are recorded as coming from `user`, or `--source claude`; never from the local model.
+These commands read the local log and never start a decision model. Labels still record their human/reviewer source.
 
 ## Commands
 
@@ -136,9 +131,9 @@ Ctrl-D (EOF) exits the loop without unloading the model or stopping the server -
 - **`session.shutdown(reason)`** - Unload all models and stop the Ollama server if this process started it, and log why.
 - **`session.close()`** - Release the MCP servers and the database, leaving the model loaded and Ollama running.
 
-`core.decision_shadow` - `DecisionShadow`, the session's hooks into the decision layer: `begin` (tool_gate and assess_effort before the first model call), `model_called` (what the model did, recorded against those decisions), `before_tool` / `after_tool` (gate_write for a write, the execution log, rerank for `semantic_search`), `before_next_call` and `end` (check_claim). Any failure in it is counted in `failures` and swallowed.
+`core.decision_shadow` - `DecisionShadow` maintains the local audit and deterministic safeguard evidence: `begin` resets per-turn state; `model_called` counts model rounds; `before_tool` checks writes; `after_tool` tracks returned note IDs, results and execution history. Thinking-watch signals and safeguard actions are logged locally. Audit-sink failures are counted in `failures` and swallowed; evidence tracking continues independently so a log failure cannot weaken write checks. No model or classifier is called.
 
-`core.enforcement`, `core.tier_policy`, `core.expert`, `core.write_args`, `core.forced_schema` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
+`core.enforcement`, `core.tier_policy`, `core.expert` - the enforce paths above, each kept separate from the session loop so it can be read and tested on its own.
 
 `core.label_cli` - the `nuru label` / `nuru export` commands above.
 
@@ -177,7 +172,7 @@ A write attempt is committed to the conversation database before dispatch. If it
 response is lost or reports an error without an explicit pre-mutation rejection
 receipt, Nuru cannot assume nothing changed: it preserves
 the request, reports uncertainty and blocks further writes to that vault/database.
-This holds with Laya unavailable and after reopening. Reads remain available. A model
+This holds without any learned decision model and after reopening. Reads remain available. A model
 failure after a confirmed write reports that completed action instead of deleting the
 request and inviting an indistinguishable retry.
 

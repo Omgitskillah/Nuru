@@ -3,7 +3,7 @@ import json
 import pytest
 
 from core import label_cli
-from laya_mcp.decision_log import DecisionLog
+from core.decision_log import DecisionLog
 
 QUESTIONS = {
     "matches_request": {"type": "noul", "instructions": "It does what was asked."},
@@ -46,7 +46,7 @@ def test_each_question_is_labelled_by_number_or_name(log):
     row = log._conn.execute("SELECT label, label_source FROM decisions WHERE id = ?", (decision_id,)).fetchone()
     assert json.loads(row["label"]) == {"matches_request": "false", "verdict": "confirm"}
     assert row["label_source"] == "user"
-    assert "Laya proposed: proceed" in shown and "(Laya 0.70)" in shown
+    assert "Policy proposed: proceed" in shown and "(model 0.70)" in shown
 
 
 def test_disagreements_come_first(log):

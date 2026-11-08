@@ -1,14 +1,9 @@
-"""The thinking-tier policy for one task (one turn), enforced by the harness when assess_effort is set
-to enforce. Pure logic, no I/O, so every rule is a unit test:
+"""The thinking-tier policy for one task (one turn), enabled by tiers.enforce.
 
-- the tier for a step is the one assess_effort returned - its prediction if that cleared the tier's
-  threshold, the configured default otherwise (the decision layer already applied that);
-- within a task the tier only goes up, never back down;
-- a failure signal (a cannot_do, the same schema failing validation twice, empty content, a failed
-  check_claim) moves the tier up one step, whatever the prediction says;
-- the step after the highest local tier is `expert`, if today's expert budget allows; otherwise
-  the task stops and the user is told plainly what happened;
-- hitting the step cap: one expert attempt if the budget allows, otherwise stop.
+Pure logic: the configured default starts a task; deterministic failure signals can
+raise the tier, and it never decreases within a task. Beyond the highest local tier,
+one expert attempt is allowed when configured and within budget; otherwise stop.
+The step cap likewise permits one expert attempt when available, otherwise stops.
 """
 
 from dataclasses import dataclass, field

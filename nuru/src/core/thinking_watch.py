@@ -8,8 +8,6 @@ check first:
 
 1. code: past the tier's thinking budget;
 2. code: one sentence (of `repeat_min_chars` or more) seen `repeat_count` times - a loop;
-3. Laya (watch_thinking): the latest stretch reads as repeating, ready to act, or stuck for a
-   lookup - what code can't see.
 
 The first signal in a call is what counts. The session decides what happens with it: in shadow
 mode it is only logged; enforced, the call is stopped and the model asked again, thinking off
@@ -17,18 +15,17 @@ mode it is only logged; enforced, the call is stopped and the model asked again,
 """
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 
-from laya_mcp.config import WatchSettings
+from core.decision_config import WatchSettings
 
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
 
 
 @dataclass(frozen=True)
 class WatchSignal:
-    kind: str  # budget | repeating | ready | stuck
-    source: str  # code | laya
+    kind: str  # budget | repeating
+    source: str  # code
     tokens: int  # thinking tokens (estimated) when it fired
     detail: str = ""
 
@@ -50,12 +47,11 @@ def repeated_sentence(text: str, min_chars: int, count: int) -> str | None:
 
 
 class ThinkingWatch:
-    """One model call's watch. `ask_laya(tail)` returns watch_thinking's answer (or None)."""
+    """One model call's watch. Only deterministic budget/repetition signals are considered."""
 
-    def __init__(self, settings: WatchSettings, tier: str | None, ask_laya: Callable[[str], dict | None] | None):
+    def __init__(self, settings: WatchSettings, tier: str | None):
         self.settings = settings
         self.budget = settings.budgets.get(tier) if tier else None
-        self.ask_laya = ask_laya
         self.text = ""
         self.first: WatchSignal | None = None
         self._next_check = settings.check_every_tokens
@@ -80,8 +76,4 @@ class ThinkingWatch:
         repeated = repeated_sentence(self.text, self.settings.repeat_min_chars, self.settings.repeat_count)
         if repeated:
             return WatchSignal("repeating", "code", tokens, repeated[:120])
-        if self.ask_laya is not None:
-            answer = self.ask_laya(self.text[-self.settings.tail_chars:])
-            if answer and answer.get("signal") not in (None, "progressing"):
-                return WatchSignal(answer["signal"], "laya", tokens)
         return None

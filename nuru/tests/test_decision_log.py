@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from laya_mcp.decision_log import redact_arguments
+from core.decision_log import redact_arguments
 
 
 def record(log, **overrides):
@@ -88,3 +88,11 @@ def test_state_and_questions_are_kept_in_the_order_laya_saw_them(log):
     reordered = record(log, state={"failures": {}, "steps": [], "request": "r"}, questions=questions)
     same = log._conn.execute("SELECT state_hash FROM decisions WHERE id = ?", (reordered,)).fetchone()
     assert same["state_hash"] == row["state_hash"]  # the hash still identifies the state
+
+
+@pytest.fixture
+def log(tmp_path):
+    from core.decision_log import DecisionLog
+    log = DecisionLog(tmp_path / "decisions.sqlite3")
+    yield log
+    log.close()

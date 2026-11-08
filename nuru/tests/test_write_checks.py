@@ -1,7 +1,7 @@
 import pytest
 from ulid import ULID
 
-from core.write_checks import check_write, find_note_ids, invented_ids
+from core.write_checks import check_write, find_note_ids
 
 KNOWN = str(ULID())
 UNKNOWN = str(ULID())
@@ -73,10 +73,11 @@ def test_supersedes_and_targets_need_known_ids_too():
     assert reasons == [f"supersedes {UNKNOWN} was not returned by any search this session"]
 
 
-def test_note_ids_are_found_in_prose_and_unknown_ones_reported():
+
+
+def test_note_ids_are_found_in_prose():
     reply = f"I appended to {KNOWN} and also updated {UNKNOWN}."
     assert find_note_ids(reply) == {KNOWN, UNKNOWN}
-    assert invented_ids(reply, {KNOWN}) == [UNKNOWN]
 
 
 def test_ordinary_words_are_not_mistaken_for_ids():

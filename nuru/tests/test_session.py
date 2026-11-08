@@ -970,7 +970,7 @@ def test_a_tool_that_returns_an_error_is_logged_as_an_error(monkeypatch, tmp_pat
     assert call["status"] == "error" and "no note 'x'" in call["error"]
 
 
-def test_start_connects_the_obsidian_math_and_laya_servers(monkeypatch):
+def test_start_connects_the_obsidian_and_math_servers(monkeypatch):
     seen = {}
 
     def recording_mcp_tools(server_params, **kwargs):

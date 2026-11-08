@@ -128,8 +128,3 @@ def check_write(tool: str, arguments: dict[str, Any], known_ids: set[str]) -> li
             if problem := _id_problem("targets", target, known_ids):
                 reasons.append(problem)
     return reasons
-
-
-def invented_ids(reply: str, known_ids: set[str]) -> list[str]:
-    """Note IDs the reply mentions that neither the tool log nor any search result contains."""
-    return sorted(find_note_ids(reply) - known_ids)

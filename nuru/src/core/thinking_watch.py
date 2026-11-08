@@ -24,7 +24,7 @@ _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
 
 @dataclass(frozen=True)
 class WatchSignal:
-    kind: str  # budget | repeating | ready | stuck
+    kind: str  # budget | repeating
     source: str  # code
     tokens: int  # thinking tokens (estimated) when it fired
     detail: str = ""

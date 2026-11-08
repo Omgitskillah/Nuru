@@ -52,7 +52,6 @@ class WatchSettings(_Strict):
     ]  # thinking tokens per model call, per tier
     repeat_min_chars: int = Field(ge=10)
     repeat_count: int = Field(ge=2)
-    tail_chars: int = Field(ge=200)
     repeat_calls: int = Field(ge=2)  # identical tool calls in a turn that make a loop
 
 

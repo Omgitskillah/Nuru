@@ -15,7 +15,7 @@ PRIYA = str(ULID())
 INVENTED = str(ULID())
 REQUEST = "Add a line to Priya's note saying she prefers async messages on Fridays."
 SEARCH = json.dumps({"matches": [{"path": "nuru/priya-raman.md", "id": PRIYA, "title": "Priya", "text": "Engineer"}]})
-DEFAULT_SCRIPT = {}  # old deterministic regression inputs carry no predictor behavior
+DEFAULT_SCRIPT = {}  # compatibility input for shared model-free fixtures
 RUNAWAY = [{"thinking_chunk": f"Thought {i}: adding load {i}, recomputing the totals from the table once more. "} for i in range(900)]
 
 
@@ -43,8 +43,9 @@ def test_tier_escalation_is_deterministic_without_a_predictor(tmp_path):
     from core.tier_policy import STOP
     assert enforcement.think_for(policy, True, True) == (STOP, STOP)
 
+
 class Tools:
-    """The model's tools, faked; the harness tools are laya_mcp's real functions."""
+    """Model tool responses are faked; deterministic safeguards run normally."""
 
     retired, unavailable, cancel = None, (), None  # MCPTools' own state, read by Session
 
@@ -304,3 +305,57 @@ def test_without_an_expert_there_is_no_plan(tmp_path):
     enforcement = Enforcement(enforce_config(tmp_path, []), None, None)
     with pytest.raises(ExpertUnavailable, match="no expert is configured"):
         enforcement.expert_plan("Find it", [], [], [])
+
+
+def _tiers_only(s):
+    config = s.enforcement.config.model_copy(update={"decision_points": {p: "off" for p in s.enforcement.config.decision_points}})
+    s.enforcement = Enforcement(config, session.PROFILE.think_map, s.enforcement.planner)
+
+
+def test_tiers_alone_enforce_and_empty_reply_raises_thinking(setup):
+    s, seen, _ = setup([], [[{"thinking": "the answer is 42"}], ["42"]], tiers={"enforce": True})
+    _tiers_only(s)
+    assert s.enforcement.any
+    assert list(s.ask("six times seven"))[-1] == Text("42")
+    assert [c["think"] for c in seen] == ["low", "high"]
+
+
+def test_highest_tier_failure_without_expert_stops_with_reason(setup):
+    s, seen, _ = setup([], [[{"thinking": "hmm"}]], tiers={"enforce": True, "default": "high"})
+    _tiers_only(s)
+    s.enforcement.planner = None
+    events = list(s.ask("Something hard"))
+    assert len(seen) == 1
+    assert events[-1].text.startswith("I stopped here: the local model kept failing at the highest thinking level")
+    assert ", and the expert isn't available (no API key, or today's budget is used up)" in events[-1].text
+
+
+def test_past_highest_tier_expert_plans_and_model_continues(setup):
+    client = _expert_client()
+    s, seen, _ = setup([], [[{"thinking": "hmm"}], ["Done."]], tiers={"enforce": True, "default": "high"}, expert_client=client)
+    _tiers_only(s)
+    events = list(s.ask("Something hard"))
+    assert len(client.calls) == 1
+    assert Thinking("Plan from the expert:\n1. search c") in events
+    assert events[-1] == Text("Done.")
+    assert seen[-1]["messages"][-1]["content"].startswith("[Nuru] A plan from the expert")
+
+
+def test_expert_failure_past_highest_tier_stops_instead_of_continuing(setup):
+    client = _expert_client(fail=True)
+    s, seen, _ = setup([], [[{"thinking": "hmm"}], ["must not run"]], tiers={"enforce": True, "default": "high"}, expert_client=client)
+    _tiers_only(s)
+    events = list(s.ask("Something hard"))
+    assert len(seen) == 1 and len(client.calls) == 1
+    assert events[-1].text.startswith("I stopped here: it needed the expert, and the expert couldn't help:")
+
+
+def test_the_turn_is_identical_with_or_without_the_audit_shadow(setup):
+    responses = [[call("search", {"query": "Priya"})], ["Found Priya."]]
+    s, seen, tools = setup([], responses)
+    before = list(s.ask("Find Priya")), seen[:], tools.calls[:]
+    s2, seen2, tools2 = setup([], responses)
+    s2.shadow.close()
+    s2.shadow = None
+    after = list(s2.ask("Find Priya")), seen2[:], tools2.calls[:]
+    assert before == after

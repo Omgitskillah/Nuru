@@ -505,11 +505,8 @@ class Session:
         self.conversation_id = conversation_id
         self.shadow = shadow  # asks the decision layer at every decision point and logs its answers
         self.enforcement = enforcement  # acts on those answers, for the points set to enforce
-        # Optional explicit write confirmation callback; None means nobody is
-        # there to ask (the UI, an eval run), and such a write is blocked.
-        self.confirm_write: Callable[[str, dict], bool] | None = None
         # Asked a question code raises mid-turn (a write to OK, a save the message ruled out); returns
-        # the chosen labels, or None if nobody answered. Used when confirm_write isn't set.
+        # the chosen labels, or None if nobody answered.
         self.answer_question: Callable[[Question], list[str] | None] | None = None
         # Told how each tool call shown as a ToolCall turned out - (its call_id, name, arguments,
         # outcome, whether it's a write) - once it has run or been refused; nuru-serve reports it to its
@@ -532,7 +529,6 @@ class Session:
         self._server_validators = tool_dispatch.validators(server_tools or tool_definitions)
         self._vault_scope = str(Path(os.environ.get("VAULT_PATH") or dotenv_values(ENV_DIR / ".env.obsidian").get("VAULT_PATH") or ".").resolve())
         self._turn_writes: list[tuple[str, dict, ToolOutcome]] = []
-        self._repair_rounds = 0
         # conversation_id -> (known_ids, last_search_ids) of the conversations not in use (use_conversation)
         self._evidence: dict[int, tuple[set[str], list[str]]] = {}
 
@@ -853,7 +849,6 @@ class Session:
             return
 
         self._turn_writes = []
-        self._repair_rounds = 0
         self._turn_text = text
         self._shown_call = None
         user_message_id = self.store.add_message(self.conversation_id, "user", text)
@@ -1086,10 +1081,6 @@ class Session:
                     # reasoning as what the model said.
                     output_text = thinking or carried_thinking
                     yield Text(_NO_REPLY_NOTE)
-                    if self.shadow:
-                        self.shadow.end(_NO_REPLY_NOTE)
-                if self.shadow:
-                    self.shadow.end(output_text)
                 self.store.add_message(self.conversation_id, "nuru", output_text, usage.get("completion_tokens"))
                 self.logger.turn_end(turn_id)
                 return
@@ -1231,22 +1222,11 @@ class Session:
         shared = self._in_shared(str(path))
         return ("shared", shared) if shared else ("private", "")
 
-    def _confirmed(self, turn_id: str, name: str, args: dict) -> bool | None:
-        """The user's explicit write confirmation; None if nobody was there to give it."""
-        if questions.no_save_phrase(self._turn_text) or self._write_scope(name, args)[0] != "private":
-            return True  # the "do not save" or shared/ question asks instead, once (_call_tool)
-        if self.confirm_write:
-            return self.confirm_write(name, args)
-        answer = self._answer(turn_id, questions.write(name, args))
-        return None if answer is None else questions.is_yes(answer)
-
     def _end_with_question(self, turn_id: str, question: Question, said: str):
         """End the turn on the model's ask_user question. The conversation keeps it as Nuru's reply,
         after anything the model wrote first, so the user's answer reads as a reply to it."""
         reply = (said.rstrip() + "\n\n" if said.strip() else "") + questions.as_text(question)
         self.store.add_message(self.conversation_id, "nuru", reply)
-        if self.shadow:
-            self.shadow.end(reply)
         self.logger.turn_end(turn_id)
         yield Ask(question)
 
@@ -1268,7 +1248,7 @@ class Session:
                     and self.enforcement.on("write_checks"))
 
     def _call_tool(self, turn_id: str, name: str, args, gate_id: int | None,
-                   enforcing: Enforcement | None, *, harness: bool = False, gate_checked: bool = False, refusal: ToolOutcome | None = None) -> ToolOutcome:
+                   enforcing: Enforcement | None, *, harness: bool = False, refusal: ToolOutcome | None = None) -> ToolOutcome:
         """One validated, logged dispatch for ordinary, forced, planned and injected calls."""
         call_id = None
         if not harness:
@@ -1281,7 +1261,7 @@ class Session:
         if authorize is not None and not authorize(name):
             outcome = tool_dispatch.failure("policy", "DEVICE_SCOPE", "Device permission does not allow this tool.")
         attempt_id = None
-        if outcome is None and not gate_checked:
+        if outcome is None:
             args, write_gate, gate_id = self._before_tool(name, args, enforcing)
             if self._write_blocked(write_gate):
                 reason = "; ".join(write_gate.get("reasons") or [])
@@ -1382,8 +1362,6 @@ class Session:
         reply = reason + self._partial_actions()
         self.logger.turn_error(turn_id, reply)
         self.store.add_message(self.conversation_id, "nuru", reply)
-        if self.shadow:
-            self.shadow.finish()
         self.logger.turn_end(turn_id)
         yield Failure(reply)
 
@@ -1409,8 +1387,6 @@ class Session:
         yield Text(text)
         self.store.add_message(self.conversation_id, "nuru", text)
         self.logger.turn_end(turn_id)
-        if self.shadow:
-            self.shadow.finish()
 
     def _end_cancelled(self, turn_id: str, output_text: str) -> None:
         """Ends a turn the user stopped. What the model had said so far is kept as its reply so the

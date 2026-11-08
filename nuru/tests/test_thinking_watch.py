@@ -4,7 +4,7 @@ from core.thinking_watch import ThinkingWatch, repeated_sentence
 from core.decision_config import WatchSettings
 
 SETTINGS = WatchSettings(check_every_tokens=100, budgets={"low": 300, "high": 1000}, repeat_min_chars=40,
-                         repeat_count=3, tail_chars=400, repeat_calls=3)
+                         repeat_count=3, repeat_calls=3)
 FRESH = "The note lists five loads, so I add each current in turn and check the units as I go. "
 
 

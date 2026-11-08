@@ -96,8 +96,6 @@ class DecisionShadow:
 
     def model_called(self, tool_names: list[str], reply_empty: bool, think) -> None:
         self._step += 1
-        if reply_empty and not tool_names:
-            self._counts["empty_replies"] += 1
 
     def before_tool(self, name: str, arguments: dict) -> dict | None:
         return self._code_gate(name, arguments) if name in WRITE_TOOLS else None
@@ -136,8 +134,6 @@ class DecisionShadow:
         self._steps.append(
             {"tool": name, "status": "ok" if ok else "error", "result": summary}
         )
-        if not ok:
-            self._counts["tool_errors"] += 1
         self._safely(
             lambda: self._log.record_tool_call(
                 tool=name,
@@ -155,18 +151,11 @@ class DecisionShadow:
                 )
             )
 
-    def finish(self) -> None:
-        pass
-
-    def end(self, reply: str) -> None:
-        self.finish()
-
     def _reset(self, request: str, task_id: str | None) -> None:
         self._request = request
         self._task_id = task_id
         self._step = 0
         self._steps: list[dict[str, str]] = []
-        self._counts = {"tool_errors": 0, "empty_replies": 0}
         self.notes: list[
             FoundNote
         ] = []  # titles and IDs the searches found, this turn (for the expert)

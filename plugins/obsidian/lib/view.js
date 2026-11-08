@@ -54,6 +54,7 @@ class ChatView extends ItemView {
     // createId, submitId}. `origin` is the conversation it was written in (null: a new one). Sending the
     // same text there again reuses its IDs, so the service replays it instead of starting a second turn.
     this.pending = null;
+    this.messageHistory = null; // recalled messages and the untouched draft, only while browsing
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -75,6 +76,10 @@ class ChatView extends ItemView {
     this.statusEl = root.createDiv({ cls: "nuru-status", attr: { role: "status" } });
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
     this.registerDomEvent(this.messagesEl, "click", (event) => this.onLinkClick(event));
+    this.registerDomEvent(this.messagesEl, "contextmenu", (event) => this.copyMenu(event));
+    this.registerDomEvent(document, "selectionchange", () => {
+      for (const turn of this.turns.values()) if (turn.selectionDeferred && !this.selected(turn.el)) this.update(turn);
+    });
 
     const composer = root.createDiv({ cls: "nuru-composer" });
     // What's selected in the open note goes with the next message; this line says so.
@@ -87,7 +92,9 @@ class ChatView extends ItemView {
     this.chipsEl = composer.createDiv({ cls: "nuru-attachments" });
     this.input = composer.createEl("textarea", { cls: "nuru-input", attr: { rows: "3", "aria-label": "Message to Nuru",
       placeholder: "Message Nuru (Enter to send, Shift+Enter for a new line)" } });
+    this.registerDomEvent(this.input, "input", () => { this.messageHistory = null; });
     this.registerDomEvent(this.input, "keydown", (event) => {
+      if (this.recallMessage(event)) return;
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         this.send();
@@ -175,6 +182,7 @@ class ChatView extends ItemView {
     const generation = ++this.generation;
     for (const turn of this.turns.values()) this.forget(turn);
     this.turns.clear();
+    this.messageHistory = null;
     this.messagesEl.empty();
     this.conversationId = null;
     this.choice = { model: null, thinking: null };
@@ -199,6 +207,56 @@ class ChatView extends ItemView {
     this.renderChoice();
     await this.plugin.remember({ conversationId: this.conversationId });
     this.updateButtons();
+  }
+
+  // History belongs to this conversation. Native selection, IME and modified arrows stay native;
+  // multiline drafts use Up only on their first line and Down only on their last.
+  recallMessage(event) {
+    if (!["ArrowUp", "ArrowDown"].includes(event.key) || event.isComposing || event.shiftKey ||
+        event.ctrlKey || event.metaKey || event.altKey) return false;
+    const input = this.input, start = input.selectionStart, end = input.selectionEnd;
+    if (start !== end) return false;
+    const up = event.key === "ArrowUp";
+    if (up ? input.value.slice(0, start).includes("\n") : input.value.slice(end).includes("\n")) return false;
+    if (!this.messageHistory) {
+      const messages = [...this.turns.values()].map((turn) => turn.text);
+      if (!up || !messages.length) return false;
+      this.messageHistory = { messages, index: messages.length,
+        draft: { text: input.value, start, end, direction: input.selectionDirection } };
+    }
+    const history = this.messageHistory;
+    history.index = Math.max(0, Math.min(history.messages.length, history.index + (up ? -1 : 1)));
+    event.preventDefault();
+    if (history.index === history.messages.length) {
+      input.value = history.draft.text;
+      input.setSelectionRange(history.draft.start, history.draft.end, history.draft.direction);
+      this.messageHistory = null;
+    } else {
+      input.value = history.messages[history.index];
+      // Repeated arrows work even for multiline recalled messages; other cursor movement stays native.
+      const caret = up ? 0 : input.value.length;
+      input.setSelectionRange(caret, caret);
+    }
+    return true;
+  }
+
+  // Never replace selected DOM, even when a selection crosses turns. Events keep accumulating in
+  // the runner; releasing the selection displays the latest state, including a completed reply.
+  selected(el) {
+    const selection = el.ownerDocument.getSelection();
+    if (!selection || selection.isCollapsed) return false;
+    for (let i = 0; i < selection.rangeCount; i++) if (selection.getRangeAt(i).intersectsNode(el)) return true;
+    return false;
+  }
+
+  copyMenu(event) {
+    if (!this.selected(this.messagesEl)) return;
+    const text = this.messagesEl.ownerDocument.getSelection().toString();
+    event.preventDefault();
+    new Menu().addItem((item) => item.setTitle("Copy").setIcon("copy").onClick(async () => {
+      try { await this.messagesEl.ownerDocument.defaultView.navigator.clipboard.writeText(text); }
+      catch { new Notice("Nuru: couldn't copy the selection. Try Ctrl/Cmd+C."); }
+    })).showAtMouseEvent(event);
   }
 
   // ------------------------------------------------------------------ sending
@@ -241,6 +299,7 @@ class ChatView extends ItemView {
       // The composer is cleared only if it still holds this message, in the view it was sent from.
       if (generation === this.generation && this.input.value.trim() === message.text) {
         this.input.value = "";
+        this.messageHistory = null;
         this.attachments = [];
         this.renderChips();
         if (selection.length) {
@@ -420,6 +479,10 @@ class ChatView extends ItemView {
   }
 
   update(turn) {
+    if (turn.forgotten) return;
+    this.updateButtons(); // Stop stays usable while selected text is held still.
+    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
+    turn.selectionDeferred = false;
     const display = turn.runner.display;
     if (turn.namesConversation && display.state === "completed" && !turn.forgotten) {
       turn.namesConversation = false; // once
@@ -472,7 +535,8 @@ class ChatView extends ItemView {
     turn.renderTimer = null;
     const reply = turn.runner.display.reply;
     if (reply === turn.renderedReply || turn.forgotten) return;
-    const stick = this.nearBottom();
+    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
+    const stick = !this.selected(this.messagesEl) && this.nearBottom();
     renderReply(reply, turn.replyEl);
     turn.renderedReply = reply;
     if (stick) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
@@ -546,6 +610,7 @@ class ChatView extends ItemView {
       new Notice("Nuru: wait for the last message to go first.");
       return;
     }
+    this.messageHistory = null;
     this.input.value = answerText(chosen, other);
     this.send();
   }
@@ -796,19 +861,19 @@ class ChatView extends ItemView {
       .catch(() => {}) // the turn's own stream reports a lost service
       .finally(() => {
         this.statusCheck = null;
-        for (const turn of this.turns.values()) if (this.following(turn)) turn.stateEl.setText(this.stepWords(turn));
+        for (const turn of this.turns.values()) if (this.following(turn) && !this.selected(turn.stateEl)) turn.stateEl.setText(this.stepWords(turn));
       });
   }
 
   tick() {
     this.ticks += 1;
     const live = [...this.turns.values()].filter((turn) => this.following(turn));
-    for (const turn of live) turn.stateEl.setText(this.stepWords(turn));
+    for (const turn of live) if (!this.selected(turn.stateEl)) turn.stateEl.setText(this.stepWords(turn));
     const loading = live.some((turn) => !turn.runner.activity.steps.length && !turn.runner.display.reply);
     if (loading || this.ticks % STATUS_SECONDS === 0) this.checkStatus();
     for (const el of this.contentEl.querySelectorAll(".nuru-countdown")) {
       const left = Math.max(0, Math.round((Date.parse(el.getAttribute("data-expires")) - Date.now()) / 1000));
-      el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");
+      if (!this.selected(el)) el.setText(left ? `${left} s to answer; no answer counts as No` : "Time's up: taken as No");
       if (!left) for (const button of el.parentElement.querySelectorAll("button")) button.disabled = true;
     }
   }

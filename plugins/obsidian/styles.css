@@ -56,3 +56,7 @@
 .nuru-model-text { width: 100%; font-family: var(--font-monospace); font-size: var(--font-ui-small); }
 .nuru-model-pending { color: var(--text-accent); }
 .nuru-model-buttons { display: flex; gap: var(--size-4-2); justify-content: flex-end; }
+
+/* Obsidian's application chrome is not selectable by default; conversation text and its native
+   composer are. Keep this scoped so buttons and the rest of the workspace retain their behavior. */
+.nuru-messages, .nuru-messages *, .nuru-input { -webkit-user-select: text; user-select: text; }

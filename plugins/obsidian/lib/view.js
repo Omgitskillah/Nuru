@@ -783,10 +783,15 @@ class ChatView extends ItemView {
 
   // Refresh the status: while a turn shows nothing yet (to see the model load), and every STATUS_SECONDS.
   // One call at a time.
+  async refreshModels() {
+    await this.statusCheck; // a pre-change status reply must not overwrite the fresh choices
+    return this.checkStatus();
+  }
+
   checkStatus() {
     if (this.statusCheck || !this.client) return;
     const client = this.client;
-    this.statusCheck = client.status()
+    return this.statusCheck = client.status()
       .then((status) => { if (client === this.client) this.showService(status); })
       .catch(() => {}) // the turn's own stream reports a lost service
       .finally(() => {

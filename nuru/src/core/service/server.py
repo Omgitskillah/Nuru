@@ -60,6 +60,7 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
     # Local administration (model-settings-v1.schema.json): refused on the remote listener (route()).
     ("GET", r"/v1/models/settings", "model_settings"),
+    ("GET", r"/v1/models/settings/pending", "pending_model_settings"),
     ("PUT", r"/v1/models/settings", "save_model_settings"),
     ("DELETE", r"/v1/models/settings", "reset_model_settings"),
     ("POST", r"/v1/models", "add_model"),
@@ -411,6 +412,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def on_model_settings(self, principal, query):
         self.answer(200, self._model_settings().describe(self._one(query, "model")))
+
+    def on_pending_model_settings(self, principal, query):
+        self.answer(200, model_settings.ModelSettings(None).administration())
 
     def on_save_model_settings(self, principal, query):
         body = self.json_body(model_settings.MAX_BODY_BYTES)

@@ -41,6 +41,11 @@ module.exports = class NuruPlugin extends Plugin {
     return connect({ port: this.settings.port, vaultPath: this.vaultPath() });
   }
 
+  async modelsChanged() {
+    // Explicit Settings-change notification; refresh choices without navigating or changing a turn.
+    await Promise.all(this.views().map((view) => view.refreshModels()));
+  }
+
   vaultPath() {
     return this.app.vault.adapter.getBasePath();
   }

@@ -15,7 +15,7 @@ import jsonschema
 import requests
 import yaml
 
-from core import model_profile, user_models
+from core import main_models, model_profile, user_models
 from core.modelfile import default_header
 from core.providers import ollama
 from core.service.protocol import ProtocolError, _problem
@@ -59,6 +59,35 @@ class ModelSettings:
                                         .json().get("models", [])])
         self.build = build or (lambda model, rendered: ollama.build_model(model, rendered))
         self.remove = remove or (lambda model: ollama.remove_model(model))
+
+    def administration(self) -> dict:
+        """Pending saved families, separate from selectable models; usable without Ollama."""
+        saved = user_models.snapshot(self.directory)
+        active = user_models.active()
+        pending = []
+        for family, bundle in sorted(saved.items()):
+            running = active.get(family)
+            active_revision = running.revision if running else user_models.INITIAL
+            if bundle.revision != active_revision:
+                pending.append({"family": family, "revision": bundle.revision,
+                                "active_revision": active_revision, "models": [],
+                                "removed": not bundle.custom and nuru_settings(family) is None})
+        if pending:
+            try:
+                names = self.names()
+            except (requests.RequestException, ValueError):
+                names = []  # the saved family must remain visible if Ollama is down
+            by_family = {row["family"]: row for row in pending}
+            for name in sorted(set(names)):
+                try:
+                    family = user_models.family_of(name)
+                except user_models.ConfigError:
+                    continue
+                if family in by_family:
+                    by_family[family]["models"].append(name)
+        body = {"pending": pending}
+        validate("administration", body)
+        return body
 
     def describe(self, model: str) -> dict:
         family = self._family(model)
@@ -106,6 +135,7 @@ class ModelSettings:
             raise ProtocolError("invalid_request", f"{model} can't run Nuru: {problem}")
         saved = user_models.read(family, self.directory)
         if saved.custom or nuru_settings(family) is not None:
+            main_models.invalidate()  # a newly pulled tag changes choices even without a settings write
             return {**self.describe(model), "added": False}
         header, profile = user_models.starting(shown)
         self._published(lambda: user_models.save(
@@ -149,6 +179,7 @@ class ModelSettings:
     def _published(publish) -> None:
         try:
             publish()
+            main_models.invalidate()
         except user_models.Conflict:
             # protocol v1's error body has no room for the revision: the client reads the settings again
             raise ProtocolError("conflict", "These settings changed since they were read: reload them.") from None

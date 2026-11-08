@@ -98,6 +98,8 @@ class NuruClient {
   cancel(turnId) { return this.post(`/v1/turns/${encodeURIComponent(turnId)}/cancel`, {}); }
 
   // A local model family's settings (model-settings-v1.schema.json), only on this computer's own listener.
+  pendingModelSettings() { return this.request("GET", "/v1/models/settings/pending"); }
+
   modelSettings(model) { return this.request("GET", `/v1/models/settings?model=${encodeURIComponent(model)}`); }
 
   saveModelSettings(settings) { return this.request("PUT", "/v1/models/settings", settings); }

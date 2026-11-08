@@ -206,3 +206,26 @@ def test_find_gives_a_listed_model_and_nothing_for_one_not_offered(monkeypatch):
     haiku = main_models.claude_provider.PREFIX + "claude-haiku-5-5"
     assert main_models.find(haiku, haiku)["label"] == "Claude Haiku 5.5"
     assert main_models.find("llama3.1:8b", haiku) is None
+
+
+def test_add_during_an_inflight_choice_load_cannot_republish_the_old_cache(monkeypatch):
+    monkeypatch.setattr(main_models, "_cache", None)
+    monkeypatch.setattr(main_models, "_cloud", lambda: [])
+    calls = []
+    def local():
+        calls.append(True)
+        if len(calls) == 1:
+            main_models.invalidate()
+            return [{"id": "old"}]
+        return [{"id": "new"}]
+    monkeypatch.setattr(main_models, "_local", local)
+    assert main_models.choices("new")["choices"] == [{"id": "new"}]
+    assert len(calls) == 2
+    assert main_models.choices("new")["choices"] == [{"id": "new"}]
+    assert len(calls) == 2
+
+
+def test_a_supported_family_tag_without_tools_never_becomes_a_picker_choice(monkeypatch):
+    monkeypatch.setattr(main_models.requests, "get", lambda *a, **kw: type("R", (), {"json": lambda self: {"models": [{"name": QWEN}]}})())
+    monkeypatch.setattr(main_models, "model_info", lambda name: {"capabilities": ["completion", "vision"]})
+    assert main_models._local() == []

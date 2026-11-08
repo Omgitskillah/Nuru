@@ -977,11 +977,14 @@ test("the panel stops looking for a title once the user opens another conversati
 });
 
 test("Settings refresh waits out an old status request and never changes a conversation's chosen model", async () => {
-  const client = fakeClient();
+  const stream = numbered(["accepted", { request_id: "refresh-test" }], ["started", {}]);
+  const client = fakeClient({ history: [{ turn_id: "turn0000active", text: "Still running", state: "running", display: displayOf(stream) }] });
   const { view } = await open({ client });
   view.choice = { model: "qwen3.5:4b", thinking: "low" };
   view.changed = { model: "qwen3.5:4b" };
   const generation = view.generation;
+  const running = view.turns.get("turn0000active");
+  assert.ok(running && !running.runner.display.ended);
   let finishOld;
   client.status = () => new Promise((resolve) => { finishOld = resolve; });
   view.checkStatus();
@@ -993,5 +996,7 @@ test("Settings refresh waits out an old status request and never changes a conve
   assert.deepEqual(view.choice, { model: "qwen3.5:4b", thinking: "low" });
   assert.deepEqual(view.changed, { model: "qwen3.5:4b" });
   assert.equal(view.generation, generation);
+  assert.equal(view.turns.get("turn0000active"), running);
+  assert.equal(client.aborted, 0);
   assert.equal(client.calls.filter((c) => c[0] === "cancel").length, 0);
 });

@@ -297,6 +297,11 @@ def _hide_injected_args(tool_definitions: list[dict]) -> list[dict]:
     for tool in tool_definitions:
         fn = tool["function"]
         properties = fn.get("parameters", {}).get("properties", {})
+        if fn["name"] == "read_note" and "include_source" in properties:
+            parameters = fn["parameters"]
+            tool = {**tool, "function": {**fn, "parameters": {**parameters,
+                "properties": {key: value for key, value in properties.items() if key != "include_source"},
+                "required": [key for key in parameters.get("required", []) if key != "include_source"]}}}
         if fn["name"] == _PYTHON_TOOL:
             tool = {**tool, "function": {**fn, "description": _PYTHON_DESCRIPTION, "parameters": _PYTHON_PARAMETERS}}
         hidden.append(tool)
@@ -1295,7 +1300,7 @@ class Session:
                     "Inspect the vault and reconcile it with /resolve-write before any further writes.", certainty="not_dispatched")
         call_args = args
         prerequisite_sources = []
-        if outcome is None and name == "read_note":
+        if outcome is None and name == "read_note" and args.get("include_revision") is not True:
             schema = self._server_validators.get(name)
             if schema is not None and "include_source" in schema.schema.get("properties", {}):
                 call_args = {**args, "include_source": True}

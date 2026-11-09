@@ -80,6 +80,8 @@ def source_session(monkeypatch, *, modern=True, failed_read=False, failed_script
     def call(name, arguments):
         calls.append((name, arguments.copy()))
         if name == "read_note":
+            if arguments.get("include_revision"):
+                return ToolResult(json.dumps({"path": "real.md", "content": "snapshot", "revision": "abc"}))
             if failed_read and arguments["name"] == "bad":
                 return ToolResult('{"content":"fake","source":{"path":"bad.md"}}', True)
             if arguments.get("include_source"):
@@ -131,3 +133,14 @@ def test_failed_prerequisite_does_not_erase_an_earlier_successful_read_or_run_sc
     outcome = s._call_tool("turn-1", "run_python", {"code": "print(1)", "notes": ["good", "bad"]}, None, None)
     assert not outcome.success and outcome.sources == ({"path": "real.md"},)
     assert [name for name, _ in calls] == ["read_note", "read_note"]
+
+
+def test_session_hides_transport_flag_and_keeps_revision_result_unchanged(monkeypatch):
+    s, calls = source_session(monkeypatch)
+    offered = next(t for t in s.tool_definitions if t["function"]["name"] == "read_note")
+    assert "include_source" not in offered["function"]["parameters"]["properties"]
+    assert "include_source" in s._server_validators["read_note"].schema["properties"]
+    outcome = s._call_tool("turn-1", "read_note", {"name": "alias", "include_revision": True}, None, None)
+    assert outcome.success and outcome.sources == ({"path": "real.md"},)
+    assert json.loads(outcome.text) == {"path": "real.md", "content": "snapshot", "revision": "abc"}
+    assert calls == [("read_note", {"name": "alias", "include_revision": True})]

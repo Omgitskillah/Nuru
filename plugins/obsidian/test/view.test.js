@@ -1358,3 +1358,51 @@ test("main-window note listeners are registered only once when chat shares its d
   for (const type of ["selectionchange", "mouseup", "keyup"]) document.dispatchEvent(new window.Event(type));
   assert.equal(calls, 3);
 });
+
+test("saved verified sources appear once in order, in replies and steps, and open at their heading", async () => {
+  const display = displayOf(FIXTURES.streams.read_sources);
+  const { view, opened } = await open({ client: fakeClient({ history: [{ turn_id: "source-turn", text: "compare", display }] }) });
+  const [turn] = view.turns.values();
+  await rendered(turn);
+  const row = [...turn.sourcesEl.querySelectorAll("a")];
+  assert.deepEqual(row.map((a) => a.getAttribute("data-href")), ["nuru/Trip.md#Decisions", "nuru/Plan.md"]);
+  row[0].click();
+  row[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+  assert.deepEqual(opened, [["nuru/Trip.md#Decisions", "", false], ["nuru/Plan.md", "", true]]);
+  assert.equal(turn.replyEl.querySelectorAll("a.nuru-source").length, 2);
+  assert.equal([...turn.replyEl.querySelectorAll("a")].some((a) => a.textContent === "never-read.md"), false);
+  assert.deepEqual([...turn.stepEls[0].querySelectorAll("a")].map((a) => a.getAttribute("data-href")), ["nuru/Trip.md#Decisions"]);
+  assert.equal(turn.stepEls[2].querySelector("a"), null, "failed read has no link");
+  await view.openConversation("conv0000demo");
+  const [reopened] = view.turns.values();
+  assert.equal(reopened.sourcesEl.querySelectorAll("a").length, 2);
+});
+
+test("a late verified source relinks unchanged reply text and preserves a held selection until release", async (t) => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("source-late", "x");
+  turn.runner.display.reply = "Read nuru/Trip.md.";
+  await until(() => turn.renderedReply === turn.runner.display.reply);
+  const selection = selectText(t, view, turn.replyEl.firstChild.firstChild);
+  turn.runner.display.sources = [{ path: "nuru/Trip.md", heading: "Decisions" }];
+  view.update(turn);
+  assert.equal(turn.sourcesEl.querySelector("a"), null);
+  assert.equal(turn.replyEl.querySelector("a"), null);
+  assert.equal(selection.toString(), "Read nuru/Trip.md.");
+  selection.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  await until(() => turn.replyEl.querySelector("a.nuru-source"));
+  assert.equal(turn.replyEl.querySelector("a").getAttribute("data-href"), "nuru/Trip.md#Decisions");
+  assert.equal(turn.sourcesEl.querySelector("a").getAttribute("data-href"), "nuru/Trip.md#Decisions");
+});
+
+test("legacy or malformed saved sources never produce a Sources row or step links", async () => {
+  const display = displayOf(FIXTURES.streams.read_sources);
+  display.sources = [{ path: "trash/no.md" }, { path: "../outside.md" }];
+  display.tools[0].sources = [{ path: "https://host/a.md" }];
+  display.tools[1].sources = [];
+  const { view } = await open({ client: fakeClient({ history: [{ turn_id: "bad-sources", text: "x", display }] }) });
+  const [turn] = view.turns.values();
+  assert.equal(turn.sourcesEl.childNodes.length, 0);
+  assert.equal(turn.toolsEl.querySelector("a"), null);
+});

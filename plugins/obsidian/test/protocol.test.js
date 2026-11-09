@@ -75,3 +75,17 @@ test("a saved display resumes from its cursor without showing replayed events tw
   assert.deepEqual(resumed, shown(events));
   assert.equal(resumed.ended, true);
 });
+
+test("verified read sources survive replay and saved-display loading in first-read order", () => {
+  const events = FIXTURES.streams.read_sources;
+  const display = shown(events);
+  const expected = [{ path: "nuru/Trip.md", heading: "Decisions" }, { path: "nuru/Plan.md" }];
+  assert.deepEqual(display.sources, expected);
+  assert.deepEqual(display.tools[0].sources, [expected[0]]);
+  assert.equal(display.tools[2].sources, undefined, "a failed read has no source");
+  assert.deepEqual(Display.from(JSON.parse(JSON.stringify(display))).sources, expected);
+  for (const event of events) display.apply(event);
+  assert.deepEqual(display.sources, expected);
+  assert.deepEqual(Display.from({ sources: [{ path: "trash/no.md" }, ...expected] }).sources, expected);
+  assert.deepEqual(Display.from({}).sources, []);
+});

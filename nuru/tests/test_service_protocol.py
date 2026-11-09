@@ -342,3 +342,49 @@ def test_refusals_never_repeat_what_was_sent(operation, body):
     assert "CONFIDENTIAL" not in message
     assert str(raised.value).split(":")[0] in ("text", "attachments/0/selection", "attachments/0/path", "request_id",
                                                 "the body", "operation", "other")
+
+
+def test_sources_keep_first_read_order_per_turn_and_per_call_through_replay():
+    from core import read_sources
+    stream = TurnStream("conversation1", "turn00000001")
+    stream.emit("accepted", {"request_id": "req-0000000000000001"})
+    stream.emit("started", {})
+    stream.emit("tool_start", {"call_id": "call00000001", "name": "read_note", "arguments": {}})
+    stream.emit("tool_result", {"call_id": "call00000001", "ok": True,
+        "sources": [{"path": "first.md", "heading": "First"}, {"path": "second.md"}]})
+    stream.emit("tool_start", {"call_id": "call00000002", "name": "run_python", "arguments": {}})
+    stream.emit("tool_result", {"call_id": "call00000002", "ok": False,
+        "sources": [{"path": "second.md"}, {"path": "first.md", "heading": "Later"}, {"path": "third.md"}]})
+    display = shown(stream.events)
+    expected = [{"path": "first.md", "heading": "First"}, {"path": "second.md"}, {"path": "third.md"}]
+    assert display.sources == expected
+    assert display.tools[1]["sources"][-1] == {"path": "third.md"}
+    for event in stream.events:
+        display.apply(event)
+    assert display.sources == expected
+    assert read_sources.MAX_PER_TURN == 128
+
+
+@pytest.mark.parametrize("source", [{"path": "../escape.md"}, {"path": "trash/a.md"}, {"path": "a.md#forged"},
+    {"path": "/absolute.md"}, {"path": "a.md", "heading": "bad\nheading"}, {"path": "a.md", "extra": "not permitted"}])
+def test_unsafe_sources_are_rejected_at_the_event_boundary(source):
+    stream = TurnStream("conversation1", "turn00000001")
+    stream.emit("accepted", {"request_id": "req-0000000000000001"})
+    stream.emit("started", {})
+    stream.emit("tool_start", {"call_id": "call00000001", "name": "read_note", "arguments": {}})
+    with pytest.raises(ProtocolError):
+        stream.emit("tool_result", {"call_id": "call00000001", "ok": True, "sources": [source]})
+
+
+def test_source_event_worst_case_size_is_bounded_and_turn_display_is_capped():
+    from core import read_sources
+    stream = TurnStream("conversation1", "turn00000001")
+    stream.emit("accepted", {"request_id": "req-0000000000000001"})
+    stream.emit("started", {})
+    for n in range(5):
+        call_id = f"call0000000{n}"
+        stream.emit("tool_start", {"call_id": call_id, "name": "search", "arguments": {}})
+        items = [{"path": "🌍" * 377 + f"{n:02}{i:02}.md", "heading": "🌍" * 160} for i in range(32)]
+        stream.emit("tool_result", {"call_id": call_id, "ok": True, "sources": items})
+        assert len(protocol.sse(stream.events[-1])) <= protocol.MAX_EVENT_BYTES
+    assert len(shown(stream.events).sources) == read_sources.MAX_PER_TURN

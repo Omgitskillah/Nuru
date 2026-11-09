@@ -20,7 +20,7 @@ from pathlib import Path
 
 import jsonschema
 
-from core import questions
+from core import questions, read_sources
 from core.questions import Question
 
 VERSION = 1
@@ -203,6 +203,11 @@ class StreamCheck:
         def broken(why: str):
             raise ProtocolError("invalid_request", f"event {number} ({kind}): {why}")
 
+        if kind == "tool_result":
+            for item in data.get("sources", []):
+                if read_sources.source(item["path"], item.get("heading")) != item:
+                    broken("has an unsafe read source")
+
         turn = (event["conversation_id"], event["turn_id"])
         if self.turn is not None and turn != self.turn:
             broken("belongs to another turn")
@@ -303,6 +308,7 @@ class Display:
     reasoning: str = ""
     tools: list[dict] = field(default_factory=list)
     receipts: list[dict] = field(default_factory=list)
+    sources: list[dict] = field(default_factory=list)
     question: dict | None = None  # the open one, waiting for an answer
     decisions: list[dict] = field(default_factory=list)
     state: str = "accepted"  # accepted, queued, running, or the terminal type
@@ -329,6 +335,9 @@ class Display:
             for tool in self.tools:
                 if tool["call_id"] == data["call_id"]:
                     tool["ok"] = data["ok"]
+                    if data.get("sources"):
+                        tool["sources"] = data["sources"]
+            self.sources = read_sources.merge(self.sources, data.get("sources", []), read_sources.MAX_PER_TURN)
         elif kind == "write_receipt":
             self.receipts.append(data)
         elif kind == "question":

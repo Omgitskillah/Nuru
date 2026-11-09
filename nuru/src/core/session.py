@@ -39,6 +39,7 @@ from core.decision_shadow import DecisionShadow, think_tier
 from core.enforcement import STEER, STOP, STOPPED, Enforcement, ExpertUnavailable, log_lines
 from core.expert import ExpertPlanner
 from core import model_profile, questions, titles
+from core import read_sources
 from core.providers.mcp_tools import MCPTools, ToolResult, ToolsUnavailable
 from core.questions import Question
 from core import tool_dispatch
@@ -1293,6 +1294,11 @@ class Session:
                 outcome = tool_dispatch.failure("replay", "UNRESOLVED_WRITE", f"Write attempt {pending[0]['id'] if pending else 'from another session'} was unresolved at admission. "
                     "Inspect the vault and reconcile it with /resolve-write before any further writes.", certainty="not_dispatched")
         call_args = args
+        prerequisite_sources = []
+        if outcome is None and name == "read_note":
+            schema = self._server_validators.get(name)
+            if schema is not None and "include_source" in schema.schema.get("properties", {}):
+                call_args = {**args, "include_source": True}
         if outcome is None and name == _PYTHON_TOOL:
             failed_read = None
             def read(note):
@@ -1300,6 +1306,7 @@ class Session:
                 result = self._call_tool(turn_id, "read_note", {"name": note}, None, enforcing, harness=True)
                 if not result.success:
                     failed_read = result
+                prerequisite_sources[:] = read_sources.merge(prerequisite_sources, result.sources)
                 return ToolResult(result.text, not result.success)
             call_args, refused = _python_request(args, read)
             if refused:
@@ -1323,6 +1330,12 @@ class Session:
                                            MCPError, anyio.EndOfStream, anyio.BrokenResourceError))
                 outcome = tool_dispatch.failure("transport" if transport else "internal", type(e).__name__, str(e),
                     certainty="uncertain" if name in MUTATIONS else "failed", repairable=transport and name not in MUTATIONS)
+        if outcome.success:
+            text, sources = read_sources.result(name, call_args, outcome.text)
+            outcome = replace(outcome, text=text, sources=tuple(sources))
+        # Successful prerequisite reads remain real reads even when the Python script fails later.
+        if prerequisite_sources:
+            outcome = replace(outcome, sources=tuple(read_sources.merge(prerequisite_sources, outcome.sources)))
         if attempt_id is not None:
             outcome = replace(outcome, attempt_id=attempt_id)
             self.store.finish_write(attempt_id, "completed" if outcome.success else

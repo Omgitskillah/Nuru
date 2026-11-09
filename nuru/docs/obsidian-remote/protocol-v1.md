@@ -102,9 +102,27 @@ Every event has these fields:
 | `question` | A question Nuru needs answered before it can go on. Details under Questions. |
 | `question_closed` | `answered`, `expired` or `cancelled`. Only `answered` has `chosen` (possibly empty) and, where `allow_other` is set, `other`. `decision` is what Nuru acts on. Details under Questions. |
 | `write_receipt` | What a write actually did, after its `tool_result`: `applied`; `refused` (not run on purpose: a policy, a No, a blocked write); `failed`; or `uncertain` (it may have run; never retried). An `applied` receipt's `path` is the file the write actually changed, as the notes server reports it (a title or a daily resolves to its file; an archive or trash move names where the note went); it is left out when that can't be told, and on other states. Clients show this, not the request. |
+
 | `completed` | The reply, plus `ask` if the model asked the user something (the next message answers it). A reply over 60,000 characters keeps its start and adds `truncated: true`; the conversation history keeps the whole reply. |
 | `failed` | `turn_failed`, `model_unavailable`, `service_restarted` or `internal`, with a message fit to show the user. |
 | `cancelled` | `user` (Stop) or `shutdown`, with the reply so far (truncated the same way). |
+
+`tool_result.sources` is an optional list of at most 32 admitted reads, each `{path, heading?}`.
+It carries no note body: paths are portable vault-relative Markdown targets (at most 384 characters),
+and headings are at most 160 characters. The service takes these only from successful typed read
+results, not model-authored citations or requested aliases. A failed `run_python` can still carry
+successful prerequisite reads; a failed note read contributes none. Ordinary legacy text reads are
+not parsed as JSON for provenance. `read_note(include_source=true)` preserves model-visible text;
+revision snapshots keep their existing JSON contract. Search admits only returned snippets/passages,
+and `note_info` admits its primary note, not outgoing/backlink targets.
+
+Both Display implementations keep first-read order, one source per path (the first read's heading),
+and at most 128 sources per turn; per-call source metadata is also retained with its tool. These
+fields survive saved history and stream replay. Old saved displays without sources remain readable;
+no source is invented for an old turn. Bounds may omit later sources, never add an unverified one.
+The UI's Sources row, literal path links and read-step links use this admitted set. Existing explicit
+Markdown/wiki links retain their existing behavior and are not treated as verified sources merely
+because the model wrote them.
 
 A stream has these rules (`StreamCheck` enforces them):
 

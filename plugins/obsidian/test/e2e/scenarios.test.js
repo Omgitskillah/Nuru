@@ -15,6 +15,8 @@ const readline = require("node:readline");
 const { Display } = require("../../lib/protocol");
 const { connect, vaultId, vaultUuid } = require("../../lib/connection");
 const { TurnRunner } = require("../../lib/turns");
+const { renderReply } = require("../../lib/render");
+const { window } = require("obsidian");
 
 const ANSWER_SECONDS = 3;
 let server;
@@ -158,4 +160,20 @@ test("a dropped connection picks up where it left off, showing nothing twice", a
 test("hostile HTML arrives as text for the renderer to neutralise", async () => {
   const hostile = await turn("scenario:hostile");
   assert.match(hostile.reply, /<script>alert\("x"\)<\/script>/);
+});
+
+
+test("verified source metadata travels over HTTP and survives history before rendering links", async () => {
+  const display = await turn("scenario:sources");
+  const expected = [{ path: "nuru/Trip.md", heading: "Trip" }, { path: "nuru/Plan.md" }];
+  assert.deepEqual(display.sources, expected);
+  assert.equal(display.tools[2].sources, undefined);
+  const history = await client.conversation(conversation);
+  const saved = history.turns.find((item) => item.text === "scenario:sources");
+  assert.deepEqual(saved.display.sources, expected);
+  const el = window.document.createElement("div");
+  renderReply(saved.display.reply, el, saved.display.sources);
+  assert.deepEqual([...el.querySelectorAll("a.nuru-source")].map((a) => a.getAttribute("data-href")),
+    ["nuru/Trip.md#Trip", "nuru/Plan.md"]);
+  assert.match(el.textContent, /never-read.md was not read/);
 });

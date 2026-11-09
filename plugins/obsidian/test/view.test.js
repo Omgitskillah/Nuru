@@ -1480,3 +1480,16 @@ test("Generate title response or error after navigation never changes another co
     assert.equal(view.titleButton.disabled, false);
   }
 });
+
+test("a title request accepted after navigation does not show a stale Notice", async () => {
+  const client = fakeClient();
+  let accept;
+  client.generateTitle = () => new Promise((resolve) => { accept = resolve; });
+  const { view } = await open({ client });
+  const before = Notice.shown.slice();
+  const pending = view.generateTitle();
+  await view.openConversation(null);
+  accept({ v: 1, conversation_id: "conv0000demo" });
+  await pending;
+  assert.deepEqual(Notice.shown, before, "no title-request notice belongs to the new conversation");
+});

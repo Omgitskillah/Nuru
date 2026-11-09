@@ -1456,3 +1456,29 @@ def test_backfill_skips_failed_partial_and_uses_oldest_completed_reply(harness):
     h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
     assert named(h.service, cid, 'Summary')
     assert calls == [('Prompt 0', 'First good answer')]
+
+
+def test_waiting_title_survives_queued_chat_and_runs_after_both_turns(harness):
+    release = threading.Event()
+    h = harness([held(release, 'First chat'), reply('Second chat')])
+    busy = seed_old_conversation(h, title='Keep this chat name')
+    target = seed_old_conversation(h, title='Needs a title')
+    first = h.submit(busy, 'First', request_id=protocol.new_id())[1]['turn_id']
+    h.first(first, 'text')
+    observed = []
+    def title(message, answer, stop):
+        with h.service._lock:
+            observed.append([h.service.store.turn(tid, ME)['state'] for tid in (first, second)])
+        return 'Generated after chat'
+    h.session.title = title
+    try:
+        h.service.generate_title(ME, target, {'request_id': protocol.new_id()})
+        second = h.submit(busy, 'Second', request_id=protocol.new_id())[1]['turn_id']
+        assert not observed
+        release.set()
+        assert h.finished(first)[-1]['type'] == 'completed'
+        assert h.finished(second)[-1]['type'] == 'completed'
+        assert named(h.service, target, 'Generated after chat'), 'queued chat must not cause title work to be discarded'
+        assert observed == [['completed', 'completed']]
+    finally:
+        release.set()

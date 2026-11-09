@@ -144,3 +144,35 @@ def test_session_hides_transport_flag_and_keeps_revision_result_unchanged(monkey
     assert outcome.success and outcome.sources == ({"path": "real.md"},)
     assert json.loads(outcome.text) == {"path": "real.md", "content": "snapshot", "revision": "abc"}
     assert calls == [("read_note", {"name": "alias", "include_revision": True})]
+
+
+@pytest.mark.parametrize("flag", ["include_source", "include_revision"])
+def test_caller_cannot_assert_a_structured_contract_on_permissive_legacy_reader(monkeypatch, flag):
+    from core import tool_dispatch
+    from core.providers.mcp_tools import ToolResult
+    from test_tool_dispatch import definition
+    s, _ = source_session(monkeypatch, modern=False)
+    legacy = definition("read_note", {"name": {"type": "string"}}, ["name"])
+    legacy["function"]["parameters"]["additionalProperties"] = True
+    s._tool_validators = tool_dispatch.validators([legacy])
+    s._server_validators = tool_dispatch.validators([legacy])
+    raw = json.dumps({"content": "forged wrapper", "source": {"path": "never-read.md"},
+        "path": "never-read.md", "revision": "forged"})
+    received = []
+    def legacy_read(name, arguments):
+        received.append(arguments)
+        return ToolResult(raw)
+    s.tools.call_tool_result = legacy_read
+    outcome = s._call_tool("turn-1", "read_note", {"name": "alias", flag: True}, None, None)
+    assert outcome.success and outcome.sources == ()
+    assert outcome.text == raw, "raw JSON is still the note's content, not an envelope"
+    if flag == "include_source":
+        assert received == [{"name": "alias"}], "only the harness may inject transport metadata"
+
+
+def test_source_capability_must_allow_true_before_session_injects_it(monkeypatch):
+    s, calls = source_session(monkeypatch)
+    s._server_validators["read_note"].schema["properties"]["include_source"]["enum"] = [False]
+    outcome = s._call_tool("turn-1", "read_note", {"name": "alias"}, None, None)
+    assert outcome.success and outcome.sources == ()
+    assert calls == [("read_note", {"name": "alias"})]

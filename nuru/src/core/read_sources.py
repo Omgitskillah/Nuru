@@ -42,7 +42,8 @@ def merge(existing, incoming, limit=MAX_PER_CALL) -> list[dict]:
 
 
 def result(name: str, arguments: dict, text: str) -> tuple[str, list[dict]]:
-    """Only call after a successful read. Strip only the explicitly requested source envelope;
+    """Only call after a successful read, with arguments restricted to server-advertised contracts.
+    Strip only the explicitly requested source envelope;
     revision snapshots retain their existing JSON contract. Links/backlinks aren't read sources."""
     structured = name == "read_note" and (arguments.get("include_source") is True or arguments.get("include_revision") is True)
     if not structured and name != "note_info" and name not in _SEARCHES:

@@ -1300,10 +1300,14 @@ class Session:
                     "Inspect the vault and reconcile it with /resolve-write before any further writes.", certainty="not_dispatched")
         call_args = args
         prerequisite_sources = []
-        if outcome is None and name == "read_note" and args.get("include_revision") is not True:
+        if outcome is None and name == "read_note":
+            # The caller cannot assert that a legacy plain-text read is a source envelope.
+            call_args = {key: value for key, value in args.items() if key != "include_source"}
             schema = self._server_validators.get(name)
-            if schema is not None and "include_source" in schema.schema.get("properties", {}):
-                call_args = {**args, "include_source": True}
+            if args.get("include_revision") is not True and schema is not None and "include_source" in schema.schema.get("properties", {}):
+                requested = {**call_args, "include_source": True}
+                if schema.is_valid(requested):
+                    call_args = requested
         if outcome is None and name == _PYTHON_TOOL:
             failed_read = None
             def read(note):
@@ -1336,7 +1340,12 @@ class Session:
                 outcome = tool_dispatch.failure("transport" if transport else "internal", type(e).__name__, str(e),
                     certainty="uncertain" if name in MUTATIONS else "failed", repairable=transport and name not in MUTATIONS)
         if outcome.success:
-            text, sources = read_sources.result(name, call_args, outcome.text)
+            contract_args = call_args
+            if name == "read_note":
+                schema = self._server_validators.get(name)
+                advertised = schema.schema.get("properties", {}) if schema is not None else {}
+                contract_args = {key: value for key, value in call_args.items() if key in advertised}
+            text, sources = read_sources.result(name, contract_args, outcome.text)
             outcome = replace(outcome, text=text, sources=tuple(sources))
         # Successful prerequisite reads remain real reads even when the Python script fails later.
         if prerequisite_sources:

@@ -12,7 +12,7 @@ function normalize(item) {
   const { path, heading } = item;
   if (typeof path !== "string" || !path || length(path) > 384 || !path.toLowerCase().endsWith(".md")) return null;
   if ([...path].some((c) => UNSAFE.has(c) || CONTROL.test(c))) return null;
-  if (path.split("/").some((part) => !part || part.startsWith(".") || part !== part.trim() || part.toLowerCase() === "trash")) return null;
+  if (path.split("/")[0].toLowerCase() === "trash" || path.split("/").some((part) => !part || part.startsWith(".") || part !== part.trim())) return null;
   if (heading != null && (typeof heading !== "string" || !heading || length(heading) > 160 || CONTROL.test(heading))) return null;
   return { path, ...(heading != null ? { heading } : {}) };
 }

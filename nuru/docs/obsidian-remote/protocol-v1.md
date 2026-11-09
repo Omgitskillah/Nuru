@@ -116,6 +116,12 @@ the transport flag is hidden from the model schema, and revision snapshots keep 
 contract without requesting extra metadata. Search admits only returned snippets/passages,
 and `note_info` admits its primary note, not outgoing/backlink targets.
 
+A requested source envelope with string `content` is unwrapped independently of link admission.
+An unsupported path (for example one containing `%`) therefore still returns the original note body;
+it simply has no automatic source link. An inadmissible heading falls back to the valid note path.
+Only a top-level trash folder is excluded (case-insensitively for portable path safety); a nested
+folder named Trash is an ordinary source. Revision snapshots retain their original JSON contract.
+
 Both Display implementations keep first-read order, one source per path (the first read's heading),
 and at most 128 sources per turn; per-call source metadata is also retained with its tool. These
 fields survive saved history and stream replay. Old saved displays without sources remain readable;

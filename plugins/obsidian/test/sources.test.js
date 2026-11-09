@@ -12,6 +12,8 @@ test("only bounded portable relative Markdown sources are admitted", () => {
     assert.equal(normalize(item), null, JSON.stringify(item));
   }
   assert.deepEqual(normalize({ path: "nuru/🌍 Grüße.MD", heading: "My   heading" }), { path: "nuru/🌍 Grüße.MD", heading: "My   heading" });
+  assert.deepEqual(normalize({ path: "Projects/Trash/Ideas.md" }), { path: "Projects/Trash/Ideas.md" });
+  assert.deepEqual(normalize({ path: "Projects/trash/Ideas.md" }), { path: "Projects/trash/Ideas.md" });
   assert.deepEqual(normalize({ path: "a.md" }), { path: "a.md" });
   assert.deepEqual(normalize({ path: "a.md", heading: null }), { path: "a.md" });
 });

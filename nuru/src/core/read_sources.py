@@ -16,7 +16,7 @@ def source(path, heading=None) -> dict | None:
         return None
     if any(c in _UNSAFE or ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in path):
         return None
-    if any(not part or part.startswith(".") or part != part.strip() or part.lower() == "trash" for part in path.split("/")):
+    if path.split("/")[0].lower() == "trash" or any(not part or part.startswith(".") or part != part.strip() for part in path.split("/")):
         return None
     if heading is not None and (not isinstance(heading, str) or not heading or len(heading) > MAX_HEADING
                                 or any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in heading)):
@@ -59,9 +59,10 @@ def result(name: str, arguments: dict, text: str) -> tuple[str, list[dict]]:
             return text, []
         item = data.get("source") if arguments.get("include_source") is True else {"path": data.get("path")}
         sources = merge([], [item])
-        # A malformed envelope is never silently mistaken for a plain successful note read.
-        if not sources:
-            return text, []
+        # Link eligibility must not change the note body the model receives. A valid path
+        # can still link to the note when its heading cannot be represented safely.
+        if not sources and isinstance(item, dict):
+            sources = merge([], [{"path": item.get("path")}])
         return (text if arguments.get("include_revision") is True else data["content"]), sources
     if name == "note_info":
         return text, merge([], [{"path": data.get("note")}])

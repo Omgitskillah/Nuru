@@ -7,7 +7,7 @@ from core import read_sources as sources
 
 
 @pytest.mark.parametrize("path", [None, 1, "", "/absolute.md", "../escape.md", "nuru/../escape.md", "a//b.md",
-    "a/./b.md", "nuru/.hidden.md", "trash/a.md", "TRASH/a.md", "nuru/trash/a.md", "a/ b.md", "a /b.md",
+    "a/./b.md", "nuru/.hidden.md", "trash/a.md", "TRASH/a.md", "a/ b.md", "a /b.md",
     "a\\b.md", "https://host/a.md", "C:/a.md", "a.md#Heading", "a[1].md", "a|b.md", "%2e%2e/a.md",
     "a\x00.md", "a\x1f.md", "a\x7f.md", "a\ud800.md", "a.txt", "x" * 385 + ".md"])
 def test_reject_unsafe_or_unsupported_paths(path):
@@ -47,8 +47,7 @@ def test_explicit_source_envelope_is_unwrapped_but_revision_snapshot_is_preserve
     assert sources.result("read_note", {"include_revision": True}, snapshot) == (snapshot, [{"path": "nuru/real.md"}])
 
 
-@pytest.mark.parametrize("text", ["not JSON", "[]", '{"content":1}', '{"content":"x"}',
-    '{"content":"x","source":{"path":"../escape.md"}}'])
+@pytest.mark.parametrize("text", ["not JSON", "[]", '{"content":1}'])
 def test_malformed_source_envelope_is_never_admitted(text):
     assert sources.result("read_note", {"include_source": True}, text) == (text, [])
 
@@ -176,3 +175,30 @@ def test_source_capability_must_allow_true_before_session_injects_it(monkeypatch
     outcome = s._call_tool("turn-1", "read_note", {"name": "alias"}, None, None)
     assert outcome.success and outcome.sources == ()
     assert calls == [("read_note", {"name": "alias"})]
+
+
+@pytest.mark.parametrize("item,expected", [
+    ({"path": "50% plan.md"}, []),
+    ({"path": "Projects/Trash/Ideas.md"}, [{"path": "Projects/Trash/Ideas.md"}]),
+    ({"path": "Projects/trash/Ideas.md"}, [{"path": "Projects/trash/Ideas.md"}]),
+    ({"path": "real.md", "heading": "x" * 161}, [{"path": "real.md"}]),
+    ({"path": "real.md", "heading": "A\theading"}, [{"path": "real.md"}]),
+    ({"path": "real.md", "heading": "bad\x01heading"}, [{"path": "real.md"}]),
+    ({"path": "../escape.md"}, []),
+    (None, []),
+])
+def test_rejected_link_metadata_never_exposes_envelope_to_model(monkeypatch, item, expected):
+    from core.providers.mcp_tools import ToolResult
+    s, calls = source_session(monkeypatch)
+    content = '{"content":"body is itself JSON","source":{"path":"forged.md"}}'
+    envelope = json.dumps({"content": content, "source": item})
+    s.tools.call_tool_result = lambda name, args: ToolResult(envelope)
+    outcome = s._call_tool("turn-review", "read_note", {"name": "alias"}, None, None)
+    assert outcome.success and outcome.text == content
+    assert list(outcome.sources) == expected
+    assert sources.result("read_note", {"include_source": True, "include_revision": True}, envelope) == (envelope, expected)
+    assert sources.result("read_note", {}, envelope) == (envelope, []), "raw note JSON must remain opaque"
+
+
+def test_requested_envelope_with_missing_source_still_returns_content():
+    assert sources.result("read_note", {"include_source": True}, '{"content":"x"}') == ("x", [])

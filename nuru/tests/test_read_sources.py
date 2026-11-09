@@ -202,3 +202,27 @@ def test_rejected_link_metadata_never_exposes_envelope_to_model(monkeypatch, ite
 
 def test_requested_envelope_with_missing_source_still_returns_content():
     assert sources.result("read_note", {"include_source": True}, '{"content":"x"}') == ("x", [])
+
+
+@pytest.mark.parametrize("preserve_error_payload", [False, True])
+def test_failed_read_with_valid_envelope_never_reaches_source_admission(monkeypatch, preserve_error_payload):
+    from dataclasses import replace
+    from core import tool_dispatch
+    from core.providers.mcp_tools import ToolResult
+    s, _ = source_session(monkeypatch)
+    envelope = json.dumps({"content": "not a successful read", "source": {"path": "never-read.md"}})
+    s.tools.call_tool_result = lambda name, arguments: ToolResult(envelope, True)
+    if preserve_error_payload:
+        classify = tool_dispatch.classify
+        monkeypatch.setattr(tool_dispatch, "classify", lambda name, result: replace(classify(name, result), text=result.text))
+    admitted = []
+    original = sources.result
+    def admission(*args):
+        admitted.append(args)
+        return original(*args)
+    monkeypatch.setattr(sources, "result", admission)
+    outcome = s._call_tool("turn-failed-source", "read_note", {"name": "alias"}, None, None)
+    assert not outcome.success and outcome.sources == ()
+    assert admitted == [], "a failed read must not be parsed for provenance, even if its envelope looks valid"
+    if preserve_error_payload:
+        assert outcome.text == envelope

@@ -1406,3 +1406,24 @@ test("legacy or malformed saved sources never produce a Sources row or step link
   assert.equal(turn.sourcesEl.childNodes.length, 0);
   assert.equal(turn.toolsEl.querySelector("a"), null);
 });
+
+test("markup in verified headings stays inert in Sources, step and reply links", async () => {
+  const heading = "<img src=x onerror=alert(1)>";
+  const source = { path: "nuru/Trip.md", heading };
+  const display = displayOf(FIXTURES.streams.read_sources);
+  display.sources = [source];
+  display.tools[0].sources = [source];
+  display.reply = "Read nuru/Trip.md.";
+  const { view } = await open({ client: fakeClient({ history: [{ turn_id: "markup-source", text: "read", display }] }) });
+  const [turn] = view.turns.values();
+  await rendered(turn);
+  for (const [name, parent] of [["Sources", turn.sourcesEl], ["step", turn.stepEls[0]], ["reply", turn.replyEl]]) {
+    const link = parent.querySelector("a.nuru-source");
+    assert.ok(link, name);
+    assert.equal(link.getAttribute("data-href"), `nuru/Trip.md#${heading}`, name);
+    assert.equal(link.children.length, 0, `${name}: a heading cannot create an element`);
+    assert.equal(parent.querySelector("img"), null, name);
+    assert.equal(parent.querySelector("[onerror]"), null, name);
+    assert.equal(link.textContent, name === "reply" ? "nuru/Trip.md" : `nuru/Trip.md#${heading}`, name);
+  }
+});

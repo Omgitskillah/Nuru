@@ -51,6 +51,7 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/conversations", "create_conversation"),
     ("GET", r"/v1/conversations", "list_conversations"),
     ("GET", r"/v1/conversations/([^/]+)", "conversation"),
+    ("POST", r"/v1/conversations/([^/]+)/title", "generate_title"),
     ("POST", r"/v1/conversations/([^/]+)/turns", "submit_turn"),
     ("GET", r"/v1/turns/([^/]+)/events", "events"),
     ("POST", r"/v1/turns/([^/]+)/cancel", "cancel_turn"),
@@ -436,6 +437,14 @@ class Handler(BaseHTTPRequestHandler):
     def on_conversation(self, principal, query, conversation_id):
         limit = self.number(query, "limit", 20, 1, 50)
         self.answer(200, self.server.service.conversation(principal, conversation_id, self.before(query), limit))
+
+    def on_generate_title(self, principal, query, conversation_id):
+        self.server.service.check_target(principal, "conversation", conversation_id)
+        options = {}
+        if self.server.remote_origin:
+            device, credentials = self.device, self.server.remote_credentials
+            options["authorize"] = lambda name: remote_tool_allowed(credentials, device, name)
+        self.answer(*self.server.service.generate_title(principal, conversation_id, self.body("generate_title"), **options))
 
     def on_submit_turn(self, principal, query, conversation_id):
         self.server.service.check_target(principal, "conversation", conversation_id)

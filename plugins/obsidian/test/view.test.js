@@ -1427,3 +1427,56 @@ test("markup in verified headings stays inert in Sources, step and reply links",
     assert.equal(link.textContent, name === "reply" ? "nuru/Trip.md" : `nuru/Trip.md#${heading}`, name);
   }
 });
+
+test("Generate title requests only the selected conversation and refreshes its new name", async () => {
+  const client = fakeClient();
+  let title = "Trip";
+  client.conversations = async () => ({ conversations: [{ id: "conv0000demo", title }] });
+  client.generateTitle = async (id, requestId) => {
+    client.calls.push(["generateTitle", id, requestId]);
+    title = "Lisbon trip planning";
+    return { v: 1, conversation_id: id };
+  };
+  const { view } = await open({ client });
+  view.titlePollMs = 1;
+  await view.generateTitle();
+  assert.equal(client.calls.find((c) => c[0] === "generateTitle")[1], "conv0000demo");
+  assert.ok(client.calls.find((c) => c[0] === "generateTitle")[2]);
+  assert.equal(view.picker.selectedOptions[0].textContent, title);
+  assert.equal(view.titleButton.disabled, false);
+  assert.equal(client.calls.some((c) => c[0] === "submit"), false);
+});
+
+test("Generate title preserves the old name on failure and ignores empty or duplicate clicks", async () => {
+  const client = fakeClient();
+  let calls = 0, release;
+  client.generateTitle = () => { calls++; return new Promise((resolve, reject) => { release = reject; }); };
+  const { view } = await open({ client });
+  const pending = view.generateTitle();
+  await view.generateTitle();
+  assert.equal(calls, 1);
+  release(new Error("No completed reply"));
+  await pending;
+  assert.match(view.statusEl.textContent, /Couldn't generate a title: No completed reply/);
+  assert.equal(view.picker.selectedOptions[0].textContent, "Trip");
+  await view.openConversation(null);
+  await view.generateTitle();
+  assert.equal(calls, 1);
+});
+
+test("Generate title response or error after navigation never changes another conversation", async () => {
+  for (const fails of [false, true]) {
+    const client = fakeClient();
+    let resolve, reject;
+    client.generateTitle = () => new Promise((yes, no) => { resolve = yes; reject = no; });
+    const { view } = await open({ client });
+    const pending = view.generateTitle();
+    await view.openConversation(null);
+    const status = view.statusEl.textContent;
+    if (fails) reject(new Error("stale")); else resolve({});
+    await pending;
+    assert.equal(view.conversationId, null);
+    assert.equal(view.statusEl.textContent, status);
+    assert.equal(view.titleButton.disabled, false);
+  }
+});

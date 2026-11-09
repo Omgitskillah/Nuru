@@ -65,6 +65,10 @@
       "type": "object", "additionalProperties": false, "required": ["request_id"],
       "properties": {"request_id": {"$ref": "#/$defs/request_id"}, "title": {"type": "string", "maxLength": 200}}
     },
+    "generate_title": {
+      "type": "object", "additionalProperties": false, "required": ["request_id"],
+      "properties": {"request_id": {"$ref": "#/$defs/request_id"}}
+    },
     "submit_turn": {
       "type": "object", "additionalProperties": false, "required": ["request_id", "text"],
       "properties": {

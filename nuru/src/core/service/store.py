@@ -293,6 +293,14 @@ class ServiceStore:
             (conversation_id, before, before, limit)).fetchall()
         return [self._turn(row) for row in rows]
 
+    def first_completed_turn(self, conversation_id: str) -> dict | None:
+        """The oldest successful reply, including compacted history; no unrelated conversation data."""
+        row = self._conn.execute(
+            "SELECT id, conversation_id, text, state, final, last_seq, compacted FROM turns "
+            "WHERE conversation_id = ? AND state = 'completed' AND final IS NOT NULL ORDER BY rowid LIMIT 1",
+            (conversation_id,)).fetchone()
+        return self._turn(row) if row else None
+
     def unfinished_turns(self) -> list[dict]:
         rows = self._conn.execute(
             "SELECT id, conversation_id, text, state, final, last_seq, compacted FROM turns "

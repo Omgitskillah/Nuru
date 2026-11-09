@@ -251,3 +251,17 @@ test("pending model administration is read from the local-only endpoint with aut
   assert.deepEqual(await client.pendingModelSettings(), { pending: [{ family: "llama3.1", models: [] }] });
   assert.deepEqual(seen, [["http://x/v1/models/settings/pending", "GET", "Bearer local"]]);
 });
+
+test("Generate title encodes its conversation ID and retries the same request ID", async () => {
+  const sent = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    sent.push({ url, method: init.method, body: JSON.parse(init.body) });
+    if (sent.length === 1) throw new Error("lost response");
+    return json(202, { conversation_id: "id" });
+  } });
+  await client.generateTitle("conv/a?b", "f25-request-00001");
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0], { url: "http://local/v1/conversations/conv%2Fa%3Fb/title", method: "POST",
+    body: { request_id: "f25-request-00001" } });
+  assert.deepEqual(sent[1], sent[0]);
+});

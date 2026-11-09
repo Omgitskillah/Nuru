@@ -54,6 +54,7 @@ class ChatView extends ItemView {
     // createId, submitId}. `origin` is the conversation it was written in (null: a new one). Sending the
     // same text there again reuses its IDs, so the service replays it instead of starting a second turn.
     this.pending = null;
+    this.messageHistory = null; // recalled messages and the untouched draft, only while browsing
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -75,6 +76,10 @@ class ChatView extends ItemView {
     this.statusEl = root.createDiv({ cls: "nuru-status", attr: { role: "status" } });
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
     this.registerDomEvent(this.messagesEl, "click", (event) => this.onLinkClick(event));
+    this.registerDomEvent(this.messagesEl, "contextmenu", (event) => this.copyMenu(event));
+    this.registerDomEvent(root.ownerDocument, "selectionchange", () => {
+      for (const turn of this.turns.values()) if (turn.selectionDeferred && !this.selected(turn.el)) this.update(turn);
+    });
 
     const composer = root.createDiv({ cls: "nuru-composer" });
     // What's selected in the open note goes with the next message; this line says so.
@@ -82,12 +87,21 @@ class ChatView extends ItemView {
     this.selection = null;
     this.sentSelection = null;
     // Table cells selected in Live Preview change no text selection: they're marked in the page.
-    for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(document, type, () => this.trackSelection());
+    // The note can stay in the main window while chat is popped out. Listen once per document.
+    for (const doc of new Set([document, root.ownerDocument])) {
+      for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(doc, type, () => this.trackSelection());
+    }
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.trackSelection()));
     this.chipsEl = composer.createDiv({ cls: "nuru-attachments" });
     this.input = composer.createEl("textarea", { cls: "nuru-input", attr: { rows: "3", "aria-label": "Message to Nuru",
       placeholder: "Message Nuru (Enter to send, Shift+Enter for a new line)" } });
+    this.registerDomEvent(this.input, "input", () => {
+      // Edits belong to this browsing session, never to the saved turn or the original draft.
+      const history = this.messageHistory;
+      if (history) history.messages[history.index] = this.input.value;
+    });
     this.registerDomEvent(this.input, "keydown", (event) => {
+      if (this.recallMessage(event)) return;
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         this.send();
@@ -175,6 +189,7 @@ class ChatView extends ItemView {
     const generation = ++this.generation;
     for (const turn of this.turns.values()) this.forget(turn);
     this.turns.clear();
+    this.messageHistory = null;
     this.messagesEl.empty();
     this.conversationId = null;
     this.choice = { model: null, thinking: null };
@@ -199,6 +214,56 @@ class ChatView extends ItemView {
     this.renderChoice();
     await this.plugin.remember({ conversationId: this.conversationId });
     this.updateButtons();
+  }
+
+  // History belongs to this conversation. Native selection, IME and modified arrows stay native;
+  // multiline drafts use Up only on their first line and Down only on their last.
+  recallMessage(event) {
+    if (!["ArrowUp", "ArrowDown"].includes(event.key) || event.isComposing || event.shiftKey ||
+        event.ctrlKey || event.metaKey || event.altKey) return false;
+    const input = this.input, start = input.selectionStart, end = input.selectionEnd;
+    if (start !== end) return false;
+    const up = event.key === "ArrowUp";
+    if (up ? input.value.slice(0, start).includes("\n") : input.value.slice(end).includes("\n")) return false;
+    if (!this.messageHistory) {
+      const messages = [...this.turns.values()].map((turn) => turn.text);
+      if (!up || !messages.length) return false;
+      this.messageHistory = { messages, index: messages.length,
+        draft: { text: input.value, start, end, direction: input.selectionDirection } };
+    }
+    const history = this.messageHistory;
+    history.index = Math.max(0, Math.min(history.messages.length, history.index + (up ? -1 : 1)));
+    event.preventDefault();
+    if (history.index === history.messages.length) {
+      input.value = history.draft.text;
+      input.setSelectionRange(history.draft.start, history.draft.end, history.draft.direction);
+      this.messageHistory = null;
+    } else {
+      input.value = history.messages[history.index];
+      // Repeated arrows work even for multiline recalled messages; other cursor movement stays native.
+      const caret = up ? 0 : input.value.length;
+      input.setSelectionRange(caret, caret);
+    }
+    return true;
+  }
+
+  // Never replace selected DOM, even when a selection crosses turns. Events keep accumulating in
+  // the runner; releasing the selection displays the latest state, including a completed reply.
+  selected(el) {
+    const selection = el.ownerDocument.getSelection();
+    if (!selection || selection.isCollapsed) return false;
+    for (let i = 0; i < selection.rangeCount; i++) if (selection.getRangeAt(i).intersectsNode(el)) return true;
+    return false;
+  }
+
+  copyMenu(event) {
+    if (!this.selected(this.messagesEl)) return;
+    const text = this.messagesEl.ownerDocument.getSelection().toString();
+    event.preventDefault();
+    new Menu().addItem((item) => item.setTitle("Copy").setIcon("copy").onClick(async () => {
+      try { await this.messagesEl.ownerDocument.defaultView.navigator.clipboard.writeText(text); }
+      catch { new Notice("Nuru: couldn't copy the selection. Try Ctrl/Cmd+C."); }
+    })).showAtMouseEvent(event);
   }
 
   // ------------------------------------------------------------------ sending
@@ -241,6 +306,7 @@ class ChatView extends ItemView {
       // The composer is cleared only if it still holds this message, in the view it was sent from.
       if (generation === this.generation && this.input.value.trim() === message.text) {
         this.input.value = "";
+        this.messageHistory = null;
         this.attachments = [];
         this.renderChips();
         if (selection.length) {
@@ -420,6 +486,8 @@ class ChatView extends ItemView {
   }
 
   update(turn) {
+    if (turn.forgotten) return;
+    this.updateButtons(); // Stop stays usable while selected text is held still.
     const display = turn.runner.display;
     if (turn.namesConversation && display.state === "completed" && !turn.forgotten) {
       turn.namesConversation = false; // once
@@ -434,6 +502,9 @@ class ChatView extends ItemView {
     turn.stateEl.setText(words);
     turn.stateEl.toggleClass("nuru-error", display.state === "failed" || turn.runner.connection === "lost");
 
+    this.renderQuestion(turn); // timed questions must appear even while reply text is selected
+    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
+    turn.selectionDeferred = false;
     this.renderActivity(turn);
     // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
     // the notes that were written, and any write whose outcome is unknown, since that note needs checking.
@@ -456,7 +527,6 @@ class ChatView extends ItemView {
       turn.receiptsEl.createDiv({ cls: "nuru-decision", text: `Answered: ${decision.decision}` +
         (decision.outcome === "answered" ? "" : ` (${decision.outcome === "expired" ? "no answer in time" : "stopped"})`) });
     }
-    this.renderQuestion(turn);
     this.scheduleRender(turn);
     this.updateButtons();
   }
@@ -472,7 +542,8 @@ class ChatView extends ItemView {
     turn.renderTimer = null;
     const reply = turn.runner.display.reply;
     if (reply === turn.renderedReply || turn.forgotten) return;
-    const stick = this.nearBottom();
+    if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
+    const stick = !this.selected(this.messagesEl) && this.nearBottom();
     renderReply(reply, turn.replyEl);
     turn.renderedReply = reply;
     if (stick) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
@@ -546,6 +617,7 @@ class ChatView extends ItemView {
       new Notice("Nuru: wait for the last message to go first.");
       return;
     }
+    this.messageHistory = null;
     this.input.value = answerText(chosen, other);
     this.send();
   }

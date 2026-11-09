@@ -53,7 +53,7 @@ test.afterEach(async () => {
 });
 
 async function open({ client, conversationId = "conv0000demo", connectError, file, selection = "", status, launcher,
-  autoStart = Boolean(launcher) } = {}) {
+  autoStart = Boolean(launcher), ownerDocument } = {}) {
   const opened = [];
   // The note being edited; `editing.active = false` is the panel having the focus instead.
   const editing = { selection, active: true };
@@ -79,6 +79,7 @@ async function open({ client, conversationId = "conv0000demo", connectError, fil
     },
   };
   const view = new ChatView({ app }, plugin);
+  if (ownerDocument) ownerDocument.adoptNode(view.containerEl);
   views.push(view);
   await view.open();
   return { view, opened, plugin, editing, note };
@@ -999,4 +1000,361 @@ test("Settings refresh waits out an old status request and never changes a conve
   assert.equal(view.turns.get("turn0000active"), running);
   assert.equal(client.aborted, 0);
   assert.equal(client.calls.filter((c) => c[0] === "cancel").length, 0);
+});
+
+function arrow(view, key, options = {}) {
+  const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+  view.input.dispatchEvent(event);
+  return event;
+}
+
+const historyMessages = (...texts) => texts.slice().reverse().map((text, i) => ({
+  turn_id: `history-${i}`, text, display: { ...displayOf([]), state: "completed" },
+}));
+
+test("Up/Down recalls this conversation chronologically and restores the exact unsent draft and caret", async () => {
+  const client = fakeClient({ history: historyMessages("first\nsecond line", "newest") });
+  const { view } = await open({ client });
+  view.input.value = "my draft\nwith another line";
+  view.input.setSelectionRange(3, 3);
+  assert.equal(arrow(view, "ArrowUp").defaultPrevented, true);
+  assert.equal(view.input.value, "newest");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "first\nsecond line");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "first\nsecond line", "the oldest message is the boundary");
+  view.input.setSelectionRange(view.input.value.length, view.input.value.length);
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "newest");
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "my draft\nwith another line");
+  assert.equal(view.input.selectionStart, 3);
+  assert.equal(view.input.selectionEnd, 3);
+  assert.equal(client.calls.some(([name]) => name === "submit"), false, "recall never sends");
+});
+
+test("history leaves multiline cursor movement, selections, modified arrows and IME native", async () => {
+  const { view } = await open({ client: fakeClient({ history: historyMessages("older") }) });
+  view.input.value = "first\nsecond";
+  view.input.setSelectionRange(9, 9);
+  assert.equal(arrow(view, "ArrowUp").defaultPrevented, false);
+  view.input.setSelectionRange(0, 0);
+  assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
+  for (const options of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { isComposing: true }]) {
+    assert.equal(arrow(view, "ArrowUp", options).defaultPrevented, false);
+    assert.equal(view.input.value, "first\nsecond");
+  }
+  view.input.setSelectionRange(0, 2);
+  assert.equal(arrow(view, "ArrowUp").defaultPrevented, false);
+  view.input.setSelectionRange(0, 0);
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "older");
+});
+
+test("editing or pasting into recall preserves the original draft and each recalled edit", async () => {
+  const client = fakeClient({ history: historyMessages("older", "newer") });
+  const { view } = await open({ client });
+  view.input.value = "my original draft";
+  view.input.setSelectionRange(3, 3);
+  arrow(view, "ArrowUp");
+  view.input.value = "newer edited";
+  view.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  view.input.setSelectionRange(0, 0);
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "older");
+  view.input.value = "older pasted text";
+  view.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  view.input.setSelectionRange(view.input.value.length, view.input.value.length);
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "newer edited");
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "my original draft");
+  assert.equal(view.input.selectionStart, 3);
+  assert.deepEqual([...view.turns.values()].map((turn) => turn.text), ["older", "newer"], "saved turns stay unchanged");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "newer", "session edits do not rewrite history");
+  await view.openConversation(null);
+  assert.equal(arrow(view, "ArrowUp").defaultPrevented, false);
+  assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
+  assert.equal(view.input.value, "newer", "navigation retains the existing composer, but clears recall state");
+});
+
+test("accepted sends join recalled history once; failed sends remain drafts", async () => {
+  const client = fakeClient();
+  const submit = client.submit;
+  client.submit = async () => { throw new Error("offline"); };
+  const { view } = await open({ client });
+  view.input.value = "not yet sent";
+  await view.send();
+  assert.equal(arrow(view, "ArrowUp").defaultPrevented, false);
+  assert.equal(view.input.value, "not yet sent");
+  client.submit = submit;
+  await view.send();
+  assert.equal(view.input.value, "");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "not yet sent");
+  arrow(view, "ArrowDown");
+  assert.equal(view.input.value, "");
+  assert.equal(view.turns.size, 1);
+});
+
+function selectText(t, view, start, end = start) {
+  document.body.appendChild(view.containerEl);
+  const selection = document.getSelection(), range = document.createRange();
+  range.setStart(start, 0);
+  range.setEnd(end, end.textContent.length);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  t.after(() => { selection.removeAllRanges(); view.containerEl.remove(); });
+  return selection;
+}
+
+test("a selected streaming reply keeps its nodes and text through completion, then catches up on release", async (t) => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("selected-stream", "question");
+  turn.runner.display.reply = "A selectable **answer**";
+  await until(() => turn.renderedReply === turn.runner.display.reply);
+  const text = turn.replyEl.querySelector("strong").firstChild;
+  const selection = selectText(t, view, text);
+  turn.runner.display.reply += " with the final ending";
+  turn.runner.display.state = "completed";
+  view.update(turn);
+  assert.equal(view.sendButton.getAttribute("aria-label"), "Send", "controls still update");
+  assert.equal(selection.toString(), "answer");
+  assert.equal(turn.replyEl.querySelector("strong").firstChild, text);
+  assert.equal(turn.replyEl.textContent.includes("final ending"), false);
+  selection.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  await until(() => turn.renderedReply === turn.runner.display.reply);
+  assert.match(turn.replyEl.textContent, /final ending/);
+});
+
+test("selection made after scheduling a render protects that render too; clearing it resumes", async (t) => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("scheduled-stream", "question");
+  turn.runner.display.reply = "first reply";
+  await until(() => turn.renderedReply === "first reply");
+  turn.runner.display.reply = "newer reply";
+  view.update(turn); // timer already scheduled before the user selects
+  const selection = selectText(t, view, turn.replyEl.firstChild.firstChild);
+  await until(() => turn.renderTimer === null);
+  assert.equal(selection.toString(), "first reply");
+  assert.equal(turn.renderedReply, "first reply");
+  selection.collapseToStart();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  await until(() => turn.renderedReply === "newer reply");
+});
+
+test("a range across turns preserves selected receipts and text, with native copy/paste keys untouched", async (t) => {
+  const client = fakeClient({ history: [
+    { turn_id: "receipt-turn", text: "first", display: displayOf(FIXTURES.streams.uncertain_write) },
+  ] });
+  const { view } = await open({ client });
+  const [first] = view.turns.values();
+  const second = view.addTurn("second", "second");
+  const receipt = first.receiptsEl.querySelector(".nuru-receipt");
+  assert.ok(receipt);
+  const selection = selectText(t, view, receipt.firstChild, second.el.querySelector(".nuru-user").firstChild);
+  const copied = selection.toString();
+  view.update(first);
+  view.update(second);
+  assert.equal(first.receiptsEl.querySelector(".nuru-receipt"), receipt);
+  assert.equal(selection.toString(), copied);
+  for (const [key, modifiers] of [["c", { ctrlKey: true }], ["c", { metaKey: true }], ["v", { ctrlKey: true }], ["v", { metaKey: true }]]) {
+    assert.equal(arrow(view, key, modifiers).defaultPrevented, false);
+  }
+  selection.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.notEqual(first.receiptsEl.querySelector(".nuru-receipt"), receipt, "deferred receipt rendering resumes");
+});
+
+test("Copy context menu writes only the selected plain text and reports clipboard failures", async (t) => {
+  const { view } = await open({ client: fakeClient({ history: historyMessages("<script>private text</script>") }) });
+  const [turn] = view.turns.values();
+  const selection = selectText(t, view, turn.el.querySelector(".nuru-user").firstChild);
+  const copied = [];
+  const navigator = window.navigator;
+  const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => copied.push(text) } });
+  t.after(() => { if (original) Object.defineProperty(navigator, "clipboard", original); else delete navigator.clipboard; });
+  const menu = () => {
+    const event = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    turn.el.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(menu().defaultPrevented, true);
+  const action = Menu.shown.items.find((item) => item.title === "Copy");
+  selection.removeAllRanges(); // closing the menu must not lose the captured text
+  await action.click();
+  assert.deepEqual(copied, ["<script>private text</script>"]);
+  assert.equal(menu().defaultPrevented, false, "no selection leaves the usual context menu alone");
+  selectText(t, view, turn.el.querySelector(".nuru-user").firstChild);
+  navigator.clipboard.writeText = async () => { throw new Error("denied"); };
+  menu();
+  await Menu.shown.items[0].click();
+  assert.match(Notice.shown.at(-1), /couldn't copy/);
+});
+
+test("selection in one turn leaves another streaming and Stop usable, without scrolling away", async (t) => {
+  const { view } = await open({ client: fakeClient({ history: historyMessages("select me") }) });
+  const [first] = view.turns.values();
+  const next = view.addTurn("running-with-selection", "continue");
+  const selection = selectText(t, view, first.el.querySelector(".nuru-user").firstChild);
+  Object.defineProperty(view.messagesEl, "scrollHeight", { configurable: true, value: 100 });
+  view.messagesEl.scrollTop = 40;
+  next.runner.display.reply = "another turn can still stream";
+  view.update(next);
+  await until(() => next.renderedReply === next.runner.display.reply);
+  assert.equal(view.messagesEl.scrollTop, 40);
+  assert.equal(selection.toString(), "select me");
+  assert.equal(view.sendButton.getAttribute("aria-label"), "Stop Nuru");
+  await view.stop();
+  assert.ok(view.client.calls.some(([name, id]) => name === "cancel" && id === "running-with-selection"));
+});
+
+test("selection outside the panel does not hold a reply; closing discards selected deferred updates", async (t) => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("close-selected", "x");
+  const outside = document.body.createDiv({ text: "some other note" });
+  t.after(() => outside.remove());
+  const selection = selectText(t, view, outside.firstChild);
+  turn.runner.display.reply = "unrelated selection";
+  view.update(turn);
+  await until(() => turn.renderedReply === "unrelated selection");
+  selection.selectAllChildren(turn.replyEl);
+  turn.runner.display.reply = "not rendered after closing";
+  view.update(turn);
+  await view.close();
+  selection.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(turn.renderedReply, "unrelated selection");
+  assert.equal(view.turns.size, 0);
+});
+
+test("an answer placed in the composer replaces recall state even if sending fails", async () => {
+  const client = fakeClient({ history: historyMessages("old message") });
+  client.submit = async () => { throw new Error("offline"); };
+  const { view } = await open({ client });
+  view.input.value = "original draft";
+  arrow(view, "ArrowUp");
+  view.answerAsk(["Yes"], "");
+  await until(() => !view.sending);
+  const answer = view.input.value;
+  assert.notEqual(answer, "original draft");
+  assert.equal(arrow(view, "ArrowDown").defaultPrevented, false);
+  assert.equal(view.input.value, answer, "failed answer is kept, not replaced by the old draft");
+});
+
+test("a timed question, countdown, and failed state stay live while reply text is selected", async (t) => {
+  const client = fakeClient();
+  const { view } = await open({ client });
+  const turn = view.addTurn("timed-selection", "question");
+  turn.runner.display.reply = "Select this while the model works";
+  await until(() => turn.renderedReply === turn.runner.display.reply);
+  const selection = selectText(t, view, turn.replyEl.firstChild.firstChild);
+  const question = FIXTURES.streams.write_approved.find((e) => e.type === "question").data;
+  turn.runner.display.question = { ...question, expires_at: new Date(Date.now() + 9000).toISOString() };
+  turn.runner.display.state = "running";
+  view.update(turn);
+  assert.match(turn.questionEl.textContent, new RegExp(question.question.text));
+  const yes = [...turn.questionEl.querySelectorAll("button")].find((b) => b.textContent.startsWith("Yes"));
+  assert.ok(yes && !yes.disabled);
+  const countdown = turn.questionEl.querySelector(".nuru-countdown");
+  assert.match(countdown.textContent, /s to answer/);
+  const held = selection.toString();
+  countdown.setAttribute("data-expires", new Date(Date.now() - 1000).toISOString());
+  view.tick();
+  assert.match(countdown.textContent, /Time's up/);
+  assert.equal(yes.disabled, true);
+  assert.equal(selection.toString(), held);
+  turn.runner.display.question = null;
+  turn.runner.display.state = "failed";
+  turn.runner.display.message = "connection failed";
+  view.update(turn);
+  assert.equal(turn.questionEl.childNodes.length, 0);
+  assert.match(turn.stateEl.textContent, /Failed: connection failed/);
+  assert.equal(selection.toString(), held);
+});
+
+test("clearing a completed reply selection in a popout document catches up without a global event", async (t) => {
+  const { JSDOM } = require("jsdom");
+  const popout = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  t.after(() => popout.window.close());
+  const doc = popout.window.document;
+  const { view } = await open({ client: fakeClient(), ownerDocument: doc });
+  doc.body.appendChild(view.containerEl);
+  const turn = view.addTurn("popout-turn", "x");
+  turn.runner.display.reply = "popout selected text";
+  await until(() => turn.renderedReply === "popout selected text");
+  const selection = doc.getSelection();
+  selection.selectAllChildren(turn.replyEl);
+  turn.runner.display.reply = "final popout answer";
+  turn.runner.display.state = "completed";
+  view.update(turn);
+  assert.equal(selection.toString().trim(), "popout selected text");
+  selection.removeAllRanges();
+  doc.dispatchEvent(new popout.window.Event("selectionchange"));
+  await until(() => turn.renderedReply === "final popout answer");
+  assert.match(turn.replyEl.textContent, /final popout answer/);
+});
+
+test("sending a recalled message clears browsing so the newest accepted message is recalled", async () => {
+  const client = fakeClient({ history: historyMessages("oldest", "newest") });
+  const { view } = await open({ client });
+  arrow(view, "ArrowUp");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "oldest");
+  await view.send();
+  assert.equal(view.input.value, "");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "oldest", "just-sent text, not the old browse position");
+  arrow(view, "ArrowUp");
+  assert.equal(view.input.value, "newest", "the prior turn comes before the newly accepted turn");
+});
+
+test("a runner callback after navigation cannot update a forgotten turn", async () => {
+  const { view } = await open({ client: fakeClient() });
+  const turn = view.addTurn("late-runner", "x");
+  await view.openConversation(null);
+  const before = turn.el.innerHTML, timer = turn.renderTimer;
+  turn.runner.display.state = "failed";
+  turn.runner.display.message = "late failure";
+  turn.runner.onChange(turn.runner);
+  assert.equal(turn.el.innerHTML, before);
+  assert.equal(turn.renderTimer, timer);
+});
+
+test("popped-out chat tracks note selections from both documents and releases their listeners on close", async (t) => {
+  const { JSDOM } = require("jsdom");
+  const popout = new JSDOM("<!doctype html><body></body>");
+  t.after(() => popout.window.close());
+  const { view, editing } = await open({ client: fakeClient(), file: { path: "nuru/Trip.md" },
+    ownerDocument: popout.window.document });
+  const track = view.trackSelection.bind(view);
+  let calls = 0;
+  view.trackSelection = () => { calls += 1; track(); };
+  for (const doc of [document, popout.window.document]) {
+    for (const type of ["selectionchange", "mouseup", "keyup"]) {
+      editing.selection = `selected text ${calls}`;
+      doc.dispatchEvent(new doc.defaultView.Event(type));
+      assert.equal(view.selection.selection, editing.selection);
+      assert.match(view.selectionEl.textContent, /Trip .* selected/);
+    }
+  }
+  assert.equal(calls, 6);
+  editing.selection = "";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "");
+  await view.close();
+  const closedCalls = calls;
+  for (const doc of [document, popout.window.document]) doc.dispatchEvent(new doc.defaultView.Event("selectionchange"));
+  assert.equal(calls, closedCalls, "neither document retains a closed view's listener");
+});
+
+test("main-window note listeners are registered only once when chat shares its document", async () => {
+  const { view } = await open({ client: fakeClient() });
+  let calls = 0;
+  view.trackSelection = () => { calls += 1; };
+  for (const type of ["selectionchange", "mouseup", "keyup"]) document.dispatchEvent(new window.Event(type));
+  assert.equal(calls, 3);
 });

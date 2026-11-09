@@ -1323,3 +1323,38 @@ test("a runner callback after navigation cannot update a forgotten turn", async 
   assert.equal(turn.el.innerHTML, before);
   assert.equal(turn.renderTimer, timer);
 });
+
+test("popped-out chat tracks note selections from both documents and releases their listeners on close", async (t) => {
+  const { JSDOM } = require("jsdom");
+  const popout = new JSDOM("<!doctype html><body></body>");
+  t.after(() => popout.window.close());
+  const { view, editing } = await open({ client: fakeClient(), file: { path: "nuru/Trip.md" },
+    ownerDocument: popout.window.document });
+  const track = view.trackSelection.bind(view);
+  let calls = 0;
+  view.trackSelection = () => { calls += 1; track(); };
+  for (const doc of [document, popout.window.document]) {
+    for (const type of ["selectionchange", "mouseup", "keyup"]) {
+      editing.selection = `selected text ${calls}`;
+      doc.dispatchEvent(new doc.defaultView.Event(type));
+      assert.equal(view.selection.selection, editing.selection);
+      assert.match(view.selectionEl.textContent, /Trip .* selected/);
+    }
+  }
+  assert.equal(calls, 6);
+  editing.selection = "";
+  document.dispatchEvent(new window.Event("selectionchange"));
+  assert.equal(view.selectionEl.textContent, "");
+  await view.close();
+  const closedCalls = calls;
+  for (const doc of [document, popout.window.document]) doc.dispatchEvent(new doc.defaultView.Event("selectionchange"));
+  assert.equal(calls, closedCalls, "neither document retains a closed view's listener");
+});
+
+test("main-window note listeners are registered only once when chat shares its document", async () => {
+  const { view } = await open({ client: fakeClient() });
+  let calls = 0;
+  view.trackSelection = () => { calls += 1; };
+  for (const type of ["selectionchange", "mouseup", "keyup"]) document.dispatchEvent(new window.Event(type));
+  assert.equal(calls, 3);
+});

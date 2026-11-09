@@ -87,7 +87,10 @@ class ChatView extends ItemView {
     this.selection = null;
     this.sentSelection = null;
     // Table cells selected in Live Preview change no text selection: they're marked in the page.
-    for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(root.ownerDocument, type, () => this.trackSelection());
+    // The note can stay in the main window while chat is popped out. Listen once per document.
+    for (const doc of new Set([document, root.ownerDocument])) {
+      for (const type of ["selectionchange", "mouseup", "keyup"]) this.registerDomEvent(doc, type, () => this.trackSelection());
+    }
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.trackSelection()));
     this.chipsEl = composer.createDiv({ cls: "nuru-attachments" });
     this.input = composer.createEl("textarea", { cls: "nuru-input", attr: { rows: "3", "aria-label": "Message to Nuru",

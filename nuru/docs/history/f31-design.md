@@ -51,6 +51,30 @@ Reviewed against main `28d0423` and its pinned Obsidian server `6a4a0e5`:
 - Ordinary moves refuse sources in trash. Keep this prohibition. Restore is a
   separate, narrowly authorized journal operation; it is not arbitrary trash access.
 
+### Interaction with F27/F04 proposal-only writes
+
+F31 depends on F27's mutation-policy work before enabling Restore. Ordinary existing
+notes remain unchanged: edit/replace/move/trash requests outside the allowed ownership
+policy create proposals, not hidden direct mutations. The existing narrow append
+exception applies only to notes Nuru authored in `nuru/`, verified by source/author
+metadata rather than location alone. Journal the proposal file creation and actual
+allowed mutations, not a hypothetical edit to the unchanged original.
+
+The user's direct 2026-11-10 Restore instruction adds a second narrow exception:
+a **user-requested journal Restore** may change an existing affected file back to its
+recorded point, with code-owned conflict approval when needed. This is not a general
+replace tool or permission to apply proposals automatically. Derive its exact scope
+from history and current authorization; preserve displaced versions and revalidate
+approval. No-conflict Restore still follows existing user-intent/write-permission
+checks, without adding an unnecessary conflict question.
+
+Keep legacy replacement/backup records recoverable; tests for those records do not
+mean ordinary replacement of user notes is re-enabled after F27. Capture the full
+set of actual allowed effects (including create, eligible append, permitted move,
+archive/trash and proposal creation), with policy tests proving F31 does not bypass
+F27. Restore implementation/release is gated on this dependency; the documentation
+review can proceed independently and does not reorder the UI queue on its own.
+
 ### Mutation-producer inventory is a release gate
 
 The backend tools are not necessarily every producer. Inventory `core.service.capture`
@@ -69,9 +93,10 @@ are conflict inputs, not changes Nuru claims to have authored.
 Current update/remove code checks content and then replaces/unlinks a pathname.
 Pinned directories prevent path redirection, but do not alone exclude another
 editor's write in that interval. Do not claim that reusing these helpers proves
-"never overwrite a later user edit." The same issue affects a source removed after
+"never overwrite an unapproved later user edit." The same issue affects a source removed after
 checking its bytes during a move. A portable lock between Nuru processes is not an
-external-editor lock. Hash equality also cannot detect edit-then-revert (ABA).
+external-editor lock. Equal bytes need no separate ABA-history detection: identical current bytes do not
+lose different content. File identity and alias checks remain for path safety.
 
 Before destructive Restore is enabled on a platform, implement and independently
 review a publication primitive that either excludes the relevant competing writes
@@ -101,8 +126,8 @@ Proposed layout:
 An optional history-root setting must be local operator configuration, never a model
 argument. Bind the namespace to the registered UUID and filesystem root identity;
 refuse an unresolved vault-copy/rebind conflict. Moving the same registered vault
-keeps history. Cloning creates a new namespace and does not silently inherit old
-Restore authority. Do not put recovery bytes, screenshots or benchmark payloads in Git.
+keeps history. Cloning follows the existing registry behavior and does not silently inherit old
+Restore authority; F31 adds no new clone/rebind management API. Do not put recovery bytes, screenshots or benchmark payloads in Git.
 
 Only the host OS account may access the root, database, WAL/SHM, blobs and staging.
 Use restrictive POSIX permissions and verified Windows ACL/access behavior; chmod
@@ -151,7 +176,14 @@ The Obsidian mutation boundary must capture the actual resolved targets and exac
 bytes while it owns the cooperating-writer lock. A service-layer read before the
 MCP call cannot reliably identify aliases or cover all mutation side effects.
 Choose the backend implementation boundary in the first implementation PR; do not
-maintain two independent stores of authoritative recovery bytes.
+maintain two independent stores of authoritative recovery bytes. Standalone MCP
+mutations enter the same vault journal with a null conversation and an authenticated
+local/actor identity; they can be restored manually by an authorized operator, never
+by the current-conversation model tool. A null conversation is not public authority.
+Hidden injected context is not itself authentication: verify the host channel or a
+process-bound capability before accepting principal/conversation/turn attribution.
+Stripping model arguments prevents model spoofing but does not authenticate a
+standalone MCP caller that constructs its own JSON.
 
 Lock order for all cooperating clients: vault mutation lock, then journal writer
 lock/SQLite transaction. History-only reads may use a short SQLite read transaction;
@@ -304,7 +336,7 @@ release gate, not permission to perform a partial normal Restore.
 
 ## Retention, capacity and privacy
 
-Working proposal for review: 30 days and a configurable **1 GiB per-vault physical
+Working proposal for user confirmation: 30 days and a configurable **1 GiB per-vault physical
 history budget**, including unique blobs, SQLite/WAL and staging. This number is not
 a confirmed user policy. Final size, clear-history interaction and permission UX
 remain review questions; do not ship automatic deletion from this document.
@@ -321,7 +353,10 @@ remain review questions; do not ship automatic deletion from this document.
 - If safe pruning cannot meet capacity, **refuse the new mutation before it runs**.
   A large note is not an excuse to proceed without recoverable before-bytes. Bound
   individual file/operation size and reserve space before preparation; exact limits
-  need review. GC and failed staging must not exceed a budget silently.
+  need user confirmation; 64 MiB per operation is a review proposal, not an enabled
+  default. Prune eligible oldest resolved groups first; refuse only if safe pruning
+  cannot make the requested operation fit (including pinned/recovery reservations).
+  GC and failed staging must not exceed a budget silently.
 - Explicit clear requires operator confirmation of what recovery will be lost, refuses
   active/uncertain work, and shares the same reference-safe GC. Back up/park uncertain
   history for manual review rather than destroying it. No large blobs in Git.
@@ -364,8 +399,10 @@ coverage numbers alone do not establish safety.
   corrupted hashes/rows, missing blobs, path traversal and forged Restore requests.
 - Age/size pressure with deduplication, shared blobs, active pins, interrupted GC,
   staging orphans, inverse dependencies, clear refusal and request tombstone replay.
-- Windows path identity, reparse points, sharing/ACL behavior and line-ending parity;
-  POSIX directory descriptors, case/Unicode distinctions and publication/fsync limits.
+- Primary shipped filesystem evidence: APFS/macOS and NTFS/Windows, including
+  identity, reparse points, sharing/ACLs, line endings, directory descriptors and
+  publication/durability behavior. Document limitations elsewhere rather than claim
+  universal power-loss guarantees. Do not remove core path/race safety tests.
 - Panel/CLI/model: conflict-free full revert, conflicts approved/declined/expired,
   zero vault changes on No, no subset before confirmation, preservation of displaced
   bytes, stale-plan re-confirmation, duplicate approval/replay and batch crash recovery.
@@ -383,6 +420,25 @@ trials. Measure valid Restore selection, entry-ID errors, wrong-conversation ref
 conflict detection/confirmation, no-op on decline, permission behavior and regressions on the unchanged vault suite.
 Report model/prompt/fixture/scorer hashes, counts and failures in the implementation
 PR. No trial is run or acceptance number claimed by this design PR.
+
+## Outstanding user choices after Claude's 2026-11-10 review
+
+Two questions have been sent directly to the user and remain pending:
+
+- Whether Restore must require a coordinated pause in editing, or may accept the
+  residual overwrite race with non-cooperating editors.
+- Whether an interrupted multi-file revert may stop with exact partial-progress
+  reporting and Continue/Undo-completed actions, or full-batch behavior remains a
+  release requirement.
+
+Do not adopt a weaker guarantee before those answers. In particular, re-capture,
+atomic rename and a post-read cannot reliably detect an external edit that happened
+between capture and rename and was overwritten: if the post-read equals the target,
+the overwritten version may already be gone and is absent from the journal. Atomic
+rename prevents torn publication, not this lost-update race. A post-read remains
+useful for edits that survive after publication, but is not proof no edit was lost.
+The proposed partial-progress behavior must likewise never be presented as a
+completed full revert. The current conservative gates stay until decisions are made.
 
 ## Questions for Claude before implementation
 

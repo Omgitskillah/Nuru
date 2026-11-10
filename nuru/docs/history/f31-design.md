@@ -1,4 +1,4 @@
-# F31: local change history and conflict-safe Restore
+# F31: local change history and confirmed Restore with conflict preflight
 
 Status: proposed design for Claude's review, 2026-11-09. Documentation only; no
 runtime changes, migrations, model calls or retention cleanup are enabled by this PR.
@@ -10,17 +10,26 @@ Keep exact before/after bytes for files changed by Nuru, outside the vault, so t
 user can inspect and undo a recorded change without losing later work. Cover create,
 append, replace, rename, move, archive and trash, plus secondary files those actions
 create or change. Support a selected entry and a turn's changes, newest first.
-A restore is another recorded mutation and can itself be undone subject to conflicts.
+A restore is another recorded mutation and can itself be undone under the same preflight and confirmation rules.
 
 Use standard-library SQLite and SHA-256-addressed blobs, not Git, dulwich, the
 Obsidian CLI or File Recovery. Obsidian's separate history is not a dependency.
 History is a local recovery aid, not a backup or a guarantee against disk failure,
 malware, another process deleting it, or non-cooperating simultaneous editors.
 
-The manual panel/CLI Restore path is in scope. A model-callable Restore remains a
-proposal pending direct user confirmation: if approved, it takes only an entry ID
-and is restricted to changes in the current conversation. Do not advertise or
-implement that tool as already authorized from the discussion note alone.
+The user directly confirmed on 2026-11-10 that Restore is a model tool. It remains
+limited to journaled changes in the current conversation. A request identifies an
+older journal point; derive the complete affected-file revert plan from trusted
+history rather than accepting arbitrary paths or replacement bytes. Ask which point
+if the user's intended target is ambiguous.
+
+**User's conflict rule:** preflight the whole plan before changing any vault file.
+If there are conflicts, ask for explicit confirmation of the complete revert. If
+approved, revert the affected files fully to the selected older point, preserving
+the displaced current versions in the journal. If declined, expired or cancelled,
+change nothing in the vault: no partial revert and no automatic recovery copies.
+Without conflicts, proceed under the existing write-permission rules. This does not
+rewind unrelated vault files or grant cross-conversation/model authority.
 
 ## Existing code and constraints
 
@@ -206,22 +215,25 @@ partial move or a user-modified backup to make a group look consistent.
 
 ## Restore and recovery-as-copy
 
-An explicit request selects an entry ID (and a request ID), never replacement bytes
-or arbitrary source/destination paths. Check principal and vault ownership, supported
+An explicit request selects a journal point ID (and a request ID), never replacement
+bytes or arbitrary source/destination paths. A single-entry undo is a one-group plan;
+a revert to an older point includes the current conversation's journaled changes
+since that point, newest first, composed into the final target for each affected path. Check principal and vault ownership, supported
 schema/action, retained complete blobs, unresolved earlier entries and current write
 permissions. For a model tool, also bind the entry's trusted conversation to the live
 conversation and enforce ordinary mutation approval; no arbitrary trash listing.
 
 | Original effect | Preconditions for destructive Restore | Desired inverse |
 | --- | --- | --- |
-| Create | Current path equals recorded after-state and publication safety gate passes | Restore absence; retain bytes in the inverse journal |
-| Append/replace | All current affected paths equal recorded after-states | Restore exact before-bytes and handle secondary backup effects together |
-| Move/rename/archive/trash | Recorded new path equals after-state; old path is still absent; all secondary effects match | No-clobber move back, followed by verified index reconciliation |
-| Prior Restore | Same checks on the inverse entry's after-state | Undo that Restore; never bypass conflict checks |
+| Create | Whole-plan preflight and publication safety gate pass; any changed current state is explicitly confirmed | Restore absence; retain bytes in the inverse journal |
+| Append/replace | All current affected states are checked; any conflicts are explicitly confirmed | Restore exact before-bytes and handle secondary backup effects together |
+| Move/rename/archive/trash | All source/destination/secondary states are checked; occupied destinations require explicit conflict confirmation and preservation | No-clobber move back, followed by verified index reconciliation |
+| Prior Restore | Same whole-plan preflight/confirmation on current states | Undo that Restore; preserve displaced versions |
 
 Evaluate existence, bytes, identity/aliases and permitted mode metadata, not mtime
-alone. Never overwrite an occupied old path even if its bytes happen to match a
-before-version. Apply path checks to trash destinations and backups too. Empty parent
+alone. An occupied old path is a conflict, even if its bytes happen to match a
+before-version. It may be displaced only under explicit approval of that exact
+conflict plan, with its complete current bytes safely journaled first. Apply path checks to trash destinations and backups too. Empty parent
 directories are not recursively deleted; unrelated files remain untouched.
 
 Ordinary `rename_or_move_file` remains unable to move out of trash. Journal Restore
@@ -229,19 +241,66 @@ gets only a narrowly reviewed exception for its recorded effects. The server der
 paths from the entry, rechecks them and never accepts an arbitrary trash path. Updating
 its tool descriptions and permission classification is part of that implementation.
 
-On conflict or unsupported publication safety, show the reason and offer an exact
-before-version as a **new copy**. The user explicitly chooses this action. Create it
-in an allowed recovery folder with exclusive no-clobber semantics and a fresh name;
-never reuse a conflicting original filename. Treat copy creation as a journaled
-mutation. Return its path in the receipt. Do not silently replace conflicts with copies
-and claim Restore succeeded. Non-text bytes may be exported unchanged where supported;
-do not pass them through a Markdown/frontmatter normalizer.
+### Whole-plan conflict confirmation
 
-Turn Restore is a sequence of entry groups, newest first, not an atomic transaction
-across files or tools. Stop at the first conflict/uncertain group, list completed and
-remaining entries, and never imply the whole turn was undone. Multi-effect groups
-need their own crash-safe recovery plan; a preflight of all files is not an atomic
-commit. No unattended rollback of later user work after a partial failure.
+1. Resolve the older point, all affected paths, intermediate move dependencies and
+   final target states. Include replacement backups and derived index operations.
+   Validate permissions, retention completeness, storage capacity and publication
+   safety for the complete plan before applying any part. Missing/corrupt history,
+   unsupported unsafe primitives and unauthorized paths are hard failures, not
+   conflicts that a Yes can waive.
+2. Capture current states without mutation. Compare existence, bytes and identities
+   with expected history. Present a bounded summary of every conflict and what the
+   revert would replace, recreate, move or remove. Do not apply conflict-free entries
+   first while waiting to ask about the rest.
+3. If conflicts exist, issue a **code-owned confirmation** tied to principal, vault,
+   conversation, target point, full plan digest, current-state identities/hashes,
+   conflict set and expiry. The model cannot supply `force=true`, mint approval or
+   treat its own statement that the user approved as consent. Reuse the existing
+   write-approval infrastructure where suitable, with an explicit Restore operation.
+   Release writer locks while waiting; never block the vault behind a question.
+4. No/expiry/cancellation means no vault changes and no applied restore entries.
+   Discard the pending plan; do not create recovery copies or apply a safe subset.
+   Read-only preview/audit metadata is not a completed mutation.
+5. After Yes, reacquire locks and revalidate the entire frozen plan. If any affected
+   path, authority, conflict or target changed, invalidate approval and preflight
+   again; seek fresh confirmation for the changed conflicts. Approval is single-use
+   and cannot authorize a later unknown file state.
+6. Durably journal all current versions that will be displaced, including a file
+   occupying an original destination, before publication. Execute the complete
+   approved target plan with reviewed safe primitives; reconcile and verify every
+   path/index effect before reporting full success. The new Restore entry's before
+   state is the actual approved current state, not a guessed historical snapshot,
+   so this conflict-approved revert can itself be undone.
+
+A complete revert concerns only the plan's affected paths. Never recursively clear
+a folder or reset unrelated vault data. Existing note ownership/path restrictions,
+current-conversation scope, remote authorization and the narrow journal-only trash
+exception still apply. A conflict confirmation does not bypass those boundaries.
+
+A copy-only recovery/export may be offered as a **separate explicit user choice**
+when the safety gate cannot be met; it is not an automatic substitute for a denied
+or failed Restore. Copy creation uses an allowed fresh path, exclusive no-clobber
+semantics and its own journal entry. Preserve arbitrary bytes without frontmatter
+or Markdown normalization.
+
+### Batch failure and crash semantics
+
+The user wants the complete revert, not a silently applied subset. Preflight,
+confirmation and capacity reservation therefore cover the entire batch. Design and
+independently review staging, compensation and durable batch recovery before this
+API can claim that behavior. Reject before publication when the platform cannot
+meet the reviewed contract. A preflight followed by sequential ordinary writes is
+not sufficient proof of all-or-nothing behavior against other editors.
+
+SQLite cannot atomically commit a multi-file vault transaction. Power loss or an
+I/O failure during publication can leave an uncertain partially published batch;
+retain all before/target versions, block conflicting writes and reconcile through
+the existing crash protocol. Never report a full revert or retry/overwrite a newer
+external edit automatically. The implementation must explicitly define recoverable
+commit/rollback guarantees and surface unresolved state rather than claim physical
+atomicity across files. This failure-mode proof is an additional implementation
+release gate, not permission to perform a partial normal Restore.
 
 ## Retention, capacity and privacy
 
@@ -277,8 +336,8 @@ remain review questions; do not ship automatic deletion from this document.
 | A: journal foundation | Versioned SQLite/blobs, identity/permissions, writer lock, capacity reservations, corruption refusal, deterministic crash-window tests |
 | B: mutation integration | Capture resolved effects under the backend boundary; ledger/receipt mapping; create/append/replace/move/archive/trash byte and index checks; all side effects accounted for |
 | C: publication safety | Independently reviewed race/identity behavior per OS and filesystem. Destructive Restore stays disabled for any unproven operation; copy-only fallback works |
-| D: manual Restore | Authenticated entry-ID route/CLI, idempotency and recovery; receipt UI, partial-turn reporting, clear conflict reasons and manual acceptance list |
-| E: optional model tool | Only after direct user confirmation: trusted current-conversation scope, existing write permissions, bounded tool description and local Qwen/Granite evaluation |
+| D: manual Restore | Journal-point route/CLI, whole-batch preflight, code-owned conflict confirmation, no changes on decline, preserved displaced bytes and verified full-revert receipts |
+| E: model tool (user confirmed 2026-11-10) | Trusted current-conversation scope, older-point resolution, existing write permissions, whole-plan conflict confirmation, bounded description and local Qwen/Granite evaluation |
 | F: retention/release | Approved cap/clear behavior, safe GC, migration/restart/copy/rebind tests, no-sync/privacy review and platform limitations documented |
 
 Backend work belongs in its separately reviewed repository; parent changes pin only
@@ -307,8 +366,10 @@ coverage numbers alone do not establish safety.
   staging orphans, inverse dependencies, clear refusal and request tombstone replay.
 - Windows path identity, reparse points, sharing/ACL behavior and line-ending parity;
   POSIX directory descriptors, case/Unicode distinctions and publication/fsync limits.
-- Panel/CLI: user-edit refusal, copy offer, old receipts whose bytes expired, partial
-  turn progress and keyboard access. Capture possible test-vault states; list manual
+- Panel/CLI/model: conflict-free full revert, conflicts approved/declined/expired,
+  zero vault changes on No, no subset before confirmation, preservation of displaced
+  bytes, stale-plan re-confirmation, duplicate approval/replay and batch crash recovery.
+  Check old receipts whose bytes expired, explicit copy choice and keyboard access. Capture possible test-vault states; list manual
   states that remain unavailable. Never use the live vault for evidence.
 
 Mutation tests must catch at least: journaling after the write, omitted backup effect,
@@ -317,9 +378,9 @@ occupied-destination overwrite, retry execution, uncertain-entry pruning and del
 a still-referenced blob. Meet the existing >90% module gate and 100% for reasonably
 small modules, with meaningful assertions and combined platform coverage.
 
-If the optional tool is approved, reserve shared local compute before Qwen/Granite
+For the user-approved model tool, reserve shared local compute before Qwen/Granite
 trials. Measure valid Restore selection, entry-ID errors, wrong-conversation refusal,
-conflict refusal, permission behavior and regressions on the unchanged vault suite.
+conflict detection/confirmation, no-op on decline, permission behavior and regressions on the unchanged vault suite.
 Report model/prompt/fixture/scorer hashes, counts and failures in the implementation
 PR. No trial is run or acceptance number claimed by this design PR.
 
@@ -332,7 +393,8 @@ PR. No trial is run or acceptance number claimed by this design PR.
    journal namespace? Nuru-controlled writes must not silently bypass journaling.
 3. Approve or revise the proposed capacity/reservation/retention rules and dependency
    pinning. What bound should one mutation and one vault consume?
-4. How should multi-effect partial failures surface and be reconciled without guessed
-   rollback? Which side effects must be grouped before slice B can ship?
-5. Confirm direct user approval status for the optional model tool before slice E;
-   the discussion design itself does not grant new destructive capabilities.
+4. How can a whole-point revert provide reviewed staging/compensation/recovery
+   guarantees? Which failures require refusing the batch before publication?
+5. Review the code-owned confirmation binding and stale-plan handling under the
+   user's direct 2026-11-10 policy. Model Restore is confirmed; approval of one
+   conflict plan must never grant arbitrary paths, other conversations or future states.

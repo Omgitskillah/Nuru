@@ -1482,3 +1482,38 @@ def test_waiting_title_survives_queued_chat_and_runs_after_both_turns(harness):
         assert observed == [['completed', 'completed']]
     finally:
         release.set()
+
+
+def test_title_job_and_source_events_survive_together_in_reloaded_history(harness):
+    release, reading = threading.Event(), threading.Event()
+    expected = [{'path': 'nuru/Trip.md', 'heading': 'Trip'}]
+    def source_turn(session, text, cancel):
+        reading.set()
+        assert release.wait(WAIT)
+        yield from calls(('read_note', {'name': 'Trip'}, ToolOutcome('Trip content', True,
+            sources=tuple(expected))))(session, text, cancel)
+    h = harness([source_turn])
+    cid = seed_old_conversation(h, title='Original title')
+    turn_id = h.submit(cid, 'Read Trip', request_id=protocol.new_id())[1]['turn_id']
+    assert reading.wait(WAIT)
+    seen = []
+    def title(message, answer, stop):
+        with h.service._lock:
+            seen.append(h.service.store.turn(turn_id, ME)['state'])
+        return 'A titled trip'
+    h.session.title = title
+    try:
+        h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+        release.set()
+        events = h.finished(turn_id)
+        assert next(e['data']['sources'] for e in events if e['type'] == 'tool_result') == expected
+        assert named(h.service, cid, 'A titled trip')
+        assert seen == ['completed'], 'title work must wait while the turn emits sources'
+        h.close()
+        h.service = h.open()
+        history = h.service.conversation(ME, cid, None, 10)
+        assert history['title'] == 'A titled trip'
+        assert history['turns'][0]['display']['sources'] == expected
+        assert history['turns'][0]['display']['tools'][0]['sources'] == expected
+    finally:
+        release.set()

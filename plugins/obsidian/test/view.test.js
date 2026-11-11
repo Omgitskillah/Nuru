@@ -1493,3 +1493,19 @@ test("a title request accepted after navigation does not show a stale Notice", a
   await pending;
   assert.deepEqual(Notice.shown, before, "no title-request notice belongs to the new conversation");
 });
+
+test("reloaded history displays a generated title together with Sources and reply links", async () => {
+  const display = displayOf(FIXTURES.streams.read_sources);
+  const client = fakeClient({ history: [{ turn_id: "title-and-sources", text: "Read Trip", display }] });
+  client.conversations = async () => ({ conversations: [{ id: "conv0000demo", title: "A titled trip" }] });
+  const { view } = await open({ client });
+  for (let load = 0; load < 2; load++) {
+    const [turn] = view.turns.values();
+    await rendered(turn);
+    assert.equal(view.picker.selectedOptions[0].textContent, "A titled trip");
+    assert.equal(turn.sourcesEl.querySelectorAll("a.nuru-source").length, 2);
+    assert.equal(turn.sourcesEl.querySelector("a").getAttribute("data-href"), "nuru/Trip.md#Decisions");
+    assert.equal(turn.replyEl.querySelectorAll("a.nuru-source").length, 2);
+    if (!load) await view.openConversation("conv0000demo");
+  }
+});

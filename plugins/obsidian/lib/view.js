@@ -13,7 +13,8 @@ const { LANTERN } = require("./icon");
 const { answerText, newRequestId } = require("./protocol");
 const { ConnectionProblem } = require("./connection");
 const { LaunchProblem } = require("./launcher");
-const { renderReply } = require("./render");
+const { renderReply, sourceLink, linkSources } = require("./render");
+const sourceTargets = require("./sources");
 const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
@@ -459,6 +460,8 @@ class ChatView extends ItemView {
       toolsEl: el.createDiv({ cls: "nuru-tools" }), // the activity: thinking, tool calls, retries
       shownWritten: null, stepEls: [], shownActivity: null, moreEl: null, activityEl: null, autoOpen: null, userToggled: false,
       replyEl: el.createDiv({ cls: "nuru-reply markdown-rendered" }),
+      sourcesEl: el.createDiv({ cls: "nuru-sources", attr: { role: "group", "aria-label": "Sources" } }),
+      shownSources: null, renderedSources: null,
       vaultedEl: el.createEl("details", { cls: "nuru-vaulted", attr: { open: "" } }), // the notes it wrote
       receiptsEl: el.createDiv({ cls: "nuru-receipts" }),
       questionEl: el.createDiv({ cls: "nuru-question" }),
@@ -505,6 +508,7 @@ class ChatView extends ItemView {
     this.renderQuestion(turn); // timed questions must appear even while reply text is selected
     if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
     turn.selectionDeferred = false;
+    this.renderSources(turn);
     this.renderActivity(turn);
     // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
     // the notes that were written, and any write whose outcome is unknown, since that note needs checking.
@@ -541,12 +545,29 @@ class ChatView extends ItemView {
   render(turn) {
     turn.renderTimer = null;
     const reply = turn.runner.display.reply;
-    if (reply === turn.renderedReply || turn.forgotten) return;
+    const sources = sourceTargets.merge([], turn.runner.display.sources, sourceTargets.PER_TURN);
+    const sourceKey = JSON.stringify(sources);
+    if ((reply === turn.renderedReply && sourceKey === turn.renderedSources) || turn.forgotten) return;
     if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
     const stick = !this.selected(this.messagesEl) && this.nearBottom();
-    renderReply(reply, turn.replyEl);
+    renderReply(reply, turn.replyEl, sources);
     turn.renderedReply = reply;
+    turn.renderedSources = sourceKey;
     if (stick) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  renderSources(turn) {
+    const sources = sourceTargets.merge([], turn.runner.display.sources, sourceTargets.PER_TURN);
+    const key = JSON.stringify(sources);
+    if (key === turn.shownSources) return;
+    turn.shownSources = key;
+    turn.sourcesEl.empty();
+    if (!sources.length) return;
+    turn.sourcesEl.createSpan({ text: "Sources: " });
+    sources.forEach((source, i) => {
+      if (i) turn.sourcesEl.appendText(" · ");
+      sourceLink(turn.sourcesEl, source);
+    });
   }
 
   nearBottom() {
@@ -658,7 +679,7 @@ class ChatView extends ItemView {
         turn.stepEls[i] = this.stepElement(step);
         turn.stepsEl.insertBefore(turn.stepEls[i], turn.moreEl);
       }
-      this.updateStep(turn.stepEls[i], step, display.ended);
+      this.updateStep(turn.stepEls[i], step, display.ended, display.tools.find((tool) => tool.call_id === step.call_id)?.sources);
     });
     // A turn from history knows only its tools and last thinking: its full steps can be fetched.
     if (activity.partial && !turn.moreEl) {
@@ -705,7 +726,7 @@ class ChatView extends ItemView {
     return el;
   }
 
-  updateStep(el, step, ended) {
+  updateStep(el, step, ended, sources = []) {
     if (step.kind === "retry") {
       el.setText(`↻ ${retryWords(step.reason)}`);
       return;
@@ -720,12 +741,18 @@ class ChatView extends ItemView {
     const named = mainArgument(step.arguments);
     const why = step.summary ? ` (${step.summary})` : "";
     el.summaryEl.setText(`${mark} ${step.name}${named ? ` ${named}` : ""}${why}`);
+    const admitted = sourceTargets.merge([], sources);
+    for (const source of admitted) {
+      el.summaryEl.appendText(" · ");
+      sourceLink(el.summaryEl, source);
+    }
     el.toggleClass("nuru-failed", step.ok === false);
     const lines = step.arguments ? argumentLines(step.arguments) : ["(arguments not kept in history: Show all steps)"];
     if (step.ok === false) lines.push(`Failed: ${step.summary || "no reason given"}`);
     else if (step.ok === null && ended) lines.push("No result: the turn ended first");
     const text = lines.join("\n") || "(no arguments)";
     if (el.bodyEl.textContent !== text) el.bodyEl.setText(text);
+    linkSources(el.bodyEl, admitted);
   }
 
   // A finished turn's full steps, from its events (kept 30 days after it ended).

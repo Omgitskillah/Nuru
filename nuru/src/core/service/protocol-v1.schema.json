@@ -12,6 +12,12 @@
       "type": "string", "minLength": 1, "maxLength": 1024,
       "not": {"anyOf": [{"pattern": "^/"}, {"pattern": "^[A-Za-z]:"}, {"pattern": "(^|/)\\.\\.(/|$)"}, {"pattern": "\\\\"}, {"pattern": "\\u0000"}]}
     },
+    "read_source": {
+      "description": "Server-admitted successful read, never a model-authored citation. No note content.",
+      "type": "object", "additionalProperties": false, "required": ["path"],
+      "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 384},
+                     "heading": {"type": "string", "minLength": 1, "maxLength": 160}}
+    },
     "question": {
       "type": "object", "additionalProperties": false,
       "required": ["kind", "text", "options"],
@@ -204,7 +210,9 @@
         {"if": {"properties": {"type": {"const": "tool_result"}}},
          "then": {"properties": {"data": {"type": "object", "additionalProperties": false, "required": ["call_id", "ok"],
                                           "properties": {"call_id": {"$ref": "#/$defs/id"}, "ok": {"type": "boolean"},
-                                                         "summary": {"type": "string", "maxLength": 2000}}}}}},
+                                                         "summary": {"type": "string", "maxLength": 2000},
+                                                         "sources": {"type": "array", "maxItems": 32,
+                                                                     "items": {"$ref": "#/$defs/read_source"}}}}}}},
         {"if": {"properties": {"type": {"const": "question"}}},
          "then": {"properties": {"data": {
            "type": "object", "additionalProperties": false, "required": ["question_id", "operation", "expires_at", "question"],

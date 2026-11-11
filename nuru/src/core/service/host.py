@@ -24,7 +24,7 @@ from typing import Callable
 
 import requests
 
-from core import questions
+from core import questions, read_sources
 from core.conversation_store import ConversationStore
 from core.questions import Question
 from core.service import protocol
@@ -690,8 +690,10 @@ class Service:
         write, its receipt. Only for a call this turn's stream started and hasn't reported. If it can't
         be stored, the turn is stopped (no tool is run again) and the outcome is kept to store before
         anything else of the turn (_caught_up)."""
+        sources = read_sources.merge([], outcome.sources)
         def report(stream: TurnStream) -> None:
             stream.emit("tool_result", {"call_id": call_id, "ok": outcome.success,
+                                        **({"sources": sources} if sources else {}),
                                         **({"summary": outcome.code[:2000]} if not outcome.success and outcome.code else {})})
             if write:
                 stream.emit("write_receipt", _receipt(call_id, name, outcome))

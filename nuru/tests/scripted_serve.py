@@ -79,6 +79,16 @@ def tools(session, cancel):
     yield Text("I read [[nuru/Trip.md]] and wrote [[nuru/summary.md]].")
 
 
+def read_sources(session, cancel):
+    """Synthetic source outcomes for source-link acceptance; no real tool/model or vault mutation."""
+    yield from session.tool("read_note", {"name": "Trip", "section": "Trip"},
+        ToolOutcome(NOTES["nuru/Trip.md"], True, sources=({"path": "nuru/Trip.md", "heading": "Trip"},)))
+    yield from session.tool("search", {"query": "plan"}, ToolOutcome("shown passages", True,
+        sources=({"path": "nuru/Trip.md"}, {"path": "nuru/Plan.md"})))
+    yield from session.tool("read_note", {"name": "never-read.md"}, failure("protocol", "NOT_FOUND", "No such note"))
+    yield Text("Compare `nuru/Trip.md` with nuru/Plan. never-read.md was not read.")
+
+
 def refused_write(session, cancel):
     yield from session.tool("write_note", {"note": "shared/Team.md", "content": "x"},
                             failure("policy", "NOT_RUN", "write_note was not run: the user didn't allow it."))
@@ -175,7 +185,7 @@ def bench(session, cancel):
 
 
 SCENARIOS = {
-    "scenario:completed": completed, "scenario:tools": tools, "scenario:refused-write": refused_write,
+    "scenario:sources": read_sources, "scenario:completed": completed, "scenario:tools": tools, "scenario:refused-write": refused_write,
     "scenario:uncertain-write": uncertain_write, "scenario:approval": approval, "scenario:choice": choice,
     "scenario:failed": failed, "scenario:slow": slow, "scenario:ask": asks_user, "scenario:hostile": hostile,
     "scenario:long": long_reply, "scenario:activity": activity, "scenario:bench": bench,

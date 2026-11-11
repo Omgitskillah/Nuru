@@ -60,3 +60,7 @@
 /* Obsidian's application chrome is not selectable by default; conversation text and its native
    composer are. Keep this scoped so buttons and the rest of the workspace retain their behavior. */
 .nuru-messages, .nuru-messages *, .nuru-input { -webkit-user-select: text; user-select: text; }
+
+/* Verified read sources sit under the answer; written notes keep their separate Vaulted section. */
+.nuru-sources { font-size: var(--font-ui-small); color: var(--text-muted); overflow-wrap: anywhere; margin-bottom: var(--size-4-2); }
+.nuru-sources:empty { display: none; }

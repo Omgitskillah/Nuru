@@ -14,6 +14,7 @@
 "use strict";
 
 const MarkdownIt = require("markdown-it");
+const sourceTargets = require("./sources");
 
 const markdown = new MarkdownIt({ html: false, linkify: true });
 markdown.disable("image");
@@ -72,12 +73,70 @@ function toHtml(text) {
 }
 
 // Show `text` (Markdown) in `el`, replacing what was there. Built and cleaned in an inert document first.
-function renderReply(text, el) {
+function renderReply(text, el, sources = []) {
   const inert = el.ownerDocument.implementation.createHTMLDocument("");
   const holder = inert.createElement("div");
   holder.innerHTML = toHtml(text);
   sanitize(holder);
+  linkSources(holder, sources);
   el.replaceChildren(...[...holder.childNodes].map((node) => el.ownerDocument.importNode(node, true)));
 }
 
-module.exports = { toHtml, renderReply, sanitize };
+
+// A relative internal link made only from admitted source metadata. Labels never become HTML.
+function sourceLink(parent, item, label) {
+  const source = sourceTargets.normalize(item);
+  if (!source) return null;
+  const target = source.path + (source.heading ? `#${source.heading}` : "");
+  const link = parent.ownerDocument.createElement("a");
+  link.className = "internal-link nuru-source";
+  link.textContent = label ?? target;
+  link.setAttribute("href", target);
+  link.setAttribute("data-href", target);
+  parent.appendChild(link);
+  return link;
+}
+
+// Only complete literal paths in the admitted set, with or without .md. Existing Markdown links
+// keep their meaning. A prefix of another filename or a URL is never promoted to an internal link.
+function linkSources(el, sources) {
+  const admitted = sourceTargets.merge([], sources, sourceTargets.PER_TURN);
+  if (!admitted.length) return;
+  const variants = new Map(admitted.map((item) => [item.path, item]));
+  for (const item of admitted) {
+    const short = item.path.slice(0, -3);
+    if (admitted.some((other) => other.path === short)) continue; // exact paths take precedence
+    if (variants.has(short) && variants.get(short)?.path !== item.path) variants.set(short, null);
+    else variants.set(short, item);
+  }
+  const names = [...variants].filter(([, item]) => item).map(([name]) => name).sort((a, b) => b.length - a.length);
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(names.map(escape).join("|"), "gu");
+  const word = (char) => char && /[\p{L}\p{N}_\/.%\\:#?~-]/u.test(char);
+  const doc = el.ownerDocument, walker = doc.createTreeWalker(el, 4); // SHOW_TEXT
+  const nodes = [];
+  while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest("a")) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.textContent, fragment = doc.createDocumentFragment();
+    let end = 0, changed = false;
+    for (const match of text.matchAll(pattern)) {
+      const at = match.index, after = at + match[0].length;
+      let beforeChar = text.charAt(at - 1);
+      if (beforeChar >= "\uDC00" && beforeChar <= "\uDFFF") beforeChar = text.slice(at - 2, at);
+      const charAt = (index) => index < text.length ? String.fromCodePoint(text.codePointAt(index)) : "";
+      const nextChar = charAt(after);
+      const sentenceEnd = nextChar === "." && !word(charAt(after + 1));
+      if (word(beforeChar) || (word(nextChar) && !sentenceEnd) || !variants.get(match[0])) continue;
+      fragment.appendChild(doc.createTextNode(text.slice(end, at)));
+      sourceLink(fragment, variants.get(match[0]), match[0]);
+      end = after;
+      changed = true;
+    }
+    if (changed) {
+      fragment.appendChild(doc.createTextNode(text.slice(end)));
+      node.replaceWith(fragment);
+    }
+  }
+}
+
+module.exports = { toHtml, renderReply, sanitize, sourceLink, linkSources };

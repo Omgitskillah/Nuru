@@ -1302,3 +1302,23 @@ def test_retitle_changes_a_title_only_if_it_is_still_the_one_read(tmp_path):
         assert store.retitle("missing", None, "x") is False and store.title("missing") is None
     finally:
         store.close()
+
+
+def test_read_sources_are_streamed_and_remain_in_saved_history_after_restart(harness):
+    h = harness([calls(
+        ("read_note", {"name": "alias"}, ToolOutcome("read text", True,
+            sources=({"path": "real.md", "heading": "Decisions"}, {"path": "trash/no.md"}))),
+        ("run_python", {"code": "raise ValueError()"}, ToolOutcome("failed script", False,
+            sources=({"path": "real.md"}, {"path": "other.md"}))),
+    )])
+    conversation = h.conversation()
+    turn_id = h.submit(conversation)[1]["turn_id"]
+    events = h.finished(turn_id)
+    results = [e["data"] for e in events if e["type"] == "tool_result"]
+    assert results[0]["sources"] == [{"path": "real.md", "heading": "Decisions"}]
+    assert not results[1]["ok"] and results[1]["sources"][-1] == {"path": "other.md"}
+    expected = [{"path": "real.md", "heading": "Decisions"}, {"path": "other.md"}]
+    assert h.service.conversation(ME, conversation, None, 10)["turns"][0]["display"]["sources"] == expected
+    h.close()
+    h.service = h.open()
+    assert h.service.conversation(ME, conversation, None, 10)["turns"][0]["display"]["sources"] == expected

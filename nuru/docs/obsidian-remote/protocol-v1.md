@@ -106,6 +106,30 @@ Every event has these fields:
 | `failed` | `turn_failed`, `model_unavailable`, `service_restarted` or `internal`, with a message fit to show the user. |
 | `cancelled` | `user` (Stop) or `shutdown`, with the reply so far (truncated the same way). |
 
+`tool_result.sources` is an optional list of at most 32 admitted reads, each `{path, heading?}`.
+It carries no note body: paths are portable vault-relative Markdown targets (at most 384 characters),
+and headings are at most 160 characters. The service takes these only from successful typed read
+results, not model-authored citations or requested aliases. A failed `run_python` can still carry
+successful prerequisite reads; a failed note read contributes none. Ordinary legacy text reads are
+not parsed as JSON for provenance. `read_note(include_source=true)` preserves model-visible text;
+the transport flag is hidden from the model schema, and revision snapshots keep their existing JSON
+contract without requesting extra metadata. Search admits only returned snippets/passages,
+and `note_info` admits its primary note, not outgoing/backlink targets.
+
+A requested source envelope with string `content` is unwrapped independently of link admission.
+An unsupported path (for example one containing `%`) therefore still returns the original note body;
+it simply has no automatic source link. An inadmissible heading falls back to the valid note path.
+Only a top-level trash folder is excluded (case-insensitively for portable path safety); a nested
+folder named Trash is an ordinary source. Revision snapshots retain their original JSON contract.
+
+Both Display implementations keep first-read order, one source per path (the first read's heading),
+and at most 128 sources per turn; per-call source metadata is also retained with its tool. These
+fields survive saved history and stream replay. Old saved displays without sources remain readable;
+no source is invented for an old turn. Bounds may omit later sources, never add an unverified one.
+The UI's Sources row, literal path links and read-step links use this admitted set. Existing explicit
+Markdown/wiki links retain their existing behavior and are not treated as verified sources merely
+because the model wrote them.
+
 A stream has these rules (`StreamCheck` enforces them):
 
 - It has exactly one terminal event (`completed`, `failed` or `cancelled`), and it is the

@@ -77,3 +77,42 @@ test("whatever gets through is cleaned", () => {
   assert.equal(el.querySelector("script, img, [onclick], [style]"), null);
   assert.deepEqual([...el.querySelectorAll("a")].map((a) => a.getAttribute("href")), [null, "nuru/Trip.md"]);
 });
+
+test("only admitted complete paths become links, in inline code or plain text, preserving all text", () => {
+  const text = '`nuru/Trip.md` and nuru/Plan; never-read.md. Also xnuru/Trip.md, nuru/Trip.md.bak, https://host/nuru/Trip.md and nuru/Trip.md#invented.';
+  const el = createDiv(), plain = createDiv();
+  renderReply(text, plain);
+  renderReply(text, el, [{ path: "nuru/Trip.md", heading: "Decisions" }, { path: "nuru/Plan.md" }]);
+  assert.equal(el.textContent, plain.textContent);
+  assert.deepEqual([...el.querySelectorAll("a.nuru-source")].map((a) => [a.textContent, a.getAttribute("data-href")]),
+    [["nuru/Trip.md", "nuru/Trip.md#Decisions"], ["nuru/Plan", "nuru/Plan.md"]]);
+  assert.equal(el.querySelector("code a").textContent, "nuru/Trip.md");
+});
+
+test("source matching escapes literal filename punctuation and avoids ambiguous shortened names", () => {
+  const el = createDiv();
+  renderReply("nuru/(2026) A+B.md and a.md and a and a.MD", el,
+    [{ path: "nuru/(2026) A+B.md" }, { path: "a.md" }, { path: "a.MD" }, { path: "a.md.md" }]);
+  assert.deepEqual([...el.querySelectorAll("a.nuru-source")].map((a) => a.getAttribute("data-href")),
+    ["nuru/(2026) A+B.md", "a.md", "a.MD"]);
+  assert.match(el.textContent, /and a and/);
+});
+
+test("literal sources keep sentence punctuation and Unicode word boundaries without rewriting existing links", () => {
+  const el = createDiv();
+  const text = 'nuru/🌍 Grüße.md. 𐐀a.md a.md𐐀 [a.md](https://example.test) [[a.md]] a.md';
+  renderReply(text, el, [{ path: "nuru/🌍 Grüße.md" }, { path: "a.md" }]);
+  assert.deepEqual([...el.querySelectorAll("a.nuru-source")].map((a) => a.textContent), ["nuru/🌍 Grüße.md", "a.md"]);
+  assert.equal(el.querySelector('a[href="https://example.test"]').textContent, "a.md");
+  assert.equal(el.querySelectorAll("a a").length, 0);
+});
+
+test("source metadata and labels cannot introduce HTML, URLs, or out-of-vault links", () => {
+  const { sourceLink } = require("../lib/render");
+  const el = createDiv();
+  const heading = '\"><img src="https://host/pixel">';
+  renderReply('a.md <script>bad()</script>', el, [{ path: "a.md", heading }, { path: "../outside.md" }, { path: "https://host/a.md" }]);
+  assert.equal(el.querySelector("a.nuru-source").getAttribute("data-href"), `a.md#${heading}`);
+  assert.equal(el.querySelector("script,img,[src],[onclick]"), null);
+  assert.equal(sourceLink(el, { path: "trash/no.md" }), null);
+});

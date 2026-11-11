@@ -5,6 +5,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const sources = require("./sources");
 
 const VERSION = 1;
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
@@ -49,6 +50,7 @@ class Display {
     this.reasoning = "";
     this.tools = []; // {call_id, name, ok: null | true | false}
     this.receipts = [];
+    this.sources = [];
     this.question = null; // the open one, waiting for an answer
     this.decisions = [];
     this.state = "accepted"; // accepted, queued, running, or the terminal type
@@ -68,9 +70,15 @@ class Display {
       case "text": this.reply += data.text; break;
       case "reasoning": this.reasoning = data.final ? data.text : this.reasoning + data.text; break;
       case "tool_start": this.tools.push({ call_id: data.call_id, name: data.name, ok: null }); break;
-      case "tool_result":
-        for (const tool of this.tools) if (tool.call_id === data.call_id) tool.ok = data.ok;
+      case "tool_result": {
+        const admitted = sources.merge([], data.sources);
+        for (const tool of this.tools) if (tool.call_id === data.call_id) {
+          tool.ok = data.ok;
+          if (admitted.length) tool.sources = admitted;
+        }
+        this.sources = sources.merge(this.sources, admitted, sources.PER_TURN);
         break;
+      }
       case "write_receipt": this.receipts.push(data); break;
       case "question": this.question = data; break;
       case "question_closed": this.question = null; this.decisions.push(data); break;
@@ -99,6 +107,7 @@ class Display {
   static from(saved) {
     const display = new Display();
     Object.assign(display, saved);
+    display.sources = sources.merge([], saved.sources, sources.PER_TURN);
     return display;
   }
 }

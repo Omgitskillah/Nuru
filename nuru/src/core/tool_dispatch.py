@@ -21,6 +21,7 @@ class ToolOutcome:
     certainty: str = "completed"  # completed | not_dispatched | not_completed | failed | uncertain
     repairable: bool = False
     attempt_id: int | None = None
+    sources: tuple[dict, ...] = ()
 
     @property
     def must_stop(self) -> bool:

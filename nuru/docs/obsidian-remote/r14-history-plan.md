@@ -40,6 +40,23 @@ or run new work. Lost-response settlement must report the hidden/purged state ra
 than silently unhiding or resubmitting. Undo after retention cannot recover text that
 was purged and must say so plainly.
 
+### Planned controls and remote permissions
+
+Keep the current conversation picker. Add a labelled search field with a clear
+control, a Hidden filter, and Rename/Delete actions for the selected conversation.
+Rename uses a small text dialog; Delete explains hiding, Undo and 30-day text purge,
+including retained logs/backups/evidence. After hiding, keep an Undo action and an
+explicit Hidden view for later recovery. Keyboard focus, drafts and selected text
+must remain stable; do not redraw a picker under an active selection needlessly.
+These controls are described before UI construction; no UI is shipped by slice 1.
+
+Proposed API permission: remote `chat:use` + `notes:read` can list/search/read but
+cannot rename, hide or Undo. Require a separate `history:write` scope for those
+mutations, granted explicitly by the host; it does not grant vault-note writes.
+Do not broaden existing read-device credentials during migration. Route checks,
+CSRF, ownership and revocation must enforce this independently of button visibility.
+The scope and routes are slice 2 work, not enabled by the storage foundation.
+
 ## Rename and title generation races
 
 Use a title revision plus explicit-user-name metadata, not just equality of strings.
@@ -113,3 +130,13 @@ large backups in Git or automatic vault mutation.
 
 Claude reviews security, retention/idempotency and UX before merge. Preserve existing
 parked branches and F31 design #90; R14 does not implement Restore or weaken its rules.
+
+## Slice 1 status
+
+Storage-only migration 5 adds title revision/manual-name and hidden/purge-state
+metadata. New store APIs cover literal Unicode search, owner-scoped rename/hide/Undo,
+retention candidates and expiry. Existing route/list contracts are unchanged; there
+is no new route, UI control, purge worker or text deletion yet. Host title-job busy
+checks and revision capture/application are required in slice 2 before exposing these
+operations. F25 tests stay unchanged except the general migration-version assertion,
+which must now expect schema 5; that is not a change to F25 behavioral expectations.

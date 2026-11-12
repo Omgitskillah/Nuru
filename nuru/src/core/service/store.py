@@ -92,12 +92,31 @@ _MIGRATIONS = {
     ALTER TABLE conversations ADD COLUMN model TEXT;     -- NULL: the configured model
     ALTER TABLE conversations ADD COLUMN thinking TEXT;  -- NULL: the model's default level
     """,
+    5: """
+    ALTER TABLE conversations ADD COLUMN title_rev INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE conversations ADD COLUMN title_by_user INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE conversations ADD COLUMN hidden_at TEXT;
+    ALTER TABLE conversations ADD COLUMN purging INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE conversations ADD COLUMN purged_at TEXT;
+    CREATE INDEX conversations_retention ON conversations(hidden_at, purged_at);
+    """,
 }
 TERMINAL_STATES = ("completed", "failed", "cancelled")
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _history_stamp(moment: datetime) -> str:
+    if moment.utcoffset() is None:
+        raise ValueError("history clock must be timezone-aware")
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _history_limit(limit: int) -> None:
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError("history limit must be 1-50")
 
 
 class ServiceBusy(RuntimeError):
@@ -136,6 +155,7 @@ class ServiceStore:
             raise
         self._conn.execute("PRAGMA foreign_keys = ON")
         try:
+            self._conn.create_function("casefold", 1, lambda value: str(value or "").casefold(), deterministic=True)
             self._migrate()
         except Exception:
             self.close()
@@ -259,10 +279,11 @@ class ServiceStore:
         row = self._conn.execute("SELECT title FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         return row[0] if row else None
 
-    def retitle(self, conversation_id: str, old: str | None, new: str) -> bool:
+    def retitle(self, conversation_id: str, old: str | None, new: str, *, expected_revision: int | None = None) -> bool:
         """Name the conversation `new` only if its title is still `old`: never over one set meanwhile."""
-        return self._conn.execute("UPDATE conversations SET title = ? WHERE id = ? AND title IS ?",
-                                  (new, conversation_id, old)).rowcount == 1
+        return self._conn.execute("UPDATE conversations SET title = ?, title_rev = title_rev + 1 WHERE id = ? AND title IS ? "
+                                  "AND (? IS NULL OR title_rev = ?)",
+                                  (new, conversation_id, old, expected_revision, expected_revision)).rowcount == 1
 
     def conversations(self, principal: str, before: str | None, limit: int) -> list[dict]:
         """Newest first; `before` is the last ID of the previous page."""
@@ -271,6 +292,66 @@ class ServiceStore:
             "AND (? IS NULL OR rowid < (SELECT rowid FROM conversations WHERE id = ?)) ORDER BY rowid DESC LIMIT ?",
             (principal, before, before, limit)).fetchall()
         return [dict(zip(("id", "title", "created_at"), row)) for row in rows]
+
+    # R14 storage foundation. Host routes and purge scheduling are deliberately separate.
+    def history_state(self, conversation_id: str, principal: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT id, store_id, title, title_rev, title_by_user, hidden_at, purging, purged_at "
+            "FROM conversations WHERE id = ? AND principal = ?", (conversation_id, principal)).fetchone()
+        return dict(zip(("id", "store_id", "title", "title_rev", "title_by_user", "hidden_at", "purging", "purged_at"), row)) if row else None
+
+    def rename_history(self, conversation_id: str, principal: str, revision: int, title: str) -> bool:
+        """Explicit user rename, including a same-string rename: revision still advances."""
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid title revision")
+        if not isinstance(title, str) or not title.strip() or len(title) > 200 or any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in title):
+            raise ValueError("title must be 1-200 characters without controls")
+        return self._conn.execute(
+            "UPDATE conversations SET title = ?, title_rev = title_rev + 1, title_by_user = 1 "
+            "WHERE id = ? AND principal = ? AND title_rev = ? AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL",
+            (title, conversation_id, principal, revision)).rowcount == 1
+
+    def hide_history(self, conversation_id: str, principal: str, now: datetime) -> bool:
+        """Caller must also exclude pending/running title jobs under the service lock."""
+        return self._conn.execute(
+            "UPDATE conversations SET hidden_at = ? WHERE id = ? AND principal = ? "
+            "AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM turns WHERE conversation_id = conversations.id "
+            "AND state NOT IN ('completed', 'failed', 'cancelled'))",
+            (_history_stamp(now), conversation_id, principal)).rowcount == 1
+
+    def undo_hide(self, conversation_id: str, principal: str, now: datetime) -> bool:
+        """Undo is refused at the exact retention boundary, even before maintenance runs."""
+        return self._conn.execute(
+            "UPDATE conversations SET hidden_at = NULL WHERE id = ? AND principal = ? AND hidden_at > ? "
+            "AND purging = 0 AND purged_at IS NULL",
+            (conversation_id, principal, _history_stamp(now - timedelta(days=30)))).rowcount == 1
+
+    def due_history(self, now: datetime, limit: int = 20) -> list[dict]:
+        """Bounded maintenance candidates, not a purge operation; identity rows are retained."""
+        _history_limit(limit)
+        return [dict(zip(("id", "principal", "store_id"), row)) for row in self._conn.execute(
+            "SELECT id, principal, store_id FROM conversations WHERE hidden_at <= ? "
+            "AND purged_at IS NULL ORDER BY hidden_at, rowid LIMIT ?",
+            (_history_stamp(now - timedelta(days=30)), limit))]
+
+    def history(self, principal: str, before: str | None = None, limit: int = 20, *, query: str = "", hidden: bool = False) -> list[dict]:
+        """Literal Unicode-casefolded title/prompt/reply search; no empty or purging rows."""
+        _history_limit(limit)
+        if not isinstance(query, str) or len(query) > 256 or any(0xD800 <= ord(c) <= 0xDFFF for c in query) or type(hidden) is not bool:
+            raise ValueError("invalid history filter")
+        rows = self._conn.execute(
+            "SELECT c.id, c.title, c.created_at, c.title_rev, c.hidden_at FROM conversations c "
+            "WHERE c.principal = ? AND c.purging = 0 AND c.purged_at IS NULL "
+            "AND (c.hidden_at IS NOT NULL) = ? "
+            "AND (? IS NULL OR c.rowid < (SELECT rowid FROM conversations WHERE id = ? AND principal = ?)) "
+            "AND EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id) "
+            "AND (instr(casefold(c.title), casefold(?)) > 0 OR EXISTS (SELECT 1 FROM turns t "
+            "WHERE t.conversation_id = c.id AND (instr(casefold(t.text), casefold(?)) > 0 "
+            "OR instr(casefold(CASE WHEN json_valid(t.final) THEN json_extract(t.final, '$.reply') ELSE '' END), casefold(?)) > 0))) "
+            "ORDER BY c.rowid DESC LIMIT ?",
+            (principal, int(hidden), before, before, principal, query, query, query, limit)).fetchall()
+        return [dict(zip(("id", "title", "created_at", "title_rev", "hidden_at"), row)) for row in rows]
 
     # ------------------------------------------------------------------ turns and events
     def add_turn(self, turn_id: str, conversation_id: str, request_id: str, text: str) -> None:

@@ -279,11 +279,17 @@ class ServiceStore:
         row = self._conn.execute("SELECT title FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         return row[0] if row else None
 
-    def retitle(self, conversation_id: str, old: str | None, new: str, *, expected_revision: int | None = None) -> bool:
+    def title_state(self, conversation_id: str) -> tuple | None:
+        """Worker snapshot for title generation; callers hold the service lock."""
+        return self._conn.execute("SELECT title, title_rev, title_by_user FROM conversations WHERE id = ?",
+                                  (conversation_id,)).fetchone()
+
+    def retitle(self, conversation_id: str, old: str | None, new: str, *, expected_revision: int | None = None, automatic: bool = False) -> bool:
         """Name the conversation `new` only if its title is still `old`: never over one set meanwhile."""
         return self._conn.execute("UPDATE conversations SET title = ?, title_rev = title_rev + 1 WHERE id = ? AND title IS ? "
-                                  "AND (? IS NULL OR title_rev = ?)",
-                                  (new, conversation_id, old, expected_revision, expected_revision)).rowcount == 1
+                                  "AND (? IS NULL OR title_rev = ?) AND (? = 0 OR title_by_user = 0) "
+                                  "AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL",
+                                  (new, conversation_id, old, expected_revision, expected_revision, automatic)).rowcount == 1
 
     def conversations(self, principal: str, before: str | None, limit: int) -> list[dict]:
         """Newest first; `before` is the last ID of the previous page."""

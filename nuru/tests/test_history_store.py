@@ -156,3 +156,27 @@ def test_history_clock_requires_timezone(store):
                  lambda: store.undo_hide('a','owner',NOW.replace(tzinfo=None)),
                  lambda: store.due_history(NOW.replace(tzinfo=None))]:
         with pytest.raises(ValueError): call()
+
+
+def test_search_thousands_of_turns_has_bounded_personal_scale_cost(store):
+    import time
+    seed(store, title='Other', prompt='Nothing', answer='Nothing')
+    with store.transaction():
+        for i in range(4000):
+            tid = f'scale-{i}'
+            store.add_turn(tid, 'a', f'req-{i}', 'Routine question ' + str(i))
+            store.end_turn(tid, 'completed', {'reply': 'Routine answer ' + ('STRASSE' if i == 3999 else str(i))})
+    start = time.monotonic()
+    assert [r['id'] for r in store.history('owner', query='straße')] == ['a']
+    assert store.history('owner', query='absent-term') == []
+    assert time.monotonic() - start < 5, 'two personal-scale searches must not take seconds per turn'
+
+
+def test_generated_title_rechecks_manual_and_visibility_at_application(store):
+    seed(store)
+    assert store.title_state('missing') is None
+    assert store.rename_history('a', 'owner', 0, 'Title')
+    assert not store.retitle('a', 'Title', 'Automatic', expected_revision=1, automatic=True)
+    assert store.retitle('a', 'Title', 'Explicit', expected_revision=1)
+    assert store.hide_history('a', 'owner', NOW)
+    assert not store.retitle('a', 'Explicit', 'Hidden title', expected_revision=2)

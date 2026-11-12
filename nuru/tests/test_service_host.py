@@ -1517,3 +1517,46 @@ def test_title_job_and_source_events_survive_together_in_reloaded_history(harnes
         assert history['turns'][0]['display']['tools'][0]['sources'] == expected
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('when', ['before', 'during'])
+def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when):
+    calls = []
+    def title(*args):
+        calls.append(1)
+        if when == 'during':
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+        return 'Generated'
+    h = titled(tmp_path, [reply('Answer')], title)
+    try:
+        cid = h.service.create_conversation(ME, {'request_id': protocol.new_id(), 'title': 'hello'})[1]['conversation_id']
+        if when == 'before':
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        h.service.close()
+        assert title_of(h.service, cid) == 'hello'
+        assert calls == ([] if when == 'before' else [1])
+    finally:
+        h.close()
+
+
+@pytest.mark.parametrize('rename_during', [False, True])
+def test_r14_explicit_title_can_replace_manual_name_but_not_later_same_string_rename(harness, rename_during):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    with h.service._lock, h.service.store.transaction():
+        assert h.service.store.rename_history(cid, ME, 1, 'old prompt')
+    def title(*args):
+        if rename_during:
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 2, 'old prompt')
+        return 'Explicit generated'
+    h.session.title = title
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    # close drains no queued work; wait for the worker to finish this explicit request.
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: not h.service._title_jobs and not h.service._title_active, WAIT)
+    assert title_of(h.service, cid) == ('old prompt' if rename_during else 'Explicit generated')

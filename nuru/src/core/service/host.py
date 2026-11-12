@@ -237,6 +237,8 @@ class Service:
             conversation = self.store.conversation(conversation_id, principal)
             if conversation is None:
                 raise ProtocolError("not_found", "no such conversation")
+            state = self.store.history_state(conversation_id, principal)
+            conversation["title_rev"] = state["title_rev"]
             turn = self.store.first_completed_turn(conversation_id)
             if turn is None or not turn["final"].get("reply", "").strip():
                 raise ProtocolError("conflict", "this conversation has no completed reply to name")
@@ -266,7 +268,8 @@ class Service:
             with self._lock:
                 if not stop() and new:
                     with self._atomic():
-                        self.store.retitle(conversation["id"], conversation["title"], new)
+                        self.store.retitle(conversation["id"], conversation["title"], new,
+                                           expected_revision=conversation["title_rev"])
         except Exception:
             print("nuru-serve: couldn't generate a conversation title:", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)
@@ -717,7 +720,10 @@ class Service:
                 if stop():
                     return
                 turns = self.store.turns(conversation_id, None, 2)
-                old = self.store.title(conversation_id)
+                row = self.store.title_state(conversation_id)
+                if row is None or row[2]:
+                    return
+                old, revision, _ = row
             if len(turns) != 1 or not (old is None or turns[0]["text"].startswith(old)):
                 return
             new = name(turns[0]["text"], live.stream.reply, stop)  # a model call: outside the lock
@@ -726,7 +732,7 @@ class Service:
                     if self._closing or self._unsafe:
                         return  # close() may already have returned: the database is no longer this service's
                     with self._atomic():
-                        self.store.retitle(conversation_id, old, new)
+                        self.store.retitle(conversation_id, old, new, expected_revision=revision, automatic=True)
         except Exception:
             print("nuru-serve: couldn't name a conversation:", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)

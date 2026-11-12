@@ -183,7 +183,7 @@ Not in this queue: WP02 and WP03 (their own plans), and the expert's items (ther
 - [ ] **R10** Parallel test runs with `OLLAMA_NUM_PARALLEL=2` and split test ranges.
 - [ ] **R12** Embedding cost: does the indexer need a pass every 30 s (`vault_indexer.INTERVAL_SECONDS`)? Can the embedding model be unloaded between uses?
 - [ ] **R13** Design proposal: router → evidence compiler → small-model draft → verification.
-- [ ] **R14** History panel extras: delete and rename, search, backfill titles, stop creating empty conversations. Port it onto main fresh; `ui-state` (7d526ff) is parked.
+- [ ] **R14** [History implementation plan](nuru/docs/obsidian-remote/r14-history-plan.md) (user-confirmed hide/Undo/30-day text purge and title/message search; preserve receipts/write evidence). History panel extras: delete and rename, search, backfill titles, stop creating empty conversations. Port it onto main fresh; `ui-state` (7d526ff) is parked.
 - [ ] **R15** Broken links as a system function that runs after renames and moves, not a model tool.
 - [ ] **R17** A separate date-time tool, only if `run_python`'s `datetime` isn't enough. (Python tool done 2026-10-05.)
 - [ ] **R20** Run on macOS, Windows and Linux.

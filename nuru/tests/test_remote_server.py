@@ -432,3 +432,26 @@ def test_session_response_explains_idle_and_absolute_expiry(remote):
     info = call(client, "GET", "/v1/session", cookie=cookie)[1]
     assert info["expires_at"] and info["idle_expires_at"]
     assert "24 hours idle or 7 days absolute" in info["renewal"]
+
+
+def test_remote_title_generation_requires_read_authority_csrf_and_rechecks_revocation(remote, monkeypatch):
+    client, credentials, local, service, built = remote
+    cookie, _ = pair(client, credentials, 'title-reader')
+    headers = {'Origin': ORIGIN, 'X-Nuru-CSRF': csrf(cookie)}
+    _, created, _ = call(client, 'POST', '/v1/conversations', {'request_id': 'remote-title-create'}, cookie=cookie, extra=headers)
+    cid = created['conversation_id']
+    path = f'/v1/conversations/{cid}/title'
+    payload = {'request_id': 'remote-title-req01'}
+    limited, _ = pair(client, credentials, 'no-read-title', scopes=('chat:use',))
+    assert call(client, 'POST', path, payload, cookie=limited,
+                extra={'Origin': ORIGIN, 'X-Nuru-CSRF': csrf(limited)})[0] == 403
+    assert call(client, 'POST', path, payload, cookie=cookie)[0] == 403
+    seen = []
+    def queued(principal, target, body, *, authorize):
+        assert target == cid and authorize(None)
+        seen.append(authorize)
+        return 202, {'v': 1, 'conversation_id': cid}
+    monkeypatch.setattr(service, 'generate_title', queued)
+    assert call(client, 'POST', path, payload, cookie=cookie, extra=headers)[0] == 202
+    credentials.revoke('title-reader')
+    assert not seen[0](None) and not built

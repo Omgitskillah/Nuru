@@ -100,6 +100,8 @@ class Service:
         self._changed = threading.Condition(self._lock)  # an event was stored, or the queue moved
         self._live: dict[str, _Live] = {}
         self._queue: deque[str] = deque()
+        self._title_jobs: deque[tuple] = deque()
+        self._title_active: str | None = None
         self._active: str | None = None
         self._session = None
         self.chat = "idle"  # idle, loading, ready, unavailable (status)
@@ -164,7 +166,7 @@ class Service:
         """Stop taking work if no turn is running or waiting, in the same step as the check, so none can be
         accepted in between. False, with nothing changed, if one is. close() still has to follow."""
         with self._lock:
-            if self._active or self._queue:
+            if self._active or self._queue or self._title_active or self._title_jobs:
                 return False
             self._closing = True
             return True
@@ -227,6 +229,47 @@ class Service:
             return 201, {"v": protocol.VERSION, "conversation_id": conversation_id}, conversation_id, None, None
 
         return self._request(principal, "create_conversation", payload, "", act)
+
+    def generate_title(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
+        """Explicitly name an older conversation, on the worker after chat work. Request replay never
+        starts another model call; a failed/interrupted title can be requested again with a new ID."""
+        def act():
+            conversation = self.store.conversation(conversation_id, principal)
+            if conversation is None:
+                raise ProtocolError("not_found", "no such conversation")
+            turn = self.store.first_completed_turn(conversation_id)
+            if turn is None or not turn["final"].get("reply", "").strip():
+                raise ProtocolError("conflict", "this conversation has no completed reply to name")
+            if self._title_active == conversation_id or any(job[0]["id"] == conversation_id for job in self._title_jobs):
+                raise ProtocolError("conflict", "a title is already being generated for this conversation")
+            if len(self._title_jobs) >= QUEUE_LIMIT:
+                raise ProtocolError("queue_full", "title requests are full; try again later", retry_after_seconds=5)
+            body = {"v": protocol.VERSION, "conversation_id": conversation_id}
+            return 202, body, conversation_id, None, lambda: self._title_jobs.append((conversation, turn, authorize))
+        return self._request(principal, "generate_title", payload, conversation_id, act)
+
+    def _generate_title(self, conversation, turn, authorize):
+        """Worker-only, with no model work under the store lock. Never overwrite a later rename."""
+        def stop():
+            return self._closing or self._unsafe or bool(self._queue) or (authorize is not None and not authorize(None))
+        try:
+            if stop():
+                return
+            session = self._ensure_session(conversation["store_id"])
+            if stop():
+                return
+            if hasattr(session, "use_model"):
+                session.use_model(conversation["model"], conversation["thinking"])
+            if stop():
+                return
+            new = session.title(turn["text"], turn["final"]["reply"], stop)
+            with self._lock:
+                if not stop() and new:
+                    with self._atomic():
+                        self.store.retitle(conversation["id"], conversation["title"], new)
+        except Exception:
+            print("nuru-serve: couldn't generate a conversation title:", file=sys.stderr)
+            traceback.print_exc(limit=5, file=sys.stderr)
 
     def submit_turn(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         def act():
@@ -544,12 +587,28 @@ class Service:
         try:
             while True:
                 with self._lock:
-                    while not self._queue and not self._closing:
+                    while not self._queue and not self._title_jobs and not self._closing:
                         self._changed.wait()
-                    if self._unsafe or not self._queue:
+                    if self._unsafe or self._closing:
                         return
-                    live = self._live[self._queue.popleft()]
-                    self._active = live.stream.turn_id
+                    if not self._queue:
+                        job = self._title_jobs.popleft()
+                        self._title_active = job[0]["id"]
+                    else:
+                        job = None
+                    if job is not None:
+                        live = None
+                    else:
+                        live = self._live[self._queue.popleft()]
+                        self._active = live.stream.turn_id
+                if job is not None:
+                    try:
+                        self._generate_title(*job)
+                    finally:
+                        with self._lock:
+                            self._title_active = None
+                            self._changed.notify_all()
+                    continue
                 completed = False
                 try:
                     with self._lock:

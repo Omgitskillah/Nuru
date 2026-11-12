@@ -80,6 +80,8 @@ class NuruClient {
 
   conversation(id, limit = 50) { return this.request("GET", `/v1/conversations/${encodeURIComponent(id)}?limit=${limit}`); }
 
+  generateTitle(id, requestId) { return this.post(`/v1/conversations/${encodeURIComponent(id)}/title`, {}, requestId); }
+
   createConversation(title, requestId) { return this.post("/v1/conversations", title ? { title } : {}, requestId); }
 
   // `choice` ({model, thinking}, either optional) changes the conversation's model or thinking level

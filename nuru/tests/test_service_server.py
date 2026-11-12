@@ -389,3 +389,32 @@ def test_the_scripted_server_runs_scenarios_end_to_end(tmp_path):
     finally:
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10) == (1 if os.name == "nt" else 0)  # Windows' SIGTERM is TerminateProcess
+
+
+def test_generate_title_http_is_authenticated_idempotent_and_schema_checked(served):
+    from test_service_host import named
+    client, service, credentials, built = served
+    headers = {'Content-Type': 'application/json'}
+    _, created, _ = client.call('POST', '/v1/conversations', {'request_id': 'f25-create-000001', 'title': 'old'}, headers=headers)
+    cid = created['conversation_id']
+    with service._lock, service.store.transaction():
+        service.store.add_turn('f25-turn-000001', cid, 'f25-turn-req00001', 'A Lisbon trip')
+        service.store.end_turn('f25-turn-000001', 'completed', {'reply': 'Flights and hotels'})
+    factory = service._factory
+    calls = []
+    def titled(store_id):
+        session = factory(store_id)
+        session.title = lambda message, reply, stop: calls.append((message, reply)) or 'Lisbon travel plans'
+        return session
+    service._factory = titled
+    path = f'/v1/conversations/{cid}/title'
+    payload = {'request_id': 'f25-title-000001'}
+    assert client.call('POST', path, payload, token=None, headers=headers)[0] == 401
+    assert client.call('POST', path, {**payload, 'title': 'Injected'}, headers=headers)[0] == 400
+    assert client.call('POST', '/v1/conversations/missing/title', payload, headers=headers)[0] == 404
+    assert client.call('POST', path, payload, headers=headers)[:2] == (202, {'v': 1, 'conversation_id': cid})
+    assert named(service, cid, 'Lisbon travel plans')
+    assert client.call('POST', path, payload, headers=headers)[0] == 202
+    assert calls == [('A Lisbon trip', 'Flights and hotels')]
+    _, history, _ = client.call('GET', f'/v1/conversations/{cid}')
+    assert history['title'] == 'Lisbon travel plans'

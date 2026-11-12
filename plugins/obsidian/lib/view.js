@@ -73,6 +73,9 @@ class ChatView extends ItemView {
     this.registerDomEvent(this.picker, "change", () => this.openConversation(this.picker.value || null));
     const fresh = header.createEl("button", { text: "New", attr: { "aria-label": "New conversation" } });
     this.registerDomEvent(fresh, "click", () => this.openConversation(null));
+    this.titleButton = header.createEl("button", { text: "Title", attr: { "aria-label": "Generate conversation title",
+      title: "Generate a title from the first completed reply, using this conversation’s model" } });
+    this.registerDomEvent(this.titleButton, "click", () => this.generateTitle());
     this.serviceEl = root.createDiv({ cls: "nuru-service" });
     this.statusEl = root.createDiv({ cls: "nuru-status", attr: { role: "status" } });
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
@@ -364,6 +367,22 @@ class ChatView extends ItemView {
     }
     if (this.conversationId === message.conversationId && !this.turns.has(turnId)) {
       this.addTurn(turnId, message.text, undefined, { namesConversation: started });
+    }
+  }
+
+  async generateTitle() {
+    if (!this.conversationId || !this.client || this.titleButton.disabled) return;
+    const generation = this.generation, id = this.conversationId;
+    this.titleButton.disabled = true;
+    try {
+      await this.client.generateTitle(id, newRequestId());
+      if (generation !== this.generation) return;
+      new Notice("Nuru: title requested. Chat takes priority; the existing title stays if generation fails.");
+      await this.showTitles();
+    } catch (error) {
+      if (generation === this.generation) this.setStatus(`Couldn't generate a title: ${error.message}`, true);
+    } finally {
+      this.titleButton.disabled = false;
     }
   }
 

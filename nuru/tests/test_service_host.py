@@ -1322,3 +1322,198 @@ def test_read_sources_are_streamed_and_remain_in_saved_history_after_restart(har
     h.close()
     h.service = h.open()
     assert h.service.conversation(ME, conversation, None, 10)["turns"][0]["display"]["sources"] == expected
+
+# F25 explicit backfill: the existing automatic first-turn naming stays unchanged.
+def seed_old_conversation(h, title='old prompt', *, state='completed', reply_text='Original answer', model=None):
+    cid = h.conversation(request_id=protocol.new_id())
+    with h.service._lock, h.service.store.transaction():
+        h.service.store.retitle(cid, None, title)
+        h.service.store.set_conversation_model(cid, model, None)
+        h.service.store.add_turn(protocol.new_id(), cid, protocol.new_id(), 'Original prompt')
+        turn = h.service.store.turns(cid, None, 1)[0]
+        h.service.store.end_turn(turn['id'], state, {'reply': reply_text})
+    return cid
+
+
+def test_explicit_title_backfill_uses_first_successful_reply_and_recorded_model(harness):
+    h = harness([])
+    cid = seed_old_conversation(h, model='chosen-model')
+    selected, called = [], []
+    h.session.use_model = lambda model, thinking: selected.append((model, thinking))
+    h.session.title = lambda message, reply, stop: called.append((message, reply)) or 'A useful title'
+    payload = {'request_id': 'backfill-request-0001'}
+    assert h.service.generate_title(ME, cid, payload) == (202, {'v': 1, 'conversation_id': cid})
+    assert named(h.service, cid, 'A useful title')
+    assert h.service.generate_title(ME, cid, payload)[0] == 202
+    assert called == [('Original prompt', 'Original answer')]
+    assert selected == [('chosen-model', None)]
+    assert len(h.service.store.turns(cid, None, 50)) == 1, 'backfill is not a chat turn'
+    h.close()
+    h.service = h.open()
+    assert title_of(h.service, cid) == 'A useful title'
+
+
+def test_title_backfill_cannot_read_another_principals_history_or_an_empty_reply(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    for target, owner, code in [(cid, SOMEONE_ELSE, 'not_found'), ('missing', ME, 'not_found')]:
+        with pytest.raises(ProtocolError) as error:
+            h.service.generate_title(owner, target, {'request_id': protocol.new_id()})
+        assert error.value.code == code
+    for state, text in [('failed', 'partial'), ('cancelled', 'partial'), ('completed', '  ')]:
+        target = seed_old_conversation(h, state=state, reply_text=text)
+        with pytest.raises(ProtocolError) as error:
+            h.service.generate_title(ME, target, {'request_id': protocol.new_id()})
+        assert error.value.code == 'conflict'
+    target = h.conversation(request_id=protocol.new_id())
+    with pytest.raises(ProtocolError):
+        h.service.generate_title(ME, target, {'request_id': protocol.new_id()})
+    assert not h.built
+
+
+def test_backfill_gives_way_to_chat_and_never_overwrites_a_later_rename(harness):
+    h = harness([reply('Chat answer')])
+    cid = seed_old_conversation(h)
+    entered, release, interrupted = threading.Event(), threading.Event(), threading.Event()
+    def title(message, reply_text, stop):
+        entered.set()
+        assert release.wait(WAIT)
+        if stop(): interrupted.set()
+        return 'Stale generated title'
+    h.session.title = title
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    assert entered.wait(WAIT)
+    assert not h.service.close_if_idle(), 'do not switch the service vault under title work'
+    with pytest.raises(ProtocolError) as error:
+        h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    assert error.value.code == 'conflict'
+    with h.service._lock, h.service.store.transaction():
+        h.service.store.retitle(cid, 'old prompt', 'User rename')
+    _, body = h.submit(cid, 'Continue', request_id=protocol.new_id())
+    release.set()
+    h.finished(body['turn_id'])
+    assert interrupted.is_set() and title_of(h.service, cid) == 'User rename'
+
+
+def test_backfill_queue_is_bounded_and_chat_runs_first(harness):
+    gate = threading.Event()
+    h = harness([held(gate, 'busy')])
+    busy = h.conversation()
+    turn = h.submit(busy)[1]['turn_id']
+    h.first(turn, 'text')
+    calls = []
+    h.session.title = lambda *args: calls.append(1) or 'Generated'
+    targets = [seed_old_conversation(h) for _ in range(host.QUEUE_LIMIT + 1)]
+    for cid in targets[:-1]: h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    with pytest.raises(ProtocolError) as error:
+        h.service.generate_title(ME, targets[-1], {'request_id': protocol.new_id()})
+    assert error.value.code == 'queue_full' and not calls
+    gate.set()
+    h.finished(turn)
+    assert named(h.service, targets[-2], 'Generated')
+
+
+@pytest.mark.parametrize('result', [None, 'raises', 'renamed', 'revoked'])
+def test_failed_or_stale_backfill_preserves_existing_title(harness, result):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    done = threading.Event()
+    allowed = [True]
+    def title(*args):
+        try:
+            if result == 'raises': raise RuntimeError('failure')
+            if result == 'renamed':
+                with h.service._lock, h.service.store.transaction():
+                    h.service.store.retitle(cid, 'old prompt', 'User rename')
+            if result == 'revoked': allowed[0] = False
+            return None if result == None else 'Generated'
+        finally: done.set()
+    h.session.title = title
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()}, authorize=lambda _: allowed[0])
+    assert done.wait(WAIT)
+    assert h.service.close()
+    assert title_of(h.service, cid) == ('User rename' if result == 'renamed' else 'old prompt')
+
+
+def test_revoked_title_job_does_not_load_a_model(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()}, authorize=lambda _: False)
+    assert h.service.close()
+    assert not h.built and title_of(h.service, cid) == 'old prompt'
+
+
+def test_backfill_skips_failed_partial_and_uses_oldest_completed_reply(harness):
+    h = harness([])
+    cid = seed_old_conversation(h, state='failed', reply_text='Do not summarise this')
+    with h.service._lock, h.service.store.transaction():
+        for index, answer in enumerate(['First good answer', 'Later answer']):
+            tid = protocol.new_id()
+            h.service.store.add_turn(tid, cid, protocol.new_id(), f'Prompt {index}')
+            h.service.store.end_turn(tid, 'completed', {'reply': answer})
+    calls = []
+    h.session.title = lambda message, reply, stop: calls.append((message, reply)) or 'Summary'
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    assert named(h.service, cid, 'Summary')
+    assert calls == [('Prompt 0', 'First good answer')]
+
+
+def test_waiting_title_survives_queued_chat_and_runs_after_both_turns(harness):
+    release = threading.Event()
+    h = harness([held(release, 'First chat'), reply('Second chat')])
+    busy = seed_old_conversation(h, title='Keep this chat name')
+    target = seed_old_conversation(h, title='Needs a title')
+    first = h.submit(busy, 'First', request_id=protocol.new_id())[1]['turn_id']
+    h.first(first, 'text')
+    observed = []
+    def title(message, answer, stop):
+        with h.service._lock:
+            observed.append([h.service.store.turn(tid, ME)['state'] for tid in (first, second)])
+        return 'Generated after chat'
+    h.session.title = title
+    try:
+        h.service.generate_title(ME, target, {'request_id': protocol.new_id()})
+        second = h.submit(busy, 'Second', request_id=protocol.new_id())[1]['turn_id']
+        assert not observed
+        release.set()
+        assert h.finished(first)[-1]['type'] == 'completed'
+        assert h.finished(second)[-1]['type'] == 'completed'
+        assert named(h.service, target, 'Generated after chat'), 'queued chat must not cause title work to be discarded'
+        assert observed == [['completed', 'completed']]
+    finally:
+        release.set()
+
+
+def test_title_job_and_source_events_survive_together_in_reloaded_history(harness):
+    release, reading = threading.Event(), threading.Event()
+    expected = [{'path': 'nuru/Trip.md', 'heading': 'Trip'}]
+    def source_turn(session, text, cancel):
+        reading.set()
+        assert release.wait(WAIT)
+        yield from calls(('read_note', {'name': 'Trip'}, ToolOutcome('Trip content', True,
+            sources=tuple(expected))))(session, text, cancel)
+    h = harness([source_turn])
+    cid = seed_old_conversation(h, title='Original title')
+    turn_id = h.submit(cid, 'Read Trip', request_id=protocol.new_id())[1]['turn_id']
+    assert reading.wait(WAIT)
+    seen = []
+    def title(message, answer, stop):
+        with h.service._lock:
+            seen.append(h.service.store.turn(turn_id, ME)['state'])
+        return 'A titled trip'
+    h.session.title = title
+    try:
+        h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+        release.set()
+        events = h.finished(turn_id)
+        assert next(e['data']['sources'] for e in events if e['type'] == 'tool_result') == expected
+        assert named(h.service, cid, 'A titled trip')
+        assert seen == ['completed'], 'title work must wait while the turn emits sources'
+        h.close()
+        h.service = h.open()
+        history = h.service.conversation(ME, cid, None, 10)
+        assert history['title'] == 'A titled trip'
+        assert history['turns'][0]['display']['sources'] == expected
+        assert history['turns'][0]['display']['tools'][0]['sources'] == expected
+    finally:
+        release.set()

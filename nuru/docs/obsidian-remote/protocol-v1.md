@@ -54,12 +54,32 @@ The service makes no tool or model call before all four checks pass.
 | `POST /v1/conversations` | `create_conversation` | `{v, conversation_id}` |
 | `GET /v1/conversations?before=&limit=` | none | `{v, conversations: [{id, title, created_at}]}`, newest first. `limit` is at most 50 (default 20); `before` is the last ID of the previous page. |
 | `GET /v1/conversations/{id}?before=&limit=` | none | `{v, conversation_id, title, created_at, model, thinking, turns: [{turn_id, text, state, display}]}`, newest first, at most 50 turns per page. `display` is what `Display` shows for the turn. |
+| `POST /v1/conversations/{id}/title` | `generate_title` (`{request_id}`) | 202 `{v, conversation_id}`: explicit background title generation from the oldest completed reply; 409 if no usable reply or already pending. |
 | `POST /v1/conversations/{id}/turns` | `submit_turn` | 202 `accepted_turn`, sent once acceptance is stored and before generation starts |
 | `GET /v1/turns/{id}/events?after={seq}` | none | Replays the events after `seq`, then follows live ones until the terminal event |
 | `POST /v1/turns/{id}/cancel` | `cancel_turn` | 202 `{v, conversation_id, turn_id}`, also for a turn that has already ended |
 | `POST /v1/questions/{id}/answers` | `answer_question` | 200 `{v, ...}` with the `question_closed` data, or 409 `question_closed` / `wrong_operation` |
 | `GET /v1/requests/{request_id}?operation=` | none | `request_state`, for a client that lost the response |
 | `POST /v1/service/stop` | `{stop_key}` | Only on the local listener, and only for a service started with `--managed` (by the Obsidian plugin), which writes the key to `~/.nuru/service/managed.json`, owner-only. 202 `{stopping: true}`, after which the service shuts down as for Ctrl-C; 403 `forbidden` for a wrong key; 409 `conflict` while a turn is running or waiting; 404 for any other service. This is how a plugin in another vault switches the service to its own. |
+
+### Conversation titles
+
+New conversations already receive a short title after their first successful reply, using the model
+that ran that reply. Failure preserves the client's initial title. The plugin's **Title** button
+requests the same operation for a selected older conversation; it can replace its existing title.
+Only that conversation's first completed prompt/reply is used, never an entire history batch or a
+failed partial reply. The conversation's saved model (or the configured default when none is saved)
+provides the title; a Claude conversation therefore sends that bounded excerpt to Claude.
+
+Title requests share the single worker, behind chat turns, with at most four pending requests.
+They never create turns or change notes. New chat work, shutdown or device revocation cancels a
+running title request on its next cancellation check. A title is committed only if it still matches
+the one at acceptance: a later rename is preserved. Generation/model failure keeps the old title.
+The HTTP 202 acknowledges acceptance, not successful generation. Pending work is best effort and is
+not resumed after a service restart; retry with a new request ID if needed. Replaying an accepted
+request returns its original receipt without generating again. The plugin checks for the new title
+for ten seconds; a later result appears next time history is loaded. Existing services without this
+optional route return 404 and the plugin reports that failure without changing the title.
 
 ### Request IDs
 

@@ -23,13 +23,18 @@ older journal point; derive the complete affected-file revert plan from trusted
 history rather than accepting arbitrary paths or replacement bytes. Ask which point
 if the user's intended target is ambiguous.
 
-**User's conflict rule:** preflight the whole plan before changing any vault file.
-If there are conflicts, ask for explicit confirmation of the complete revert. If
-approved, revert the affected files fully to the selected older point, preserving
-the displaced current versions in the journal. If declined, expired or cancelled,
-change nothing in the vault: no partial revert and no automatic recovery copies.
-Without conflicts, proceed under the existing write-permission rules. This does not
-rewind unrelated vault files or grant cross-conversation/model authority.
+**Directly confirmed policy, 2026-11-12:** before every Restore, show affected notes
+and ask the user to pause editing and confirm. Combine any conflicts into that same
+code-owned prompt. No/expiry/cancellation means zero vault changes. Yes authorizes
+the preflighted target plan, with displaced current versions journaled. The UI must
+state that edits saved after confirmation may still be lost: this is a coordinated
+pause agreement, not an OS lock or a guarantee against non-cooperating editors.
+
+A failed multi-file batch stops and reports exactly which steps completed. Offer
+**Continue** or **Undo completed steps**, each with fresh preflight and confirmation.
+Every completed step is its own journaled inverse entry; never label a partial run
+successful. Full-batch filesystem atomicity is not a release requirement. Scope
+remains the current conversation's journaled changes, not unrelated vault files.
 
 ## Existing code and constraints
 
@@ -65,8 +70,8 @@ a **user-requested journal Restore** may change an existing affected file back t
 recorded point, with code-owned conflict approval when needed. This is not a general
 replace tool or permission to apply proposals automatically. Derive its exact scope
 from history and current authorization; preserve displaced versions and revalidate
-approval. No-conflict Restore still follows existing user-intent/write-permission
-checks, without adding an unnecessary conflict question.
+approval. Even a conflict-free Restore now asks the user to pause editing and
+confirm; combine pause and conflict information into one prompt, not two.
 
 Keep legacy replacement/backup records recoverable; tests for those records do not
 mean ordinary replacement of user notes is re-enabled after F27. Capture the full
@@ -88,27 +93,39 @@ not user-note versions; specify their separate recovery behavior rather than off
 Restore of arbitrary internal files. User/Obsidian edits made independently of Nuru
 are conflict inputs, not changes Nuru claims to have authored.
 
-### Safety gate: a hash check is not an atomic compare-and-swap
+### Publication safety under the confirmed pause agreement
 
-Current update/remove code checks content and then replaces/unlinks a pathname.
-Pinned directories prevent path redirection, but do not alone exclude another
-editor's write in that interval. Do not claim that reusing these helpers proves
-"never overwrite an unapproved later user edit." The same issue affects a source removed after
-checking its bytes during a move. A portable lock between Nuru processes is not an
-external-editor lock. Equal bytes need no separate ABA-history detection: identical current bytes do not
-lose different content. File identity and alias checks remain for path safety.
+A hash pre-check followed by ordinary replace/unlink is not an atomic compare-and-swap
+against external editors. Pinning directories prevents path redirection, not every
+in-place competing edit. The user confirmed a coordinated editing pause rather than
+a mandatory exclusion mechanism. Do not describe confirmation as an OS lock.
 
-Before destructive Restore is enabled on a platform, implement and independently
-review a publication primitive that either excludes the relevant competing writes
-for its whole check/commit interval or preserves any displaced version with a
-provable recovery path. Include inode/file-identity and alias cases in that proof.
-A final pre-check followed by ordinary replace/unlink is insufficient. Do not
-invent a cross-platform guarantee from APIs only one OS provides.
+Before any Restore write, show the full affected-note list and ask the user to stop
+editing those notes and confirm. With conflicts, include their paths and change kinds
+in the same question, not note bytes. With none, say "Restore will change these notes;
+stop editing them, then confirm." Explicitly warn that an edit saved after confirmation
+is not protected and may be overwritten.
 
-If this guarantee cannot be met on a filesystem/platform, **leave the current file
-unchanged and offer recovery as a new copy**. Such platforms are copy-only for that
-operation; list this limitation in the UI and release criteria. This is an explicit
-implementation gate, not a solved detail or permission to weaken the requirement.
+After Yes, reacquire cooperating-writer locks, re-capture/re-hash and revalidate the
+plan, and journal each step's current bytes before publication. Changed known states
+invalidate approval and require fresh preflight/confirmation. Publish complete staged
+files by same-volume atomic rename where supported, then re-read and verify. New-file
+publication remains no-clobber. Source removal and moves retain pinned path/identity
+checks and their crash-safe intent; do not turn a move into unrecorded delete/copy.
+Post-check anomalies leave the step uncertain and retain all available versions.
+
+This sequence shrinks but does not eliminate the lost-update window: capture A,
+external save B, publish target T, read T leaves B unrecorded. A post-read detects
+some surviving edits, not an overwritten B. The UI, docs and forced-interleaving tests
+must acknowledge that residual limitation rather than claim protection the OS does
+not provide. Equal bytes need no separate ABA-history detector; path/alias identity
+checks remain for redirection safety.
+
+Test the supported APFS/macOS and NTFS/Windows publication paths. Refuse destructive
+Restore for cross-volume publication, reparse redirection or filesystems/operations
+where the reviewed safe publication contract cannot be met. Offer copy-only recovery
+as a separate explicit choice, never as an automatic consequence of No. No broad
+filesystem-proof project or claim of multi-file atomicity is required by this policy.
 
 ## Identity, ownership and storage
 
@@ -259,7 +276,7 @@ conversation and enforce ordinary mutation approval; no arbitrary trash listing.
 | --- | --- | --- |
 | Create | Whole-plan preflight and publication safety gate pass; any changed current state is explicitly confirmed | Restore absence; retain bytes in the inverse journal |
 | Append/replace | All current affected states are checked; any conflicts are explicitly confirmed | Restore exact before-bytes and handle secondary backup effects together |
-| Move/rename/archive/trash | All source/destination/secondary states are checked; occupied destinations require explicit conflict confirmation and preservation | No-clobber move back, followed by verified index reconciliation |
+| Move/rename/archive/trash | All source/destination/secondary states are checked; occupied destinations require explicit conflict confirmation and preservation | Move back after any explicitly approved, journaled displacement; preserve all unapproved data and reconcile the index |
 | Prior Restore | Same whole-plan preflight/confirmation on current states | Undo that Restore; preserve displaced versions |
 
 Evaluate existence, bytes, identity/aliases and permitted mode metadata, not mtime
@@ -273,7 +290,7 @@ gets only a narrowly reviewed exception for its recorded effects. The server der
 paths from the entry, rechecks them and never accepts an arbitrary trash path. Updating
 its tool descriptions and permission classification is part of that implementation.
 
-### Whole-plan conflict confirmation
+### Whole-plan pause and conflict confirmation
 
 1. Resolve the older point, all affected paths, intermediate move dependencies and
    final target states. Include replacement backups and derived index operations.
@@ -285,9 +302,10 @@ its tool descriptions and permission classification is part of that implementati
    with expected history. Present a bounded summary of every conflict and what the
    revert would replace, recreate, move or remove. Do not apply conflict-free entries
    first while waiting to ask about the rest.
-3. If conflicts exist, issue a **code-owned confirmation** tied to principal, vault,
+3. For every Restore, issue one **code-owned pause/conflict confirmation** tied to principal, vault,
    conversation, target point, full plan digest, current-state identities/hashes,
-   conflict set and expiry. The model cannot supply `force=true`, mint approval or
+   conflict set and expiry. Include the editing-pause request and after-confirmation
+   save warning even when there are no conflicts. The model cannot supply `force=true`, mint approval or
    treat its own statement that the user approved as consent. Reuse the existing
    write-approval infrastructure where suitable, with an explicit Restore operation.
    Release writer locks while waiting; never block the vault behind a question.
@@ -296,12 +314,13 @@ its tool descriptions and permission classification is part of that implementati
    Read-only preview/audit metadata is not a completed mutation.
 5. After Yes, reacquire locks and revalidate the entire frozen plan. If any affected
    path, authority, conflict or target changed, invalidate approval and preflight
-   again; seek fresh confirmation for the changed conflicts. Approval is single-use
+   again; seek fresh pause/conflict confirmation for the changed plan. Approval is single-use
    and cannot authorize a later unknown file state.
 6. Durably journal all current versions that will be displaced, including a file
    occupying an original destination, before publication. Execute the complete
-   approved target plan with reviewed safe primitives; reconcile and verify every
-   path/index effect before reporting full success. The new Restore entry's before
+   approved target plan newest first with reviewed safe primitives; each completed
+   step gets its own inverse entry, with path/index verification. Report full success
+   only once every step finishes. The new Restore entry's before
    state is the actual approved current state, not a guessed historical snapshot,
    so this conflict-approved revert can itself be undone.
 
@@ -318,21 +337,24 @@ or Markdown normalization.
 
 ### Batch failure and crash semantics
 
-The user wants the complete revert, not a silently applied subset. Preflight,
-confirmation and capacity reservation therefore cover the entire batch. Design and
-independently review staging, compensation and durable batch recovery before this
-API can claim that behavior. Reject before publication when the platform cannot
-meet the reviewed contract. A preflight followed by sequential ordinary writes is
-not sufficient proof of all-or-nothing behavior against other editors.
+The directly confirmed behavior is stepwise and recoverable, not a cross-file atomic
+transaction. Preflight and confirmation cover the full requested older-point plan;
+apply journaled steps newest first. On the first failure, stop and report the exact
+completed, failed/uncertain and unattempted steps. Say "partially reverted: N of M
+steps completed" when applicable; never claim the full revert succeeded.
 
-SQLite cannot atomically commit a multi-file vault transaction. Power loss or an
-I/O failure during publication can leave an uncertain partially published batch;
-retain all before/target versions, block conflicting writes and reconcile through
-the existing crash protocol. Never report a full revert or retry/overwrite a newer
-external edit automatically. The implementation must explicitly define recoverable
-commit/rollback guarantees and surface unresolved state rather than claim physical
-atomicity across files. This failure-mode proof is an additional implementation
-release gate, not permission to perform a partial normal Restore.
+Offer **Continue** (the remaining plan) and **Undo completed steps** (inverse entries
+for the successful steps). Neither runs automatically. Both require fresh whole-plan
+preflight, a code-owned pause/conflict confirmation and current permission checks.
+A failed or uncertain step must be reconciled before either choice can touch its paths.
+Recheck other affected paths too; do not roll back a user's later edits under stale
+approval. Every completed continuation/undo step is journaled and idempotent.
+
+Power loss or I/O failure can leave a prepared step partly published. Retain its
+before/target versions, block conflicting writes and reconcile through the crash
+protocol. Never rerun the original mutation from a lost request receipt. Report
+unresolved state honestly rather than inventing atomicity or attempting an unattended
+compensating revert. Pre-confirmation No still means no vault changes at all.
 
 ## Retention, capacity and privacy
 
@@ -370,9 +392,8 @@ remain review questions; do not ship automatic deletion from this document.
 | --- | --- |
 | A: journal foundation | Versioned SQLite/blobs, identity/permissions, writer lock, capacity reservations, corruption refusal, deterministic crash-window tests |
 | B: mutation integration | Capture resolved effects under the backend boundary; ledger/receipt mapping; create/append/replace/move/archive/trash byte and index checks; all side effects accounted for |
-| C: publication safety | Independently reviewed race/identity behavior per OS and filesystem. Destructive Restore stays disabled for any unproven operation; copy-only fallback works |
-| D: manual Restore | Journal-point route/CLI, whole-batch preflight, code-owned conflict confirmation, no changes on decline, preserved displaced bytes and verified full-revert receipts |
-| E: model tool (user confirmed 2026-11-10) | Trusted current-conversation scope, older-point resolution, existing write permissions, whole-plan conflict confirmation, bounded description and local Qwen/Granite evaluation |
+| C/D: publication and manual Restore | APFS/NTFS path/identity and staged-publication tests; one pause/conflict prompt per action, recapture and preserved bytes; stepwise failure reporting/Continue/Undo; copy-only for unsupported publication |
+| E: model tool (user confirmed 2026-11-10) | Trusted current-conversation scope, older-point resolution, existing write permissions, whole-plan pause/conflict confirmation, bounded description and local Qwen/Granite evaluation |
 | F: retention/release | Approved cap/clear behavior, safe GC, migration/restart/copy/rebind tests, no-sync/privacy review and platform limitations documented |
 
 Backend work belongs in its separately reviewed repository; parent changes pin only
@@ -403,9 +424,11 @@ coverage numbers alone do not establish safety.
   identity, reparse points, sharing/ACLs, line endings, directory descriptors and
   publication/durability behavior. Document limitations elsewhere rather than claim
   universal power-loss guarantees. Do not remove core path/race safety tests.
-- Panel/CLI/model: conflict-free full revert, conflicts approved/declined/expired,
-  zero vault changes on No, no subset before confirmation, preservation of displaced
-  bytes, stale-plan re-confirmation, duplicate approval/replay and batch crash recovery.
+- Panel/CLI/model: conflict-free Restore still asks for a pause; conflicts share the
+  same prompt; Yes/No/expiry; zero changes on No; no subset before confirmation;
+  preserved displaced bytes; stale-plan re-confirmation; duplicate approval/replay;
+  partial-progress failure reporting and fresh-confirmed Continue/Undo-completed.
+  Test the documented lost-update interleaving without claiming the post-check saves it.
   Check old receipts whose bytes expired, explicit copy choice and keyboard access. Capture possible test-vault states; list manual
   states that remain unavailable. Never use the live vault for evidence.
 
@@ -421,36 +444,27 @@ conflict detection/confirmation, no-op on decline, permission behavior and regre
 Report model/prompt/fixture/scorer hashes, counts and failures in the implementation
 PR. No trial is run or acceptance number claimed by this design PR.
 
-## Outstanding user choices after Claude's 2026-11-10 review
+## Direct user decisions recorded 2026-11-12
 
-Two questions have been sent directly to the user and remain pending:
-
-- Whether Restore must require a coordinated pause in editing, or may accept the
-  residual overwrite race with non-cooperating editors.
-- Whether an interrupted multi-file revert may stop with exact partial-progress
-  reporting and Continue/Undo-completed actions, or full-batch behavior remains a
-  release requirement.
-
-Do not adopt a weaker guarantee before those answers. In particular, re-capture,
-atomic rename and a post-read cannot reliably detect an external edit that happened
-between capture and rename and was overwritten: if the post-read equals the target,
-the overwritten version may already be gone and is absent from the journal. Atomic
-rename prevents torn publication, not this lost-update race. A post-read remains
-useful for edits that survive after publication, but is not proof no edit was lost.
-The proposed partial-progress behavior must likewise never be presented as a
-completed full revert. The current conservative gates stay until decisions are made.
+The user confirmed the four numbered points presented here: pause/confirm every
+Restore with an explicit after-confirmation edit limitation; stop/report/offer recovery
+on batch failure; R14 hide with Undo then 30-day conversation-text purge while retaining
+required evidence; and literal case-insensitive title/prompt/reply search. The R14
+retention decision is separate from this journal's still-proposed capacity/retention
+numbers. The earlier race/batch questions are settled; no pending approval for those
+choices remains. Runtime implementation and review are still separate from this plan.
 
 ## Questions for Claude before implementation
 
-1. Which cross-platform publication strategy meets the simultaneous-editor requirement,
-   and which operations/filesystems must remain copy-only until proven?
+1. Review the supported platform publication tests and pause/risk messaging under
+   the directly confirmed policy; which unsupported operations remain copy-only?
 2. Is the backend mutation boundary plus trusted host context the right ownership split
    for standalone MCP callers, or must those clients explicitly opt into a separate
    journal namespace? Nuru-controlled writes must not silently bypass journaling.
 3. Approve or revise the proposed capacity/reservation/retention rules and dependency
    pinning. What bound should one mutation and one vault consume?
-4. How can a whole-point revert provide reviewed staging/compensation/recovery
-   guarantees? Which failures require refusing the batch before publication?
+4. Review stepwise failure receipts, prepared-step reconciliation and fresh-confirmed
+   Continue/Undo-completed plans. Which hard failures require refusing before publication?
 5. Review the code-owned confirmation binding and stale-plan handling under the
    user's direct 2026-11-10 policy. Model Restore is confirmed; approval of one
    conflict plan must never grant arbitrary paths, other conversations or future states.

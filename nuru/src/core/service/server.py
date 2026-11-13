@@ -745,7 +745,9 @@ def main(argv: list[str] | None = None) -> None:
     device = commands.add_parser("device", help="host-only device approval/rotation; service must be running")
     device.add_argument("action", choices=["pair", "shortcut", "android", "revoke", "cancel", "list"])
     device.add_argument("name", nargs="?")
-    device.add_argument("--scopes", nargs="+", default=[])
+    device.add_argument("--scopes", nargs="+", default=[],
+                        help="explicit device grants; chat:use notes:read permit conversation access; add history:write "
+                             "for generating titles, renaming, hiding and recovering conversations (not vault-note edits)")
     device.add_argument("--local-client", default="obsidian")
     device.add_argument("--import-legacy", action="store_true", help="prompt privately for an existing capture token")
     args = parser.parse_args(argv)

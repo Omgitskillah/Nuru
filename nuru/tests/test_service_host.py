@@ -1560,3 +1560,42 @@ def test_r14_explicit_title_can_replace_manual_name_but_not_later_same_string_re
     with h.service._changed:
         assert h.service._changed.wait_for(lambda: not h.service._title_jobs and not h.service._title_active, WAIT)
     assert title_of(h.service, cid) == ('old prompt' if rename_during else 'Explicit generated')
+
+
+@pytest.mark.parametrize('manual', [True, False])
+def test_r14_held_automatic_title_does_not_overwrite_same_string_update(tmp_path, monkeypatch, manual):
+    entered, release, applied = threading.Event(), threading.Event(), threading.Event()
+    def title(*args):
+        entered.set()
+        assert release.wait(WAIT)
+        return 'Late automatic title'
+    h = titled(tmp_path, [reply('Answer')], title)
+    original = h.service.store.retitle
+    def observe(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        finally:
+            if args[2] == 'Late automatic title':
+                applied.set()
+    monkeypatch.setattr(h.service.store, 'retitle', observe)
+    try:
+        cid = h.service.create_conversation(ME, {'request_id': protocol.new_id(), 'title': 'hello'})[1]['conversation_id']
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        assert entered.wait(WAIT)
+        with h.service._lock, h.service.store.transaction():
+            if manual:
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+            else:
+                # Another generated-title writer advances the revision without marking it manual.
+                assert h.service.store.retitle(cid, 'hello', 'hello', expected_revision=0)
+        release.set()
+        assert applied.wait(WAIT), 'observe the application attempt before closing the service'
+        with h.service._lock:
+            state = h.service.store.history_state(cid, ME)
+        assert state['title'] == 'hello'
+        assert state['title_rev'] == 1
+        assert state['title_by_user'] == int(manual)
+    finally:
+        release.set()
+        h.close()

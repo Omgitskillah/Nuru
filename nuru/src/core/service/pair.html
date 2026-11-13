@@ -4,5 +4,6 @@
 <main><h1>Pair with Nuru</h1><p>Ask the operator to approve this device on the Mac, then enter the pairing code.</p>
 <form id="pair"><label>Pairing code <input id="code" type="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="ABCDE-23456" maxlength="21" required></label><button>Pair</button></form>
 <p>Sessions last up to seven days, or 24 hours without use. After that, ask the operator to pair this device again.</p>
+<p>The operator chooses this device's permissions. Read access allows viewing and searching conversations. The additional <code>history:write</code> permission allows generating titles, renaming, hiding and recovering conversations; it does not allow editing vault notes.</p>
 <p id="state" role="status"></p><button id="logout" hidden>Sign out</button></main>
 <script src="/pair.js" defer></script></html>

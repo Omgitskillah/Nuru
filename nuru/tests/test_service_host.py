@@ -1685,3 +1685,43 @@ def test_r14_rename_is_revision_checked_and_replay_does_not_rename_again(harness
         h.service.change_history(ME, cid, 'rename_history', {**rename, 'request_id': protocol.new_id()})
     with pytest.raises(ProtocolError, match='invalid title revision'):
         h.service.change_history(ME, cid, 'rename_history', {'request_id': protocol.new_id(), 'title': 'Name'})
+
+
+def test_r14_hide_waits_for_failed_worker_to_finish_unwinding(harness):
+    entered, release = threading.Event(), threading.Event()
+    def script(*args):
+        yield Failure('Stopped')
+        entered.set()
+        assert release.wait(WAIT)
+    h = harness([script])
+    cid = h.conversation()
+    try:
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        assert entered.wait(WAIT)
+        with pytest.raises(ProtocolError, match='worker is still active'):
+            h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+    finally:
+        release.set()
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._working_conversation is None, WAIT)
+    assert h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})[0] == 200
+
+
+def test_r14_hidden_submit_replay_settles_without_running_again(harness):
+    h = harness([reply('Preserved')])
+    cid = h.conversation()
+    rid = protocol.new_id()
+    _, turn = h.submit(cid, request_id=rid)
+    h.finished(turn['turn_id'])
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._active is None, WAIT)
+    h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+    with pytest.raises(ProtocolError, match='not repeated'):
+        h.submit(cid, request_id=rid)
+    assert h.service.request_state(ME, rid, 'submit_turn')['state'] == 'hidden'
+    assert len(h.session.asked) == 1
+    h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
+    replay = h.submit(cid, request_id=rid)[1]
+    assert replay['replayed'] is True and replay['turn_id'] == turn['turn_id']
+    assert len(h.session.asked) == 1

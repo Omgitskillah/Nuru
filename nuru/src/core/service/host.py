@@ -104,6 +104,7 @@ class Service:
         self._title_jobs: deque[tuple] = deque()
         self._title_active: str | None = None
         self._active: str | None = None
+        self._working_conversation: str | None = None  # remains set while a terminal worker unwinds
         self._session = None
         self.chat = "idle"  # idle, loading, ready, unavailable (status)
         self._closing = False
@@ -167,7 +168,7 @@ class Service:
         """Stop taking work if no turn is running or waiting, in the same step as the check, so none can be
         accepted in between. False, with nothing changed, if one is. close() still has to follow."""
         with self._lock:
-            if self._active or self._queue or self._title_active or self._title_jobs:
+            if self._active or self._working_conversation or self._queue or self._title_active or self._title_jobs:
                 return False
             self._closing = True
             return True
@@ -242,8 +243,8 @@ class Service:
         return {key: state[key] for key in ("id", "title_rev", "hidden_at", "purging", "purged_at")}
 
     def change_history(self, principal: str, conversation_id: str, operation: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
-        """Host-only mutation boundary. HTTP scope/CSRF bindings are added before routes are exposed.
-        The title-job check, authorization, update and receipt share the service lock."""
+        """History mutation boundary; HTTP supplies scope/CSRF and live-grant checks.
+        Busy checks, authorization, update and receipt share the service lock."""
         if operation not in ("rename_history", "hide_history", "undo_history"):
             raise ProtocolError("invalid_request", "unknown history operation")
         with self._lock:
@@ -256,6 +257,8 @@ class Service:
                 if state["purging"] or state["purged_at"]:
                     raise ProtocolError("conflict", "conversation text has expired")
                 if operation == "hide_history":
+                    if self._working_conversation == conversation_id:
+                        raise ProtocolError("conflict", "the turn worker is still active; try again after it finishes")
                     if self._title_active == conversation_id or any(job[0]["id"] == conversation_id for job in self._title_jobs):
                         raise ProtocolError("conflict", "a title is being generated; try again after it finishes")
                     changed = self.store.hide_history(conversation_id, principal, self._clock())
@@ -659,6 +662,7 @@ class Service:
                     else:
                         live = self._live[self._queue.popleft()]
                         self._active = live.stream.turn_id
+                        self._working_conversation = live.stream.conversation_id
                 if job is not None:
                     try:
                         self._generate_title(*job)
@@ -679,6 +683,7 @@ class Service:
                     traceback.print_exc(limit=5, file=sys.stderr)
                 finally:
                     with self._lock:
+                        self._working_conversation = None
                         self._active = None
                         self._changed.notify_all()
                 if completed:

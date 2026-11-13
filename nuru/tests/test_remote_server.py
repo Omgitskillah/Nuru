@@ -434,9 +434,9 @@ def test_session_response_explains_idle_and_absolute_expiry(remote):
     assert "24 hours idle or 7 days absolute" in info["renewal"]
 
 
-def test_remote_title_generation_requires_read_authority_csrf_and_rechecks_revocation(remote, monkeypatch):
+def test_remote_title_generation_requires_history_write_csrf_and_rechecks_revocation(remote, monkeypatch):
     client, credentials, local, service, built = remote
-    cookie, _ = pair(client, credentials, 'title-reader')
+    cookie, _ = pair(client, credentials, 'title-reader', scopes=('chat:use', 'notes:read', 'history:write'))
     headers = {'Origin': ORIGIN, 'X-Nuru-CSRF': csrf(cookie)}
     _, created, _ = call(client, 'POST', '/v1/conversations', {'request_id': 'remote-title-create'}, cookie=cookie, extra=headers)
     cid = created['conversation_id']
@@ -455,3 +455,40 @@ def test_remote_title_generation_requires_read_authority_csrf_and_rechecks_revoc
     assert call(client, 'POST', path, payload, cookie=cookie, extra=headers)[0] == 202
     credentials.revoke('title-reader')
     assert not seen[0](None) and not built
+
+
+def test_r14_history_write_scope_csrf_and_revocation(remote):
+    from core.service import protocol
+    client, credentials, _, service, built = remote
+    read_cookie, _ = pair(client, credentials, name='reader')
+    write_cookie, _ = pair(client, credentials, name='history-writer', scopes=('chat:use', 'notes:read', 'history:write'))
+    def headers(cookie): return {'Origin': ORIGIN, 'X-Nuru-CSRF': csrf(cookie)}
+    cid = call(client, 'POST', '/v1/conversations', {'request_id': protocol.new_id()}, cookie=read_cookie, extra=headers(read_cookie))[1]['conversation_id']
+    mutations = [('rename', {'title_rev': 0, 'title': 'Name'}), ('hide', {}), ('undo', {}), ('title', {})]
+    for action, fields in mutations:
+        body = {'request_id': protocol.new_id(), **fields}
+        assert call(client, 'POST', f'/v1/conversations/{cid}/{action}', body, cookie=read_cookie, extra=headers(read_cookie))[0] == 403
+    assert call(client, 'GET', '/v1/history', cookie=read_cookie)[0] == 200
+    payload = {'request_id': protocol.new_id()}
+    path = f'/v1/conversations/{cid}/hide'
+    assert call(client, 'POST', path, payload, cookie=write_cookie)[0] == 403
+    assert call(client, 'POST', path, payload, cookie=write_cookie, extra=headers(write_cookie))[0] == 200
+    credentials.revoke('history-writer')
+    assert call(client, 'POST', path, payload, cookie=write_cookie, extra=headers(write_cookie))[0] == 401
+    assert not built
+
+
+def test_r14_history_rechecks_revocation_at_host_mutation(remote, monkeypatch):
+    from core.service import protocol
+    client, credentials, _, service, _ = remote
+    cookie, _ = pair(client, credentials, name='race-writer', scopes=('chat:use', 'notes:read', 'history:write'))
+    headers = {'Origin': ORIGIN, 'X-Nuru-CSRF': csrf(cookie)}
+    cid = call(client, 'POST', '/v1/conversations', {'request_id': protocol.new_id()}, cookie=cookie, extra=headers)[1]['conversation_id']
+    original = service.change_history
+    def revoke_then_change(*args, **kwargs):
+        credentials.revoke('race-writer')
+        return original(*args, **kwargs)
+    monkeypatch.setattr(service, 'change_history', revoke_then_change)
+    assert call(client, 'POST', f'/v1/conversations/{cid}/hide', {'request_id': protocol.new_id()}, cookie=cookie, extra=headers)[0] == 403
+    with service._lock:
+        assert service.store.history_state(cid, 'operator')['hidden_at'] is None

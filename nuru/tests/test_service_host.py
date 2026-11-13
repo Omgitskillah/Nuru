@@ -1599,3 +1599,89 @@ def test_r14_held_automatic_title_does_not_overwrite_same_string_update(tmp_path
     finally:
         release.set()
         h.close()
+
+
+@pytest.mark.parametrize('phase', ['queued', 'running', 'automatic'])
+def test_r14_hide_refuses_title_work_under_service_lock(harness, phase):
+    h = harness([reply('Answer')])
+    entered, release = threading.Event(), threading.Event()
+    def title(*args):
+        entered.set()
+        assert release.wait(WAIT)
+        return 'Generated'
+    h.session.title = title
+    cid = h.conversation() if phase == 'automatic' else seed_old_conversation(h)
+    try:
+        if phase == 'automatic':
+            _, turn = h.submit(cid)
+            h.finished(turn['turn_id'])
+            assert entered.wait(WAIT)
+        else:
+            with h.service._lock:
+                h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+                if phase == 'queued':
+                    with pytest.raises(ProtocolError, match='title is being generated'):
+                        h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+            assert entered.wait(WAIT)
+        with pytest.raises(ProtocolError, match='title is being generated'):
+            h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+        assert h.service.store.history_state(cid, ME)['hidden_at'] is None
+    finally:
+        release.set()
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._title_active is None, WAIT)
+    assert h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})[0] == 200
+
+
+def test_r14_hidden_resources_and_replayed_requests_do_not_run_work(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    hide = {'request_id': protocol.new_id()}
+    h.service.change_history(ME, cid, 'hide_history', hide)
+    assert h.service.list_conversations(ME, None, 20)['conversations'] == []
+    assert h.service.search_history(ME)['conversations'] == []
+    assert h.service.search_history(SOMEONE_ELSE, hidden=True)['conversations'] == []
+    assert h.service.search_history(ME, hidden=True)['conversations'][0]['id'] == cid
+    for action in (lambda: h.service.conversation(ME, cid, None, 20),
+                   lambda: h.submit(cid),
+                   lambda: h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})):
+        with pytest.raises(ProtocolError, match='no such conversation'): action()
+    assert h.built == []
+    h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
+    replay = h.service.change_history(ME, cid, 'hide_history', hide)
+    assert replay[1]['history']['hidden_at'] is None, 'replay settles current state without hiding again'
+    assert h.service.conversation(ME, cid, None, 20)['turns'][0]['display']['reply'] == 'Original answer'
+
+
+def test_r14_history_authorization_owner_replay_and_expiry(harness):
+    clock = [datetime(2026, 11, 13, tzinfo=timezone.utc)]
+    h = harness([], clock=lambda: clock[0])
+    cid = seed_old_conversation(h)
+    payload = {'request_id': protocol.new_id()}
+    for principal, allowed in ((ME, False), (SOMEONE_ELSE, True)):
+        with pytest.raises(ProtocolError):
+            h.service.change_history(principal, cid, 'hide_history', payload, authorize=lambda: allowed)
+    h.service.change_history(ME, cid, 'hide_history', payload, authorize=lambda: True)
+    with pytest.raises(ProtocolError, match='not authorized'):
+        h.service.change_history(ME, cid, 'hide_history', payload, authorize=lambda: False)
+    with pytest.raises(ProtocolError, match='different request'):
+        h.service.change_history(ME, cid, 'hide_history', {**payload, 'extra': 'changed'})
+    assert h.service.request_state(ME, payload['request_id'], 'hide_history')['state'] == 'hidden'
+    clock[0] += timedelta(days=30)
+    with pytest.raises(ProtocolError, match='recovery expired'):
+        h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
+    assert h.service.store.history_state(cid, ME)['hidden_at'] is not None
+
+
+def test_r14_rename_is_revision_checked_and_replay_does_not_rename_again(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    rename = {'request_id': protocol.new_id(), 'title_rev': 1, 'title': 'Chosen'}
+    assert h.service.change_history(ME, cid, 'rename_history', rename)[1]['history']['title_rev'] == 2
+    h.service.change_history(ME, cid, 'rename_history', {**rename, 'request_id': protocol.new_id(), 'title_rev': 2, 'title': 'Newer'})
+    assert h.service.change_history(ME, cid, 'rename_history', rename)[1]['history']['title_rev'] == 3
+    assert title_of(h.service, cid) == 'Newer'
+    with pytest.raises(ProtocolError, match='refresh history'):
+        h.service.change_history(ME, cid, 'rename_history', {**rename, 'request_id': protocol.new_id()})
+    with pytest.raises(ProtocolError, match='invalid title revision'):
+        h.service.change_history(ME, cid, 'rename_history', {'request_id': protocol.new_id(), 'title': 'Name'})

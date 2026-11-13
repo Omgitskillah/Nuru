@@ -269,7 +269,7 @@ class ServiceStore:
         """The conversation, or None if it doesn't exist or belongs to another principal: the two
         are answered alike, so an ID doesn't give away whether it exists."""
         row = self._conn.execute("SELECT id, store_id, title, created_at, model, thinking FROM conversations "
-                                 "WHERE id = ? AND principal = ?", (conversation_id, principal)).fetchone()
+                                 "WHERE id = ? AND principal = ? AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL", (conversation_id, principal)).fetchone()
         return dict(zip(("id", "store_id", "title", "created_at", "model", "thinking"), row)) if row else None
 
     def set_conversation_model(self, conversation_id: str, model: str | None, thinking: str | None) -> None:
@@ -281,7 +281,8 @@ class ServiceStore:
 
     def title_state(self, conversation_id: str) -> tuple | None:
         """Worker snapshot for title generation; callers hold the service lock."""
-        return self._conn.execute("SELECT title, title_rev, title_by_user FROM conversations WHERE id = ?",
+        return self._conn.execute("SELECT title, title_rev, title_by_user FROM conversations WHERE id = ? "
+                                  "AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL",
                                   (conversation_id,)).fetchone()
 
     def retitle(self, conversation_id: str, old: str | None, new: str, *, expected_revision: int | None = None, automatic: bool = False) -> bool:
@@ -295,6 +296,7 @@ class ServiceStore:
         """Newest first; `before` is the last ID of the previous page."""
         rows = self._conn.execute(
             "SELECT id, title, created_at FROM conversations WHERE principal = ? "
+            "AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL "
             "AND (? IS NULL OR rowid < (SELECT rowid FROM conversations WHERE id = ?)) ORDER BY rowid DESC LIMIT ?",
             (principal, before, before, limit)).fetchall()
         return [dict(zip(("id", "title", "created_at"), row)) for row in rows]
@@ -368,7 +370,8 @@ class ServiceStore:
         """The turn, or None if it doesn't exist or another principal owns its conversation."""
         row = self._conn.execute(
             "SELECT t.id, t.conversation_id, t.text, t.state, t.final, t.last_seq, t.compacted FROM turns t "
-            "JOIN conversations c ON c.id = t.conversation_id WHERE t.id = ? AND c.principal = ?",
+            "JOIN conversations c ON c.id = t.conversation_id WHERE t.id = ? AND c.principal = ? "
+            "AND c.hidden_at IS NULL AND c.purging = 0 AND c.purged_at IS NULL",
             (turn_id, principal)).fetchone()
         return self._turn(row) if row else None
 
@@ -436,7 +439,8 @@ class ServiceStore:
     def question(self, question_id: str, principal: str) -> dict | None:
         row = self._conn.execute(
             "SELECT q.id, q.turn_id, q.operation, q.expires_at, q.open FROM questions q JOIN turns t ON t.id = q.turn_id "
-            "JOIN conversations c ON c.id = t.conversation_id WHERE q.id = ? AND c.principal = ?",
+            "JOIN conversations c ON c.id = t.conversation_id WHERE q.id = ? AND c.principal = ? "
+            "AND c.hidden_at IS NULL AND c.purging = 0 AND c.purged_at IS NULL",
             (question_id, principal)).fetchone()
         return dict(zip(("id", "turn_id", "operation", "expires_at", "open"), row)) if row else None
 

@@ -69,6 +69,9 @@
       "type": "object", "additionalProperties": false, "required": ["request_id"],
       "properties": {"request_id": {"$ref": "#/$defs/request_id"}}
     },
+    "rename_history": {"type": "object", "additionalProperties": false, "required": ["request_id", "title_rev", "title"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}, "title_rev": {"type": "integer", "minimum": 0}, "title": {"type": "string", "minLength": 1, "maxLength": 200}}},
+    "hide_history": {"type": "object", "additionalProperties": false, "required": ["request_id"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}}},
+    "undo_history": {"type": "object", "additionalProperties": false, "required": ["request_id"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}}},
     "submit_turn": {
       "type": "object", "additionalProperties": false, "required": ["request_id", "text"],
       "properties": {
@@ -165,8 +168,8 @@
       "properties": {
         "v": {"const": 1},
         "request_id": {"$ref": "#/$defs/request_id"},
-        "operation": {"enum": ["create_conversation", "submit_turn", "answer_question", "cancel_turn"]},
-        "state": {"enum": ["accepted", "running", "completed", "failed", "cancelled", "expired"]},
+        "operation": {"enum": ["create_conversation", "submit_turn", "answer_question", "cancel_turn", "generate_title", "rename_history", "hide_history", "undo_history"]},
+        "state": {"enum": ["accepted", "running", "completed", "failed", "cancelled", "expired", "hidden"]},
         "conversation_id": {"$ref": "#/$defs/id"},
         "turn_id": {"$ref": "#/$defs/id"},
         "last_seq": {"type": "integer", "minimum": 0}

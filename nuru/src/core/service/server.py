@@ -50,6 +50,10 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("GET", r"/v1/status", "status"),
     ("POST", r"/v1/conversations", "create_conversation"),
     ("GET", r"/v1/conversations", "list_conversations"),
+    ("GET", r"/v1/history", "search_history"),
+    ("POST", r"/v1/conversations/([^/]+)/rename", "rename_history"),
+    ("POST", r"/v1/conversations/([^/]+)/hide", "hide_history"),
+    ("POST", r"/v1/conversations/([^/]+)/undo", "undo_history"),
     ("GET", r"/v1/conversations/([^/]+)", "conversation"),
     ("POST", r"/v1/conversations/([^/]+)/title", "generate_title"),
     ("POST", r"/v1/conversations/([^/]+)/turns", "submit_turn"),
@@ -434,6 +438,33 @@ class Handler(BaseHTTPRequestHandler):
         limit = self.number(query, "limit", 20, 1, 50)
         self.answer(200, self.server.service.list_conversations(principal, self.before(query), limit))
 
+    def on_search_history(self, principal, query):
+        hidden = self._one(query, "hidden") if "hidden" in query else "false"
+        if hidden not in ("true", "false"):
+            raise ProtocolError("invalid_request", "hidden must be true or false")
+        self.answer(200, self.server.service.search_history(principal, self.before(query),
+                    self.number(query, "limit", 20, 1, 50), query=self._one(query, "q") if "q" in query else "", hidden=hidden == "true"))
+
+    def _history_authorized(self):
+        if not self.server.remote_origin:
+            return True
+        current = self.server.remote_credentials.check_digest(self.device.digest, self.device.kind)
+        return current is not None and {"chat:use", "notes:read", "history:write"} <= current.scopes
+
+    def _change_history(self, principal, conversation_id, operation):
+        payload = self.body(operation)
+        self.answer(*self.server.service.change_history(principal, conversation_id, operation, payload,
+                                                       authorize=self._history_authorized))
+
+    def on_rename_history(self, principal, query, conversation_id):
+        self._change_history(principal, conversation_id, "rename_history")
+
+    def on_hide_history(self, principal, query, conversation_id):
+        self._change_history(principal, conversation_id, "hide_history")
+
+    def on_undo_history(self, principal, query, conversation_id):
+        self._change_history(principal, conversation_id, "undo_history")
+
     def on_conversation(self, principal, query, conversation_id):
         limit = self.number(query, "limit", 20, 1, 50)
         self.answer(200, self.server.service.conversation(principal, conversation_id, self.before(query), limit))
@@ -443,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
         options = {}
         if self.server.remote_origin:
             device, credentials = self.device, self.server.remote_credentials
-            options["authorize"] = lambda name: remote_tool_allowed(credentials, device, name)
+            options["authorize"] = lambda name: self._history_authorized() and remote_tool_allowed(credentials, device, name)
         self.answer(*self.server.service.generate_title(principal, conversation_id, self.body("generate_title"), **options))
 
     def on_submit_turn(self, principal, query, conversation_id):

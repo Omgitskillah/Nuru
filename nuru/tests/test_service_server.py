@@ -418,3 +418,29 @@ def test_generate_title_http_is_authenticated_idempotent_and_schema_checked(serv
     assert calls == [('A Lisbon trip', 'Flights and hotels')]
     _, history, _ = client.call('GET', f'/v1/conversations/{cid}')
     assert history['title'] == 'Lisbon travel plans'
+
+
+def test_r14_http_history_rename_hide_undo_search_and_receipts(served):
+    client, service, _, built = served
+    headers = {'Content-Type': 'application/json'}
+    cid = client.call('POST', '/v1/conversations', {'request_id': protocol.new_id(), 'title': 'Straße'}, headers=headers)[1]['conversation_id']
+    with service._lock, service.store.transaction():
+        tid = protocol.new_id()
+        service.store.add_turn(tid, cid, protocol.new_id(), 'Original prompt')
+        service.store.end_turn(tid, 'completed', {'reply': 'Answer'})
+    assert client.call('GET', '/v1/history?q=STRASSE')[1]['conversations'][0]['id'] == cid
+    assert client.call('GET', '/v1/history?hidden=wrong')[0] == 400
+    assert client.call('POST', f'/v1/conversations/{cid}/rename', {'request_id': protocol.new_id(), 'title_rev': True, 'title': 'Name'}, headers=headers)[0] == 400
+    rename = {'request_id': protocol.new_id(), 'title_rev': 0, 'title': 'Chosen'}
+    assert client.call('POST', f'/v1/conversations/{cid}/rename', rename, headers=headers)[0] == 200
+    hide = {'request_id': protocol.new_id()}
+    assert client.call('POST', f'/v1/conversations/{cid}/hide', hide, headers=headers)[0] == 200
+    assert client.call('GET', f'/v1/turns/{tid}/events')[0] == 404
+    assert client.call('GET', f'/v1/conversations/{cid}')[0] == 404
+    assert client.call('GET', '/v1/history')[1]['conversations'] == []
+    assert client.call('GET', '/v1/history?hidden=true')[1]['conversations'][0]['id'] == cid
+    assert client.call('GET', f'/v1/requests/{hide["request_id"]}?operation=hide_history')[1]['state'] == 'hidden'
+    assert client.call('POST', f'/v1/conversations/{cid}/undo', {'request_id': protocol.new_id()}, headers=headers)[0] == 200
+    assert client.call('POST', f'/v1/conversations/{cid}/hide', hide, headers=headers)[1]['history']['hidden_at'] is None
+    assert client.call('GET', f'/v1/conversations/{cid}')[1]['turns'][0]['display']['reply'] == 'Answer'
+    assert not built

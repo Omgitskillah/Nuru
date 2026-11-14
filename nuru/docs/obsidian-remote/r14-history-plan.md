@@ -84,7 +84,7 @@ resumable. Startup may resume existing marked work, never mark old Trash due to 
 The prototype processes bounded requests synchronously under the host lock; a slow
 operation can time out at the client, whose same request ID remains safe to retry. The
 ConversationStore scrub uses its own SQLite connection so it cannot commit another
-worker's transaction. Lock failure leaves a durable pending receipt for restart recovery.
+worker's transaction. Lock failure stops the pass at its first error and leaves a durable pending receipt. Checking or replaying that receipt, completing a turn, or restarting resumes already-confirmed targets; no new Trash is selected.
 This removes logical database text, not secure overwriting of SQLite pages or storage.
 
 | Location | Treatment after confirmed Empty trash |

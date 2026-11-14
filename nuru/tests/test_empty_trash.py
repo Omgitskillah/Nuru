@@ -26,12 +26,20 @@ def test_empty_scrubs_both_stores_but_preserves_identity_receipts_and_write_evid
     h.service.store.add_request('old-content', 'answer_question', 'old-request', 'binding', 200,
                                 {'v':1, 'conversation_id':cid, 'private':'Remove cached content'}, cid)
     other = h.conversation(principal=SOMEONE_ELSE, request_id=protocol.new_id())
+    tid = h.service.store.turns(cid, None, 1)[0]['id']
+    with h.service.store.transaction():
+        h.service.store.add_event({'turn_id': tid, 'seq': 1, 'text': 'Private streamed text'})
+        h.service.store.add_question('private-question', tid, 'write_note', '2099-01-01T00:00:00Z')
+    assert h.service.store.events(tid)
+    assert h.service.store._conn.execute('SELECT COUNT(*) FROM questions WHERE turn_id=?', (tid,)).fetchone()[0] == 1
     target = trash(h, cid)
     payload = request(target)
     status, receipt = h.service.empty_trash(ME, payload)
     assert status == 200 and receipt['erased'] == 1 and receipt['state'] == 'completed' and receipt['skipped'] == []
     state = h.service.store.history_state(cid, ME)
     assert state['purged_at'] and state['title'] is None
+    assert h.service.store.events(tid) == []
+    assert h.service.store._conn.execute('SELECT COUNT(*) FROM questions WHERE turn_id=?', (tid,)).fetchone()[0] == 0
     assert h.service.store.turns(cid, None, 1)[0]['text'] == ''
     assert h.service.store.turns(cid, None, 1)[0]['final'] is None
     assert h.service.conversations._conn.execute('SELECT content FROM messages WHERE conversation_id=?',(sid,)).fetchall() == []
@@ -184,7 +192,7 @@ def test_target_without_consumed_confirmation_never_resumes(harness):
     assert h.service.conversations._conn.execute('SELECT content FROM messages WHERE conversation_id=?',(sid,)).fetchall() == [('Keep without a confirmed request',)]
 
 
-def test_partial_progress_receipt_replays_without_retry_and_restart_finishes(harness,monkeypatch):
+def test_partial_progress_receipt_retries_pending_without_repeating_completed_targets(harness,monkeypatch):
     h = harness([])
     first,second = [seed_old_conversation(h) for _ in range(2)]
     payload = request(trash(h,first),trash(h,second))
@@ -200,8 +208,118 @@ def test_partial_progress_receipt_replays_without_retry_and_restart_finishes(har
         assert status==202 and receipt['erased']==1 and receipt['state']=='pending'
         assert h.service.request_state(ME,payload['request_id'],'empty_trash')['state']=='accepted'
         assert h.service.empty_trash(ME,payload)==(status,receipt)
-        assert len(calls)==2, 'a replay returns its receipt without retrying erasure'
+        assert len(calls)==4, 'settlement and replay retry only the unfinished target'
     h.close()
     h.service=h.open()
     status,receipt=h.service.empty_trash(ME,payload)
     assert status==200 and receipt['erased']==2 and receipt['state']=='completed'
+
+
+@pytest.mark.parametrize('settle', ['receipt', 'replay'])
+def test_locked_database_erasure_finishes_on_settlement_without_restart(harness, settle):
+    import sqlite3
+    h = harness([])
+    entries = [trash(h, seed_old_conversation(h)) for _ in range(3)]
+    payload = request(*entries)
+    calls = []
+    original = h.service.conversations.erase_history
+    def tracked(sid):
+        calls.append(sid)
+        return original(sid)
+    h.service.conversations.erase_history = tracked
+    blocker = sqlite3.connect(h.service.conversations._db_path)
+    blocker.execute('BEGIN IMMEDIATE')
+    try:
+        status, body = h.service.empty_trash(ME, payload)
+        assert status == 202 and body['state'] == 'pending'
+        assert len(calls) == 1, 'stop on the first lock instead of waiting once per target'
+    finally:
+        blocker.rollback()
+        blocker.close()
+    if settle == 'receipt':
+        assert h.service.request_state(ME, payload['request_id'], 'empty_trash')['state'] == 'completed'
+    status, body = h.service.empty_trash(ME, payload)
+    assert status == 200 and body['erased'] == 3
+    assert h.service.store.pending_purges() == []
+    assert all(h.service.store.history_state(e['id'], ME)['purged_at'] for e in entries)
+
+
+def test_queued_title_job_keeps_conversation_in_trash(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    entry = trash(h, cid)
+    with h.service._lock:
+        h.service._title_jobs.append(({'id': cid}, {}, None))
+        try:
+            status, body = h.service.empty_trash(ME, request(entry))
+        finally:
+            h.service._title_jobs.clear()
+    assert status == 200 and body['erased'] == 0
+    assert body['skipped'] == [{'id': cid, 'reason': 'busy'}]
+    state = h.service.store.history_state(cid, ME)
+    assert state['hidden_at'] and not state['purging'] and not state['purged_at']
+
+
+@pytest.mark.parametrize('guard', ['stale_revision', 'active_turn', 'restored'])
+def test_store_mark_purging_refuses_ineligible_rows(harness, guard):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    entry = trash(h, cid)
+    store = h.service.store
+    with store.transaction():
+        store.add_purge_intent('guard-intent', ME, [entry])
+        revision = entry['trash_rev']
+        if guard == 'stale_revision': revision -= 1
+        elif guard == 'active_turn': store.add_turn(protocol.new_id(), cid, protocol.new_id(), 'Still active')
+        else: assert store.undo_hide(cid, ME)
+        assert not store.mark_purging('guard-intent', ME, cid, revision)
+    assert not store.history_state(cid, ME)['purging']
+    assert store._conn.execute('SELECT COUNT(*) FROM purge_targets').fetchone()[0] == 0
+
+
+def test_store_undo_refuses_purging_and_pending_requires_purging(harness, monkeypatch):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    entry = trash(h, cid)
+    with monkeypatch.context() as patch:
+        patch.setattr(h.service.conversations, 'erase_history', lambda *_: (_ for _ in ()).throw(OSError('blocked')))
+        assert h.service.empty_trash(ME, request(entry))[0] == 202
+    store = h.service.store
+    assert len(store.pending_purges()) == 1
+    with store.transaction():
+        assert not store.undo_hide(cid, ME)
+    assert store.history_state(cid, ME)['hidden_at']
+    with store.transaction():
+        store._conn.execute('UPDATE conversations SET purging=0 WHERE id=?', (cid,))
+    assert store.pending_purges() == []
+
+
+def test_turn_completion_resumes_confirmed_pending_erasure(harness, monkeypatch):
+    import threading
+    from core.session import Text
+    entered, release, resumed = threading.Event(), threading.Event(), threading.Event()
+    def turn(session, text, cancel):
+        entered.set()
+        assert release.wait(10)
+        yield Text('Done')
+    h = harness([turn])
+    cid = seed_old_conversation(h)
+    payload = request(trash(h, cid))
+    with monkeypatch.context() as patch:
+        patch.setattr(h.service.conversations, 'erase_history', lambda *_: (_ for _ in ()).throw(OSError('blocked')))
+        assert h.service.empty_trash(ME, payload)[0] == 202
+    original = h.service._resume_purges
+    def resume():
+        original()
+        if not h.service.store.pending_purges(): resumed.set()
+    monkeypatch.setattr(h.service, '_resume_purges', resume)
+    other = h.conversation(request_id=protocol.new_id())
+    try:
+        h.submit(other)
+        assert entered.wait(10)
+        assert h.service.store.pending_purges()
+        release.set()
+        assert resumed.wait(10), 'worker completion must recover pending erasure without a client retry'
+        assert h.service.store.history_state(cid, ME)['purged_at']
+    finally:
+        release.set()

@@ -217,6 +217,9 @@ class Service:
                     raise ProtocolError("conflict", "conversation is hidden or expired; this request was not repeated")
                 if operation in ("rename_history", "hide_history", "undo_history"):
                     return known["status"], {**known["body"], "history": self._history_metadata(state)}
+                if operation == "empty_trash" and known["status"] == 202:
+                    self._resume_purges()
+                    known = self.store.request(key)
                 body = {**known["body"], "replayed": True} if operation == "submit_turn" else known["body"]
                 return known["status"], body
             if self._closing:
@@ -323,7 +326,10 @@ class Service:
 
     def _resume_purges(self) -> None:
         """Committed intent only. Each cross-database step is repeatable after a crash.
-        No timer selects new Trash. Failure leaves a durable pending receipt for restart recovery."""
+        No timer selects new Trash. Stop on the first failure so lock contention costs
+        at most one database timeout per attempt. Settlement or worker completion retries."""
+        if self._unsafe:
+            return  # An uncertain service transaction forbids even further reads.
         try:
             while targets := self.store.pending_purges():
                 for target in targets:
@@ -331,7 +337,7 @@ class Service:
                     with self._atomic():
                         self.store.finish_purge(target, self._clock())
         except Exception:
-            print("nuru-serve: confirmed history erasure is pending restart recovery", file=sys.stderr)
+            print("nuru-serve: confirmed history erasure is pending retry", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)
 
     def generate_title(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
@@ -558,6 +564,9 @@ class Service:
             known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
             if known is None:
                 raise ProtocolError("not_found", "no such request")
+            if operation == "empty_trash" and known["status"] == 202:
+                self._resume_purges()
+                known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
             state = {"v": protocol.VERSION, "request_id": request_id, "operation": operation,
                      "state": "accepted" if operation == "empty_trash" and known["status"] == 202 else "completed"}
             if known["conversation_id"]:
@@ -737,6 +746,7 @@ class Service:
                     with self._lock:
                         self._working_conversation = None
                         self._active = None
+                        self._resume_purges()
                         self._changed.notify_all()
                 if completed:
                     self._name_conversation(live)

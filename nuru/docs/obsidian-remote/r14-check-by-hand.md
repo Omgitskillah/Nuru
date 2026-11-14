@@ -23,7 +23,7 @@ validation does not mean these manual checks have been performed.
 - Simulate a lost response or close the panel during a multi-batch operation. Reopen
   History and use Check pending erasure. Confirm the existing request settles rather
   than creating another confirmation or adding new Trash. For a reported pending
-  backend erasure, restart Nuru and check its receipt again.
+  backend erasure, release any database contention and check its receipt again without restarting Nuru. Confirm it completes; a finishing turn also retries pending erasure.
 - Pair a read/search-only phone/browser. History search and reading work; Title,
   Rename, Delete, Restore and Empty trash are disabled with a re-pair explanation.
   Explicitly re-pair with history:write and verify those actions become available.

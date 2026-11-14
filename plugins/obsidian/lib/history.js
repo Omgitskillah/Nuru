@@ -129,7 +129,7 @@ class HistoryModal extends Modal {
       } while (before);
       if (!targets.length) { this.note.setText("Trash is empty."); return; }
       const yes = await HistoryQuestion.ask(this.app, { title: `Permanently erase ${targets.length} conversations?`,
-        text: "This empties all Trash, including conversations outside the current search. Conversation text cannot be restored in Nuru. Identity stubs, consumed request IDs and required write evidence remain; logs and OS backups are not erased. Vault notes stay unchanged. Restored, changed or busy items will be kept.", action: "Empty trash permanently", items: labels });
+        text: "This empties all Trash, including conversations outside the current search. This can't be undone. Your vault notes aren't changed. Nuru keeps a record of the changes it made to your notes, and its logs and your computer's backups aren't erased. Anything restored, changed or busy will be kept.", action: "Empty trash permanently", items: labels });
       if (!yes || this.closed) return;
       if (this.options.getPending()) throw new Error("Another erasure needs settlement first");
       await this.options.savePending({ remaining: targets, active: null, erased: 0, skipped: 0 });
@@ -147,7 +147,7 @@ class HistoryModal extends Modal {
       }
       const result = await this.client.emptyTrash(state.active.targets, state.active.requestId);
       if (result.state !== "completed") {
-        this.note.setText(`Erased ${state.erased + result.erased}; the rest of this batch is pending. Restart Nuru to resume, then check pending erasure.`); return;
+        this.note.setText(`Erased ${state.erased + result.erased}; the rest of this batch is pending. Check pending erasure to retry when Nuru is ready.`); return;
       }
       state = { ...state, active: null, erased: state.erased + result.erased, skipped: state.skipped + result.skipped.length };
       await this.options.savePending(state);

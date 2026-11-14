@@ -67,7 +67,7 @@ test("Open is explicit navigation; revocation disables mutations with a useful e
   await m.run(async () => { throw new Error("conflict"); }); assert.match(m.note.textContent, /conflict/);
 });
 test("Empty trash confirmation discloses retained content; Cancel never sends", async () => {
-  const { m, calls } = await setup(); HistoryQuestion.ask = async (_app, options) => { assert.match(options.text, /write evidence.*logs and OS backups/); return null; };
+  const { m, calls } = await setup(); HistoryQuestion.ask = async (_app, options) => { assert.match(options.text, /record of the changes.*logs.*backups/); return null; };
   await m.beginEmpty(); assert.equal(calls.filter((c) => c[0] === "empty").length, 0);
 });
 test("multi-batch erasure freezes the confirmed list and never adds new Trash", async () => {
@@ -86,7 +86,7 @@ test("lost response plus reopen reuses durable targets and the exact request ID"
 });
 test("server-pending progress remains durable until recovery is observed", async () => {
   const { m, client, options } = await setup(); HistoryQuestion.ask = async () => true; client.emptyTrash = async () => ({ state: "pending", erased: 0, skipped: [] });
-  await m.beginEmpty(); assert.ok(options.getPending().active); assert.match(m.note.textContent, /Restart Nuru/); assert.equal(m.retry.hidden, false); await m.beginEmpty();
+  await m.beginEmpty(); assert.ok(options.getPending().active); assert.match(m.note.textContent, /Check pending erasure to retry/); assert.equal(m.retry.hidden, false); await m.beginEmpty();
   client.emptyTrash = async () => ({ state: "completed", erased: 1, skipped: [] }); await click(m, "Check pending erasure"); assert.equal(options.getPending(), null);
 });
 test("empty lists, inconsistent pagination and failed persistence cannot erase", async () => {

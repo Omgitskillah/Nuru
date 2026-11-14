@@ -1698,6 +1698,7 @@ def test_r14_hide_waits_for_failed_worker_to_finish_unwinding(harness):
         _, turn = h.submit(cid)
         h.finished(turn['turn_id'])
         assert entered.wait(WAIT)
+        assert not h.service.close_if_idle(), "terminal does not mean the worker has exited"
         with pytest.raises(ProtocolError, match='worker is still active'):
             h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
     finally:

@@ -76,7 +76,9 @@ def test_a_busy_service_refuses_to_stop_and_keeps_its_turn(tmp_path):
     assert not h.service.close_if_idle()
     gate.set()
     assert h.finished(turn)[-1]["type"] == "completed", "the turn wasn't cancelled"
-    assert h.service.close_if_idle(), "idle now"
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._working_conversation is None, 10)
+    assert h.service.close_if_idle(), "idle now that the worker has exited"
     h.close()
 
 

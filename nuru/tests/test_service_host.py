@@ -1520,8 +1520,9 @@ def test_title_job_and_source_events_survive_together_in_reloaded_history(harnes
 
 
 @pytest.mark.parametrize('when', ['before', 'during'])
-def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when):
+def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when, monkeypatch):
     calls = []
+    naming_finished = threading.Event()
     def title(*args):
         calls.append(1)
         if when == 'during':
@@ -1529,6 +1530,13 @@ def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when):
                 assert h.service.store.rename_history(cid, ME, 0, 'hello')
         return 'Generated'
     h = titled(tmp_path, [reply('Answer')], title)
+    original_name = h.service._name_conversation
+    def name(live):
+        try:
+            return original_name(live)
+        finally:
+            naming_finished.set()
+    monkeypatch.setattr(h.service, '_name_conversation', name)
     try:
         cid = h.service.create_conversation(ME, {'request_id': protocol.new_id(), 'title': 'hello'})[1]['conversation_id']
         if when == 'before':
@@ -1536,6 +1544,7 @@ def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when):
                 assert h.service.store.rename_history(cid, ME, 0, 'hello')
         _, turn = h.submit(cid)
         h.finished(turn['turn_id'])
+        assert naming_finished.wait(WAIT), 'terminal event does not mean automatic naming finished'
         h.service.close()
         assert title_of(h.service, cid) == 'hello'
         assert calls == ([] if when == 'before' else [1])

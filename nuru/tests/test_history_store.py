@@ -146,7 +146,7 @@ def test_purge_states_are_not_visible_renameable_or_undoable(store, field, value
     assert not store.rename_history('a','owner',0,'Name')
     assert not store.hide_history('a','owner',NOW)
     assert not store.undo_hide('a','owner')
-    assert store.pending_purges() == ([{'id':'a','principal':'owner','store_id':1}] if field == 'purging' else [])
+    assert store.pending_purges() == [], 'an orphan mark without committed intent must never erase'
 
 
 def test_history_clock_requires_timezone(store):

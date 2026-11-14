@@ -51,6 +51,7 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/conversations", "create_conversation"),
     ("GET", r"/v1/conversations", "list_conversations"),
     ("GET", r"/v1/history", "search_history"),
+    ("POST", r"/v1/history/empty", "empty_trash"),
     ("POST", r"/v1/conversations/([^/]+)/rename", "rename_history"),
     ("POST", r"/v1/conversations/([^/]+)/hide", "hide_history"),
     ("POST", r"/v1/conversations/([^/]+)/undo", "undo_history"),
@@ -437,6 +438,9 @@ class Handler(BaseHTTPRequestHandler):
     def on_list_conversations(self, principal, query):
         limit = self.number(query, "limit", 20, 1, 50)
         self.answer(200, self.server.service.list_conversations(principal, self.before(query), limit))
+
+    def on_empty_trash(self, principal, query):
+        self.answer(*self.server.service.empty_trash(principal, self.body("empty_trash"), authorize=self._history_authorized))
 
     def on_search_history(self, principal, query):
         hidden = self._one(query, "hidden") if "hidden" in query else "false"

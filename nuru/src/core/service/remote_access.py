@@ -52,7 +52,7 @@ def authenticate(handler, method, is_capture):
     # used as model context. Status and session management disclose no history.
     if path == "/v1/status":
         required = {"chat:use"}
-    if re.fullmatch(r"/v1/conversations/[^/]+/(?:rename|hide|undo|title)", path) and method == "POST":
+    if method == "POST" and (path == "/v1/history/empty" or re.fullmatch(r"/v1/conversations/[^/]+/(?:rename|hide|undo|title)", path)):
         required = required | {"history:write"}
     session_route = path in {"/v1/session", "/v1/logout"} and device.kind == "browser"
     if not session_route and not required <= device.scopes:

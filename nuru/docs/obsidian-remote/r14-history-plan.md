@@ -2,7 +2,7 @@
 
 Status: integration in progress, 2026-11-14. Storage foundation #91 is merged;
 search, title revision guards and host/API mutations are on codex/r14-host-integration.
-The UI and permanent-erasure flow remain unfinished.
+The Empty trash backend is under test; UI and full integration remain unfinished.
 
 ## Directly confirmed behavior
 
@@ -12,7 +12,7 @@ purge policy with manual Empty trash. This supersedes the earlier retention choi
 - Delete moves a conversation to Trash. Restore is available without an age limit.
 - Show Trash (N) when nonempty as a quiet reminder; no timed prompts or nagging.
 - Empty trash permanently erases the conversations in the confirmed Trash snapshot,
-  only after a code-owned confirmation. Explain that identity stubs, consumed request
+  only after an ordinary client confirmation dialog. Explain that identity stubs, consumed request
   IDs and required write evidence remain, and logs/OS backups are not erased.
 - No age-selected cleanup, scheduled purge timer or deadline on restoration.
 - Resume an interrupted erasure at startup only if the user already confirmed it.
@@ -29,8 +29,8 @@ Use disposable databases and vaults in tests. No model tool for Empty trash is a
 Read/search requires chat:use + notes:read remotely. History mutations, including
 Generate title, require a separately granted history:write scope. Existing device
 grants are not silently upgraded. Pairing and CLI explain the additional permission.
-The separately relayed decision to require re-pairing remains pending direct user
-confirmation; do not infer credential migration authorization from discussion data.
+The user directly confirmed that existing devices must re-pair to gain history writes.
+Until then they keep read/search access, with clear explanations on disabled controls.
 
 Host ownership checks, current-grant rechecks, CSRF and revocation enforce permissions
 independently of button visibility. A missing scope gets a short explanation on the UI.
@@ -65,11 +65,12 @@ service lock as the mutation and receipt. A terminal event can free the queue sl
 before a generator finishes unwinding; _working_conversation guards this interval.
 A hidden row cannot start automatic title generation or receive its late result.
 
-## Permanent-erasure protocol to implement
+## Permanent-erasure protocol
 
-Prepare an ownership-bound confirmation for an explicit snapshot of Trash. Bind the
-confirmation to the snapshot version so newly trashed, restored or re-hidden resources
-cannot be silently added or erased after a stale confirmation. The UI must say the
+The client freezes the confirmed IDs and their monotonic Trash revisions (at most200
+per request). Each still-owned, still-trashed, nonbusy unchanged entry is erased; restored,
+changed or busy entries are skipped and reported. New entries are never added to an old
+confirmation. Freeze the entire confirmed list before sending multiple bounded batches. The UI must say the
 number being erased; cancellation makes no change. Revalidate ownership, grants and
 busy state before accepting it. Replayed confirmation requests must not start another
 erasure or broaden the snapshot.
@@ -77,7 +78,11 @@ erasure or broaden the snapshot.
 Before scrubbing, persist the purging mark and durable user-confirmed intent. Two WAL
 SQLite databases are not one atomic transaction: phases must be idempotent and crash
 resumable. Startup may resume existing marked work, never mark old Trash due to age.
-Use bounded batches; do not hold a model call or live-vault write during erasure.
+The prototype processes bounded requests synchronously under the host lock; a slow
+operation can time out at the client, whose same request ID remains safe to retry. The
+ConversationStore scrub uses its own SQLite connection so it cannot commit another
+worker's transaction. Lock failure leaves a durable pending receipt for restart recovery.
+This removes logical database text, not secure overwriting of SQLite pages or storage.
 
 | Location | Treatment after confirmed Empty trash |
 | --- | --- |

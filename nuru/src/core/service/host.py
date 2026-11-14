@@ -121,6 +121,7 @@ class Service:
         with self._lock:
             self._recover(retention_days)
             self.captures.recover()
+            self._resume_purges()
         self._worker = threading.Thread(target=self._run, name="nuru-serve-worker", daemon=True)
         self._worker.start()
 
@@ -240,7 +241,7 @@ class Service:
 
     @staticmethod
     def _history_metadata(state: dict) -> dict:
-        return {key: state[key] for key in ("id", "title_rev", "hidden_at", "purging", "purged_at")}
+        return {key: state[key] for key in ("id", "title_rev", "hidden_at", "purging", "purged_at", "trash_rev")}
 
     def change_history(self, principal: str, conversation_id: str, operation: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         """History mutation boundary; HTTP supplies scope/CSRF and live-grant checks.
@@ -283,6 +284,55 @@ class Service:
             except ValueError as error:
                 raise ProtocolError("invalid_request", str(error)) from None
             return {"v": protocol.VERSION, "conversations": rows, "trash_count": self.store.trash_count(principal)}
+
+    def empty_trash(self, principal: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
+        """An ordinary UI confirmation supplies a frozen bounded list; no model can call this."""
+        protocol.validate("empty_trash", payload)
+        targets = payload["targets"]
+        if len({t["id"] for t in targets}) != len(targets) or any(type(t["trash_rev"]) is not int for t in targets):
+            raise ProtocolError("invalid_request", "targets must have distinct IDs and integer Trash revisions")
+        key = protocol.request_key(principal, self.vault_id, "empty_trash", payload["request_id"])
+        with self._lock:
+            if authorize is not None and not authorize():
+                raise ProtocolError("forbidden", "history writes are not authorized")
+            def act():
+                self.store.add_purge_intent(key, principal, targets)
+                skipped, accepted = [], 0
+                for target in targets:
+                    cid = target["id"]
+                    state = self.store.history_state(cid, principal)
+                    if state is None or state["purged_at"] or not state["hidden_at"]:
+                        reason = "unavailable_or_restored"
+                    elif state["trash_rev"] != target["trash_rev"]:
+                        reason = "changed"
+                    elif (state["purging"] or self._working_conversation == cid or self._title_active == cid
+                          or any(job[0]["id"] == cid for job in self._title_jobs)):
+                        reason = "busy"
+                    elif not self.store.mark_purging(key, principal, cid, target["trash_rev"]):
+                        reason = "busy"
+                    else:
+                        accepted += 1
+                        continue
+                    skipped.append({"id": cid, "reason": reason})
+                body = {"v": protocol.VERSION, "request_id": payload["request_id"], "erased": 0,
+                        "skipped": skipped, "state": "pending" if accepted else "completed"}
+                return 202 if accepted else 200, body, None, None, self._resume_purges if accepted else None
+            self._request(principal, "empty_trash", payload, "", act)
+            receipt = self.store.request(key)
+            return receipt["status"], receipt["body"]
+
+    def _resume_purges(self) -> None:
+        """Committed intent only. Each cross-database step is repeatable after a crash.
+        No timer selects new Trash. Failure leaves a durable pending receipt for restart recovery."""
+        try:
+            while targets := self.store.pending_purges():
+                for target in targets:
+                    self.conversations.erase_history(target["store_id"])
+                    with self._atomic():
+                        self.store.finish_purge(target, self._clock())
+        except Exception:
+            print("nuru-serve: confirmed history erasure is pending restart recovery", file=sys.stderr)
+            traceback.print_exc(limit=5, file=sys.stderr)
 
     def generate_title(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         """Explicitly name an older conversation, on the worker after chat work. Request replay never
@@ -507,7 +557,8 @@ class Service:
             known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
             if known is None:
                 raise ProtocolError("not_found", "no such request")
-            state = {"v": protocol.VERSION, "request_id": request_id, "operation": operation, "state": "completed"}
+            state = {"v": protocol.VERSION, "request_id": request_id, "operation": operation,
+                     "state": "accepted" if operation == "empty_trash" and known["status"] == 202 else "completed"}
             if known["conversation_id"]:
                 state["conversation_id"] = known["conversation_id"]
             if known["turn_id"]:

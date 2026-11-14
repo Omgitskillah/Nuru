@@ -100,6 +100,17 @@ _MIGRATIONS = {
     ALTER TABLE conversations ADD COLUMN purged_at TEXT;
     CREATE INDEX conversations_retention ON conversations(hidden_at, purged_at);
     """,
+    6: """
+    ALTER TABLE conversations ADD COLUMN trash_rev INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE purge_intents (key TEXT PRIMARY KEY, principal TEXT NOT NULL, targets TEXT NOT NULL);
+    CREATE TABLE purge_targets (
+        intent_key TEXT NOT NULL REFERENCES purge_intents(key),
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        store_id INTEGER NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (intent_key, conversation_id)
+    );
+    """,
 }
 TERMINAL_STATES = ("completed", "failed", "cancelled")
 
@@ -304,9 +315,9 @@ class ServiceStore:
     # R14 storage foundation. Host routes and purge scheduling are deliberately separate.
     def history_state(self, conversation_id: str, principal: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT id, store_id, title, title_rev, title_by_user, hidden_at, purging, purged_at "
+            "SELECT id, store_id, title, title_rev, title_by_user, hidden_at, purging, purged_at, trash_rev "
             "FROM conversations WHERE id = ? AND principal = ?", (conversation_id, principal)).fetchone()
-        return dict(zip(("id", "store_id", "title", "title_rev", "title_by_user", "hidden_at", "purging", "purged_at"), row)) if row else None
+        return dict(zip(("id", "store_id", "title", "title_rev", "title_by_user", "hidden_at", "purging", "purged_at", "trash_rev"), row)) if row else None
 
     def rename_history(self, conversation_id: str, principal: str, revision: int, title: str) -> bool:
         """Explicit user rename, including a same-string rename: revision still advances."""
@@ -322,7 +333,7 @@ class ServiceStore:
     def hide_history(self, conversation_id: str, principal: str, now: datetime) -> bool:
         """Caller must also exclude pending/running title jobs under the service lock."""
         return self._conn.execute(
-            "UPDATE conversations SET hidden_at = ? WHERE id = ? AND principal = ? "
+            "UPDATE conversations SET hidden_at = ?, trash_rev = trash_rev + 1 WHERE id = ? AND principal = ? "
             "AND hidden_at IS NULL AND purging = 0 AND purged_at IS NULL "
             "AND NOT EXISTS (SELECT 1 FROM turns WHERE conversation_id = conversations.id "
             "AND state NOT IN ('completed', 'failed', 'cancelled'))",
@@ -331,15 +342,66 @@ class ServiceStore:
     def undo_hide(self, conversation_id: str, principal: str) -> bool:
         """Restore Trash at any age, unless a user-confirmed erasure has started."""
         return self._conn.execute(
-            "UPDATE conversations SET hidden_at = NULL WHERE id = ? AND principal = ? AND hidden_at IS NOT NULL "
+            "UPDATE conversations SET hidden_at = NULL, trash_rev = trash_rev + 1 WHERE id = ? AND principal = ? AND hidden_at IS NOT NULL "
             "AND purging = 0 AND purged_at IS NULL", (conversation_id, principal)).rowcount == 1
 
     def pending_purges(self, limit: int = 20) -> list[dict]:
-        """Resume only already-marked erasures; age never starts a new purge."""
+        """Only targets with both committed user intent and a consumed request may resume."""
         _history_limit(limit)
-        return [dict(zip(("id", "principal", "store_id"), row)) for row in self._conn.execute(
-            "SELECT id, principal, store_id FROM conversations WHERE purging = 1 "
-            "AND purged_at IS NULL ORDER BY rowid LIMIT ?", (limit,))]
+        rows = self._conn.execute(
+            "SELECT c.id, c.principal, c.store_id, i.key FROM purge_targets t "
+            "JOIN purge_intents i ON i.key = t.intent_key JOIN requests r ON r.key = i.key "
+            "JOIN conversations c ON c.id = t.conversation_id "
+            "WHERE t.done = 0 AND c.purging = 1 AND c.purged_at IS NULL "
+            "AND r.operation = 'empty_trash' AND c.principal = i.principal AND c.store_id = t.store_id "
+            "ORDER BY c.rowid LIMIT ?", (limit,)).fetchall()
+        return [dict(zip(("id", "principal", "store_id", "intent_key"), row)) for row in rows]
+
+    def mark_purging(self, key: str, principal: str, cid: str, revision: int) -> bool:
+        """Inside the intent/receipt transaction, with host worker/title checks under its lock."""
+        changed = self._conn.execute(
+            "UPDATE conversations SET purging = 1 WHERE id = ? AND principal = ? AND trash_rev = ? "
+            "AND hidden_at IS NOT NULL AND purging = 0 AND purged_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM turns WHERE conversation_id = conversations.id "
+            "AND state NOT IN ('completed','failed','cancelled'))", (cid, principal, revision)).rowcount
+        if changed:
+            self._conn.execute("INSERT INTO purge_targets (intent_key, conversation_id, store_id) "
+                               "SELECT ?, id, store_id FROM conversations WHERE id = ?", (key, cid))
+        return bool(changed)
+
+    def add_purge_intent(self, key: str, principal: str, targets: list[dict]) -> None:
+        self._conn.execute("INSERT INTO purge_intents VALUES (?, ?, ?)", (key, principal, json.dumps(targets)))
+
+    def finish_purge(self, target: dict, now: datetime) -> None:
+        """After the other database commits its scrub, atomically scrub this store and its receipt.
+        Parent rows, hashes, consumed IDs and the separate write ledger are retained."""
+        cid, key = target["id"], target["intent_key"]
+        valid = self._conn.execute(
+            "SELECT 1 FROM purge_targets t JOIN purge_intents i ON i.key = t.intent_key "
+            "JOIN requests r ON r.key = i.key JOIN conversations c ON c.id = t.conversation_id "
+            "WHERE i.key = ? AND c.id = ? AND c.principal = ? AND c.store_id = ? "
+            "AND i.principal = c.principal AND t.store_id = c.store_id AND t.done = 0 "
+            "AND c.purging = 1 AND c.purged_at IS NULL AND r.operation = 'empty_trash'",
+            (key, cid, target["principal"], target["store_id"])).fetchone()
+        if not valid:
+            raise ValueError("no committed erasure target")
+        self._conn.execute("DELETE FROM events WHERE turn_id IN (SELECT id FROM turns WHERE conversation_id = ?)", (cid,))
+        self._conn.execute("DELETE FROM questions WHERE turn_id IN (SELECT id FROM turns WHERE conversation_id = ?)", (cid,))
+        self._conn.execute("UPDATE turns SET text = '', final = NULL, compacted = 1 WHERE conversation_id = ?", (cid,))
+        for request_key, raw in self._conn.execute("SELECT key, body FROM requests WHERE conversation_id = ?", (cid,)).fetchall():
+            body = json.loads(raw)
+            clean = {k: body[k] for k in ('v','conversation_id','turn_id','request_id','replayed','events') if k in body}
+            self._conn.execute("UPDATE requests SET body = ? WHERE key = ?", (json.dumps(clean), request_key))
+        self._conn.execute("UPDATE conversations SET title = NULL, model = NULL, thinking = NULL, "
+                           "purged_at = ?, purging = 0 WHERE id = ? AND principal = ?",
+                           (_history_stamp(now), cid, target["principal"]))
+        self._conn.execute("UPDATE purge_targets SET done = 1 WHERE intent_key = ? AND conversation_id = ?", (key, cid))
+        receipt = self.request(key)["body"]
+        receipt["erased"] = self._conn.execute("SELECT COUNT(*) FROM purge_targets WHERE intent_key = ? AND done = 1", (key,)).fetchone()[0]
+        pending = self._conn.execute("SELECT COUNT(*) FROM purge_targets WHERE intent_key = ? AND done = 0", (key,)).fetchone()[0]
+        receipt["state"] = "pending" if pending else "completed"
+        self._conn.execute("UPDATE requests SET status = ?, body = ? WHERE key = ?",
+                           (202 if pending else 200, json.dumps(receipt), key))
 
     def trash_count(self, principal: str) -> int:
         return self._conn.execute(
@@ -352,7 +414,7 @@ class ServiceStore:
         if not isinstance(query, str) or len(query) > 256 or any(0xD800 <= ord(c) <= 0xDFFF for c in query) or type(hidden) is not bool:
             raise ValueError("invalid history filter")
         rows = self._conn.execute(
-            "SELECT c.id, c.title, c.created_at, c.title_rev, c.hidden_at FROM conversations c "
+            "SELECT c.id, c.title, c.created_at, c.title_rev, c.hidden_at, c.trash_rev FROM conversations c "
             "WHERE c.principal = ? AND c.purging = 0 AND c.purged_at IS NULL "
             "AND (c.hidden_at IS NOT NULL) = ? "
             "AND (? IS NULL OR c.rowid < (SELECT rowid FROM conversations WHERE id = ? AND principal = ?)) "
@@ -362,7 +424,7 @@ class ServiceStore:
             "OR instr(casefold(CASE WHEN json_valid(t.final) THEN json_extract(t.final, '$.reply') ELSE '' END), casefold(?)) > 0))) "
             "ORDER BY c.rowid DESC LIMIT ?",
             (principal, int(hidden), before, before, principal, query, query, query, limit)).fetchall()
-        return [dict(zip(("id", "title", "created_at", "title_rev", "hidden_at"), row)) for row in rows]
+        return [dict(zip(("id", "title", "created_at", "title_rev", "hidden_at", "trash_rev"), row)) for row in rows]
 
     # ------------------------------------------------------------------ turns and events
     def add_turn(self, turn_id: str, conversation_id: str, request_id: str, text: str) -> None:

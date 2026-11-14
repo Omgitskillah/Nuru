@@ -492,3 +492,24 @@ def test_r14_history_rechecks_revocation_at_host_mutation(remote, monkeypatch):
     assert call(client, 'POST', f'/v1/conversations/{cid}/hide', {'request_id': protocol.new_id()}, cookie=cookie, extra=headers)[0] == 403
     with service._lock:
         assert service.store.history_state(cid, 'operator')['hidden_at'] is None
+
+
+def test_empty_trash_requires_explicit_scope_csrf_and_preserves_replay(remote):
+    from core.service import protocol
+    client, credentials, _, service, built = remote
+    reader,_ = pair(client,credentials,name='trash-reader')
+    writer,_ = pair(client,credentials,name='trash-writer',scopes=('chat:use','notes:read','history:write'))
+    def headers(cookie):return {'Origin':ORIGIN,'X-Nuru-CSRF':csrf(cookie)}
+    cid = call(client,'POST','/v1/conversations',{'request_id':protocol.new_id()},cookie=writer,extra=headers(writer))[1]['conversation_id']
+    assert call(client,'POST',f'/v1/conversations/{cid}/hide',{'request_id':protocol.new_id()},cookie=writer,extra=headers(writer))[0] == 200
+    state = service.store.history_state(cid,'operator')
+    payload={'request_id':protocol.new_id(),'confirmed':True,'targets':[{'id':cid,'trash_rev':state['trash_rev']}]}
+    path='/v1/history/empty'
+    assert call(client,'POST',path,payload,cookie=reader,extra=headers(reader))[0] == 403
+    assert call(client,'POST',path,payload,cookie=writer)[0] == 403
+    status,receipt,_=call(client,'POST',path,payload,cookie=writer,extra=headers(writer))
+    assert status == 200 and receipt['erased'] == 1
+    assert call(client,'POST',path,payload,cookie=writer,extra=headers(writer))[:2] == (status,receipt)
+    credentials.revoke('trash-writer')
+    assert call(client,'POST',path,payload,cookie=writer,extra=headers(writer))[0] == 401
+    assert not built

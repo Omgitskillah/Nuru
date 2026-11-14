@@ -197,3 +197,11 @@ def test_trash_count_is_owned_and_excludes_erasing_or_erased_rows(store):
     assert store.trash_count('missing') == 0
     assert store.undo_hide('a', 'owner')
     assert store.trash_count('owner') == 0
+
+
+def test_trash_includes_empty_rows_so_every_counted_item_can_be_recovered(store):
+    seed(store, prompt=None)
+    assert store.history('owner') == []
+    assert store.hide_history('a','owner',NOW)
+    assert store.trash_count('owner') == 1
+    assert [r['id'] for r in store.history('owner',hidden=True)] == ['a']

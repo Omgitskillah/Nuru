@@ -78,6 +78,20 @@ class NuruClient {
 
   conversations(limit = 50) { return this.request("GET", `/v1/conversations?limit=${limit}`); }
 
+  history({ query = "", hidden = false, before = null } = {}) {
+    const params = new URLSearchParams({ q: query, hidden: String(hidden), limit: "50" });
+    if (before) params.set("before", before);
+    return this.request("GET", `/v1/history?${params}`);
+  }
+
+  changeHistory(id, action, body = {}, requestId) {
+    return this.post(`/v1/conversations/${encodeURIComponent(id)}/${action}`, body, requestId);
+  }
+
+  emptyTrash(targets, requestId) {
+    return this.post("/v1/history/empty", { confirmed: true, targets }, requestId);
+  }
+
   conversation(id, limit = 50) { return this.request("GET", `/v1/conversations/${encodeURIComponent(id)}?limit=${limit}`); }
 
   generateTitle(id, requestId) { return this.post(`/v1/conversations/${encodeURIComponent(id)}/title`, {}, requestId); }

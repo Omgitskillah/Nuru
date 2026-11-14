@@ -384,12 +384,14 @@ class Handler(BaseHTTPRequestHandler):
         body = self.server.service.status()
         if self.server.remote_origin:
             body.pop("vault", None)
+            body["history"] = {"write": self._history_authorized()}
         self.answer(200, body)
 
     def on_status_v2(self, principal, query):
         body = self.server.service.status_v2()
         if self.server.remote_origin:
             body.pop("vault", None)
+            body["history"] = {"write": self._history_authorized()}
         self.answer(200, body)
 
     def on_stop_service(self, principal, query):

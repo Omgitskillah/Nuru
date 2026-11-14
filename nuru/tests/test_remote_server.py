@@ -500,6 +500,8 @@ def test_empty_trash_requires_explicit_scope_csrf_and_preserves_replay(remote):
     reader,_ = pair(client,credentials,name='trash-reader')
     writer,_ = pair(client,credentials,name='trash-writer',scopes=('chat:use','notes:read','history:write'))
     def headers(cookie):return {'Origin':ORIGIN,'X-Nuru-CSRF':csrf(cookie)}
+    assert call(client,'GET','/v1/status',cookie=reader)[1]['history']['write'] is False
+    assert call(client,'GET','/v2/status',cookie=writer)[1]['history']['write'] is True
     cid = call(client,'POST','/v1/conversations',{'request_id':protocol.new_id()},cookie=writer,extra=headers(writer))[1]['conversation_id']
     assert call(client,'POST',f'/v1/conversations/{cid}/hide',{'request_id':protocol.new_id()},cookie=writer,extra=headers(writer))[0] == 200
     state = service.store.history_state(cid,'operator')

@@ -539,6 +539,7 @@ class Service:
             queue = {"active": int(self._active is not None), "waiting": len(self._queue), "limit": self.queue_limit}
             body = {"v": protocol.VERSION, "service": "nuru", "version": self.version,
                     "vault": {"id": self.vault_id, "name": self.vault.name[:200]},
+                    "history": {"write": True},
                     "ready": {"chat": self.chat, "notes": "ready" if self.vault.is_dir() else "unavailable", "queue": queue}}
         if self._models is not None:
             body["models"] = self._models()  # outside the lock: it may ask Ollama

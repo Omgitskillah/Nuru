@@ -2,7 +2,8 @@
 
 Status: integration in progress, 2026-11-14. Storage foundation #91 is merged;
 search, title revision guards and host/API mutations are on codex/r14-host-integration.
-The Empty trash backend is under test; UI and full integration remain unfinished.
+The backend and history/Trash UI are implemented on the integration branch. Final
+validation and Claude review are pending; manual release checks are in r14-check-by-hand.md.
 
 ## Directly confirmed behavior
 
@@ -43,8 +44,8 @@ the unavailable state without resubmitting a model turn or silently restoring hi
 
 ## Controls and navigation
 
-Keep the conversation picker and New/Title actions; add labelled Search and Clear,
-Rename and Delete actions, and Trash (N). Rename opens a text dialog. Delete explains
+Keep the conversation picker and New/Title actions; History opens a separate modal
+with labelled Search and Clear, Rename and Delete actions, and Trash (N). Rename opens a text dialog. Delete explains
 that it moves history to Trash and offers Restore. Trash permits restoration without a
 deadline. Empty trash opens the explicit irreversible-erasure confirmation described
 above. Single-conversation permanent erasure is omitted unless it becomes necessary.
@@ -67,7 +68,9 @@ A hidden row cannot start automatic title generation or receive its late result.
 
 ## Permanent-erasure protocol
 
-The client freezes the confirmed IDs and their monotonic Trash revisions (at most200
+The erasure dialog lists conversation names and defaults focus to Cancel. The client
+persists pending erasure targets, progress and request IDs in plugin settings before
+sending, so reopening settles the same operation. The client freezes the confirmed IDs and their monotonic Trash revisions (at most200
 per request). Each still-owned, still-trashed, nonbusy unchanged entry is erased; restored,
 changed or busy entries are skipped and reported. New entries are never added to an old
 confirmation. Freeze the entire confirmed list before sending multiple bounded batches. The UI must say the

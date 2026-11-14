@@ -409,7 +409,7 @@ class ServiceStore:
             "AND purging = 0 AND purged_at IS NULL", (principal,)).fetchone()[0]
 
     def history(self, principal: str, before: str | None = None, limit: int = 20, *, query: str = "", hidden: bool = False) -> list[dict]:
-        """Literal Unicode-casefolded title/prompt/reply search; no empty or purging rows."""
+        """Literal Unicode-casefolded search; empty rows appear only in explicit Trash."""
         _history_limit(limit)
         if not isinstance(query, str) or len(query) > 256 or any(0xD800 <= ord(c) <= 0xDFFF for c in query) or type(hidden) is not bool:
             raise ValueError("invalid history filter")
@@ -418,12 +418,12 @@ class ServiceStore:
             "WHERE c.principal = ? AND c.purging = 0 AND c.purged_at IS NULL "
             "AND (c.hidden_at IS NOT NULL) = ? "
             "AND (? IS NULL OR c.rowid < (SELECT rowid FROM conversations WHERE id = ? AND principal = ?)) "
-            "AND EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id) "
+            "AND (? = 1 OR EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id)) "
             "AND (instr(casefold(c.title), casefold(?)) > 0 OR EXISTS (SELECT 1 FROM turns t "
             "WHERE t.conversation_id = c.id AND (instr(casefold(t.text), casefold(?)) > 0 "
             "OR instr(casefold(CASE WHEN json_valid(t.final) THEN json_extract(t.final, '$.reply') ELSE '' END), casefold(?)) > 0))) "
             "ORDER BY c.rowid DESC LIMIT ?",
-            (principal, int(hidden), before, before, principal, query, query, query, limit)).fetchall()
+            (principal, int(hidden), before, before, principal, int(hidden), query, query, query, limit)).fetchall()
         return [dict(zip(("id", "title", "created_at", "title_rev", "hidden_at", "trash_rev"), row)) for row in rows]
 
     # ------------------------------------------------------------------ turns and events

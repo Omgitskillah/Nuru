@@ -85,13 +85,14 @@ class Service:
     def __init__(self, store: ServiceStore, conversations: ConversationStore, session_factory: Callable[[int], object],
                  vault: Path, *, queue_limit: int = QUEUE_LIMIT, answer_seconds: float | None = None,
                  retention_days: int = RETENTION_DAYS, models: Callable[[], dict] | None = None,
-                 vault_uuid: str | None = None) -> None:
+                 vault_uuid: str | None = None, clock: Callable[[], datetime] | None = None) -> None:
         """`session_factory(conversation_id)` builds the Session (in the worker thread, on the first
         turn). `answer_seconds` overrides how long a question waits (questions.ANSWER_SECONDS).
         `models()` gives the models a conversation may pick (core.main_models.choices); without it,
         every conversation runs on the configured model."""
         self.store, self.conversations, self._factory = store, conversations, session_factory
         self._models = models
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.vault = Path(vault).resolve()
         self.vault_id = protocol.vault_id(self.vault)  # v1's path hash
         self.vault_uuid = vault_uuid  # v2's identity (core.vault_identity), set by nuru-serve
@@ -103,6 +104,7 @@ class Service:
         self._title_jobs: deque[tuple] = deque()
         self._title_active: str | None = None
         self._active: str | None = None
+        self._working_conversation: str | None = None  # remains set while a terminal worker unwinds
         self._session = None
         self.chat = "idle"  # idle, loading, ready, unavailable (status)
         self._closing = False
@@ -119,6 +121,7 @@ class Service:
         with self._lock:
             self._recover(retention_days)
             self.captures.recover()
+            self._resume_purges()
         self._worker = threading.Thread(target=self._run, name="nuru-serve-worker", daemon=True)
         self._worker.start()
 
@@ -166,7 +169,7 @@ class Service:
         """Stop taking work if no turn is running or waiting, in the same step as the check, so none can be
         accepted in between. False, with nothing changed, if one is. close() still has to follow."""
         with self._lock:
-            if self._active or self._queue or self._title_active or self._title_jobs:
+            if self._active or self._working_conversation or self._queue or self._title_active or self._title_jobs:
                 return False
             self._closing = True
             return True
@@ -208,6 +211,15 @@ class Service:
             if known:
                 if known["payload_hash"] != digest:
                     raise ProtocolError("conflict", "this request_id was already used for a different request")
+                state = self.store.history_state(known["conversation_id"], principal) if known["conversation_id"] else None
+                unavailable = state and (state["hidden_at"] or state["purging"] or state["purged_at"])
+                if unavailable and operation in ("submit_turn", "generate_title"):
+                    raise ProtocolError("conflict", "conversation is hidden or expired; this request was not repeated")
+                if operation in ("rename_history", "hide_history", "undo_history"):
+                    return known["status"], {**known["body"], "history": self._history_metadata(state)}
+                if operation == "empty_trash" and known["status"] == 202:
+                    self._resume_purges()
+                    known = self.store.request(key)
                 body = {**known["body"], "replayed": True} if operation == "submit_turn" else known["body"]
                 return known["status"], body
             if self._closing:
@@ -230,6 +242,104 @@ class Service:
 
         return self._request(principal, "create_conversation", payload, "", act)
 
+    @staticmethod
+    def _history_metadata(state: dict) -> dict:
+        return {key: state[key] for key in ("id", "title_rev", "hidden_at", "purging", "purged_at", "trash_rev")}
+
+    def change_history(self, principal: str, conversation_id: str, operation: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
+        """History mutation boundary; HTTP supplies scope/CSRF and live-grant checks.
+        Busy checks, authorization, update and receipt share the service lock."""
+        if operation not in ("rename_history", "hide_history", "undo_history"):
+            raise ProtocolError("invalid_request", "unknown history operation")
+        with self._lock:
+            if authorize is not None and not authorize():
+                raise ProtocolError("forbidden", "history writes are not authorized")
+            def act():
+                state = self.store.history_state(conversation_id, principal)
+                if state is None:
+                    raise ProtocolError("not_found", "no such conversation")
+                if state["purging"] or state["purged_at"]:
+                    raise ProtocolError("conflict", "conversation text has expired")
+                if operation == "hide_history":
+                    if self._working_conversation == conversation_id:
+                        raise ProtocolError("conflict", "the turn worker is still active; try again after it finishes")
+                    if self._title_active == conversation_id or any(job[0]["id"] == conversation_id for job in self._title_jobs):
+                        raise ProtocolError("conflict", "a title is being generated; try again after it finishes")
+                    changed = self.store.hide_history(conversation_id, principal, self._clock())
+                elif operation == "undo_history":
+                    changed = self.store.undo_hide(conversation_id, principal)
+                else:
+                    try:
+                        changed = self.store.rename_history(conversation_id, principal, payload.get("title_rev"), payload.get("title"))
+                    except ValueError as error:
+                        raise ProtocolError("invalid_request", str(error)) from None
+                if not changed:
+                    raise ProtocolError("conflict", "conversation state changed or is busy; refresh history")
+                state = self.store.history_state(conversation_id, principal)
+                return 200, {"v": protocol.VERSION, "history": self._history_metadata(state)}, conversation_id, None, None
+            return self._request(principal, operation, payload, conversation_id, act)
+
+    def search_history(self, principal: str, before: str | None = None, limit: int = 20, *, query: str = "", hidden: bool = False) -> dict:
+        with self._lock:
+            self._check_safe()
+            try:
+                rows = self.store.history(principal, before, limit, query=query, hidden=hidden)
+            except ValueError as error:
+                raise ProtocolError("invalid_request", str(error)) from None
+            return {"v": protocol.VERSION, "conversations": rows, "trash_count": self.store.trash_count(principal)}
+
+    def empty_trash(self, principal: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
+        """An ordinary UI confirmation supplies a frozen bounded list; no model can call this."""
+        protocol.validate("empty_trash", payload)
+        targets = payload["targets"]
+        if len({t["id"] for t in targets}) != len(targets) or any(type(t["trash_rev"]) is not int for t in targets):
+            raise ProtocolError("invalid_request", "targets must have distinct IDs and integer Trash revisions")
+        key = protocol.request_key(principal, self.vault_id, "empty_trash", payload["request_id"])
+        with self._lock:
+            if authorize is not None and not authorize():
+                raise ProtocolError("forbidden", "history writes are not authorized")
+            def act():
+                self.store.add_purge_intent(key, principal, targets)
+                skipped, accepted = [], 0
+                for target in targets:
+                    cid = target["id"]
+                    state = self.store.history_state(cid, principal)
+                    if state is None or state["purged_at"] or not state["hidden_at"]:
+                        reason = "unavailable_or_restored"
+                    elif state["trash_rev"] != target["trash_rev"]:
+                        reason = "changed"
+                    elif (state["purging"] or self._working_conversation == cid or self._title_active == cid
+                          or any(job[0]["id"] == cid for job in self._title_jobs)):
+                        reason = "busy"
+                    elif not self.store.mark_purging(key, principal, cid, target["trash_rev"]):
+                        reason = "busy"
+                    else:
+                        accepted += 1
+                        continue
+                    skipped.append({"id": cid, "reason": reason})
+                body = {"v": protocol.VERSION, "request_id": payload["request_id"], "erased": 0,
+                        "skipped": skipped, "state": "pending" if accepted else "completed"}
+                return 202 if accepted else 200, body, None, None, self._resume_purges if accepted else None
+            self._request(principal, "empty_trash", payload, "", act)
+            receipt = self.store.request(key)
+            return receipt["status"], receipt["body"]
+
+    def _resume_purges(self) -> None:
+        """Committed intent only. Each cross-database step is repeatable after a crash.
+        No timer selects new Trash. Stop on the first failure so lock contention costs
+        at most one database timeout per attempt. Settlement or worker completion retries."""
+        if self._unsafe:
+            return  # An uncertain service transaction forbids even further reads.
+        try:
+            while targets := self.store.pending_purges():
+                for target in targets:
+                    self.conversations.erase_history(target["store_id"])
+                    with self._atomic():
+                        self.store.finish_purge(target, self._clock())
+        except Exception:
+            print("nuru-serve: confirmed history erasure is pending retry", file=sys.stderr)
+            traceback.print_exc(limit=5, file=sys.stderr)
+
     def generate_title(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         """Explicitly name an older conversation, on the worker after chat work. Request replay never
         starts another model call; a failed/interrupted title can be requested again with a new ID."""
@@ -237,6 +347,8 @@ class Service:
             conversation = self.store.conversation(conversation_id, principal)
             if conversation is None:
                 raise ProtocolError("not_found", "no such conversation")
+            state = self.store.history_state(conversation_id, principal)
+            conversation["title_rev"] = state["title_rev"]
             turn = self.store.first_completed_turn(conversation_id)
             if turn is None or not turn["final"].get("reply", "").strip():
                 raise ProtocolError("conflict", "this conversation has no completed reply to name")
@@ -266,7 +378,8 @@ class Service:
             with self._lock:
                 if not stop() and new:
                     with self._atomic():
-                        self.store.retitle(conversation["id"], conversation["title"], new)
+                        self.store.retitle(conversation["id"], conversation["title"], new,
+                                           expected_revision=conversation["title_rev"])
         except Exception:
             print("nuru-serve: couldn't generate a conversation title:", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)
@@ -432,6 +545,7 @@ class Service:
             queue = {"active": int(self._active is not None), "waiting": len(self._queue), "limit": self.queue_limit}
             body = {"v": protocol.VERSION, "service": "nuru", "version": self.version,
                     "vault": {"id": self.vault_id, "name": self.vault.name[:200]},
+                    "history": {"write": True},
                     "ready": {"chat": self.chat, "notes": "ready" if self.vault.is_dir() else "unavailable", "queue": queue}}
         if self._models is not None:
             body["models"] = self._models()  # outside the lock: it may ask Ollama
@@ -450,11 +564,19 @@ class Service:
             known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
             if known is None:
                 raise ProtocolError("not_found", "no such request")
-            state = {"v": protocol.VERSION, "request_id": request_id, "operation": operation, "state": "completed"}
+            if operation == "empty_trash" and known["status"] == 202:
+                self._resume_purges()
+                known = self.store.request(protocol.request_key(principal, self.vault_id, operation, request_id))
+            state = {"v": protocol.VERSION, "request_id": request_id, "operation": operation,
+                     "state": "accepted" if operation == "empty_trash" and known["status"] == 202 else "completed"}
             if known["conversation_id"]:
                 state["conversation_id"] = known["conversation_id"]
             if known["turn_id"]:
                 state["turn_id"] = known["turn_id"]
+            history = self.store.history_state(known["conversation_id"], principal) if known["conversation_id"] else None
+            if history and (history["hidden_at"] or history["purging"] or history["purged_at"]):
+                state["state"] = "expired" if history["purging"] or history["purged_at"] else "hidden"
+                return state
             if operation == "submit_turn":
                 turn = self.store.turn(known["turn_id"], principal)
                 state["state"], state["last_seq"] = turn["state"], turn["last_seq"]
@@ -601,6 +723,7 @@ class Service:
                     else:
                         live = self._live[self._queue.popleft()]
                         self._active = live.stream.turn_id
+                        self._working_conversation = live.stream.conversation_id
                 if job is not None:
                     try:
                         self._generate_title(*job)
@@ -621,7 +744,9 @@ class Service:
                     traceback.print_exc(limit=5, file=sys.stderr)
                 finally:
                     with self._lock:
+                        self._working_conversation = None
                         self._active = None
+                        self._resume_purges()
                         self._changed.notify_all()
                 if completed:
                     self._name_conversation(live)
@@ -712,12 +837,18 @@ class Service:
         def stop() -> bool:  # core.titles calls it from its own thread, so without the lock
             return self._closing or bool(self._queue)
 
+        title_started = False
         try:
             with self._lock:
                 if stop():
                     return
                 turns = self.store.turns(conversation_id, None, 2)
-                old = self.store.title(conversation_id)
+                row = self.store.title_state(conversation_id)
+                if row is None or row[2]:
+                    return
+                old, revision, _ = row
+                self._title_active = conversation_id
+                title_started = True
             if len(turns) != 1 or not (old is None or turns[0]["text"].startswith(old)):
                 return
             new = name(turns[0]["text"], live.stream.reply, stop)  # a model call: outside the lock
@@ -726,10 +857,15 @@ class Service:
                     if self._closing or self._unsafe:
                         return  # close() may already have returned: the database is no longer this service's
                     with self._atomic():
-                        self.store.retitle(conversation_id, old, new)
+                        self.store.retitle(conversation_id, old, new, expected_revision=revision, automatic=True)
         except Exception:
             print("nuru-serve: couldn't name a conversation:", file=sys.stderr)
             traceback.print_exc(limit=5, file=sys.stderr)
+        finally:
+            if title_started:
+                with self._lock:
+                    self._title_active = None
+                    self._changed.notify_all()
 
     def _caught_up(self, live: _Live) -> bool:
         """Store the outcomes that couldn't be stored when they came, oldest first. False if one still

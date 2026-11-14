@@ -265,3 +265,16 @@ test("Generate title encodes its conversation ID and retries the same request ID
     body: { request_id: "f25-request-00001" } });
   assert.deepEqual(sent[1], sent[0]);
 });
+
+test("history queries are literal and bounded, and mutations retain their request IDs", async () => {
+  const calls = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "t", fetch: async (url, init) => { calls.push([url, init]); return json(200, {}); } });
+  await client.history({ query: "Straße %_&", hidden: true, before: "conv0" });
+  const params = new URL(calls[0][0]).searchParams;
+  assert.equal(params.get("q"), "Straße %_&"); assert.equal(params.get("hidden"), "true"); assert.equal(params.get("limit"), "50"); assert.equal(params.get("before"), "conv0");
+  await client.history(); assert.equal(new URL(calls[1][0]).searchParams.has("before"), false);
+  await client.changeHistory("conv/id", "rename", { title: "Chosen", title_rev: 2 }, "rename-rid");
+  assert.match(calls[2][0], /conv%2Fid\/rename$/); assert.deepEqual(JSON.parse(calls[2][1].body), { request_id: "rename-rid", title: "Chosen", title_rev: 2 });
+  await client.emptyTrash([{ id: "conv0", trash_rev: 3 }], "erase-rid");
+  assert.deepEqual(JSON.parse(calls[3][1].body), { request_id: "erase-rid", confirmed: true, targets: [{ id: "conv0", trash_rev: 3 }] });
+});

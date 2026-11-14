@@ -93,6 +93,7 @@
             }
           }
         },
+        "history": {"type": "object", "additionalProperties": false, "required": ["write"], "properties": {"write": {"type": "boolean"}}},
         "models": {
           "description": "The models a conversation may pick, the configured one (default) first. Thinking is empty for a model that can't think.",
           "type": "object",

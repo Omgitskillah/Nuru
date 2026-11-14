@@ -1509,3 +1509,19 @@ test("reloaded history displays a generated title together with Sources and repl
     if (!load) await view.openConversation("conv0000demo");
   }
 });
+
+test("History is scoped, keeps the composer draft, and closes with its chat panel", async () => {
+  const { HistoryModal } = require("../lib/history");
+  const { Modal } = require("obsidian");
+  const client = fakeClient(); client.history = async () => ({ conversations: [], trash_count: 0 });
+  const { view, plugin } = await open({ client, status: { ready: { chat: "ready", notes: "ready" }, history: { write: false } } });
+  view.input.value = "Unsaved draft";
+  assert.equal(view.titleButton.disabled, true); assert.match(view.titleButton.title, /Re-pair/);
+  view.historyButton.click(); await until(() => Modal.shown instanceof HistoryModal && !Modal.shown.loading);
+  const m = Modal.shown; assert.equal(m.options.writable, false); assert.equal(view.input.value, "Unsaved draft");
+  view.historyButton.click(); assert.equal(Modal.shown, m);
+  await m.options.savePending({ active: { requestId: "same-id" } }); assert.equal(plugin.settings.pendingHistory.active.requestId, "same-id");
+  await m.options.savePending(null);
+  await m.options.changed(); assert.equal(view.picker.value, view.conversationId); assert.equal(view.input.value, "Unsaved draft");
+  await view.close(); assert.equal(m.closed, true);
+});

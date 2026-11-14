@@ -59,6 +59,7 @@ class ConversationStore:
     def __init__(self, db_path: Path) -> None:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = db_path.resolve()
         # The UI starts the session on one thread and runs each turn on another. Turns never
         # overlap, so sharing the connection between them is safe.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -245,6 +246,17 @@ class ConversationStore:
         ).fetchall()
         columns = ["id", "conversation_id", "timestamp", "role", "content", "tokens_used", "content_tokens"]
         return [dict(zip(columns, row)) for row in rows]
+
+    def erase_history(self, conversation_id: int) -> None:
+        """Use a separate transaction: an unrelated model worker may use the main connection.
+        Logical text removal retains identities and write evidence; it is not secure media wiping."""
+        db = sqlite3.connect(self._db_path, timeout=1)
+        try:
+            with db:
+                db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+                db.execute("UPDATE conversations SET title = NULL WHERE id = ?", (conversation_id,))
+        finally:
+            db.close()
 
     def close(self) -> None:
         self._conn.close()

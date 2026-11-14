@@ -589,7 +589,7 @@ def test_migrations_run_once_and_the_two_databases_join(harness, tmp_path):
     h.close()
     ServiceStore(tmp_path / "service.db").close()  # opening again changes nothing
     with sqlite3.connect(tmp_path / "service.db") as db:
-        assert db.execute("SELECT version FROM service_migrations").fetchall() == [(1,), (2,), (3,), (4,), (5,)]
+        assert db.execute("SELECT version FROM service_migrations").fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,)]
         db.execute("ATTACH DATABASE ? AS history", (str(tmp_path / "conversation.db"),))
         joined = db.execute("SELECT c.id, m.content FROM conversations c "
                             "JOIN history.messages m ON m.conversation_id = c.store_id").fetchall()
@@ -1517,3 +1517,220 @@ def test_title_job_and_source_events_survive_together_in_reloaded_history(harnes
         assert history['turns'][0]['display']['tools'][0]['sources'] == expected
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('when', ['before', 'during'])
+def test_r14_automatic_title_respects_manual_same_string_name(tmp_path, when, monkeypatch):
+    calls = []
+    naming_finished = threading.Event()
+    def title(*args):
+        calls.append(1)
+        if when == 'during':
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+        return 'Generated'
+    h = titled(tmp_path, [reply('Answer')], title)
+    original_name = h.service._name_conversation
+    def name(live):
+        try:
+            return original_name(live)
+        finally:
+            naming_finished.set()
+    monkeypatch.setattr(h.service, '_name_conversation', name)
+    try:
+        cid = h.service.create_conversation(ME, {'request_id': protocol.new_id(), 'title': 'hello'})[1]['conversation_id']
+        if when == 'before':
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        assert naming_finished.wait(WAIT), 'terminal event does not mean automatic naming finished'
+        h.service.close()
+        assert title_of(h.service, cid) == 'hello'
+        assert calls == ([] if when == 'before' else [1])
+    finally:
+        h.close()
+
+
+@pytest.mark.parametrize('rename_during', [False, True])
+def test_r14_explicit_title_can_replace_manual_name_but_not_later_same_string_rename(harness, rename_during):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    with h.service._lock, h.service.store.transaction():
+        assert h.service.store.rename_history(cid, ME, 1, 'old prompt')
+    def title(*args):
+        if rename_during:
+            with h.service._lock, h.service.store.transaction():
+                assert h.service.store.rename_history(cid, ME, 2, 'old prompt')
+        return 'Explicit generated'
+    h.session.title = title
+    h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+    # close drains no queued work; wait for the worker to finish this explicit request.
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: not h.service._title_jobs and not h.service._title_active, WAIT)
+    assert title_of(h.service, cid) == ('old prompt' if rename_during else 'Explicit generated')
+
+
+@pytest.mark.parametrize('manual', [True, False])
+def test_r14_held_automatic_title_does_not_overwrite_same_string_update(tmp_path, monkeypatch, manual):
+    entered, release, applied = threading.Event(), threading.Event(), threading.Event()
+    def title(*args):
+        entered.set()
+        assert release.wait(WAIT)
+        return 'Late automatic title'
+    h = titled(tmp_path, [reply('Answer')], title)
+    original = h.service.store.retitle
+    def observe(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        finally:
+            if args[2] == 'Late automatic title':
+                applied.set()
+    monkeypatch.setattr(h.service.store, 'retitle', observe)
+    try:
+        cid = h.service.create_conversation(ME, {'request_id': protocol.new_id(), 'title': 'hello'})[1]['conversation_id']
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        assert entered.wait(WAIT)
+        with h.service._lock, h.service.store.transaction():
+            if manual:
+                assert h.service.store.rename_history(cid, ME, 0, 'hello')
+            else:
+                # Another generated-title writer advances the revision without marking it manual.
+                assert h.service.store.retitle(cid, 'hello', 'hello', expected_revision=0)
+        release.set()
+        assert applied.wait(WAIT), 'observe the application attempt before closing the service'
+        with h.service._lock:
+            state = h.service.store.history_state(cid, ME)
+        assert state['title'] == 'hello'
+        assert state['title_rev'] == 1
+        assert state['title_by_user'] == int(manual)
+    finally:
+        release.set()
+        h.close()
+
+
+@pytest.mark.parametrize('phase', ['queued', 'running', 'automatic'])
+def test_r14_hide_refuses_title_work_under_service_lock(harness, phase):
+    h = harness([reply('Answer')])
+    entered, release = threading.Event(), threading.Event()
+    def title(*args):
+        entered.set()
+        assert release.wait(WAIT)
+        return 'Generated'
+    h.session.title = title
+    cid = h.conversation() if phase == 'automatic' else seed_old_conversation(h)
+    try:
+        if phase == 'automatic':
+            _, turn = h.submit(cid)
+            h.finished(turn['turn_id'])
+            assert entered.wait(WAIT)
+        else:
+            with h.service._lock:
+                h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})
+                if phase == 'queued':
+                    with pytest.raises(ProtocolError, match='title is being generated'):
+                        h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+            assert entered.wait(WAIT)
+        with pytest.raises(ProtocolError, match='title is being generated'):
+            h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+        assert h.service.store.history_state(cid, ME)['hidden_at'] is None
+    finally:
+        release.set()
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._title_active is None, WAIT)
+    assert h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})[0] == 200
+
+
+def test_r14_hidden_resources_and_replayed_requests_do_not_run_work(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    hide = {'request_id': protocol.new_id()}
+    h.service.change_history(ME, cid, 'hide_history', hide)
+    assert h.service.list_conversations(ME, None, 20)['conversations'] == []
+    assert h.service.search_history(ME)['conversations'] == []
+    assert h.service.search_history(SOMEONE_ELSE, hidden=True)['conversations'] == []
+    assert h.service.search_history(ME, hidden=True)['conversations'][0]['id'] == cid
+    for action in (lambda: h.service.conversation(ME, cid, None, 20),
+                   lambda: h.submit(cid),
+                   lambda: h.service.generate_title(ME, cid, {'request_id': protocol.new_id()})):
+        with pytest.raises(ProtocolError, match='no such conversation'): action()
+    assert h.built == []
+    h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
+    replay = h.service.change_history(ME, cid, 'hide_history', hide)
+    assert replay[1]['history']['hidden_at'] is None, 'replay settles current state without hiding again'
+    assert h.service.conversation(ME, cid, None, 20)['turns'][0]['display']['reply'] == 'Original answer'
+
+
+def test_r14_history_authorization_owner_replay_and_unlimited_restore(harness):
+    clock = [datetime(2026, 11, 13, tzinfo=timezone.utc)]
+    h = harness([], clock=lambda: clock[0])
+    cid = seed_old_conversation(h)
+    payload = {'request_id': protocol.new_id()}
+    for principal, allowed in ((ME, False), (SOMEONE_ELSE, True)):
+        with pytest.raises(ProtocolError):
+            h.service.change_history(principal, cid, 'hide_history', payload, authorize=lambda: allowed)
+    h.service.change_history(ME, cid, 'hide_history', payload, authorize=lambda: True)
+    with pytest.raises(ProtocolError, match='not authorized'):
+        h.service.change_history(ME, cid, 'hide_history', payload, authorize=lambda: False)
+    with pytest.raises(ProtocolError, match='different request'):
+        h.service.change_history(ME, cid, 'hide_history', {**payload, 'extra': 'changed'})
+    assert h.service.request_state(ME, payload['request_id'], 'hide_history')['state'] == 'hidden'
+    clock[0] += timedelta(days=36500)
+    assert h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})[0] == 200
+    assert h.service.store.history_state(cid, ME)['hidden_at'] is None
+
+
+def test_r14_rename_is_revision_checked_and_replay_does_not_rename_again(harness):
+    h = harness([])
+    cid = seed_old_conversation(h)
+    rename = {'request_id': protocol.new_id(), 'title_rev': 1, 'title': 'Chosen'}
+    assert h.service.change_history(ME, cid, 'rename_history', rename)[1]['history']['title_rev'] == 2
+    h.service.change_history(ME, cid, 'rename_history', {**rename, 'request_id': protocol.new_id(), 'title_rev': 2, 'title': 'Newer'})
+    assert h.service.change_history(ME, cid, 'rename_history', rename)[1]['history']['title_rev'] == 3
+    assert title_of(h.service, cid) == 'Newer'
+    with pytest.raises(ProtocolError, match='refresh history'):
+        h.service.change_history(ME, cid, 'rename_history', {**rename, 'request_id': protocol.new_id()})
+    with pytest.raises(ProtocolError, match='invalid title revision'):
+        h.service.change_history(ME, cid, 'rename_history', {'request_id': protocol.new_id(), 'title': 'Name'})
+
+
+def test_r14_hide_waits_for_failed_worker_to_finish_unwinding(harness):
+    entered, release = threading.Event(), threading.Event()
+    def script(*args):
+        yield Failure('Stopped')
+        entered.set()
+        assert release.wait(WAIT)
+    h = harness([script])
+    cid = h.conversation()
+    try:
+        _, turn = h.submit(cid)
+        h.finished(turn['turn_id'])
+        assert entered.wait(WAIT)
+        assert not h.service.close_if_idle(), "terminal does not mean the worker has exited"
+        with pytest.raises(ProtocolError, match='worker is still active'):
+            h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+    finally:
+        release.set()
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._working_conversation is None, WAIT)
+    assert h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})[0] == 200
+
+
+def test_r14_hidden_submit_replay_settles_without_running_again(harness):
+    h = harness([reply('Preserved')])
+    cid = h.conversation()
+    rid = protocol.new_id()
+    _, turn = h.submit(cid, request_id=rid)
+    h.finished(turn['turn_id'])
+    with h.service._changed:
+        assert h.service._changed.wait_for(lambda: h.service._working_conversation is None, WAIT)
+    h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
+    with pytest.raises(ProtocolError, match='not repeated'):
+        h.submit(cid, request_id=rid)
+    assert h.service.request_state(ME, rid, 'submit_turn')['state'] == 'hidden'
+    assert len(h.session.asked) == 1
+    h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
+    replay = h.submit(cid, request_id=rid)[1]
+    assert replay['replayed'] is True and replay['turn_id'] == turn['turn_id']
+    assert len(h.session.asked) == 1

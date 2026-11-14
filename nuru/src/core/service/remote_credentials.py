@@ -21,7 +21,7 @@ from pathlib import Path
 
 from core.service.credentials import PRINCIPAL, _CLIENT_NAME, _hash
 
-SCOPES = frozenset({"capture:create", "chat:use", "notes:read", "notes:write"})
+SCOPES = frozenset({"capture:create", "chat:use", "notes:read", "notes:write", "history:write"})
 COOKIE = "__Host-nuru"
 DAY = 86400
 PAIR_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # 32 symbols, no I/L/O/U
@@ -110,7 +110,7 @@ class RemoteCredentials:
         if kind == "shortcut":
             if scopes != {"capture:create"}:
                 raise ValueError("shortcuts have capture:create only")
-        elif not scopes or ("notes:write" in scopes and not {"chat:use", "notes:read"} <= scopes):
+        elif not scopes or (scopes & {"notes:write", "history:write"} and not {"chat:use", "notes:read"} <= scopes):
             raise ValueError("browser grants need scopes; writes also require chat:use and notes:read")
         if legacy is not None and (kind != "shortcut" or not re.fullmatch(r"[a-fA-F0-9]{64}", legacy)):
             raise ValueError("legacy import requires a 64-hex capture token")

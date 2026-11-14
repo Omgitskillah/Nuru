@@ -1,142 +1,126 @@
 # R14: conversation history implementation plan
 
-Status: implementation preparation, 2026-11-12; no runtime changes in this document.
-Base: main `46dcc967a79643025499c761af09f0402db068ab` (F33 and F25 merged).
+Status: integration in progress, 2026-11-14. Storage foundation #91 is merged;
+search, title revision guards and host/API mutations are on codex/r14-host-integration.
+The backend and history/Trash UI are implemented on the integration branch. Final
+validation and Claude review are pending; manual release checks are in r14-check-by-hand.md.
 
-## Directly confirmed product behavior
+## Directly confirmed behavior
 
-The user confirmed all four numbered F31/R14 choices on 2026-11-12. R14's choices:
+On 2026-11-14 the user directly confirmed replacing the earlier 30-day automatic
+purge policy with manual Empty trash. This supersedes the earlier retention choice.
 
-- Delete hides a conversation and offers Undo. After 30 days hidden, purge its
-  conversation text permanently while preserving required change evidence and
-  request receipts/tombstones. No vault notes are deleted or reverted by this action.
-- Search titles, user prompts and replies using literal, case-insensitive matching,
-  bounded by principal and this service's vault. Exclude hidden conversations from
-  ordinary search; use an explicit Hidden filter for recovery during retention.
-- Refuse hiding while a turn is active/queued or a title job is pending/running.
-  Preserve request receipts when suppressing or cleaning zero-turn conversations.
-- Renaming is explicit user intent and must win over late generated titles. F25's
-  title backfill already exists and remains available; no second generation path.
+- Delete moves a conversation to Trash. Restore is available without an age limit.
+- Show Trash (N) when nonempty as a quiet reminder; no timed prompts or nagging.
+- Empty trash permanently erases the conversations in the confirmed Trash snapshot,
+  only after an ordinary client confirmation dialog. Explain that identity stubs, consumed request
+  IDs and required write evidence remain, and logs/OS backups are not erased.
+- No age-selected cleanup, scheduled purge timer or deadline on restoration.
+- Resume an interrupted erasure at startup only if the user already confirmed it.
+- Refuse hiding or erasing while active, queued or title work references the targets.
+- Search titles, user prompts and replies with literal Unicode casefold matching,
+  scoped to the authenticated principal and this service's vault.
+- Manual names win over late generated titles, including same-string renames.
 
-No more user choice is needed for these four points. Storage details below are
-implementation proposals for Claude's review, not additional product requirements.
+This product choice does not authorize erasing any current user data during development.
+Use disposable databases and vaults in tests. No model tool for Empty trash is added.
 
-## Preservation and authorization
+## Authorization and replay
 
-Add hidden/purge metadata to ServiceStore conversation rows. Keep identity/ownership
-stubs for purged conversations and their terminal turn IDs so foreign references,
-write attempts and request replay stay meaningful. Never cascade-delete the parent
-ConversationStore conversation or its write ledger to remove UI history.
+Read/search requires chat:use + notes:read remotely. History mutations, including
+Generate title, require a separately granted history:write scope. Existing device
+grants are not silently upgraded. Pairing and CLI explain the additional permission.
+The user directly confirmed that existing devices must re-pair to gain history writes.
+Until then they keep read/search access, with clear explanations on disabled controls.
 
-Ordinary list/detail/send/title endpoints exclude or refuse hidden/purged resources;
-only an explicitly authorized Hidden view/Undo can restore visibility before expiry.
-IDs are not authority: every endpoint checks principal/vault and remote read/write
-scopes as appropriate, including code-owned request bindings. No model tool for
-conversation hiding/purging is introduced by R14.
+Host ownership checks, current-grant rechecks, CSRF and revocation enforce permissions
+independently of button visibility. A missing scope gets a short explanation on the UI.
 
-Hiding, Undo and rename use client request IDs and the existing idempotency layer.
-After purge, an old accepted create/submit ID remains consumed; replay cannot create
-or run new work. Lost-response settlement must report the hidden/purged state rather
-than silently unhiding or resubmitting. Undo after retention cannot recover text that
-was purged and must say so plainly.
+Hide/Restore/rename use request IDs and persisted receipts. A replay never repeats an
+old mutation after restoration, re-hiding or renaming; return the current state instead.
+Old accepted create/send IDs stay consumed after erasure. Hidden/erasing/erased resources
+cannot be used by ordinary detail, events, send or title endpoints. Settlement reports
+the unavailable state without resubmitting a model turn or silently restoring history.
 
-### Planned controls and remote permissions
+## Controls and navigation
 
-Keep the current conversation picker. Add a labelled search field with a clear
-control, a Hidden filter, and Rename/Delete actions for the selected conversation.
-Rename uses a small text dialog; Delete explains hiding, Undo and 30-day text purge,
-including retained logs/backups/evidence. After hiding, keep an Undo action and an
-explicit Hidden view for later recovery. Keyboard focus, drafts and selected text
-must remain stable; do not redraw a picker under an active selection needlessly.
-These controls are described before UI construction; no UI is shipped by slice 1.
+Keep the conversation picker and New/Title actions; History opens a separate modal
+with labelled Search and Clear, Rename and Delete actions, and Trash (N). Rename opens a text dialog. Delete explains
+that it moves history to Trash and offers Restore. Trash permits restoration without a
+deadline. Empty trash opens the explicit irreversible-erasure confirmation described
+above. Single-conversation permanent erasure is omitted unless it becomes necessary.
 
-Proposed API permission: remote `chat:use` + `notes:read` can list/search/read but
-cannot rename, hide or Undo. Require a separate `history:write` scope for those
-mutations, granted explicitly by the host; it does not grant vault-note writes.
-Do not broaden existing read-device credentials during migration. Route checks,
-CSRF, ownership and revocation must enforce this independently of button visibility.
-The scope and routes are slice 2 work, not enabled by the storage foundation.
+No conversation is created merely by pressing New. Suppress zero-turn rows in ordinary
+history while preserving identity and request receipts. Preserve drafts, selection,
+focus and navigation generations; stale search/hide/restore replies cannot overwrite
+a newer selection. Describe scope failures before the user attempts a forbidden action.
 
-## Rename and title generation races
+## Title and worker races
 
-Use a title revision plus explicit-user-name metadata, not just equality of strings.
-A user can rename to the same string or to a prefix of the first prompt; neither
-should invite the automatic first-turn title writer to overwrite that choice.
+Both generated-title paths capture and compare title revisions. Automatic first-turn
+naming additionally skips manual titles and rechecks title_by_user at application.
+Explicit Title may replace a manual name but cannot overwrite a later rename.
 
-Rename accepts an expected revision and returns a conflict on a stale edit. Both
-queued explicit title requests and automatic first-turn naming capture the revision
-and store only if unchanged. Explicitly clicking Generate title may replace the
-current name, subject to that revision guard; opening history must not start a model.
+Hide checks queued/running title jobs and the actual worker lifetime under the same
+service lock as the mutation and receipt. A terminal event can free the queue slot
+before a generator finishes unwinding; _working_conversation guards this interval.
+A hidden row cannot start automatic title generation or receive its late result.
 
-## Search, empty rows and navigation
+## Permanent-erasure protocol
 
-Use bound SQL parameters and literal matching (escape LIKE wildcards or use a literal
-substring function); do not interpret regex, SQL or FTS query syntax from the user.
-Bound query length, result count and pagination. Search full persisted reply text,
-not only truncated picker labels, while returning bounded metadata and not unrelated
-note content. Define/test Unicode case behavior rather than claiming SQLite lower()
-provides full Unicode casefolding automatically.
+The erasure dialog lists conversation names and defaults focus to Cancel. The client
+persists pending erasure targets, progress and request IDs in plugin settings before
+sending, so reopening settles the same operation. The client freezes the confirmed IDs and their monotonic Trash revisions (at most200
+per request). Each still-owned, still-trashed, nonbusy unchanged entry is erased; restored,
+changed or busy entries are skipped and reported. New entries are never added to an old
+confirmation. Freeze the entire confirmed list before sending multiple bounded batches. The UI must say the
+number being erased; cancellation makes no change. Revalidate ownership, grants and
+busy state before accepting it. Replayed confirmation requests must not start another
+erasure or broaden the snapshot.
 
-Never create a server conversation merely by pressing New or navigating. The plugin
-already creates at first send; a successful create followed by failed submit can
-leave a zero-turn row. Suppress these in ordinary history while retaining consumed
-request IDs/identity until request reconciliation is safe. Ensure accepted sends
-refresh the list and keep the correct selection even if a zero-turn row was omitted.
+Before scrubbing, persist the purging mark and durable user-confirmed intent. Two WAL
+SQLite databases are not one atomic transaction: phases must be idempotent and crash
+resumable. Startup may resume existing marked work, never mark old Trash due to age.
+The prototype processes bounded requests synchronously under the host lock; a slow
+operation can time out at the client, whose same request ID remains safe to retry. The
+ConversationStore scrub uses its own SQLite connection so it cannot commit another
+worker's transaction. Lock failure stops the pass at its first error and leaves a durable pending receipt. Checking or replaying that receipt, completing a turn, or restarting resumes already-confirmed targets; no new Trash is selected.
+This removes logical database text, not secure overwriting of SQLite pages or storage.
 
-Protect list/detail/search responses with navigation generations. Search or hiding
-must not steal input focus, discard drafts or apply stale results after navigation.
-Expose hidden recovery and expired-text status honestly; Delete's dialog explains
-Undo/30-day purge and never implies that logs, backups or vault notes are erased.
-
-## Purge inventory and recovery protocol
-
-Content exists in more than one place:
-
-| Location | Purge treatment |
+| Location | Treatment after confirmed Empty trash |
 | --- | --- |
-| ServiceStore conversation title, turn text and final Display | Remove conversation text after retention; retain minimal identity/state stubs |
-| Stored turn events/questions | Remove content-bearing event/question records once no live work references them |
-| ConversationStore title/messages | Remove corresponding conversation text; preserve parent identity and write_attempts |
-| Request receipts | Keep binding hashes and consumed-ID tombstones; audit bodies for free-text answers and redact content-bearing cached responses without ever re-executing requests |
-| Write attempts/F31 journal links | Preserve required mutation/reconciliation evidence and authorization links, including uncertain attempts; do not claim these necessarily contain no note bytes |
-| Existing full-content logs and OS backups | Separate retention policies; not silently removed by R14 and not advertised as secure erasure |
+| ServiceStore conversation title, turns.text and turns.final | Remove text; retain minimal ownership/turn identity stubs |
+| Turn events/questions | Remove content-bearing history without breaking required write receipts |
+| ConversationStore title/messages | Remove text; retain conversation identity and write_attempts |
+| Request receipts | Preserve key/binding hashes and consumed IDs; scrub content-bearing cached responses without replaying work |
+| Write attempts and F31 evidence links | Preserve required mutation/reconciliation evidence, including uncertain attempts that may contain note bytes |
+| Full-content logs and OS backups | Separate policies; never advertise these as erased by Empty trash |
 
-Mark a conversation purging before scrubbing either store so it cannot be opened,
-unhidden, renamed or submitted to mid-purge. Use durable idempotent phases across the
-two SQLite databases; a process crash resumes cleanup rather than exposes half-erased
-history or repeats a model/write action. Do not assume two separate WAL databases
-have one atomic commit. Recheck that no active/queued/title work can reference it.
+No cascading parent deletion, recursive file removal, vault-note deletion, large Git
+backups or changes to unrelated data. Mark purged_at only after both stores are scrubbed.
+Until then, purging prevents reading or restoring a partly erased conversation.
 
-Run bounded maintenance batches, with a clock injectable in tests. Hidden retention
-starts at the hide timestamp; Undo before the deadline clears it. Re-hiding starts a
-new deadline. Define the exact boundary at 30 days and check expiry inside Undo,
-not only when a maintenance job happens. No recursive file removal, log deletion,
-large backups in Git or automatic vault mutation.
+## Verification and review
 
-## Verification and implementation order
+Storage tests cover upgrade/reopen, literal non-ASCII and wildcard queries, owner/cursor
+isolation, empty rows and preserved receipts. Tests formerly asserting 30-day expiry
+must instead assert restoration after arbitrarily long time and no age-started purge;
+this expectation change is required by the user's 2026-11-14 policy replacement.
 
-1. Store migrations and model-free tests for ownership, revision races, hidden/Undo,
-   empty-history suppression, literal search and retention boundaries.
-2. Host routes and request replay; busy guards; title-job revision integration;
-   remote credentials/CSRF/revocation; crash-resumable content purge preserving evidence.
-3. Client/history UI with search, rename, hide confirmation, Undo/Hidden filter and
-   explicit expired-text messages; generation/focus/draft protections.
-4. HTTP/plugin integration for lost replies, repeated request IDs, wrong owner,
-   non-ASCII/search wildcards, zero-turn create/submit failures, title races,
-   interrupted purge and history reopened after restart.
-5. Full local suite/build and combined coverage gate; hosted Windows-specific tests
-   only. Useful mutation checks must catch scope bypass, replayed work, ledger deletion,
-   early/late expiry, same-string rename overwritten and stale navigation.
+Host/HTTP tests cover queued/running/automatic title races, terminal worker unwinding,
+request replay, same-string renames, hidden detail/events, strict schemas, explicit
+history grants, CSRF and revocation between authentication and mutation. The changed
+remote-title test explicitly grants history:write because title generation renames
+history; read authority alone is insufficient.
 
-Claude reviews security, retention/idempotency and UX before merge. Preserve existing
-parked branches and F31 design #90; R14 does not implement Restore or weaken its rules.
+Erasure tests must inject crashes between each durable phase, preserve other owners
+and active/uncertain write evidence, reject stale confirmations, exercise restart,
+replay and new Trash entries during a batch, and prove cancellation changes nothing.
+UI tests cover Trash counts, restored history, stale navigation, retained drafts/focus
+and clear confirmation/permission explanations. Use useful mutation probes for each
+security or preservation boundary, not coverage-only assertions.
 
-## Slice 1 status
-
-Storage-only migration 5 adds title revision/manual-name and hidden/purge-state
-metadata. New store APIs cover literal Unicode search, owner-scoped rename/hide/Undo,
-retention candidates and expiry. Existing route/list contracts are unchanged; there
-is no new route, UI control, purge worker or text deletion yet. Host title-job busy
-checks and revision capture/application are required in slice 2 before exposing these
-operations. F25 tests stay unchanged except the general migration-version assertion,
-which must now expect schema 5; that is not a change to F25 behavioral expectations.
+Run full local tests/build and the combined coverage gate before integration approval.
+Use hosted CI only where Windows validation is necessary. Claude reviews the complete
+slice before merge. F31 #90 is a merged design; its implementation remains queued and
+its capacity proposals are separate from R14's Trash policy.

@@ -15,6 +15,7 @@ const { ConnectionProblem } = require("./connection");
 const { LaunchProblem } = require("./launcher");
 const { renderReply, sourceLink, linkSources } = require("./render");
 const sourceTargets = require("./sources");
+const { HistoryModal } = require("./history");
 const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
@@ -76,6 +77,33 @@ class ChatView extends ItemView {
     this.titleButton = header.createEl("button", { text: "Title", attr: { "aria-label": "Generate conversation title",
       title: "Generate a title from the first completed reply, using this conversation’s model" } });
     this.registerDomEvent(this.titleButton, "click", () => this.generateTitle());
+    this.historyButton = header.createEl("button", { text: "History", attr: { "aria-label": "Search history and Trash" } });
+    this.historyButton.disabled = true;
+    this.registerDomEvent(this.historyButton, "click", () => {
+      if (!this.client || this.historyButton.disabled || (this.historyDialog && !this.historyDialog.closed)) return;
+      const client = this.client;
+      this.historyDialog = new HistoryModal(this.app, client, {
+        writable: this.service?.history?.write === true,
+        getPending: () => this.plugin.settings.pendingHistory,
+        savePending: (pendingHistory) => this.plugin.remember({ pendingHistory }),
+        openConversation: (id) => client === this.client ? this.openConversation(id) : undefined,
+        changed: async () => {
+          if (client !== this.client) return;
+          let generation = this.generation;
+          if (this.conversationId) {
+            try { await client.conversation(this.conversationId); }
+            catch (error) {
+              if (error.status === 404 && generation === this.generation) {
+                await this.openConversation(null); generation = this.generation;
+              }
+            }
+          }
+          if (generation !== this.generation || client !== this.client) return;
+          if (await this.loadConversations(generation)) this.picker.value = this.conversationId || "";
+        },
+      });
+      this.historyDialog.open();
+    });
     this.serviceEl = root.createDiv({ cls: "nuru-service" });
     this.statusEl = root.createDiv({ cls: "nuru-status", attr: { role: "status" } });
     this.messagesEl = root.createDiv({ cls: "nuru-messages", attr: { role: "log", "aria-live": "polite" } });
@@ -135,6 +163,7 @@ class ChatView extends ItemView {
   }
 
   async onClose() {
+    this.historyDialog?.close();
     this.generation += 1;
     for (const turn of this.turns.values()) this.forget(turn);
     this.turns.clear();
@@ -373,6 +402,7 @@ class ChatView extends ItemView {
   async generateTitle() {
     if (!this.conversationId || !this.client || this.titleButton.disabled) return;
     const generation = this.generation, id = this.conversationId;
+    this.namingTitle = true;
     this.titleButton.disabled = true;
     try {
       await this.client.generateTitle(id, newRequestId());
@@ -382,7 +412,8 @@ class ChatView extends ItemView {
     } catch (error) {
       if (generation === this.generation) this.setStatus(`Couldn't generate a title: ${error.message}`, true);
     } finally {
-      this.titleButton.disabled = false;
+      this.namingTitle = false;
+      this.titleButton.disabled = this.service?.history?.write === false;
     }
   }
 
@@ -886,6 +917,11 @@ class ChatView extends ItemView {
   showService(status) {
     if (!status?.ready) return;
     this.service = status;
+    this.historyButton.disabled = !status.history;
+    this.titleButton.disabled = Boolean(this.namingTitle) || status.history?.write === false;
+    this.titleButton.title = status.history?.write === false
+      ? "Re-pair this device to generate titles, rename or delete conversations"
+      : "Generate a title from the first completed reply";
     this.renderChoice();
     this.chat = status.ready.chat;
     const { ready } = status;

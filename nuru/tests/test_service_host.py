@@ -1724,7 +1724,7 @@ def test_r14_hidden_submit_replay_settles_without_running_again(harness):
     _, turn = h.submit(cid, request_id=rid)
     h.finished(turn['turn_id'])
     with h.service._changed:
-        assert h.service._changed.wait_for(lambda: h.service._active is None, WAIT)
+        assert h.service._changed.wait_for(lambda: h.service._working_conversation is None, WAIT)
     h.service.change_history(ME, cid, 'hide_history', {'request_id': protocol.new_id()})
     with pytest.raises(ProtocolError, match='not repeated'):
         h.submit(cid, request_id=rid)

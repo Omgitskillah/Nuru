@@ -328,20 +328,23 @@ class ServiceStore:
             "AND state NOT IN ('completed', 'failed', 'cancelled'))",
             (_history_stamp(now), conversation_id, principal)).rowcount == 1
 
-    def undo_hide(self, conversation_id: str, principal: str, now: datetime) -> bool:
-        """Undo is refused at the exact retention boundary, even before maintenance runs."""
+    def undo_hide(self, conversation_id: str, principal: str) -> bool:
+        """Restore Trash at any age, unless a user-confirmed erasure has started."""
         return self._conn.execute(
-            "UPDATE conversations SET hidden_at = NULL WHERE id = ? AND principal = ? AND hidden_at > ? "
-            "AND purging = 0 AND purged_at IS NULL",
-            (conversation_id, principal, _history_stamp(now - timedelta(days=30)))).rowcount == 1
+            "UPDATE conversations SET hidden_at = NULL WHERE id = ? AND principal = ? AND hidden_at IS NOT NULL "
+            "AND purging = 0 AND purged_at IS NULL", (conversation_id, principal)).rowcount == 1
 
-    def due_history(self, now: datetime, limit: int = 20) -> list[dict]:
-        """Bounded maintenance candidates, not a purge operation; identity rows are retained."""
+    def pending_purges(self, limit: int = 20) -> list[dict]:
+        """Resume only already-marked erasures; age never starts a new purge."""
         _history_limit(limit)
         return [dict(zip(("id", "principal", "store_id"), row)) for row in self._conn.execute(
-            "SELECT id, principal, store_id FROM conversations WHERE hidden_at <= ? "
-            "AND purged_at IS NULL ORDER BY hidden_at, rowid LIMIT ?",
-            (_history_stamp(now - timedelta(days=30)), limit))]
+            "SELECT id, principal, store_id FROM conversations WHERE purging = 1 "
+            "AND purged_at IS NULL ORDER BY rowid LIMIT ?", (limit,))]
+
+    def trash_count(self, principal: str) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM conversations WHERE principal = ? AND hidden_at IS NOT NULL "
+            "AND purging = 0 AND purged_at IS NULL", (principal,)).fetchone()[0]
 
     def history(self, principal: str, before: str | None = None, limit: int = 20, *, query: str = "", hidden: bool = False) -> list[dict]:
         """Literal Unicode-casefolded title/prompt/reply search; no empty or purging rows."""

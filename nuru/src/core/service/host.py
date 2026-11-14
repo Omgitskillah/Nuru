@@ -263,14 +263,14 @@ class Service:
                         raise ProtocolError("conflict", "a title is being generated; try again after it finishes")
                     changed = self.store.hide_history(conversation_id, principal, self._clock())
                 elif operation == "undo_history":
-                    changed = self.store.undo_hide(conversation_id, principal, self._clock())
+                    changed = self.store.undo_hide(conversation_id, principal)
                 else:
                     try:
                         changed = self.store.rename_history(conversation_id, principal, payload.get("title_rev"), payload.get("title"))
                     except ValueError as error:
                         raise ProtocolError("invalid_request", str(error)) from None
                 if not changed:
-                    raise ProtocolError("conflict", "conversation state changed, is busy, or recovery expired; refresh history")
+                    raise ProtocolError("conflict", "conversation state changed or is busy; refresh history")
                 state = self.store.history_state(conversation_id, principal)
                 return 200, {"v": protocol.VERSION, "history": self._history_metadata(state)}, conversation_id, None, None
             return self._request(principal, operation, payload, conversation_id, act)
@@ -282,7 +282,7 @@ class Service:
                 rows = self.store.history(principal, before, limit, query=query, hidden=hidden)
             except ValueError as error:
                 raise ProtocolError("invalid_request", str(error)) from None
-            return {"v": protocol.VERSION, "conversations": rows}
+            return {"v": protocol.VERSION, "conversations": rows, "trash_count": self.store.trash_count(principal)}
 
     def generate_title(self, principal: str, conversation_id: str, payload: dict, *, authorize=None) -> tuple[int, dict]:
         """Explicitly name an older conversation, on the worker after chat work. Request replay never

@@ -437,10 +437,11 @@ def test_r14_http_history_rename_hide_undo_search_and_receipts(served):
     assert client.call('POST', f'/v1/conversations/{cid}/hide', hide, headers=headers)[0] == 200
     assert client.call('GET', f'/v1/turns/{tid}/events')[0] == 404
     assert client.call('GET', f'/v1/conversations/{cid}')[0] == 404
-    assert client.call('GET', '/v1/history')[1]['conversations'] == []
+    assert client.call('GET', '/v1/history')[1] == {'v': 1, 'conversations': [], 'trash_count': 1}
     assert client.call('GET', '/v1/history?hidden=true')[1]['conversations'][0]['id'] == cid
     assert client.call('GET', f'/v1/requests/{hide["request_id"]}?operation=hide_history')[1]['state'] == 'hidden'
     assert client.call('POST', f'/v1/conversations/{cid}/undo', {'request_id': protocol.new_id()}, headers=headers)[0] == 200
     assert client.call('POST', f'/v1/conversations/{cid}/hide', hide, headers=headers)[1]['history']['hidden_at'] is None
     assert client.call('GET', f'/v1/conversations/{cid}')[1]['turns'][0]['display']['reply'] == 'Answer'
+    assert client.call('GET', '/v1/history')[1]['trash_count'] == 0
     assert not built

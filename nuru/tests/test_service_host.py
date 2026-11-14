@@ -1653,7 +1653,7 @@ def test_r14_hidden_resources_and_replayed_requests_do_not_run_work(harness):
     assert h.service.conversation(ME, cid, None, 20)['turns'][0]['display']['reply'] == 'Original answer'
 
 
-def test_r14_history_authorization_owner_replay_and_expiry(harness):
+def test_r14_history_authorization_owner_replay_and_unlimited_restore(harness):
     clock = [datetime(2026, 11, 13, tzinfo=timezone.utc)]
     h = harness([], clock=lambda: clock[0])
     cid = seed_old_conversation(h)
@@ -1667,10 +1667,9 @@ def test_r14_history_authorization_owner_replay_and_expiry(harness):
     with pytest.raises(ProtocolError, match='different request'):
         h.service.change_history(ME, cid, 'hide_history', {**payload, 'extra': 'changed'})
     assert h.service.request_state(ME, payload['request_id'], 'hide_history')['state'] == 'hidden'
-    clock[0] += timedelta(days=30)
-    with pytest.raises(ProtocolError, match='recovery expired'):
-        h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})
-    assert h.service.store.history_state(cid, ME)['hidden_at'] is not None
+    clock[0] += timedelta(days=36500)
+    assert h.service.change_history(ME, cid, 'undo_history', {'request_id': protocol.new_id()})[0] == 200
+    assert h.service.store.history_state(cid, ME)['hidden_at'] is None
 
 
 def test_r14_rename_is_revision_checked_and_replay_does_not_rename_again(harness):

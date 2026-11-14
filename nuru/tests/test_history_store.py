@@ -103,7 +103,7 @@ def test_search_pagination_is_bounded_and_wrong_owner_cursor_does_not_leak(store
 @pytest.mark.parametrize('limit', [0, 51, True, '2'])
 def test_invalid_bounds(store, limit):
     with pytest.raises(ValueError): store.history('owner', limit=limit)
-    with pytest.raises(ValueError): store.due_history(NOW, limit)
+    with pytest.raises(ValueError): store.pending_purges(limit)
 
 
 @pytest.mark.parametrize('query,hidden', [(None,False),('x'*257,False),('bad\ud800',False),('',1)])
@@ -111,22 +111,21 @@ def test_invalid_filters(store, query, hidden):
     with pytest.raises(ValueError): store.history('owner', query=query, hidden=hidden)
 
 
-def test_hide_undo_and_exact_expiry_preserve_rows_messages_and_receipts(store):
+def test_trash_has_no_deadline_and_preserves_rows_messages_and_receipts(store):
     seed(store)
     store.add_request('key','create_conversation','req', 'hash',201,{'conversation_id':'a'},'a',None)
     assert not store.hide_history('a','intruder',NOW)
     assert store.hide_history('a','owner',NOW)
-    assert not store.hide_history('a','owner',NOW + timedelta(days=1)), 'retries must not reset retention'
+    assert not store.hide_history('a','owner',NOW + timedelta(days=1)), 'retries must not change the Trash timestamp'
     assert store.history('owner') == []
     assert store.history('owner', hidden=True)[0]['id'] == 'a'
     assert not store.rename_history('a','owner',0,'Hidden rename')
-    assert not store.undo_hide('a','intruder',NOW)
-    assert store.undo_hide('a','owner',NOW + timedelta(days=30) - timedelta(milliseconds=1))
+    assert not store.undo_hide('a','intruder')
+    assert store.undo_hide('a','owner')
     assert store.hide_history('a','owner',NOW + timedelta(days=1))
-    boundary = NOW + timedelta(days=31)
-    assert store.due_history(boundary - timedelta(milliseconds=1)) == []
-    assert store.due_history(boundary) == [{'id':'a','principal':'owner','store_id':1}]
-    assert not store.undo_hide('a','owner',boundary)
+    assert store.pending_purges() == [], 'age cannot initiate erasure'
+    assert store.undo_hide('a','owner')
+    assert not store.undo_hide('a','owner'), 'already-restored state is not a new restoration'
     assert store.request('key')['body'] == {'conversation_id':'a'}
     assert store.turns('a',None,1)[0]['text'] == 'Prompt', 'foundation must not purge content'
 
@@ -146,16 +145,13 @@ def test_purge_states_are_not_visible_renameable_or_undoable(store, field, value
     assert store.history('owner') == []
     assert not store.rename_history('a','owner',0,'Name')
     assert not store.hide_history('a','owner',NOW)
-    assert not store.undo_hide('a','owner',NOW)
-    if field == 'purged_at': assert store.due_history(NOW) == []
+    assert not store.undo_hide('a','owner')
+    assert store.pending_purges() == ([{'id':'a','principal':'owner','store_id':1}] if field == 'purging' else [])
 
 
 def test_history_clock_requires_timezone(store):
     seed(store)
-    for call in [lambda: store.hide_history('a','owner',NOW.replace(tzinfo=None)),
-                 lambda: store.undo_hide('a','owner',NOW.replace(tzinfo=None)),
-                 lambda: store.due_history(NOW.replace(tzinfo=None))]:
-        with pytest.raises(ValueError): call()
+    with pytest.raises(ValueError): store.hide_history('a','owner',NOW.replace(tzinfo=None))
 
 
 def test_search_thousands_of_turns_has_bounded_personal_scale_cost(store):
@@ -180,3 +176,24 @@ def test_generated_title_rechecks_manual_and_visibility_at_application(store):
     assert store.retitle('a', 'Title', 'Explicit', expected_revision=1)
     assert store.hide_history('a', 'owner', NOW)
     assert not store.retitle('a', 'Explicit', 'Hidden title', expected_revision=2)
+
+
+def test_ancient_trash_restores_and_is_never_selected_for_erasure(store):
+    seed(store)
+    assert store.hide_history('a', 'owner', NOW.replace(year=1900))
+    assert store.pending_purges() == []
+    assert store.undo_hide('a', 'owner')
+    assert store.turns('a', None, 1)[0]['final']['reply'] == 'Answer'
+
+
+def test_trash_count_is_owned_and_excludes_erasing_or_erased_rows(store):
+    for cid, owner in [('a','owner'),('b','owner'),('c','owner'),('d','intruder')]:
+        seed(store, cid, principal=owner)
+        assert store.hide_history(cid, owner, NOW)
+    store._conn.execute('UPDATE conversations SET purging = 1 WHERE id = ?', ('b',))
+    store._conn.execute('UPDATE conversations SET purged_at = ? WHERE id = ?', ('done', 'c'))
+    assert store.trash_count('owner') == 1
+    assert store.trash_count('intruder') == 1
+    assert store.trash_count('missing') == 0
+    assert store.undo_hide('a', 'owner')
+    assert store.trash_count('owner') == 0

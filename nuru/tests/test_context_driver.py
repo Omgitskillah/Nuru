@@ -193,3 +193,21 @@ def test_status_poll_during_healthy_measurement_reports_busy_not_interrupted(tmp
     r.cold_load = observed
     d.measure("qwen")
     assert states and control.recovery() == {"reserved": False}
+
+
+def test_realistic_minimum_measure_then_smaller_apply_uses_existing_resident_evidence(tmp_path):
+    d, r = setup(tmp_path); r.current = 32768
+    original = r.resident
+    r.resident = lambda model, **kwargs: {**original(model, **kwargs), "digest": "digest"}
+    r.available = lambda: (17_180_000_000, 1_380_000_000)
+    r.reclaimable = lambda row: row["size"] if row else 0
+    d._minimum = lambda model: 20480
+    info = d.measure("qwen")
+    assert info["max_tokens"] == 32768 and r.calls == [8192, 16384, 32768]
+    result = d.apply("qwen", 1, "initial")
+    assert result["window_tokens"] == 26755 and prefs.read("qwen", d.root).tokens == 26755
+    assert r.calls[-1] == 26755
+    # Growth above that current allocation must still pass the memory budget.
+    with pytest.raises(Unsupported, match="available memory"):
+        d.apply("qwen", 2, prefs.read("qwen", d.root).revision)
+    assert r.current == 26755 and prefs.read("qwen", d.root).gb == 1

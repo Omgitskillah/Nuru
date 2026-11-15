@@ -159,8 +159,9 @@ class ContextDriver:
         if row is not None:
             point, _ = self.runner.verify(model, row["context_length"], exclusive=exclusive)
             if not record.curve.agrees(point): raise Unsupported("Memory use changed: measure again")
-            # Reusing this exact allocation needs no additional memory or reload.
-            if point.window == value:
+            # Reusing or shrinking an agreeing allocation needs no extra memory.
+            # The reload is still verified against the curve before publication.
+            if value <= point.window:
                 return
         total, available = self.runner.available()
         available = min(total, available + self.runner.reclaimable(row))

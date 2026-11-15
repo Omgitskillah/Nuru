@@ -182,9 +182,13 @@ class Modal {
 
   setTitle(title) { this.title = title; return this; }
 
-  open() { Modal.shown = this; this.onOpen(); }
+  open() {
+    Modal.shown = this; window.document.body.appendChild(this.contentEl); this.onOpen();
+    // Obsidian focuses the first control after onOpen; pre-opening focus is overwritten.
+    this.contentEl.querySelector('input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')?.focus();
+  }
 
-  close() { if (Modal.shown === this) Modal.shown = null; this.onClose(); }
+  close() { if (Modal.shown === this) Modal.shown = null; this.onClose(); this.contentEl.remove(); }
 }
 Modal.shown = null;
 

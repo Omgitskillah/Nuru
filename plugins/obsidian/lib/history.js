@@ -6,6 +6,11 @@ const PERMISSION = "Re-pair this device to generate titles, rename or delete con
 class HistoryQuestion extends Modal {
   static ask(app, options) { return new Promise((resolve) => new HistoryQuestion(app, options, resolve).open()); }
   constructor(app, options, resolve) { super(app); this.options = options; this.resolve = resolve; }
+  open() {
+    super.open();
+    // Modal.open() applies host autofocus after onOpen(), so choose the safe target last.
+    (this.input || this.cancel).focus();
+  }
   onOpen() {
     const { title, text, value, action } = this.options;
     this.setTitle(title); this.contentEl.createEl("p", { text });
@@ -15,14 +20,13 @@ class HistoryQuestion extends Modal {
     }
     if (value !== undefined) {
       this.input = this.contentEl.createEl("input", { attr: { "aria-label": "Conversation name", maxlength: "200" } });
-      this.input.value = value; this.input.focus();
+      this.input.value = value;
     }
     this.contentEl.createEl("button", { text: action }).addEventListener("click", () => {
       this.resolve(this.input ? this.input.value : true); this.close();
     });
-    const cancel = this.contentEl.createEl("button", { text: "Cancel" });
+    const cancel = this.cancel = this.contentEl.createEl("button", { text: "Cancel" });
     cancel.addEventListener("click", () => this.close());
-    if (!this.input) cancel.focus();
   }
   onClose() { this.resolve(null); this.contentEl.empty(); }
 }
@@ -128,7 +132,7 @@ class HistoryModal extends Modal {
         before = page.conversations.length === 50 ? page.conversations.at(-1).id : null;
       } while (before);
       if (!targets.length) { this.note.setText("Trash is empty."); return; }
-      const yes = await HistoryQuestion.ask(this.app, { title: `Permanently erase ${targets.length} conversations?`,
+      const yes = await HistoryQuestion.ask(this.app, { title: `Permanently erase ${targets.length} ${targets.length === 1 ? "conversation" : "conversations"}?`,
         text: "This empties all Trash, including conversations outside the current search. This can't be undone. Your vault notes aren't changed. Nuru keeps a record of the changes it made to your notes, and its logs and your computer's backups aren't erased. Anything restored, changed or busy will be kept.", action: "Empty trash permanently", items: labels });
       if (!yes || this.closed) return;
       if (this.options.getPending()) throw new Error("Another erasure needs settlement first");

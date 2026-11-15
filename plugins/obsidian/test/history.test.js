@@ -96,3 +96,27 @@ test("empty lists, inconsistent pagination and failed persistence cannot erase",
   client.history = async () => ({ conversations: [row()], trash_count: 1 }); HistoryQuestion.ask = async () => true;
   options.savePending = async () => { throw new Error("disk full"); }; await m.beginEmpty(); assert.match(m.note.textContent, /disk full/); assert.equal(calls.filter((c) => c[0] === "empty").length, 0);
 });
+
+for (const [action, value] of [["Empty trash permanently", undefined], ["Move to Trash", undefined], ["Rename", "Trip"]]) {
+  test(`${action} opens with a safe focus after the host's autofocus`, async () => {
+    const result = HistoryQuestion.ask({}, { title: action, text: "Confirm", action, value });
+    const question = Modal.shown;
+    assert.equal(document.activeElement, value === undefined ? button(question, "Cancel") : question.input);
+    // Activate the initially focused button (the native Enter action), never a destructive action.
+    if (value === undefined) document.activeElement.click();
+    else question.close();
+    assert.equal(await result, null);
+  });
+}
+test("erasure confirmation uses singular and plural counts and safe cancellation", async () => {
+  for (const count of [1, 2]) {
+    const { m, calls } = await setup({ history: () => ({ conversations: Array.from({ length: count }, (_, i) => row(`conv${i}`)), trash_count: count }) });
+    const pending = m.beginEmpty();
+    await until(() => Modal.shown instanceof HistoryQuestion);
+    assert.equal(Modal.shown.title, `Permanently erase ${count} ${count === 1 ? "conversation" : "conversations"}?`);
+    assert.equal(document.activeElement, button(Modal.shown, "Cancel"));
+    document.activeElement.click(); await pending;
+    assert.equal(calls.filter((c) => c[0] === "empty").length, 0);
+    m.close();
+  }
+});

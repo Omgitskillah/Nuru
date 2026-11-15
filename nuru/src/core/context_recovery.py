@@ -38,7 +38,8 @@ def _snapshot(directory=None):
     try:
         process = psutil.Process(pid)
         # Missing legacy creation time is conservatively live if its PID exists.
-        alive = created is None or process.create_time() == created
+        # Small clock/boot-time rounding differences must not declare a live owner dead.
+        alive = created is None or abs(process.create_time() - created) <= 1.0
     except psutil.NoSuchProcess:
         alive = False
     except psutil.AccessDenied:

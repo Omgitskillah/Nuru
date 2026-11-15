@@ -119,3 +119,14 @@ def test_cli_check_and_explicit_release(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     server.main(["compute", "release", "--run-id", lease.run, "--ollama-restarted"])
     assert json.loads(capsys.readouterr().out) == {"released": lease.run}
+
+
+@pytest.mark.parametrize("delta", [-1.0, -0.5, 0.0, 0.5, 1.0])
+def test_small_creation_time_difference_preserves_live_owner(tmp_path, monkeypatch, delta):
+    with ComputeLease("qwen", tmp_path) as lease: lease.retain("uncertain")
+    created = json.loads((lease.path / "owner.json").read_text())["process_created"]
+    monkeypatch.setattr(recovery.psutil, "Process", lambda pid: SimpleNamespace(create_time=lambda: created + delta))
+    assert recovery.inspect(tmp_path)["owner_running"] is True
+    with pytest.raises(Unsupported, match="still running"):
+        recovery.release(lease.run, ollama_restarted=True, directory=tmp_path)
+    assert lease.path.exists()

@@ -103,6 +103,7 @@ class Service:
         self._queue: deque[str] = deque()
         self._title_jobs: deque[tuple] = deque()
         self._title_active: str | None = None
+        self._model_changing = False  # F40 exclusive reload reservation
         self._active: str | None = None
         self._working_conversation: str | None = None  # remains set while a terminal worker unwinds
         self._session = None
@@ -165,11 +166,34 @@ class Service:
 
             self._emit(live, report)
 
+    @contextmanager
+    def model_change(self):
+        """Reserve an idle service for one model reload, without holding its lock during I/O.
+
+        Both admission checks and reservation use the same lock as submit/title jobs. A
+        terminal event alone is insufficient: the old worker must have finished unwinding.
+        Caller must handle reload/publication failures; this only owns model-work admission.
+        """
+        with self._lock:
+            self._check_safe()
+            if self._closing:
+                raise ProtocolError("shutting_down", "Nuru is shutting down")
+            if (self._model_changing or self._active or self._working_conversation or self._queue
+                    or self._title_active or self._title_jobs):
+                raise ProtocolError("conflict", "Nuru is busy; change context memory after its work finishes")
+            self._model_changing = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._model_changing = False
+                self._changed.notify_all()
+
     def close_if_idle(self) -> bool:
         """Stop taking work if no turn is running or waiting, in the same step as the check, so none can be
         accepted in between. False, with nothing changed, if one is. close() still has to follow."""
         with self._lock:
-            if self._active or self._working_conversation or self._queue or self._title_active or self._title_jobs:
+            if self._model_changing or self._active or self._working_conversation or self._queue or self._title_active or self._title_jobs:
                 return False
             self._closing = True
             return True
@@ -224,6 +248,8 @@ class Service:
                 return known["status"], body
             if self._closing:
                 raise ProtocolError("shutting_down", "Nuru is shutting down")
+            if self._model_changing and operation in ("submit_turn", "generate_title"):
+                raise ProtocolError("conflict", "The model is reloading; try again when it is ready")
             with self._atomic():
                 status, body, conversation_id, turn_id, then = act()
                 self.store.add_request(key, operation, payload["request_id"], digest, status, body, conversation_id, turn_id)
@@ -709,7 +735,7 @@ class Service:
         try:
             while True:
                 with self._lock:
-                    while not self._queue and not self._title_jobs and not self._closing:
+                    while self._model_changing or (not self._queue and not self._title_jobs and not self._closing):
                         self._changed.wait()
                     if self._unsafe or self._closing:
                         return

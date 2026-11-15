@@ -16,6 +16,26 @@ and review. Identity includes digest, server version and cache type; geometry ch
 also invalidate the conversion. Actual adapters must verify loaded windows, unchanged
 placement and parallelism; requested sizes alone are not measurements.
 
+## Storage and service reservation implemented
+
+`core.context_preferences` stores each canonical model independently under the user's
+settings directory, with hashed filenames, owner-only atomic writes and fresh revisions.
+Stale editors fail instead of overwriting. Corrupt/newer-format files and symbolic links
+are refused, preserving the original. A saved choice is usable only with its exact current
+runner identity and geometry. This is not yet wired into Session or an HTTP endpoint.
+
+`Service.model_change()` reserves an idle service under the admission lock and releases
+that lock for blocking reload I/O. Active turns, unwinding workers, queued turns, active
+or queued titles and another reload refuse. While reserved, new turn/title requests refuse
+without recording acceptance, status/history remain available, and managed vault-switch
+shutdown refuses. The reservation releases even on failure. The runtime adapter still
+must preserve the old preference on reload failure and report uncertain state if saving
+fails after a successful reload.
+
+The user directly confirmed the panel mockup, staged −/+ changes, a single reload on
+Apply, and discarding unapplied changes on close. Future UI work starts with a labelled
+mockup. Neither a pending panel value nor merely opening it may reload the model.
+
 ## Still to implement and verify
 
 - Trustworthy actual-runner precision/parallelism discovery. Never assume Nuru’s
@@ -23,10 +43,8 @@ placement and parallelism; requested sizes alone are not measurements.
 - Safe calibration adapter under the canonical shared-compute protocol. Preserve the
   user’s resident model; no live inference has been run for this work yet.
 - Minimum window measured from shipped system/tools plus bounded read/reply headroom.
-- Atomic per-model persistence outside the install, revision conflicts, strict inputs,
-  calibration identity validation and invalidation.
-- Server-side exclusive reload reservation refusing turns, unwinding workers, title
-  jobs and queues; do not hold service locks across blocking network I/O. Preserve
+- Wire the implemented per-model storage into runtime validation and Session window selection.
+- Wire the implemented server reservation into the reload adapter. Preserve
   the previous setting on failures and report uncertain runner state honestly.
 - Explicit NURU_MAX_NUM_CTX override wins; the unset 32k default must not accidentally
   cap the user’s saved choice. Next turns/titles/model loads must use the same window.

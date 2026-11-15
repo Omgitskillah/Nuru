@@ -1734,3 +1734,67 @@ def test_r14_hidden_submit_replay_settles_without_running_again(harness):
     replay = h.submit(cid, request_id=rid)[1]
     assert replay['replayed'] is True and replay['turn_id'] == turn['turn_id']
     assert len(h.session.asked) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("_active", "turn"), ("_working_conversation", "unwinding"), ("_queue", ["queued"]),
+    ("_title_active", "title"), ("_title_jobs", [("queued-title",)]), ("_model_changing", True),
+])
+def test_f40_model_change_refuses_every_kind_of_busy_work(harness, field, value):
+    h = harness()
+    with h.service._lock:
+        original = getattr(h.service, field)
+        setattr(h.service, field, value)
+        try:
+            with pytest.raises(ProtocolError, match="busy"):
+                with h.service.model_change():
+                    pytest.fail("Busy reservation must not yield")
+        finally:
+            setattr(h.service, field, original)
+
+
+def test_f40_reservation_blocks_new_model_work_but_not_status_or_history(harness):
+    h = harness(); cid = h.conversation()
+    with h.service.model_change():
+        assert not h.service.close_if_idle()
+        done = threading.Event()
+        def read_status():
+            h.service.status(); done.set()
+        reader = threading.Thread(target=read_status); reader.start()
+        assert done.wait(WAIT), "Reload must not hold the service lock across I/O"
+        reader.join(WAIT)
+        assert h.conversation(request_id="req-other-conv-0001") != cid
+        with pytest.raises(ProtocolError, match="reloading"):
+            h.submit(cid)
+        with pytest.raises(ProtocolError, match="reloading"):
+            h.service.generate_title(ME, cid, {"request_id": "req-title-f40-0001"})
+    # A refusal leaves no request record: the exact same request can run after the reservation.
+    _, turn = h.submit(cid)
+    h.finished(turn["turn_id"])
+
+
+def test_f40_reservation_releases_on_failure_and_refuses_shutdown_or_unsafe(harness):
+    h = harness()
+    with pytest.raises(OSError):
+        with h.service.model_change():
+            raise OSError("load failed")
+    assert not h.service._model_changing
+    for field in ("_closing", "_unsafe"):
+        with h.service._lock:
+            setattr(h.service, field, True)
+            try:
+                with pytest.raises(ProtocolError):
+                    with h.service.model_change():
+                        pytest.fail("Unsafe/closing service must refuse")
+            finally:
+                setattr(h.service, field, False)
+    with h.service.model_change():
+        assert h.service._model_changing
+
+
+def test_f40_shutdown_waits_for_reload_reservation_before_closing_session(harness):
+    h = harness()
+    with h.service.model_change():
+        assert not h.service.close(timeout=0), "Reload still owns the service even with no turn worker"
+        assert h.service._worker.is_alive()
+    assert h.service.close(timeout=WAIT)

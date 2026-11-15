@@ -294,6 +294,7 @@ def chat(
                     "prompt_tokens": obj.get("prompt_eval_count", 0),
                     "completion_tokens": obj.get("eval_count", 0),
                     "stop_reason": obj.get("done_reason"),
+                    **({"usage_available": False} if type(obj.get("eval_count")) is not int else {}),
                 }
     finally:
         r.close()  # an abandoned stream stops the model, rather than letting it run on unread

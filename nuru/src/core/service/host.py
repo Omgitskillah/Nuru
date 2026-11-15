@@ -787,6 +787,11 @@ class Service:
             return
         session.use_conversation(live.store_id)
         session.answer_question = lambda question: self._ask_user(live, question)
+        def context_changed(status):
+            with self._lock:
+                if not live.stream.ended and not self._unsafe and self._caught_up(live):
+                    self._emit(live, lambda stream: stream.emit("status", {"context": dataclasses.asdict(status)}))
+        session.on_context = context_changed
         session.on_tool_outcome = lambda call_id, name, arguments, outcome, write: self._tool_outcome(live, call_id, name, outcome, write)
         try:
             for event in session.ask(live.prompt, live.cancel):

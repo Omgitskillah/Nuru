@@ -150,6 +150,10 @@ class ChatView extends ItemView {
     this.registerDomEvent(this.modelButton, "click", (event) => this.pickModel(event));
     this.thinkingButton = actions.createEl("button", { cls: "nuru-pill", attr: { "aria-label": "Thinking" } });
     this.registerDomEvent(this.thinkingButton, "click", (event) => this.pickThinking(event));
+    this.contextRing = actions.createEl("span", { cls: "nuru-context-ring", attr: {
+      role: "img", tabindex: "0", "aria-label": "Context usage unavailable",
+    } });
+    this.contextArc = this.contextRing.createEl("span", { cls: "nuru-context-ring-arc", attr: { "aria-hidden": "true" } });
     this.choice = { model: null, thinking: null }; // null: the conversation's (or the service's) default
     this.changed = {}; // what the user picked since the conversation's last message
     this.renderChoice();
@@ -227,6 +231,7 @@ class ChatView extends ItemView {
     this.conversationId = null;
     this.choice = { model: null, thinking: null };
     this.changed = {};
+    this.renderContextRing();
     if (id) {
       let history;
       try {
@@ -509,6 +514,7 @@ class ChatView extends ItemView {
       stateEl: el.createDiv({ cls: "nuru-state" }),
       toolsEl: el.createDiv({ cls: "nuru-tools" }), // the activity: thinking, tool calls, retries
       shownWritten: null, stepEls: [], shownActivity: null, moreEl: null, activityEl: null, autoOpen: null, userToggled: false,
+      contextEl: el.createDiv({ cls: "nuru-context", attr: { "aria-live": "polite" } }),
       replyEl: el.createDiv({ cls: "nuru-reply markdown-rendered" }),
       sourcesEl: el.createDiv({ cls: "nuru-sources", attr: { role: "group", "aria-label": "Sources" } }),
       shownSources: null, renderedSources: null,
@@ -555,9 +561,11 @@ class ChatView extends ItemView {
     turn.stateEl.setText(words);
     turn.stateEl.toggleClass("nuru-error", display.state === "failed" || turn.runner.connection === "lost");
 
+    this.renderContextRing();
     this.renderQuestion(turn); // timed questions must appear even while reply text is selected
     if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
     turn.selectionDeferred = false;
+    this.renderContext(turn);
     this.renderSources(turn);
     this.renderActivity(turn);
     // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
@@ -583,6 +591,46 @@ class ChatView extends ItemView {
     }
     this.scheduleRender(turn);
     this.updateButtons();
+  }
+
+  renderContext(turn) {
+    const context = turn.runner.display.context;
+    let words = "";
+    if (context?.history_omitted || context?.tool_results_omitted) {
+      const what = context.history_omitted && context.tool_results_omitted ? "Older messages and tool results"
+        : context.history_omitted ? "Older messages" : "Tool results";
+      words = `${what} were left out to fit. Start a new conversation for best results.`;
+    }
+    turn.contextEl.hidden = !words;
+    if (turn.contextEl.textContent !== words) turn.contextEl.setText(words);
+  }
+
+  renderContextRing() {
+    if (!this.contextRing) return;
+    const turn = [...this.turns.values()].at(-1);
+    const context = turn?.runner.display.context;
+    const model = this.choice?.model ?? this.service?.models?.default ?? null;
+    const known = context && (model === null || context.model === model) &&
+      Number.isSafeInteger(context.used_tokens) && context.used_tokens >= 0 &&
+      Number.isSafeInteger(context.window_tokens) && context.window_tokens > 0;
+    const percent = known ? Math.min(100, context.used_tokens / context.window_tokens * 100) : 0;
+    const format = (n) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+    const words = known
+      ? `${context.phase === "calling" ? "Last call: about" : "About"} ${format(context.used_tokens)} of ${format(context.window_tokens)} tokens`
+      : "Context usage unavailable";
+    this.contextArc.style.setProperty("--nuru-context-angle", `${percent * 3.6}deg`);
+    this.contextRing.setAttr("title", words);
+    this.contextRing.setAttr("role", known ? "meter" : "img");
+    this.contextRing.setAttr("aria-label", known ? "Context usage" : words);
+    if (known) {
+      this.contextRing.setAttr("aria-valuemin", "0");
+      this.contextRing.setAttr("aria-valuemax", "100");
+      this.contextRing.setAttr("aria-valuenow", String(percent));
+      this.contextRing.setAttr("aria-valuetext", words);
+    } else {
+      for (const attr of ["aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext"]) this.contextRing.removeAttribute(attr);
+    }
+    this.contextRing.toggleClass("nuru-context-last", Boolean(known && context.phase === "calling"));
   }
 
   // The reply is rendered again at most every RENDER_MS while it streams. Rendering is synchronous
@@ -878,6 +926,7 @@ class ChatView extends ItemView {
     this.modelButton.setAttr("title", model?.cloud ? "Runs on Claude: what Nuru reads is sent to Anthropic" : "Runs on this computer");
     this.thinkingButton.hidden = !thinking;
     this.thinkingButton.setText(thinking ? `Thinking: ${thinking.label}` : "");
+    this.renderContextRing();
   }
 
   pickModel(event) {

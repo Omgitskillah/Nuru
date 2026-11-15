@@ -282,3 +282,21 @@ def test_a_write_state_outside_the_ledgers_states_is_refused(tmp_path, call, mes
             call(store)
     finally:
         store.close()
+
+
+def test_history_omission_telemetry_reports_only_complete_exchanges_left_out(tmp_path):
+    store = ConversationStore(tmp_path / 'context.db')
+    cid = store.create_conversation()
+    omitted = []
+    store.add_message(cid, 'user', 'unfinished')
+    assert store.get_recent_messages(cid, 0, on_omitted=lambda: omitted.append(True)) == []
+    assert omitted == []
+    store.add_message(cid, 'nuru', 'a reply')
+    assert store.get_recent_messages(cid, 0, on_omitted=lambda: omitted.append(True)) == []
+    assert omitted == [True]
+    omitted.clear()
+    for i in range(_MAX_HISTORY_MESSAGES + 2):
+        store.add_message(cid, 'user' if i % 2 == 0 else 'nuru', 'x')
+    rows = store.get_recent_messages(cid, 10**9, on_omitted=lambda: omitted.append(True))
+    assert len(rows) == _MAX_HISTORY_MESSAGES and omitted == [True]
+    store.close()

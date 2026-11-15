@@ -1525,3 +1525,70 @@ test("History is scoped, keeps the composer draft, and closes with its chat pane
   await m.options.changed(); assert.equal(view.picker.value, view.conversationId); assert.equal(view.input.value, "Unsaved draft");
   await view.close(); assert.equal(m.closed, true);
 });
+
+
+test("F18 context is per-turn, approximate, replayable and leaves the composer alone", async () => {
+  const make = (id, display) => ({ turn_id: id, text: "Question", state: "completed", display });
+  const current = displayOf(FIXTURES.streams.context_with_omissions);
+  const old = displayOf(FIXTURES.streams.completed_with_tools); delete old.context;
+  const { view } = await open({ client: fakeClient({ history: [make("turn00000002", current), make("turn00000001", old)] }) });
+  const [first, second] = view.turns.values();
+  assert.equal(first.contextEl.hidden, true);
+  assert.match(view.contextRing.getAttribute("title"), /About 11.2k of 16.4k/);
+  assert.match(second.contextEl.textContent, /Older messages and tool results were left out/);
+  view.input.value = "Keep my draft"; view.input.setSelectionRange(2, 7);
+  second.runner.display.context = { ...current.context, phase: "calling" };
+  view.update(second);
+  assert.match(view.contextRing.getAttribute("title"), /Last call: about/);
+  assert.equal(view.contextRing.classList.contains("nuru-context-last"), true);
+  assert.equal(view.input.value, "Keep my draft");
+  assert.equal(view.input.selectionStart, 2); assert.equal(view.input.selectionEnd, 7);
+  second.runner.display.context = { ...current.context, used_tokens: null, history_omitted: false };
+  view.update(second);
+  assert.doesNotMatch(second.contextEl.textContent, /About|Older messages/);
+  assert.match(second.contextEl.textContent, /Tool results were left out/);
+  second.runner.display.context = { ...current.context, window_tokens: null, history_omitted: true, tool_results_omitted: false };
+  view.update(second);
+  assert.match(second.contextEl.textContent, /Older messages were left out/);
+  assert.doesNotMatch(second.contextEl.textContent, /context tokens/);
+  second.runner.display.context = null; view.update(second);
+  assert.equal(second.contextEl.hidden, true);
+  await view.close();
+});
+
+
+test("F18 ring fills zero to full, resets across models/conversations and ignores older turn updates", async () => {
+  const display = displayOf(FIXTURES.streams.context_with_omissions);
+  display.context = { ...display.context, model: MODELS.default, used_tokens: 0, window_tokens: 1000,
+    history_omitted: false, tool_results_omitted: false };
+  const client = fakeClient({ history: [{ turn_id: "turn00000001", text: "Q", state: "completed", display }] });
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  const first = [...view.turns.values()][0];
+  assert.equal(view.contextRing.previousElementSibling, view.thinkingButton);
+  assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
+  assert.equal(view.contextRing.getAttribute("aria-valuenow"), "0");
+  assert.equal(view.contextRing.getAttribute("role"), "meter");
+  first.runner.display.context.used_tokens = 500; view.update(first);
+  assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "180deg");
+  first.runner.display.context.used_tokens = 1500; view.update(first);
+  assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "360deg");
+  assert.match(view.contextRing.getAttribute("title"), /1.5k of 1k/);
+  assert.equal(first.contextEl.hidden, true, "fullness alone does not mean actual omission");
+  view.modelButton.click(); Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
+  assert.equal(view.contextRing.hasAttribute("aria-valuenow"), false);
+  assert.equal(view.contextRing.getAttribute("role"), "img");
+  assert.equal(view.contextRing.hasAttribute("aria-valuemax"), false);
+  assert.match(view.contextRing.getAttribute("aria-label"), /unavailable/);
+  assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
+  view.choice = { model: MODELS.default, thinking: null }; view.renderChoice();
+  const second = view.addTurn("turn00000002", "Next", { ...display, context: null });
+  view.update(first);
+  assert.equal(view.contextRing.hasAttribute("aria-valuenow"), false, "old turn refresh cannot restore a stale reading");
+  second.runner.display.context = { ...display.context, used_tokens: 250 }; view.update(second);
+  assert.equal(view.contextRing.getAttribute("aria-valuenow"), "25");
+  client.conversation = async () => ({ conversation_id: "conv0000new1", turns: [] });
+  await view.openConversation("conv0000new1");
+  assert.equal(view.contextRing.hasAttribute("aria-valuenow"), false);
+  assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
+  await view.close();
+});

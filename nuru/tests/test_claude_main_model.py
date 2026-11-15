@@ -291,3 +291,9 @@ def test_a_request_log_that_cannot_be_written_never_stops_a_turn(monkeypatch, tm
     monkeypatch.setattr(claude, "LOG_DIR", blocked)
     claude._log({"model": "claude-haiku-5-5"})  # must not raise
     assert blocked.read_text() == "a file where the log folder should be"
+
+
+def test_missing_usage_stays_unknown_for_context_display(fake):
+    fake([{'type': 'message', 'message': {'content': [], 'stop_reason': 'end_turn', 'usage': {}}}])
+    usage = list(claude.chat('claude-haiku-5-5', []))[-1]
+    assert usage['usage_available'] is False

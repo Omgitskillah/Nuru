@@ -281,3 +281,21 @@ Error bodies have the form `{v, error: {code, message, retry_after_seconds?, res
 - Remote access, which is WP02. It reuses this contract over its own authorization.
 - Windows.
 - Model-assisted maintenance.
+
+
+### Optional context status (F18)
+
+After `started`, a `status` event may carry `{context: {window_tokens, used_tokens,
+estimated, phase, history_omitted, tool_results_omitted}}`. The same event schema
+is shared by v2 (which changes only the status endpoint's vault identity).
+An optional model field names the actual canonical model, allowing clients to suppress readings after the picker switches to another model. Window/usage are nullable bounded integers; unknown is null, not zero. `phase`
+is `calling` or `finished`; a value retained while calling is explicitly the last
+completed call, not current usage. `used_tokens` replaces prior call usage; it is
+not a sum across a turn. Ollama uses the fitted request estimate plus reported
+completion tokens; Claude uses normalized input (cache counted once) plus output.
+Omission categories are sticky for one turn and reflect actual removed input only.
+No prompt or note text is carried. Context is saved in the final Display, including
+when events are compacted. An absent context field in old saved histories and an
+old service stream without status events are supported by the new client. A
+co-released old client may ignore this additive event; it is not a new operation,
+permission, model tool, or deferred WP01-ACT2 budget implementation.

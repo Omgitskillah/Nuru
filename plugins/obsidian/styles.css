@@ -69,3 +69,10 @@
 .nuru-history-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.5rem 0; border-bottom: 1px solid var(--background-modifier-border); }
 .nuru-history-row > span { flex: 1; min-width: 10rem; overflow-wrap: anywhere; }
 .nuru-history-targets { max-height: 12rem; overflow-y: auto; overflow-wrap: anywhere; }
+
+/* F18: context telemetry is distinct from reply text and never redraws the composer. */
+.nuru-context { color: var(--text-muted); font-size: var(--font-smaller); margin: 0.35em 0; }
+.nuru-context-ring { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; }
+.nuru-context-ring:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.nuru-context-ring-arc { display: block; width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(var(--interactive-accent) var(--nuru-context-angle, 0deg), var(--interactive-normal) 0); mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0); }
+.nuru-context-last { opacity: 0.7; }

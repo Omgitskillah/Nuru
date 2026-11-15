@@ -197,3 +197,22 @@ def test_small_window_turn_includes_both_real_omissions(monkeypatch):
         assert statuses[-1].used_tokens < 1200
         assert 'left out' in next(m['content'] for m in seen[-1] if m['role'] == 'tool')
     finally: s.close()
+
+
+def test_service_context_policy_sets_load_window_and_next_model_call(chat_session, monkeypatch):
+    s = chat_session; requested = []; verified = []; calls = []
+    s.context_policy = lambda model, info, default: 65536
+    s.context_verify = verified.append
+    before_load = []
+    s.context_before_load = before_load.append
+    monkeypatch.setattr(session, "ensure_server_running", lambda: False)
+    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, window: requested.append(window({"context_window": 131072})) or {"context_window": 131072})
+    monkeypatch.setattr(s.logger, "model_lifecycle", lambda *args: None)
+    monkeypatch.setattr(s, "_chat_with", lambda model, messages, **kwargs: calls.append(kwargs["num_ctx"]) or iter(["OK", {"prompt_tokens": 1, "completion_tokens": 1}]))
+    list(s.ask("hello"))
+    assert requested == [65536] and calls == [65536]
+    assert verified == [s.model_id()]
+    assert before_load == [s.model_id()]
+    assert s.context_window == 65536
+    monkeypatch.setattr(s, "_claude", lambda: True)
+    assert s.context_window == session._context_window(s.model_info)

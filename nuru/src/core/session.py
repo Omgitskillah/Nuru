@@ -55,6 +55,7 @@ from core.providers.ollama import (
     ensure_model_loaded,
     ensure_server_running,
     model_info as base_info,
+    _static_info as static_model_info,
     is_model_loaded,
     stop_server,
     unload_all_models,
@@ -378,6 +379,10 @@ def _context_overflow(error: requests.exceptions.RequestException) -> bool:
     )
 
 
+def local_alias(model_id: str) -> str:
+    return "nuru-" + re.sub(r"[^a-z0-9._-]+", "-", model_id.lower())
+
+
 def _context_window(model_info: dict | None) -> int:
     """The window nuru actually requests: the model's own maximum, capped at MAX_NUM_CTX."""
     return min((model_info or {}).get("context_window") or DEFAULT_NUM_CTX, MAX_NUM_CTX)
@@ -689,9 +694,14 @@ class Session:
         window to announce a pass too quick to catch while it ran; (0, "") without an indexer."""
         return (self.indexer.changes, self.indexer.last_change) if self.indexer else (0, "")
 
+    def _requested_context(self, info) -> int:
+        default = _context_window(info)
+        policy = getattr(self, "context_policy", None)
+        return policy(self.model_id(), info, default) if policy is not None and not self._claude() else default
+
     @property
     def context_window(self) -> int:
-        return _context_window(self.model_info)
+        return self._requested_context(self.model_info)
 
     def title(self, message: str, reply: str, stop) -> str | None:
         """A title for the conversation that `message` and `reply` begin (core.titles), by the model the
@@ -745,7 +755,7 @@ class Session:
                         "chat": claude_provider.chat}
                 system = render_system((MODELFILES_DIR / "system.md").read_text(encoding="utf-8"))
             else:
-                alias = "nuru-" + re.sub(r"[^a-z0-9._-]+", "-", target.lower())
+                alias = local_alias(target)
                 rendered = _build(alias, target)
                 main = {"id": target, "model": alias, "claude": False, "profile": model_profile.for_model(target),
                         "chat": ollama_chat}
@@ -761,7 +771,13 @@ class Session:
         """Make sure the Ollama server is up and the model is loaded, starting either if it isn't."""
         server_spawned = ensure_server_running()  # with Claude too: the notes search embeds through Ollama
         model = self._model()
-        self.model_info = claude_provider.model_info(model) if self._claude() else ensure_model_loaded(model, _context_window)
+        before_load = getattr(self, "context_before_load", None)
+        if before_load is not None and not self._claude():
+            before_load(self.model_id())
+        self.model_info = claude_provider.model_info(model) if self._claude() else ensure_model_loaded(model, self._requested_context)
+        verify = getattr(self, "context_verify", None)
+        if verify is not None and not self._claude():
+            verify(self.model_id())
         self.logger.model_lifecycle(server_spawned, self.model_info)
 
     def loaded_model_info(self) -> dict | None:
@@ -769,7 +785,7 @@ class Session:
         model = self._model()
         if self._claude():
             return claude_provider.model_info(model)
-        return ensure_model_loaded(model, _context_window) if is_model_loaded(model) else None
+        return static_model_info(model) if is_model_loaded(model) else None
 
     def _system_text(self) -> str:
         return self._cached_system_text
@@ -934,7 +950,7 @@ class Session:
         while True:
             if messages is not None:
                 self.load_model()
-            num_ctx = _context_window(self.model_info)
+            num_ctx = self.context_window
             if messages is None:
                 messages = self._history([current], num_ctx, before_id=user_message_id, tools=self.tool_definitions)
                 history_count = len(messages)

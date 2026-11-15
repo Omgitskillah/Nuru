@@ -278,3 +278,29 @@ test("history queries are literal and bounded, and mutations retain their reques
   await client.emptyTrash([{ id: "conv0", trash_rev: 3 }], "erase-rid");
   assert.deepEqual(JSON.parse(calls[3][1].body), { request_id: "erase-rid", confirmed: true, targets: [{ id: "conv0", trash_rev: 3 }] });
 });
+
+test("F40 reads escape model IDs and reload requests never retry on lost answers", async () => {
+  const calls = [];
+  const client = new NuruClient({ baseUrl: "http://local", token: "t", fetch: async (url, init) => {
+    calls.push([url, init]); if (init.method === "PUT") throw new Error("lost response"); return json(200, {});
+  } });
+  await client.contextSettings("ns/qwen:latest");
+  assert.equal(new URL(calls[0][0]).searchParams.get("model"), "ns/qwen:latest");
+  await assert.rejects(client.changeContext("qwen", { operation: "measure", expected_revision: "r1" }), /answering/);
+  assert.equal(calls.length, 2); assert.equal(calls[1][1].method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1][1].body), { model: "qwen", operation: "measure", expected_revision: "r1" });
+});
+
+
+test("F40 recovery reads are authenticated and release is one exact acknowledged request without retry", async () => {
+  const calls = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "secret", fetch: async (url, init) => {
+    calls.push([url, init]); if (init.method === "PUT") throw new Error("lost reply");
+    return json(200, { reserved: false });
+  } });
+  assert.deepEqual(await client.contextRecovery(), { reserved: false });
+  await assert.rejects(client.recoverContext("a".repeat(32)));
+  assert.equal(calls.length, 2); assert.match(calls[0][0], /models\/context\/recovery$/);
+  assert.equal(calls[0][1].headers.Authorization, "Bearer secret");
+  assert.deepEqual(JSON.parse(calls[1][1].body), { run_id: "a".repeat(32), ollama_restarted: true });
+});

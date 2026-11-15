@@ -1,0 +1,137 @@
+"use strict";
+const { until } = require("./helpers/setup");
+require("obsidian");
+const test = require("node:test"), assert = require("node:assert/strict");
+const { ContextPanel, checked, checkedRecovery } = require("../lib/context-panel");
+const fresh = (extra = {}) => ({ model: "qwen", revision: "r1", window_tokens: 32768, measured: false, can_measure: true, busy: false, ...extra });
+const measured = (extra = {}) => fresh({ measured: true, gb: 2, min_gb: 1, max_gb: 4, max_tokens: 65536, bytes_per_token: 65536, ...extra });
+const panels = [], roots = [];
+test.afterEach(() => { for (const p of panels.splice(0)) p.close(false); for (const r of roots.splice(0)) r.remove(); });
+async function setup({ info = fresh(), change, get, recovery, recover, ...options } = {}) {
+  const root = document.body.createDiv(), anchor = root.createEl("span", { attr: { tabindex: "0" } }); roots.push(root);
+  const calls = [], client = { async contextSettings(model) { calls.push(["read", model]); return get ? get() : info; }, async changeContext(...args) { calls.push(["change", ...args]); return change ? change(...args) : measured(); } };
+  if (recovery) client.contextRecovery = recovery;
+  if (recover) client.recoverContext = recover;
+  const panel = new ContextPanel(anchor, { client, model: "qwen", label: "Qwen", ...options }); panels.push(panel); await panel.ready;
+  return { panel, anchor, calls };
+}
+test("opening only reads; measurement is explicit, progress blocks duplicate requests", async () => {
+  let finish, reloads = 0;
+  const { panel, calls, anchor } = await setup({ change: () => new Promise((r) => { finish = r; }), reloading: () => reloads++ });
+  assert.deepEqual(calls, [["read", "qwen"]]); assert.equal(anchor.getAttribute("aria-expanded"), "true");
+  assert.ok(panel.minus.disabled && panel.plus.disabled); assert.match(panel.body.textContent, /Only when you press it/);
+  panel.action.click(); assert.equal(reloads, 1); assert.equal(panel.action.textContent, "Measuring…"); assert.ok(panel.action.disabled);
+  await panel.run("measure"); assert.equal(calls.length, 2); finish(measured()); await until(() => !panel.working);
+  assert.equal(panel.action.textContent, "Apply"); assert.ok(panel.action.disabled); assert.match(panel.note.textContent, /measured/);
+});
+test("steps stage only, bounds hold, Apply sends once and close discards edits", async () => {
+  const { panel, calls, anchor } = await setup({ info: measured({ limit_reason: "Measured limit" }), change: () => measured({ gb: 3, revision: "r2", notice: "Applied for now" }) });
+  await panel.run("apply"); assert.equal(calls.length, 1);
+  panel.plus.click(); assert.equal(panel.pending, 3); assert.equal(calls.length, 1); assert.equal(document.activeElement, panel.plus);
+  panel.action.click(); assert.equal(panel.action.textContent, "Reloading the model…"); await until(() => !panel.working);
+  assert.deepEqual(calls[1], ["change", "qwen", { operation: "apply", expected_revision: "r1", gb: 3 }]); assert.equal(panel.note.textContent, "Applied for now");
+  panel.plus.click(); assert.ok(panel.plus.disabled); panel.plus.click(); assert.equal(panel.pending, 4);
+  panel.minus.click(); panel.minus.click(); panel.minus.click(); assert.equal(panel.pending, 1); assert.ok(panel.minus.disabled);
+  panel.closeButton.click(); assert.equal(document.activeElement, anchor); assert.equal(calls.length, 2); assert.equal(anchor.getAttribute("aria-expanded"), "false"); panel.close();
+});
+test("unsupported and busy states never start measurement", async () => {
+  for (const options of [{ info: fresh({ can_measure: false, reason: "Claude's window is set by Anthropic" }) }, { info: fresh({ busy: true }) }, { busy: () => true }]) {
+    const { panel, calls } = await setup(options); assert.ok(panel.action.disabled); await panel.run("measure"); assert.equal(calls.length, 1);
+  }
+});
+test("lost response blocks retries until reopening to reconcile", async () => {
+  const { panel, calls } = await setup({ change: () => { throw new Error("unreachable"); } });
+  panel.action.click(); await until(() => !panel.working); assert.match(panel.note.textContent, /Reopen/); assert.ok(panel.action.disabled);
+  await panel.run("measure"); assert.equal(calls.length, 2);
+});
+test("close and navigation ignore late results without repeating or undoing work", async () => {
+  for (const close of [true, false]) {
+    let finish, current = true;
+    const { panel, calls } = await setup({ current: () => current, change: () => new Promise((r) => { finish = r; }) });
+    const run = panel.run("measure"); if (close) panel.close(); else current = false;
+    finish(measured()); await run; assert.equal(panel.info.measured, false); assert.equal(calls.length, 2); await panel.run("measure");
+  }
+  const stale = await setup({ current: () => false }); assert.equal(stale.panel.info, undefined);
+});
+test("Escape and outside close; hostile labels are plain text", async () => {
+  const { panel, anchor } = await setup({ label: "<img onerror=bad>" }); assert.equal(panel.el.querySelector("img"), null);
+  anchor.dispatchEvent(new Event("pointerdown", { bubbles: true })); assert.equal(panel.closed, false);
+  panel.el.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); assert.equal(panel.closed, false);
+  panel.el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.equal(panel.closed, true);
+  const other = await setup(); document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); assert.equal(other.panel.closed, true);
+});
+test("malformed, failed and closed settings reads cannot enable controls", async () => {
+  for (const get of [() => null, () => { throw new Error("offline"); }]) {
+    const { panel } = await setup({ get }); assert.match(panel.note.textContent, /Invalid|offline/); assert.equal(panel.action, undefined);
+  }
+  let finish; const pending = setup({ get: () => new Promise((r) => { finish = r; }) }); panels.at(-1).close(); finish(fresh());
+  const { panel } = await pending; assert.equal(panel.info, undefined);
+});
+test("malformed server data never drives a memory control", () => {
+  assert.equal(checked(measured(), "qwen").gb, 2);
+  for (const bad of [null, fresh({ model: "other" }), fresh({ revision: null }), fresh({ window_tokens: 0 }), fresh({ window_tokens: 16777217 }), fresh({ measured: null }), fresh({ can_measure: null }), fresh({ busy: null }), fresh({ needs_apply: "false" }), fresh({ reason: {} }), fresh({ notice: {} }), fresh({ limit_reason: {} }), measured({ gb: 0 }), measured({ min_gb: 3 }), measured({ max_gb: 1 }), measured({ max_gb: 4097 }), measured({ max_tokens: 0 }), measured({ bytes_per_token: Infinity }), measured({ bytes_per_token: -1 })]) assert.throws(() => checked(bad, "qwen"));
+});
+
+test("a measured but unapplied suggestion can Apply without first changing its GB value", async () => {
+  const { panel, calls } = await setup({ info: measured({ needs_apply: true }) });
+  assert.equal(panel.action.disabled, false);
+  await panel.run("apply"); assert.equal(calls.length, 2);
+});
+
+const reservation = (changes = {}) => ({ reserved: true, owner_running: false, run_id: "a".repeat(32), ...changes });
+function recoveryButtons(panel) { return [...panel.body.querySelectorAll("button")]; }
+test("recovery is explicit, requires both checks, clears once and restores enabled controls", async () => {
+  let reserved = true, finish; const releases = [], pauses = [];
+  const { panel, calls } = await setup({ recovery: async () => reserved ? reservation() : { reserved: false },
+    recover: (id) => { releases.push(id); return new Promise((resolve) => { finish = () => { reserved = false; resolve({ reserved: false }); }; }); },
+    recoveryChanged: (paused) => pauses.push(paused) });
+  assert.equal(calls.length, 0); assert.match(panel.body.textContent, /Nuru is paused/);
+  const [check, clear] = recoveryButtons(panel), checkbox = panel.body.querySelector("input");
+  assert.ok(clear.disabled); clear.click(); assert.equal(releases.length, 0);
+  checkbox.checked = true; checkbox.dispatchEvent(new Event("change")); assert.equal(clear.disabled, false);
+  clear.click(); clear.click(); assert.deepEqual(releases, ["a".repeat(32)]); assert.ok(check.disabled && checkbox.disabled);
+  finish(); await until(() => !panel.working);
+  assert.deepEqual(pauses, [true, false]); assert.equal(panel.action.disabled, false); assert.equal(calls.length, 1);
+});
+test("live or unknown owner cannot clear even with checkbox; Check again discards acknowledgement", async () => {
+  for (const changes of [{ owner_running: true }, { run_id: undefined, recovery: "Restart Nuru and Ollama" }]) {
+    const { panel } = await setup({ recovery: async () => reservation(changes), recover: () => { throw new Error("must not clear"); } });
+    const checkbox = panel.body.querySelector("input"); checkbox.checked = true; checkbox.dispatchEvent(new Event("change"));
+    assert.equal(recoveryButtons(panel)[1].disabled, true);
+    recoveryButtons(panel)[0].click(); await until(() => panel.body.querySelector("input") !== checkbox);
+    assert.equal(panel.body.querySelector("input").checked, false);
+  }
+});
+test("failed recovery never retries itself; check again is required", async () => {
+  let attempts = 0;
+  const { panel } = await setup({ recovery: async () => reservation(), recover: async () => { attempts++; throw new Error("owner changed"); } });
+  const checkbox = panel.body.querySelector("input"); checkbox.checked = true; checkbox.dispatchEvent(new Event("change"));
+  recoveryButtons(panel)[1].click(); await until(() => !panel.working);
+  assert.equal(attempts, 1); assert.match(panel.note.textContent, /owner changed/);
+  assert.ok(recoveryButtons(panel)[1].disabled); assert.equal(recoveryButtons(panel)[0].disabled, false);
+});
+test("invalid and late recovery reads cannot change a closed or navigated panel", async () => {
+  const bad = await setup({ recovery: async () => null }); assert.match(bad.panel.note.textContent, /Invalid recovery/);
+  let finish; const pending = setup({ recovery: () => new Promise((resolve) => { finish = resolve; }) });
+  panels.at(-1).close(); finish(reservation()); const { panel } = await pending; assert.equal(panel.info, undefined);
+});
+
+test("malformed recovery status cannot enable clearing or unpause the composer", () => {
+  for (const bad of [null, {}, { reserved: true }, reservation({ owner_running: "false" }), reservation({ run_id: "bad" }), reservation({ recovery: {} }), reservation({ recovery: "x".repeat(1001) })]) assert.throws(() => checkedRecovery(bad));
+  assert.equal(checkedRecovery({ reserved: false }).reserved, false);
+});
+
+test("healthy own or other memory work has no recovery warning or restart checkbox", async () => {
+  for (const own of [true, false]) {
+    const states = [];
+    const { panel } = await setup({ recovery: async () => reservation({ state: "busy", owner_running: true, own }),
+      recoveryChanged: (...args) => states.push(args) });
+    assert.deepEqual(states, [[true, true]]);
+    assert.match(panel.body.textContent, own ? /Nuru is measuring/ : /Another Nuru is measuring/);
+    assert.equal(panel.body.querySelector("input"), null);
+    assert.equal(panel.body.querySelector(".nuru-context-warning"), null);
+    assert.equal(recoveryButtons(panel).length, 1);
+    recoveryButtons(panel)[0].click(); await until(() => states.length === 2);
+  }
+  for (const bad of [reservation({ state: "wrong" }), reservation({ own: "false" })]) assert.throws(() => checkedRecovery(bad));
+});

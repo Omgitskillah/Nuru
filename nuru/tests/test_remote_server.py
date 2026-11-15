@@ -515,3 +515,11 @@ def test_empty_trash_requires_explicit_scope_csrf_and_preserves_replay(remote):
     credentials.revoke('trash-writer')
     assert call(client,'POST',path,payload,cookie=writer,extra=headers(writer))[0] == 401
     assert not built
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+def test_compute_recovery_is_never_exposed_remotely(remote, method):
+    client, credentials, _, _, _ = remote
+    cookie, _ = pair(client, credentials)
+    assert call(client, method, "/v1/models/context/recovery", cookie=cookie,
+                extra={"Origin": ORIGIN, "X-Nuru-CSRF": csrf(cookie)})[0] == 404

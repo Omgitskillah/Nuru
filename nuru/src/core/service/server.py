@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from dotenv import dotenv_values
 
-from core.service import model_settings, protocol
+from core.service import model_settings, context_settings, protocol
 from core.service import remote_contract, remote_access
 from core.service.remote_credentials import RemoteCredentials, COOKIE, csrf
 from core.service.capture import CaptureError
@@ -65,6 +65,10 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/service/stop", "stop_service"),
     ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
     # Local administration (model-settings-v1.schema.json): refused on the remote listener (route()).
+    ("GET", r"/v1/models/context/recovery", "context_recovery"),
+    ("PUT", r"/v1/models/context/recovery", "recover_context"),
+    ("GET", r"/v1/models/context", "context_settings"),
+    ("PUT", r"/v1/models/context", "change_context"),
     ("GET", r"/v1/models/settings", "model_settings"),
     ("GET", r"/v1/models/settings/pending", "pending_model_settings"),
     ("PUT", r"/v1/models/settings", "save_model_settings"),
@@ -418,6 +422,24 @@ class Handler(BaseHTTPRequestHandler):
             raise ProtocolError("invalid_request", f"{name}: give it once")
         return values[0]
 
+    def _context_settings(self):
+        controller = getattr(self.server.service, "context_settings", None)
+        if controller is None:
+            raise ProtocolError("model_unavailable", "Context memory control is not available in this service")
+        return controller
+
+    def on_context_recovery(self, principal, query):
+        self.answer(200, self._context_settings().recovery())
+
+    def on_recover_context(self, principal, query):
+        self.answer(200, self._context_settings().recover(self.json_body(1024)))
+
+    def on_context_settings(self, principal, query):
+        self.answer(200, self._context_settings().describe(self._one(query, "model")))
+
+    def on_change_context(self, principal, query):
+        self.answer(200, self._context_settings().change(self.json_body(context_settings.MAX_BYTES)))
+
     def on_model_settings(self, principal, query):
         self.answer(200, self._model_settings().describe(self._one(query, "model")))
 
@@ -646,8 +668,21 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
               "to move them into a vault, stop Nuru and run `uv run nuru-serve vault adopt-legacy <vault>`", file=sys.stderr)
     from core import main_models
     default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
-    service = Service(store, ConversationStore(db_path), _session_factory(vault), vault, queue_limit=queue_limit,
+    from core.context_runner import Runner
+    from core.service.context_driver import ContextDriver
+    base_factory = _session_factory(vault)
+    driver = None
+    def factory(conversation_id):
+        current = base_factory(conversation_id)
+        current.context_policy = driver.window
+        current.context_verify = driver.verify_loaded
+        current.context_before_load = driver.before_load
+        return current
+    service = Service(store, ConversationStore(db_path), factory, vault, queue_limit=queue_limit,
                       models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
+    alias = lambda model: session.MODEL if model == default_model else session.local_alias(model)
+    driver = ContextDriver(service, Runner(alias), session._context_window)
+    service.context_settings = context_settings.ContextSettings(service, driver)
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)
@@ -739,6 +774,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--managed", action="store_true",
                         help="started by the Obsidian plugin: stop when stdin closes; another vault may stop it when idle")
     commands = parser.add_subparsers(dest="command")
+    recovery = commands.add_parser("compute", help="inspect or explicitly recover an abandoned local compute reservation")
+    recovery.add_argument("action", choices=["check", "release"])
+    recovery.add_argument("--run-id", help="exact reservation ID shown by compute check")
+    recovery.add_argument("--ollama-restarted", action="store_true", help="confirm you stopped the owner and restarted Ollama after the interrupted operation")
     commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
     vault_command = commands.add_parser("vault", help="vault IDs on this computer: list, or settle a copied vault")
     vault_command.add_argument("action", choices=["list", "rebind", "clone", "adopt-legacy"])
@@ -766,6 +805,14 @@ def main(argv: list[str] | None = None) -> None:
             args.remote_origin = remote_access.https_origin(args.remote_origin)
         except ValueError as error:
             parser.error(str(error))
+    if args.command == "compute":
+        from core import context_recovery
+        try:
+            result = context_recovery.inspect() if args.action == "check" else context_recovery.release(args.run_id, ollama_restarted=args.ollama_restarted)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        print(json.dumps(result))
+        return
     if args.command == "remote-check":
         from core.service.private_transport import inspect
         if not args.remote_origin:

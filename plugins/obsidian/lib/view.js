@@ -509,6 +509,7 @@ class ChatView extends ItemView {
       stateEl: el.createDiv({ cls: "nuru-state" }),
       toolsEl: el.createDiv({ cls: "nuru-tools" }), // the activity: thinking, tool calls, retries
       shownWritten: null, stepEls: [], shownActivity: null, moreEl: null, activityEl: null, autoOpen: null, userToggled: false,
+      contextEl: el.createDiv({ cls: "nuru-context", attr: { "aria-live": "polite" } }),
       replyEl: el.createDiv({ cls: "nuru-reply markdown-rendered" }),
       sourcesEl: el.createDiv({ cls: "nuru-sources", attr: { role: "group", "aria-label": "Sources" } }),
       shownSources: null, renderedSources: null,
@@ -558,6 +559,7 @@ class ChatView extends ItemView {
     this.renderQuestion(turn); // timed questions must appear even while reply text is selected
     if (this.selected(turn.el)) { turn.selectionDeferred = true; return; }
     turn.selectionDeferred = false;
+    this.renderContext(turn);
     this.renderSources(turn);
     this.renderActivity(turn);
     // What each write did goes in the Thought section, after the steps. Under the reply: "Vaulted", links to
@@ -583,6 +585,25 @@ class ChatView extends ItemView {
     }
     this.scheduleRender(turn);
     this.updateButtons();
+  }
+
+  renderContext(turn) {
+    const context = turn.runner.display.context;
+    const text = [];
+    if (context && Number.isSafeInteger(context.used_tokens) && context.used_tokens >= 0 &&
+        Number.isSafeInteger(context.window_tokens) && context.window_tokens > 0) {
+      const format = (n) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+      text.push(`${context.phase === "calling" ? "Last call: about" : "About"} ${format(context.used_tokens)} of ${format(context.window_tokens)} context tokens.`);
+    }
+    if (context?.history_omitted || context?.tool_results_omitted) {
+      const what = context.history_omitted && context.tool_results_omitted ? "Older messages and tool results"
+        : context.history_omitted ? "Older messages" : "Tool results";
+      text.push(`${what} were left out to fit. Start a new conversation for best results.`);
+    }
+    const words = text.join(" ");
+    turn.contextEl.hidden = !words;
+    if (turn.contextEl.textContent !== words) turn.contextEl.setText(words);
+    turn.contextEl.toggleClass("nuru-context-last", context?.phase === "calling");
   }
 
   // The reply is rendered again at most every RENDER_MS while it streams. Rendering is synchronous

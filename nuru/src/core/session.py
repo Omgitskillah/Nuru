@@ -401,6 +401,18 @@ def _cancelled(cancel: threading.Event | None) -> bool:
 
 
 @dataclass(frozen=True)
+class ContextStatus:
+    """Per-turn telemetry, separate from reply events; no note or prompt content."""
+
+    window_tokens: int | None = None
+    used_tokens: int | None = None
+    estimated: bool = True
+    phase: str = "calling"
+    history_omitted: bool = False
+    tool_results_omitted: bool = False
+
+
+@dataclass(frozen=True)
 class Text:
     """A chunk of the model's reply."""
 
@@ -519,6 +531,9 @@ class Session:
         # clients. Calls never shown (refusals once tools are closed, siblings skipped after a failure)
         # and the calls Nuru makes for itself (the notes run_python reads) aren't reported.
         self.on_tool_outcome: Callable[[str, str, dict, ToolOutcome, bool], None] | None = None
+        self.on_context: Callable[[ContextStatus], None] | None = None
+        self._context = ContextStatus()
+        self._context_model = None
         self._shown_call: str | None = None  # the call_id of the ToolCall last shown, until it runs
         self._make_tools: Callable[[], MCPTools] | None = None  # fresh tools, once these are retired (start)
         self._turn_text = ""  # the user's message this turn: what "do not save" is looked for in
@@ -758,6 +773,11 @@ class Session:
     def _system_text(self) -> str:
         return self._cached_system_text
 
+    def _report_context(self, **changes) -> None:
+        self._context = replace(self._context, **changes)
+        if self.on_context:
+            self.on_context(self._context)
+
     def _chat(self, model: str, messages: list[dict], *, num_ctx: int, history_count: int = 0, **kwargs):
         messages = [dict(message) for message in messages]
         original_history_count = history_count
@@ -783,15 +803,38 @@ class Session:
                 omitted_tokens.append(estimate_tokens(content))
         if history_count != original_history_count or omitted_tokens:
             self.logger.context_reduction(num_ctx, original_history_count - history_count, omitted_tokens)
+            self._report_context(history_omitted=self._context.history_omitted or history_count != original_history_count,
+                                 tool_results_omitted=self._context.tool_results_omitted or bool(omitted_tokens))
         require_fit(num_ctx, messages, system=self._system_text(),
                     tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
         if self._claude():
             kwargs["system"] = self._system_text()
-        yield from self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
+        prompt_estimate = input_budget(num_ctx) - available_tokens(
+            num_ctx, messages, system=self._system_text(), tools=kwargs.get("tools"), fmt=kwargs.get("fmt"))
+        if self._context_model != model or self._context.window_tokens != num_ctx:
+            self._context = replace(self._context, used_tokens=None)
+        self._context_model = model
+        self._report_context(window_tokens=num_ctx, phase="calling")
+        stream = self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
+        try:
+            for out in stream:
+                if isinstance(out, dict) and "completion_tokens" in out:
+                    prompt, completion = out.get("prompt_tokens"), out.get("completion_tokens")
+                    valid = (out.get("usage_available", True) and type(completion) is int and 0 <= completion <= 1_000_000_000
+                             and (not self._claude() or type(prompt) is int and 0 <= prompt <= 1_000_000_000))
+                    used = (prompt if self._claude() else prompt_estimate) + completion if valid else None
+                    if used is not None and used > 1_000_000_000:
+                        used = None
+                    self._report_context(used_tokens=used, estimated=not self._claude(), phase="finished")
+                yield out
+        finally:
+            if close := getattr(stream, "close", None):
+                close()
 
     def _history(self, messages: list[dict], window: int, *, before_id=None, tools=None, fmt=None) -> list[dict]:
         budget = available_tokens(window, messages, system=self._system_text(), tools=tools, fmt=fmt)
-        rows = self.store.get_recent_messages(self.conversation_id, budget, before_id=before_id)
+        rows = self.store.get_recent_messages(self.conversation_id, budget, before_id=before_id,
+                                              on_omitted=lambda: self._report_context(history_omitted=True))
         return [{"role": _ROLE_TO_API.get(m["role"], m["role"]), "content": m["content"]} for m in rows]
 
     def continuation_context(self) -> str:
@@ -846,6 +889,9 @@ class Session:
         Decision points set to enforce in the decision-layer config change the turn as
         core.enforcement describes; in shadow (the default) the decision layer only watches.
         """
+        self._context_model = None
+        self._context = ContextStatus()  # Never carry another turn/model/conversation into this turn.
+        self._report_context()
         self.load_model()  # Admission uses the effective window, including after unload/reload.
         current = {"role": "user", "content": f"{_timestamp_line(datetime.now().astimezone())}\n\n{text}"}
         try:
@@ -1001,6 +1047,7 @@ class Session:
                     tokens = _estimate_tokens(messages[index]["content"])
                     messages[index]["content"] = _TOO_LONG_NOTE.format(name=name, tokens=tokens)
                     cut_a_result = True
+                    self._report_context(tool_results_omitted=True)
                     continue
                 if self._turn_writes:
                     yield from self._abort_turn(turn_id, f"Model request failed: {e}. Earlier writes must not be repeated.")

@@ -315,6 +315,7 @@ class Display:
     ask: dict | None = None
     truncated: bool = False  # the reply was longer than the protocol carries
     message: str = ""
+    context: dict | None = None
 
     def apply(self, event: dict) -> None:
         if event["seq"] <= self.seq:
@@ -325,6 +326,8 @@ class Display:
             self.state = "queued"
         elif kind == "started":
             self.state = "running"
+        elif kind == "status":
+            self.context = data.get("context", self.context)
         elif kind == "text":
             self.reply += data["text"]
         elif kind == "reasoning":

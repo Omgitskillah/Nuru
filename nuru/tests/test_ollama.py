@@ -447,7 +447,7 @@ def test_chat_skips_blank_lines(monkeypatch):
 
     results = list(ollama.chat("qwen3:8b", []))
 
-    assert results == ["hi", {"prompt_tokens": 0, "completion_tokens": 0, "stop_reason": None}]
+    assert results == ["hi", {"prompt_tokens": 0, "completion_tokens": 0, "stop_reason": None, "usage_available": False}]
 
 
 def test_chat_sends_think_and_num_ctx_options(monkeypatch):

@@ -185,15 +185,13 @@ class ConversationStore:
         with self._conn:
             self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
 
-    def get_recent_messages(self, conversation_id: int, token_budget: int, *, before_id: int | None = None) -> list[dict]:
+    def get_recent_messages(self, conversation_id: int, token_budget: int, *, before_id: int | None = None, on_omitted=None) -> list[dict]:
         """Newest complete adjacent user/reply exchanges that fit, in stable ID order.
 
         Usage is never a message size. Unfinished users and legacy orphan replies
         are skipped; an empty cancelled reply still completes an exchange.
         Fetch content only for selected IDs, after a bounded metadata scan.
         """
-        if token_budget <= 0:
-            return []
         rows = self._conn.execute(
             "SELECT id, role, content_tokens FROM messages WHERE conversation_id = ? "
             "AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
@@ -205,12 +203,25 @@ class ConversationStore:
             if reply[1] in ("nuru", "assistant") and user[1] == "user":
                 cost = reply[2] + user[2] + 2 * MESSAGE_FRAMING
                 if total + cost > token_budget:
+                    if on_omitted:
+                        on_omitted()
                     break
                 selected.extend((reply[0], user[0]))
                 total += cost
                 i += 2
             else:
                 i += 1
+        if on_omitted and len(rows) == _MAX_HISTORY_MESSAGES:
+            # An indexed existence probe, not an unbounded content/metadata fetch. Include
+            # the boundary row: an exchange can straddle the selection cap.
+            older = self._conn.execute(
+                "SELECT 1 FROM messages r WHERE r.conversation_id = ? AND r.id <= ? "
+                "AND r.role IN ('nuru','assistant') AND 'user' = "
+                "(SELECT u.role FROM messages u WHERE u.conversation_id = r.conversation_id "
+                "AND u.id < r.id ORDER BY u.id DESC LIMIT 1) ORDER BY r.id DESC LIMIT 1",
+                (conversation_id, rows[-1][0])).fetchone()
+            if older:
+                on_omitted()
         if not selected:
             return []
         placeholders = ",".join("?" for _ in selected)

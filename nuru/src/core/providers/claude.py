@@ -240,6 +240,7 @@ def chat(
         "stop_reason": _STOP_REASONS.get(stop, stop),
         "cache_read_tokens": cache_read,
         "cache_write_tokens": cache_write,
+        **({"usage_available": False} if type(usage.get("input_tokens")) is not int or type(usage.get("output_tokens")) is not int else {}),
     }
     _log({**entry, "usage": usage, "stop_reason": stop, "answered_by": message.get("model"),
           "duration_ms": round((time.monotonic() - started) * 1000)})

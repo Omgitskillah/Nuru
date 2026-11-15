@@ -69,3 +69,7 @@
 .nuru-history-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.5rem 0; border-bottom: 1px solid var(--background-modifier-border); }
 .nuru-history-row > span { flex: 1; min-width: 10rem; overflow-wrap: anywhere; }
 .nuru-history-targets { max-height: 12rem; overflow-y: auto; overflow-wrap: anywhere; }
+
+/* F18: context telemetry is distinct from reply text and never redraws the composer. */
+.nuru-context { color: var(--text-muted); font-size: var(--font-smaller); margin: 0.35em 0; }
+.nuru-context-last { opacity: 0.7; }

@@ -89,3 +89,19 @@ test("verified read sources survive replay and saved-display loading in first-re
   assert.deepEqual(Display.from({ sources: [{ path: "trash/no.md" }, ...expected] }).sources, expected);
   assert.deepEqual(Display.from({}).sources, []);
 });
+
+
+test("F18 status survives replay and saved display; pre-F18 streams need no context", () => {
+  const events = FIXTURES.streams.context_with_omissions;
+  const d = shown(events);
+  assert.equal(d.context.used_tokens, 11200);
+  assert.equal(d.context.tool_results_omitted, true);
+  for (const event of events) d.apply(event);
+  assert.equal(d.context.used_tokens, 11200);
+  assert.deepEqual(Display.from(JSON.parse(JSON.stringify(d))).context, d.context);
+  const old = shown(FIXTURES.streams.completed_with_tools);
+  assert.equal(old.context, null);
+  const saved = JSON.parse(JSON.stringify(old)); delete saved.context;
+  assert.equal(Display.from(saved).context, null);
+  assert.equal(Display.from(saved).reply, old.reply);
+});

@@ -1263,6 +1263,68 @@
      "reply": "Read `nuru/Trip.md` and nuru/Plan, then compare never-read.md."
     }
    }
+  ],
+  "context_with_omissions": [
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 1,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "accepted",
+    "data": {
+     "request_id": "req-0000000000000001"
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 2,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "started",
+    "data": {}
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 3,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "status",
+    "data": {
+     "context": {
+      "window_tokens": 16384,
+      "used_tokens": 11200,
+      "estimated": true,
+      "phase": "finished",
+      "history_omitted": true,
+      "tool_results_omitted": true
+     }
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 4,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "text",
+    "data": {
+     "text": "A reply."
+    }
+   },
+   {
+    "v": 1,
+    "conversation_id": "conv0000demo",
+    "turn_id": "turn00000001",
+    "seq": 5,
+    "at": "2026-10-09T12:00:00.000Z",
+    "type": "completed",
+    "data": {
+     "reply": "A reply."
+    }
+   }
   ]
  },
  "requests": {

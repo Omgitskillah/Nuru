@@ -57,6 +57,7 @@ class Display {
     this.ask = null;
     this.truncated = false;
     this.message = "";
+    this.context = null;
     this.position = null; // place in the queue while queued
   }
 
@@ -67,6 +68,7 @@ class Display {
     switch (event.type) {
       case "queued": this.state = "queued"; this.position = data.position; break;
       case "started": this.state = "running"; this.position = null; break;
+      case "status": if (data.context) this.context = data.context; break;
       case "text": this.reply += data.text; break;
       case "reasoning": this.reasoning = data.final ? data.text : this.reasoning + data.text; break;
       case "tool_start": this.tools.push({ call_id: data.call_id, name: data.name, ok: null }); break;

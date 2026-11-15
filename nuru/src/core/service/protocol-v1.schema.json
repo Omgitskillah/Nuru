@@ -4,6 +4,51 @@
   "title": "Nuru service protocol, version 1",
   "description": "Requests, responses and events of nuru-serve. Rules a schema can't state (sequence order, one terminal event, size limits, request-ID binding) are in core/service/protocol.py and protocol-v1.md.",
   "$defs": {
+    "turn_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window_tokens",
+        "used_tokens",
+        "estimated",
+        "phase",
+        "history_omitted",
+        "tool_results_omitted"
+      ],
+      "properties": {
+        "window_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "used_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "estimated": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "calling",
+            "finished"
+          ]
+        },
+        "history_omitted": {
+          "type": "boolean"
+        },
+        "tool_results_omitted": {
+          "type": "boolean"
+        }
+      }
+    },
     "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$"},
     "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
     "timestamp": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"},
@@ -187,7 +232,7 @@
         "turn_id": {"$ref": "#/$defs/id"},
         "seq": {"type": "integer", "minimum": 1},
         "at": {"$ref": "#/$defs/timestamp"},
-        "type": {"enum": ["accepted", "queued", "started", "text", "reasoning", "retry", "tool_start", "tool_result",
+        "type": {"enum": ["accepted", "queued", "started", "status", "text", "reasoning", "retry", "tool_start", "tool_result",
                           "question", "question_closed", "write_receipt", "completed", "failed", "cancelled"]},
         "data": {"type": "object"}
       },
@@ -200,6 +245,31 @@
                                           "properties": {"position": {"type": "integer", "minimum": 1}}}}}},
         {"if": {"properties": {"type": {"const": "started"}}},
          "then": {"properties": {"data": {"type": "object", "additionalProperties": false, "properties": {}}}}},
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "status"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "context"
+                ],
+                "properties": {
+                  "context": {
+                    "$ref": "#/$defs/turn_context"
+                  }
+                }
+              }
+            }
+          }
+        },
         {"if": {"properties": {"type": {"const": "text"}}},
          "then": {"properties": {"data": {"type": "object", "additionalProperties": false, "required": ["text"],
                                           "properties": {"text": {"type": "string", "minLength": 1, "maxLength": 16000}}}}}},

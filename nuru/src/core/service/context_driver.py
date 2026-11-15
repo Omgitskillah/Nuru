@@ -154,7 +154,7 @@ class ContextDriver:
         resident = self.runner.resident(model)
         return _integer(resident.get("context_length"), "current runtime window") if resident is not None else self.default_window({"context_window": layout.window})
 
-    def _affordable(self, model, value, record, *, exclusive=True):
+    def _affordable(self, model, value, record, *, exclusive=True, cold_default=None):
         row = self.runner.resident(model, exclusive=exclusive)
         if row is not None:
             point, _ = self.runner.verify(model, row["context_length"], exclusive=exclusive)
@@ -163,6 +163,11 @@ class ContextDriver:
             # The reload is still verified against the curve before publication.
             if value <= point.window:
                 return
+        if row is None and type(cold_default) is int and value <= cold_default:
+            # Cold saved choices no larger than ordinary chat must not introduce a
+            # stricter preflight. Identity/envelope checks and post-load verification
+            # still apply; this is parity with default loading, not proof of free RAM.
+            return
         total, available = self.runner.available()
         available = min(total, available + self.runner.reclaimable(row))
         budget = min(total * 66 // 100, available * 8 // 10)
@@ -186,7 +191,7 @@ class ContextDriver:
             if not saved.usable(identity, stored_layout):
                 raise Unsupported("Saved context belongs to another runner configuration; measure and apply again")
         value = self.live.get(model, saved.tokens)
-        self._affordable(model, value, record, exclusive=False)
+        self._affordable(model, value, record, exclusive=False, cold_default=default)
         if value > min(record.curve.maximum, self._admin() or layout.window):
             raise Unsupported("The saved context exceeds the current verified/admin limit; reopen the panel")
         return value

@@ -211,3 +211,29 @@ def test_realistic_minimum_measure_then_smaller_apply_uses_existing_resident_evi
     with pytest.raises(Unsupported, match="available memory"):
         d.apply("qwen", 2, prefs.read("qwen", d.root).revision)
     assert r.current == 26755 and prefs.read("qwen", d.root).gb == 1
+
+
+def test_cold_saved_smaller_window_is_no_stricter_than_default_chat(tmp_path, monkeypatch):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    r.resident = lambda *args, **kwargs: None
+    r.available = lambda: (17_180_000_000, 6_000_000_000)
+    assert d.window("qwen", {"context_window": 32768}, 32768) == 26755
+    monkeypatch.setenv("NURU_MAX_NUM_CTX", "16384")
+    with pytest.raises(Unsupported, match="limit"): d.window("qwen", {}, 32768)
+    monkeypatch.delenv("NURU_MAX_NUM_CTX")
+    with pytest.raises(Unsupported, match="available memory"):
+        d.window("qwen", {"context_window": 16384}, 16384)
+    # Default parity never overrides stale calibration or explicit limits.
+    r.fingerprint = "a" * 64
+    with pytest.raises(Unsupported): d.window("qwen", {}, 32768)
+
+
+def test_default_parity_keeps_post_load_verification_and_owned_cleanup(tmp_path):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    resident = r.resident; r.resident = lambda *args, **kwargs: None
+    r.available = lambda: (17_180_000_000, 6_000_000_000)
+    value = d.window("qwen", {}, 32768); d.before_load("qwen")
+    r.resident = resident; r.load("qwen", value); r.size_offset = 500_000_000
+    unloaded = []; r.unload_owned = lambda model, **kwargs: unloaded.append((model, kwargs))
+    with pytest.raises(Unsupported): d.verify_loaded("qwen")
+    assert unloaded == [("qwen", {"exclusive": False})]

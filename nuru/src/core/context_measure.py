@@ -27,22 +27,12 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
     maximum = layout.window if admin_limit is None else min(layout.window, _integer(admin_limit, "admin context limit"))
     if maximum < minimum:
         raise Unsupported("The model/admin limit is below Nuru's required context window")
-    total, available = runner.available()  # missing signal refuses before any load
+    runner.available()  # missing signal refuses before any load
     before = runner.resident(model)  # never evict another model
     previous = None if before is None else _integer(before.get("context_length"), "previous loaded context")
     metadata, digest, version, fingerprint = runner.metadata(model)
-    available = min(total, available + runner.reclaimable(before))
-    budget = min(Fraction(total * 66, 100), Fraction(available * 8, 10))
-    # The first probes must be affordable too. An absent resident baseline requires a
-    # trusted model-size signal from metadata, not a guess that weights fit.
-    if before is None:
-        weight_size = metadata.get("size")
-        _integer(weight_size, "model weight-size estimate", 1 << 50)
-        baseline = weight_size
-    else:
-        baseline = _integer(before.get("size"), "previous resident size", 1 << 50)
-    if baseline + layout.bytes_per_token * 16384 * 5 + 1_500_000_000 > budget:
-        raise Unsupported("Not enough verified available memory for the bounded calibration probes")
+    weights = _integer(metadata.get("size"), "model weight-size estimate", 1 << 50)
+    resident_size = None if before is None else _integer(before.get("size"), "previous resident size", 1 << 50)
     changed = False
     result = None
     try:
@@ -52,8 +42,19 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
             now_total, now_available = runner.available()
             now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
             now_budget = min(Fraction(now_total * 66, 100), Fraction(now_available * 8, 10))
-            if baseline + layout.bytes_per_token * window * 5 + 1_500_000_000 > now_budget:
-                raise Unsupported("Available memory changed; measurement stopped before another load")
+            if previous is not None and window <= previous:
+                # This replaces a demonstrated larger allocation, rather than adding
+                # a new cache on top of its resident size. Still stop on lost capacity.
+                need = resident_size
+                ceiling = min(Fraction(now_total * 66, 100), now_available)
+            else:
+                # Disk weight size is not a proven lower bound on resident weights.
+                # Scaling the entire observed allocation bounds nonnegative baseline
+                # plus linear cache growth without subtracting an unverified baseline.
+                need = (Fraction(points[0].size * window, 8192) if points else weights + layout.bytes_per_token * window * 5) + 1_500_000_000
+                ceiling = now_budget
+            if need > ceiling:
+                raise Unsupported("Available memory changed; not enough verified available memory for calibration probes")
             progress(step, 4); changed = True
             point, location = runner.cold_load(model, window)
             if placement is not None and location != placement:
@@ -62,15 +63,24 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
             if runner.metadata(model)[1:] != (digest, version, fingerprint):
                 raise Unsupported("Model or runner configuration changed during measurement")
         provisional = fit(layout, points[0], points[1], points[1])
+        def propose(total, available):
+            try:
+                return candidate(provisional, total=total, available=available, maximum=maximum, minimum=minimum)
+            except Unsupported:
+                # A conservative growth budget may permit no larger trial. Keep the
+                # actual verified 16k result only while its existing allocation fits.
+                if minimum <= 16384 and points[1].size <= min(total * 66 // 100, available):
+                    return 16384
+                raise
         now_total, now_available = runner.available()
         now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
-        proposed = candidate(provisional, total=now_total, available=now_available, maximum=maximum, minimum=minimum)
+        proposed = propose(now_total, now_available)
         verified = provisional
         verified_point = points[1]
         for attempt in range(2):
             now_total, now_available = runner.available()
             now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
-            proposed = min(proposed, candidate(provisional, total=now_total, available=now_available, maximum=maximum, minimum=minimum))
+            proposed = min(proposed, propose(now_total, now_available))
             if proposed <= 16384:
                 break
             progress(3 + attempt, 4)

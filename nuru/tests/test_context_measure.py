@@ -137,3 +137,40 @@ def test_candidate_spill_steps_down_and_restores(spill_both):
     assert r.calls[3] < r.calls[2] and r.calls[-1] == 32768
     assert result.curve.maximum == (16384 if spill_both else r.calls[3])
     assert result.placement == "gpu" and not lease.retained
+
+
+@pytest.mark.parametrize("baseline,slope,bpt,weights", [(4_800_000_000, 37376, 32768, 5_160_000_000), (2_072_000_000, 80500, 81920, 2_240_000_000)])
+def test_real_16gb_mac_resident_replacement_probes_do_not_double_count_cache(baseline, slope, bpt, weights):
+    r, lease = Fake(), Lease(); current = [32768]; original = r.cold_load
+    layout = Geometry("qwen35", 262144, 8, bpt)
+    metadata = r.metadata
+    r.metadata = lambda model: ({"size": weights}, *metadata(model)[1:])
+    def row(model):
+        size = baseline + current[0] * slope
+        return {"context_length": current[0], "size": size, "size_vram": size}
+    r.resident = row
+    r.reclaimable = lambda resident: resident["size"] if resident else 0
+    # Captured Mac: 17.18 GB total, 1.40 GB free, 6.03 GB already resident.
+    capacity = 1_400_000_000 + row("qwen")["size"]
+    r.available = lambda: (17_180_000_000, capacity - row("qwen")["size"])
+    def load(model, window):
+        original(model, window); current[0] = window
+        return Sample(window, baseline + window * slope), "gpu"
+    r.cold_load = load
+    result = measure(r, "qwen", layout, minimum=16384, lease=lease)
+    assert r.calls == [8192, 16384, 32768]
+    assert result.curve.maximum == 16384 and current[0] == 32768 and not lease.retained
+
+
+def test_unloaded_default_is_not_evidence_that_a_probe_fits():
+    r, lease = Fake(previous=None), Lease()
+    r.available = lambda: (17_180_000_000, 5_950_000_000)
+    with pytest.raises(Unsupported): measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
+    assert not r.calls and not lease.retained
+
+
+def test_one_probe_uses_observed_allocation_before_unproven_larger_probe():
+    r, lease = Fake(previous=8192), Lease(); r.bad_candidates = True
+    r.available = lambda: (17_180_000_000, 7_000_000_000)
+    with pytest.raises(Unsupported): measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
+    assert r.calls == [8192, 8192] and not lease.retained

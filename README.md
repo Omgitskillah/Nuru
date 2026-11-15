@@ -1,7 +1,7 @@
 # Nuru
 Nuru to guide me into the AI future.  A hopeful darkness purge in a probably dystopia yonder. 
 
-What's left to do: [TODO.md](TODO.md).
+What's left to do: the [Nuru board on Trello](https://trello.com/b/NGdSG7zu/nuru).
 
 ## Settings
 

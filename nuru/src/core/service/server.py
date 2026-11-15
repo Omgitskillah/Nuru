@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from dotenv import dotenv_values
 
-from core.service import model_settings, protocol
+from core.service import model_settings, context_settings, protocol
 from core.service import remote_contract, remote_access
 from core.service.remote_credentials import RemoteCredentials, COOKIE, csrf
 from core.service.capture import CaptureError
@@ -65,6 +65,8 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/service/stop", "stop_service"),
     ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
     # Local administration (model-settings-v1.schema.json): refused on the remote listener (route()).
+    ("GET", r"/v1/models/context", "context_settings"),
+    ("PUT", r"/v1/models/context", "change_context"),
     ("GET", r"/v1/models/settings", "model_settings"),
     ("GET", r"/v1/models/settings/pending", "pending_model_settings"),
     ("PUT", r"/v1/models/settings", "save_model_settings"),
@@ -418,6 +420,18 @@ class Handler(BaseHTTPRequestHandler):
             raise ProtocolError("invalid_request", f"{name}: give it once")
         return values[0]
 
+    def _context_settings(self):
+        controller = getattr(self.server.service, "context_settings", None)
+        if controller is None:
+            raise ProtocolError("model_unavailable", "Context memory control is not available in this service")
+        return controller
+
+    def on_context_settings(self, principal, query):
+        self.answer(200, self._context_settings().describe(self._one(query, "model")))
+
+    def on_change_context(self, principal, query):
+        self.answer(200, self._context_settings().change(self.json_body(context_settings.MAX_BYTES)))
+
     def on_model_settings(self, principal, query):
         self.answer(200, self._model_settings().describe(self._one(query, "model")))
 
@@ -646,8 +660,20 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
               "to move them into a vault, stop Nuru and run `uv run nuru-serve vault adopt-legacy <vault>`", file=sys.stderr)
     from core import main_models
     default_model = session.MAIN_MODEL if session.CLAUDE else session.BASE_MODEL
-    service = Service(store, ConversationStore(db_path), _session_factory(vault), vault, queue_limit=queue_limit,
+    from core.context_runner import Runner
+    from core.service.context_driver import ContextDriver
+    base_factory = _session_factory(vault)
+    driver = None
+    def factory(conversation_id):
+        current = base_factory(conversation_id)
+        current.context_policy = driver.window
+        current.context_verify = driver.verify_loaded
+        return current
+    service = Service(store, ConversationStore(db_path), factory, vault, queue_limit=queue_limit,
                       models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
+    alias = lambda model: session.MODEL if model == default_model else session.local_alias(model)
+    driver = ContextDriver(service, Runner(alias), session._context_window)
+    service.context_settings = context_settings.ContextSettings(service, driver)
     if not service.captures._link_available:
         print("nuru-serve: capture unavailable: Inbox cannot publish with safe hard links on this vault",
               file=sys.stderr)

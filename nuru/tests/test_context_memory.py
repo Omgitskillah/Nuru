@@ -92,3 +92,11 @@ def test_calibration_refuses_a_precision_identity_that_does_not_match_the_formul
     c = calibrated()
     with pytest.raises(Unsupported):
         calibrate(replace(c.identity, kv_type="q8_0"), c.geometry, Sample(8192, 5_073_741_824), Sample(16384, 6_147_483_648))
+
+
+def test_plain_granite_uniform_heads_and_non_uniform_refusal():
+    fields = {"general.architecture": "granite", "granite.context_length": 131072, "granite.block_count": 40,
+              "granite.attention.head_count": 40, "granite.attention.head_count_kv": 8, "granite.embedding_length": 2560}
+    assert geometry({"model_info": fields}, "f16").bytes_per_token == 81920
+    fields["granite.embedding_length"] = 2561
+    with pytest.raises(Unsupported): geometry({"model_info": fields}, "f16")

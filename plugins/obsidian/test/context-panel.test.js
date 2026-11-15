@@ -67,5 +67,11 @@ test("malformed, failed and closed settings reads cannot enable controls", async
 });
 test("malformed server data never drives a memory control", () => {
   assert.equal(checked(measured(), "qwen").gb, 2);
-  for (const bad of [null, fresh({ model: "other" }), fresh({ revision: null }), fresh({ window_tokens: 0 }), fresh({ window_tokens: 16777217 }), fresh({ measured: null }), fresh({ can_measure: null }), fresh({ busy: null }), fresh({ reason: {} }), fresh({ notice: {} }), fresh({ limit_reason: {} }), measured({ gb: 0 }), measured({ min_gb: 3 }), measured({ max_gb: 1 }), measured({ max_gb: 4097 }), measured({ max_tokens: 0 }), measured({ bytes_per_token: Infinity }), measured({ bytes_per_token: -1 })]) assert.throws(() => checked(bad, "qwen"));
+  for (const bad of [null, fresh({ model: "other" }), fresh({ revision: null }), fresh({ window_tokens: 0 }), fresh({ window_tokens: 16777217 }), fresh({ measured: null }), fresh({ can_measure: null }), fresh({ busy: null }), fresh({ needs_apply: "false" }), fresh({ reason: {} }), fresh({ notice: {} }), fresh({ limit_reason: {} }), measured({ gb: 0 }), measured({ min_gb: 3 }), measured({ max_gb: 1 }), measured({ max_gb: 4097 }), measured({ max_tokens: 0 }), measured({ bytes_per_token: Infinity }), measured({ bytes_per_token: -1 })]) assert.throws(() => checked(bad, "qwen"));
+});
+
+test("a measured but unapplied suggestion can Apply without first changing its GB value", async () => {
+  const { panel, calls } = await setup({ info: measured({ needs_apply: true }) });
+  assert.equal(panel.action.disabled, false);
+  await panel.run("apply"); assert.equal(calls.length, 2);
 });

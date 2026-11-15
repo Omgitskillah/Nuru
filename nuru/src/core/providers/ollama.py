@@ -202,8 +202,15 @@ def ensure_model_loaded(model: str, window: Callable[[dict], int] | None = None)
     size, since Ollama starts a model again when a request's num_ctx differs from the loaded one's.
     """
     info = _static_info(model)
-    if not is_model_loaded(model):
-        _load_model_with_spinner(model, window(info) if window else None)
+    desired = window(info) if window else None
+    loaded = is_model_loaded(model)
+    mismatch = False
+    if loaded and desired is not None:
+        target = _normalize_model_name(model)
+        resident = next((row for row in loaded_models() if _normalize_model_name(row["name"]) == target), None)
+        mismatch = resident is not None and type(resident.get("context_length")) is int and resident["context_length"] != desired
+    if not loaded or mismatch:
+        _load_model_with_spinner(model, desired)
     return info
 
 

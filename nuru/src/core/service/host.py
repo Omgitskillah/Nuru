@@ -248,6 +248,9 @@ class Service:
                 return known["status"], body
             if self._closing:
                 raise ProtocolError("shutting_down", "Nuru is shutting down")
+            context = getattr(self, "context_settings", None)
+            if (context is not None and getattr(context.driver, "compute_blocked", lambda: False)()) and operation in ("submit_turn", "generate_title"):
+                raise ProtocolError("conflict", "The model state is uncertain; reconcile it before sending more work")
             if self._model_changing and operation in ("submit_turn", "generate_title"):
                 raise ProtocolError("conflict", "The model is reloading; try again when it is ready")
             with self._atomic():

@@ -12,6 +12,7 @@ dependencies = [
     "anyio>=4",
     "obsidian-mcp",
     "claude-access",
+    "psutil>=7.0",
 ]
 
 [project.scripts]

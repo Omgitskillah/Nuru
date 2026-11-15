@@ -1,95 +1,64 @@
-# F40 context-memory control: implementation in progress
+# F40 context-memory control
 
-The user confirmed per-model context memory in 1 GB steps, opened from F18’s ring,
-for 1.0.5. GB means decimal 1,000,000,000 bytes. This describes variable context
-allocation, not the model weights or total process RAM.
+The user confirmed a per-model setting, decimal 1 GB steps, staged changes, one reload
+on Apply, and discard on close. The maximum is the largest window actually verified to
+fit on this computer, capped by model/admin limits. The panel says which limit applies
+and keeps CPU/mixed residency distinct from fully GPU-resident operation.
 
-## Implemented foundation
+## Implemented
 
-`core.context_memory` is model-free. Explicit supported model metadata predicts
-f16 K/V bytes per token. Qwen 3.5 explicit recurrent flags override the full-attention
-interval. Unknown architectures, sliding/shared-KV and prediction-layer layouts,
-missing head dimensions, and unknown/unsupported runner cache precision refuse.
-Two isolated actual resident-size samples (at most 16k, at least 4k apart) must
-agree with the geometry within 5%; the tolerance is provisional pending calibration
-and review. Identity includes digest, server version and cache type; geometry changes
-also invalidate the conversion. Actual adapters must verify loaded windows, unchanged
-placement and parallelism; requested sizes alone are not measurements.
+- The ring opens the approved measured/unmeasured popover. GET only reads metadata.
+  Measure is explicit; minus/plus only stage values. A newly measured suggestion can
+  Apply without first changing its rounded GB value. Navigation/close ignores stale
+  responses. Lost reload responses are not retried; reopen to reconcile.
+- Authenticated local GET/PUT `/v1/models/context`, strict schema, model binding,
+  revision checks and idle-service admission. Remote listeners cannot administer models.
+  Requests may not overlap active/queued/unwinding turns, titles or another reload.
+- Cross-process compute lease, no automatic expiry or stale-lock deletion. A timeout
+  retains ownership; failed restore is uncertain, never successful measurement. Further
+  model work refuses until the uncertain reservation is reconciled. Development live
+  runs must also follow the canonical shared-compute protocol and announcement.
+- Real Ollama operations: bounded empty load requests, actual context/residency checks,
+  observable digest/version/metadata fingerprint. Other resident models are not evicted.
+  Cross-platform available-memory data comes from psutil; dedicated VRAM is not treated
+  as reclaimable system RAM. Apple Silicon unified memory and CPU residency are explicit.
+- Two cold slope probes (8k/16k), at most two bounded candidate loads, mandatory restore
+  outside measurement progress. Missing memory data or unaffordable probes refuse.
+  Candidate budget applies the physical-memory ceiling once, available-memory ceiling,
+  fitted baseline and headroom. A proposal is not a verified maximum until loaded.
+- Supported geometry is a plausibility gate, not a claim of KV precision/parallel slots.
+  Measured effective slope includes runner-buffer growth. Runtime checks compare context
+  residuals with the fitted intercept; no conversion goes beyond the verified envelope.
+  Qwen 3.5 recurrent flags precede interval metadata. Plain Granite uniform heads are
+  supported; unsupported sliding/shared/prediction layouts refuse.
+- Bounded calibration evidence and revisioned per-model choices live outside install.
+  Atomic file publication/fsync, plus POSIX directory fsync; unreadable/newer data is
+  preserved. Identity, geometry and post-load checks prevent silently reusing stale data.
+- Session load, next chat rounds and title window selection use the same runtime policy.
+  Resident window mismatch reloads before a call. Status-only model inspection never
+  reloads. Explicit NURU_MAX_NUM_CTX wins; the unset 32k default does not cap a saved choice.
+- Apply verifies before saving. Save failure keeps the verified live choice with an
+  explicit restart-size notice and categorized logs. Reload failure attempts rollback;
+  failed rollback remains uncertain. Partial-GPU operation gets the slower-replies warning.
 
-## Storage and service reservation implemented
+## Still required before readiness
 
-`core.context_preferences` stores each canonical model independently under the user's
-settings directory, with hashed filenames, owner-only atomic writes and fresh revisions.
-Stale editors fail instead of overwriting. Corrupt/newer-format files and symbolic links
-are refused, preserving the original. A saved choice is usable only with its exact current
-runner identity and geometry. This is not yet wired into Session or an HTTP endpoint.
+- Full local suite/coverage validation on the integration commit and focused Windows
+  checks for file publication, ownership and memory probing. No broad hosted Linux tests.
+- Claude's thorough security/concurrency/failure review of the production adapter.
+- Native bounded acceptance under a coordinated reservation, on disposable test state,
+  without changing the user's live service/vault or unloading another client's model.
+- Native macOS panel checks and the user's Windows checklist; no scripted response or
+  mockup may be presented as end-to-end model acceptance or a real screenshot.
+- Review uncertainty recovery/operator messaging and memory preflight conservatism on
+  supported hosts. The 96MB/10% residual tolerance is based on bounded observed Qwen and
+  Granite data, not a general hardware guarantee. Unsupported cases remain unavailable.
 
-`Service.model_change()` reserves an idle service under the admission lock and releases
-that lock for blocking reload I/O. Active turns, unwinding workers, queued turns, active
-or queued titles and another reload refuse. While reserved, new turn/title requests refuse
-without recording acceptance, status/history remain available, and managed vault-switch
-shutdown refuses. The reservation releases even on failure. The runtime adapter still
-must preserve the old preference on reload failure and report uncertain state if saving
-fails after a successful reload.
+## References
 
-The user directly confirmed the panel mockup, staged −/+ changes, a single reload on
-Apply, and discarding unapplied changes on close. Future UI work starts with a labelled
-mockup. Neither a pending panel value nor merely opening it may reload the model.
-
-## Still to implement and verify
-
-- Trustworthy actual-runner precision/parallelism discovery. Never assume Nuru’s
-  environment describes an independently started Ollama server.
-- Safe calibration adapter under the canonical shared-compute protocol. Preserve the
-  user’s resident model; no live inference has been run for this work yet.
-- Minimum window measured from shipped system/tools plus bounded read/reply headroom.
-- Wire the implemented per-model storage into runtime validation and Session window selection.
-- Wire the implemented server reservation into the reload adapter. Preserve
-  the previous setting on failures and report uncertain runner state honestly.
-- Explicit NURU_MAX_NUM_CTX override wins; the unset 32k default must not accidentally
-  cap the user’s saved choice. Next turns/titles/model loads must use the same window.
-- Ring panel, accessible buttons, per-model bounds, disabled Claude explanation,
-  reload status clearing stale readings, honest partial-GPU/unknown residency notice.
-- Useful integration/security/failure tests, local suites and coverage gate; only
-  Windows-specific CI if needed. Claude’s thorough review and manual UI checklist.
-
-## Primary references
-
-- [Ollama running models API](https://docs.ollama.com/api/ps): resident size,
-  GPU size, digest and actual context length. This API does not establish cache precision.
+- [Ollama running models](https://docs.ollama.com/api/ps): actual resident size, GPU size,
+  digest and context; this does not expose hidden cache precision or parallelism.
 - [Qwen 3.5 loader](https://github.com/ggml-org/llama.cpp/blob/master/src/models/qwen35.cpp):
-  explicit recurrent flags take precedence; otherwise full attention at interval boundaries.
-- [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.mdx): cache precision is a
-  server configuration. The initial implementation refuses non-f16 rather than guessing.
-
-## Apply transaction implemented, adapter still pending
-
-`core.context_apply` now checks revisions before loading, verifies the new runner window
-before publication, and keeps a successfully applied runtime choice when saving fails,
-with an explicit unsaved notice. Reload/verification failure attempts the previous actual
-runtime window, including any unsaved override. Failed rollback reports uncertainty.
-The reservation releases on each path. Fault-injection tests cover stale edits, reload,
-verification, live-state update, publication, and rollback failures. Runtime adapters must
-still supply real identity checks, residency verification and all-session live overrides.
-
-## Panel implemented against a draft client contract
-
-The approved unmeasured/measured popover is wired to the ring, with keyboard access,
-Escape/outside/Close dismissal, model/conversation navigation cleanup, live status and
-plain-text output. Minus/plus only stage changes. Close discards them. Requests never
-retry automatically after an uncertain network response, and the panel requires reopening
-before another action after a failed request. Reload clears usage numbers but preserves
-actual-omission notices, draft text and caret selection.
-
-The draft client contract is GET `/v1/models/context?model=...` and PUT to that path with
-`model`, `operation` (measure/apply), `expected_revision`, and `gb` only for apply.
-Both must be local authenticated administration, subject to service admission/reservations.
-These routes are NOT implemented yet. The UI is tested with scripted responses and must
-not be presented as end-to-end working or as a live-memory measurement screenshot.
-
-The response binds `model`, `revision`, `window_tokens`, booleans `measured`, `can_measure`,
-`busy`, optional plain-text `reason`/`notice`/`limit_reason`; a measured response additionally
-has integer `gb`, `min_gb`, `max_gb`, `max_tokens` and positive finite `bytes_per_token`.
-A bounded measurement envelope must be described honestly in `limit_reason`, rather than
-labelled as the model's architectural maximum. Claude's fixed-window explanation replaces
-local measurement instructions when measurement is unavailable.
+  recurrent flags take precedence over interval boundaries.
+- [Granite loader](https://github.com/ggml-org/llama.cpp/blob/master/src/models/granite.cpp):
+  uniform standard-attention head dimensions for the supported plain architecture.

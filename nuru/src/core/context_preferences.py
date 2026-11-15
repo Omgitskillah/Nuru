@@ -6,6 +6,7 @@ choice or model load is created by reading. Corrupt/newer-format data is never o
 """
 import hashlib
 import json
+import os
 import re
 import secrets
 from dataclasses import asdict, dataclass
@@ -63,7 +64,7 @@ def _decode(data: dict, model: str) -> Choice:
         _integer(gb, "saved context memory", 4096)
         _integer(tokens, "saved context window")
         identity, layout = Identity(**data["identity"]), Geometry(**data["layout"])
-        if identity.kv_type != "f16" or layout.architecture not in ("llama", "qwen2", "qwen3", "qwen35", "qwen35moe"):
+        if (identity.kv_type != "f16" and not re.fullmatch(r"measured:[0-9a-f]{64}", identity.kv_type)) or layout.architecture not in ("llama", "qwen2", "qwen3", "qwen35", "qwen35moe", "granite"):
             raise ValueError("Unsupported saved calibration")
         _integer(layout.window, "saved model window")
         _integer(layout.attention_layers, "saved attention layers", 1024)
@@ -110,5 +111,17 @@ def publish(model: str, expected: str, *, gb: int | None, tokens: int | None,
     with _exclusive(root / "context.lock", busy=Conflict("Another Nuru is saving context settings")):
         if read(model, root).revision != expected:
             raise Conflict("Context settings changed; reopen the panel")
-        user_models._write(path, json.dumps(data, ensure_ascii=False))
+        durable_write(path, json.dumps(data, ensure_ascii=False))
     return choice
+
+
+def durable_write(path: Path, text: str) -> None:
+    user_models._write(path, text)
+    if os.name != "nt":
+        # Windows has no portable directory fsync. The same-file-system atomic replace
+        # and file fsync still apply there; POSIX also persists the directory entry.
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)

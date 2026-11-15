@@ -5,7 +5,7 @@ const integer = (n) => Number.isSafeInteger(n) && n > 0;
 function checked(info, model) {
   if (!info || info.model !== model || typeof info.revision !== "string" || !integer(info.window_tokens) ||
       info.window_tokens > 16777216 || typeof info.measured !== "boolean" || typeof info.can_measure !== "boolean" ||
-      typeof info.busy !== "boolean" || ["reason", "notice", "limit_reason"].some((key) => info[key] != null && typeof info[key] !== "string")) throw new Error("Invalid context settings from Nuru");
+      typeof info.busy !== "boolean" || (info.needs_apply != null && typeof info.needs_apply !== "boolean") || ["reason", "notice", "limit_reason"].some((key) => info[key] != null && typeof info[key] !== "string")) throw new Error("Invalid context settings from Nuru");
   if (info.measured && (!integer(info.gb) || !integer(info.min_gb) || !integer(info.max_gb) ||
       info.min_gb > info.gb || info.gb > info.max_gb || info.max_gb > 4096 || !integer(info.max_tokens) ||
       !Number.isFinite(info.bytes_per_token) || info.bytes_per_token <= 0)) throw new Error("Invalid context memory limits from Nuru");
@@ -70,7 +70,7 @@ class ContextPanel {
     if (info.reason) this.body.createEl("p", { text: info.reason });
     this.body.createEl("p", { text: `Applies to every ${this.label} conversation`, cls: "nuru-context-muted" });
     this.action = this.body.createEl("button", { text: this.working ? (this.operation === "measure" ? "Measuring…" : "Reloading the model…") : info.measured ? "Apply" : "Measure memory use", cls: "mod-cta" });
-    this.action.disabled = disabled || (info.measured ? this.pending === info.gb : !info.can_measure);
+    this.action.disabled = disabled || (info.measured ? this.pending === info.gb && !info.needs_apply : !info.can_measure);
     this.action.addEventListener("click", () => this.run(info.measured ? "apply" : "measure"));
     if (disabled && !this.working && !this.failed) this.note.setText("Nuru is busy. Wait until its replies and title work finish.");
   }
@@ -78,7 +78,7 @@ class ContextPanel {
     if (this.closed || this.working || this.failed || !this.current()) return;
     if (this.busy() || this.info.busy) { this.note.setText("Nuru is busy. Wait until its replies and title work finish."); return; }
     if (operation === "measure" && !this.info.can_measure) return;
-    if (operation === "apply" && this.pending === this.info.gb) return;
+    if (operation === "apply" && this.pending === this.info.gb && !this.info.needs_apply) return;
     this.working = true; this.operation = operation; this.render();
     this.note.setText(operation === "measure" ? "Measuring…" : "Reloading the model…");
     try {

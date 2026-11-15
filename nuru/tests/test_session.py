@@ -354,7 +354,7 @@ def test_the_model_is_loaded_at_the_window_its_chats_will_use(monkeypatch, info,
 def test_loaded_model_info_returns_the_info_when_the_model_is_loaded(monkeypatch):
     s = start_session(monkeypatch)
     monkeypatch.setattr(session, "is_model_loaded", lambda model: True)
-    monkeypatch.setattr(session, "ensure_model_loaded", lambda model, *_: {"family": "qwen3"})
+    monkeypatch.setattr(session, "static_model_info", lambda model: {"family": "qwen3"})
 
     assert s.loaded_model_info() == {"family": "qwen3"}
 

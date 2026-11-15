@@ -580,3 +580,14 @@ def test_unload_model_asks_ollama_to_drop_a_loaded_model_and_leaves_others_alone
     ollama.unload_model("qwen3:8b")
     ollama.unload_model("llama3.1:8b")  # not loaded: nothing to send
     assert posted == [(f"{ollama.BASE}/api/generate", {"model": "qwen3:8b", "keep_alive": 0}), "checked"]
+
+
+def test_resident_context_mismatch_reloads_before_the_next_call(monkeypatch):
+    from core.providers import ollama
+    loads = []
+    monkeypatch.setattr(ollama, "_static_info", lambda model: {"context_window": 131072})
+    monkeypatch.setattr(ollama, "is_model_loaded", lambda model: True)
+    monkeypatch.setattr(ollama, "loaded_models", lambda: [{"name": "nuru:latest", "context_length": 8192}])
+    monkeypatch.setattr(ollama, "_load_model_with_spinner", lambda model, window: loads.append((model, window)))
+    assert ollama.ensure_model_loaded("nuru", lambda info: 32768)["context_window"] == 131072
+    assert loads == [("nuru", 32768)]

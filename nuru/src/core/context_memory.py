@@ -41,7 +41,7 @@ def geometry(shown: dict, kv_type: str) -> Geometry:
     if not isinstance(info, dict):
         raise Unsupported("Missing model metadata")
     arch = info.get("general.architecture")
-    if arch not in ("llama", "qwen2", "qwen3", "qwen35", "qwen35moe"):
+    if arch not in ("llama", "qwen2", "qwen3", "qwen35", "qwen35moe", "granite"):
         raise Unsupported("Unsupported context-memory architecture")
     prefix = arch + "."
     if any("sliding_window" in k or "shared_kv" in k or "nextn_predict" in k for k in info):
@@ -63,7 +63,13 @@ def geometry(shown: dict, kv_type: str) -> Geometry:
         if not layers:
             raise Unsupported("No full-attention layers")
     heads = field("attention.head_count_kv")
-    key, value = field("attention.key_length"), field("attention.value_length")
+    if arch == "granite" and prefix + "attention.key_length" not in info and prefix + "attention.value_length" not in info:
+        embedding, query_heads = field("embedding_length"), field("attention.head_count")
+        if embedding % query_heads:
+            raise Unsupported("Granite head dimensions are not uniform")
+        key = value = embedding // query_heads
+    else:
+        key, value = field("attention.key_length"), field("attention.value_length")
     window = field("context_length")
     return Geometry(arch, window, layers, layers * heads * (key + value) * 2)
 

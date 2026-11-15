@@ -4,6 +4,7 @@ The adapter owns the service reservation and actual model identity/calibration c
 `live_window` reports the current runtime window (including a prior unsaved application),
 not merely the stored preference. Nothing here infers residency from a requested window.
 """
+import logging
 from dataclasses import dataclass
 
 from core import context_preferences as preferences
@@ -62,9 +63,19 @@ def apply(model: str, expected: str, gb: int, calibration: Calibration, *, minim
         try:
             publish(model, expected, gb=gb, tokens=window, identity=calibration.identity,
                     layout=calibration.geometry, root=root)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             # A verified runtime change must not be presented as persisted. The adapter shows
             # this notice and keeps its runtime override until restart or another Apply.
-            return Applied(window, False, "Applied for now, but couldn't be saved. "
-                           "Saved settings will apply after a restart.")
+            kind = "conflict" if isinstance(error, preferences.Conflict) else "storage" if isinstance(error, OSError) else "validation"
+            logging.getLogger(__name__).warning("Context choice publication failed (%s)", kind, exc_info=True)
+            try:
+                # A different writer may have saved since our initial read. Do not promise
+                # the old snapshot's size when the current persisted choice says otherwise.
+                saved = preferences.read(model, root)
+                size = f"{saved.gb} GB (about {saved.tokens:,} tokens)" if saved.tokens is not None else "the default"
+                notice = f"Applied for now, but couldn't be saved: after a restart it goes back to {size}."
+            except (OSError, ValueError):
+                logging.getLogger(__name__).warning("Could not reread saved context choice", exc_info=True)
+                notice = "Applied for now, but couldn't be saved. Couldn't verify which size will apply after a restart."
+            return Applied(window, False, notice)
         return Applied(window, True)

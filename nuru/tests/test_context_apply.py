@@ -93,3 +93,43 @@ def test_publish_failure_keeps_verified_runtime_and_next_rollback_uses_it(tmp_pa
     with pytest.raises(context_apply.ApplyFailed) as error:
         context_apply.apply("llama", prefs.INITIAL, 3, c, **args)
     assert not error.value.uncertain and runtime[0] == 15258 and not held[0]
+
+
+@pytest.mark.parametrize("error,kind", [(OSError("full"), "storage"), (prefs.Conflict("stale"), "conflict"), (ValueError("bug"), "validation")])
+def test_save_failures_log_kind_and_name_restart_default(tmp_path, caplog, error, kind):
+    c, events, runtime, held, args = setup(tmp_path)
+    def fail(*args, **kwargs): raise error
+    args["publish"] = fail
+    result = context_apply.apply("llama", prefs.INITIAL, 2, c, **args)
+    assert f"({kind})" in caplog.text and "goes back to the default" in result.notice
+    assert not result.saved and runtime[0] == 15258
+
+
+def test_validation_failure_inside_publish_is_logged_without_a_false_save(tmp_path, monkeypatch, caplog):
+    c, events, runtime, held, args = setup(tmp_path)
+    def fail(*args): raise Unsupported("record validation bug")
+    monkeypatch.setattr(prefs, "_decode", fail)
+    result = context_apply.apply("llama", prefs.INITIAL, 2, c, **args)
+    assert not result.saved and "(validation)" in caplog.text and "goes back to the default" in result.notice
+    assert runtime[0] == 15258 and not held[0]
+
+
+def test_publication_conflict_notice_uses_current_saved_size_not_old_snapshot(tmp_path):
+    c, events, runtime, held, args = setup(tmp_path)
+    def concurrent(model, expected, **kwargs):
+        prefs.publish(model, expected, **{**kwargs, "gb": 1, "tokens": 7629})
+        raise prefs.Conflict("another editor won")
+    args["publish"] = concurrent
+    result = context_apply.apply("llama", prefs.INITIAL, 2, c, **args)
+    assert not result.saved and "1 GB (about 7,629 tokens)" in result.notice
+    assert runtime[0] == 15258 and prefs.read("llama", tmp_path).gb == 1
+
+
+def test_unreadable_saved_size_after_publish_failure_is_reported_as_unknown(tmp_path):
+    c, events, runtime, held, args = setup(tmp_path)
+    def corrupt(*args, **kwargs):
+        prefs._path("llama", tmp_path).write_text("broken")
+        raise OSError("save failed")
+    args["publish"] = corrupt
+    result = context_apply.apply("llama", prefs.INITIAL, 2, c, **args)
+    assert not result.saved and "Couldn't verify which size" in result.notice and runtime[0] == 15258

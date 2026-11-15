@@ -404,6 +404,7 @@ def _cancelled(cancel: threading.Event | None) -> bool:
 class ContextStatus:
     """Per-turn telemetry, separate from reply events; no note or prompt content."""
 
+    model: str | None = None
     window_tokens: int | None = None
     used_tokens: int | None = None
     estimated: bool = True
@@ -814,7 +815,7 @@ class Session:
         if self._context_model != model or self._context.window_tokens != num_ctx:
             self._context = replace(self._context, used_tokens=None)
         self._context_model = model
-        self._report_context(window_tokens=num_ctx, phase="calling")
+        self._report_context(model=self.model_id(), window_tokens=num_ctx, phase="calling")
         stream = self._chat_with(model, messages, num_ctx=num_ctx, **kwargs)
         try:
             for out in stream:

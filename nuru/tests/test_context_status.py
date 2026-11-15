@@ -42,6 +42,7 @@ def test_cached_local_counter_cannot_make_a_large_sent_prompt_look_empty(chat_se
     expected = input_budget(8192) - available_tokens(8192, sent[0]) + 9
     assert result.used_tokens == expected and result.used_tokens > 400
     assert result.estimated and result.phase == 'finished'
+    assert result.model == chat_session.model_id()
     assert not result.history_omitted and not result.tool_results_omitted
 
 

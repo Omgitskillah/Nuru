@@ -16,6 +16,7 @@
         "tool_results_omitted"
       ],
       "properties": {
+        "model": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
         "window_tokens": {
           "type": [
             "integer",

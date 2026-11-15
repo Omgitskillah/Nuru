@@ -288,7 +288,7 @@ Error bodies have the form `{v, error: {code, message, retry_after_seconds?, res
 After `started`, a `status` event may carry `{context: {window_tokens, used_tokens,
 estimated, phase, history_omitted, tool_results_omitted}}`. The same event schema
 is shared by v2 (which changes only the status endpoint's vault identity).
-Window/usage are nullable bounded integers; unknown is null, not zero. `phase`
+An optional model field names the actual canonical model, allowing clients to suppress readings after the picker switches to another model. Window/usage are nullable bounded integers; unknown is null, not zero. `phase`
 is `calling` or `finished`; a value retained while calling is explicitly the last
 completed call, not current usage. `used_tokens` replaces prior call usage; it is
 not a sum across a turn. Ollama uses the fitted request estimate plus reported

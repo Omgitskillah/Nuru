@@ -109,3 +109,30 @@ def test_local_http_controller_drives_real_adapter_under_admission(harness, tmp_
     result = controller.change({"model": "qwen", "operation": "apply", "gb": 1, "expected_revision": "initial"})
     assert result["window_tokens"] == 26755
     h.service._session = None  # scripted harness owns its own close lifecycle
+
+
+def test_uncertain_apply_keeps_compute_ownership_and_blocks_future_work(tmp_path):
+    from core import context_apply
+    d, r = setup(tmp_path); d.measure("qwen")
+    def timeout(model, window):
+        r.uncertain = True
+        raise Uncertain("load timed out")
+    r.load = timeout
+    with pytest.raises(context_apply.ApplyFailed): d.apply("qwen", 1, "initial")
+    assert d.compute_blocked() and (tmp_path / "compute" / "local-model.lock").is_dir()
+    assert prefs.read("qwen", d.root).revision == "initial"
+
+
+def test_saved_choice_remains_unchanged_if_publication_fails_after_apply(tmp_path, monkeypatch):
+    d, r = setup(tmp_path); d.measure("qwen")
+    monkeypatch.setattr(prefs, "durable_write", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    result = d.apply("qwen", 1, "initial")
+    assert "couldn't be saved" in result["notice"] and r.current == 26755
+    assert prefs.read("qwen", d.root).revision == "initial" and d.window("qwen", {}, 8192) == 26755
+
+
+def test_partial_gpu_placement_after_apply_is_explicit(tmp_path):
+    d, r = setup(tmp_path); d.measure("qwen"); original = r.verify
+    r.verify = lambda model, window: (original(model, window)[0], "mixed")
+    result = d.apply("qwen", 1, "initial")
+    assert "Doesn't fully fit in GPU memory" in result["notice"]

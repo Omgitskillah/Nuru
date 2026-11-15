@@ -107,3 +107,19 @@ def test_wrong_restored_placement_is_not_success():
     r.cold_load = changed
     with pytest.raises(Uncertain): measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
     assert lease.retained
+
+
+def test_memory_pressure_between_probes_stops_before_loading_and_restores_previous():
+    r, lease = Fake(), Lease()
+    r.available = lambda: (32_000_000_000, 28_000_000_000 if not r.calls else 1_000_000_000)
+    with pytest.raises(Unsupported, match="memory changed"):
+        measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
+    assert r.calls == [8192, 32768] and not lease.retained
+
+
+def test_memory_pressure_after_slope_probes_cannot_trigger_an_oversized_candidate():
+    r, lease = Fake(), Lease()
+    r.available = lambda: (32_000_000_000, 28_000_000_000 if len(r.calls) < 2 else 1_000_000_000)
+    with pytest.raises(Unsupported, match="available memory"):
+        measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
+    assert r.calls == [8192, 16384, 32768] and not lease.retained

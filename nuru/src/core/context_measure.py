@@ -49,6 +49,11 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
         points = []
         placement = None
         for step, window in enumerate((8192, 16384), 1):
+            now_total, now_available = runner.available()
+            now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
+            now_budget = min(Fraction(now_total * 66, 100), Fraction(now_available * 8, 10))
+            if baseline + layout.bytes_per_token * window * 5 + 1_500_000_000 > now_budget:
+                raise Unsupported("Available memory changed; measurement stopped before another load")
             progress(step, 4); changed = True
             point, location = runner.cold_load(model, window)
             if placement is not None and location != placement:
@@ -57,10 +62,15 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
             if runner.metadata(model)[1:] != (digest, version, fingerprint):
                 raise Unsupported("Model or runner configuration changed during measurement")
         provisional = fit(layout, points[0], points[1], points[1])
-        proposed = candidate(provisional, total=total, available=available, maximum=maximum, minimum=minimum)
+        now_total, now_available = runner.available()
+        now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
+        proposed = candidate(provisional, total=now_total, available=now_available, maximum=maximum, minimum=minimum)
         verified = provisional
         verified_point = points[1]
         for attempt in range(2):
+            now_total, now_available = runner.available()
+            now_available = min(now_total, now_available + runner.reclaimable(runner.resident(model)))
+            proposed = min(proposed, candidate(provisional, total=now_total, available=now_available, maximum=maximum, minimum=minimum))
             if proposed <= 16384:
                 break
             progress(3 + attempt, 4)

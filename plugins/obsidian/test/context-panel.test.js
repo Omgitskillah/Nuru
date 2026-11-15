@@ -120,3 +120,18 @@ test("malformed recovery status cannot enable clearing or unpause the composer",
   for (const bad of [null, {}, { reserved: true }, reservation({ owner_running: "false" }), reservation({ run_id: "bad" }), reservation({ recovery: {} }), reservation({ recovery: "x".repeat(1001) })]) assert.throws(() => checkedRecovery(bad));
   assert.equal(checkedRecovery({ reserved: false }).reserved, false);
 });
+
+test("healthy own or other memory work has no recovery warning or restart checkbox", async () => {
+  for (const own of [true, false]) {
+    const states = [];
+    const { panel } = await setup({ recovery: async () => reservation({ state: "busy", owner_running: true, own }),
+      recoveryChanged: (...args) => states.push(args) });
+    assert.deepEqual(states, [[true, true]]);
+    assert.match(panel.body.textContent, own ? /Nuru is measuring/ : /Another Nuru is measuring/);
+    assert.equal(panel.body.querySelector("input"), null);
+    assert.equal(panel.body.querySelector(".nuru-context-warning"), null);
+    assert.equal(recoveryButtons(panel).length, 1);
+    recoveryButtons(panel)[0].click(); await until(() => states.length === 2);
+  }
+  for (const bad of [reservation({ state: "wrong" }), reservation({ own: "false" })]) assert.throws(() => checkedRecovery(bad));
+});

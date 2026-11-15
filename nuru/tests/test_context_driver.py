@@ -181,3 +181,15 @@ def test_post_load_mismatch_cleans_only_newly_loaded_target(tmp_path, initially_
     with pytest.raises(Unsupported): d.verify_loaded("qwen")
     assert unloaded == ([] if initially_resident else [("qwen", {"exclusive": False})])
     assert not d.pending_loads
+
+
+def test_status_poll_during_healthy_measurement_reports_busy_not_interrupted(tmp_path):
+    d, r = setup(tmp_path); control = ContextSettings(d.service, d); original = r.cold_load; states = []
+    def observed(model, window):
+        info = control.recovery(); states.append(info)
+        assert info["state"] == "busy" and info["own"] is True
+        assert "restart" not in info["recovery"].lower()
+        return original(model, window)
+    r.cold_load = observed
+    d.measure("qwen")
+    assert states and control.recovery() == {"reserved": False}

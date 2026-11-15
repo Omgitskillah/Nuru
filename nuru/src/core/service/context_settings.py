@@ -102,12 +102,15 @@ class ContextSettings:
         try:
             result = context_recovery.inspect(self.driver.lease("recovery").directory)
             if not result["reserved"] and getattr(getattr(self.driver, "runner", None), "uncertain", False):
-                return {"reserved": True, "owner_running": True,
+                return {"reserved": True, "owner_running": True, "state": "uncertain",
                         "recovery": "This service cannot verify its model state. Restart Nuru and Ollama before continuing."}
+            if result["reserved"] and result.get("state") == "busy":
+                result["own"] = bool(getattr(self.driver, "owns_compute", False))
+                result["recovery"] = "Nuru is measuring or reloading a model. Wait for it to finish."
             validate("recovery", result)
             return result
         except (OSError, ValueError):
-            return {"reserved": True, "owner_running": True,
+            return {"reserved": True, "owner_running": True, "state": "uncertain",
                     "recovery": "Ownership could not be checked. Stop the owning service and inspect with nuru-serve compute check."}
 
     def recover(self, body):

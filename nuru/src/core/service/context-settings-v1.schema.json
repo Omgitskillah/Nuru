@@ -172,6 +172,16 @@
         "recovery": {
           "type": "string",
           "maxLength": 1000
+        },
+        "state": {
+          "enum": [
+            "busy",
+            "uncertain",
+            "abandoned"
+          ]
+        },
+        "own": {
+          "type": "boolean"
         }
       },
       "allOf": [

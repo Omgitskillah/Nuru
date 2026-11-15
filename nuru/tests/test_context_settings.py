@@ -173,3 +173,13 @@ def test_uncertain_runner_without_lease_still_keeps_composer_paused(harness, tmp
     info = control.recovery()
     assert info["reserved"] and info["owner_running"] and "run_id" not in info
     assert "Restart Nuru and Ollama" in info["recovery"]
+
+
+def test_other_live_owner_is_busy_until_uncertainty_is_retained(harness, tmp_path):
+    h = harness(); control, driver = recovery_controller(h.service, tmp_path)
+    with driver.lease("qwen") as lease:
+        info = control.recovery()
+        assert info["state"] == "busy" and info["own"] is False
+        assert "restart" not in info["recovery"].lower()
+        lease.retain("uncertain load")
+        assert control.recovery()["state"] == "uncertain"

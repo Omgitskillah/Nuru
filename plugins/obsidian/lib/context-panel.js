@@ -16,6 +16,8 @@ function checkedRecovery(info) {
       (info.reserved && typeof info.owner_running !== "boolean") ||
       (info.run_id != null && !/^[0-9a-f]{32}$/.test(info.run_id)) ||
       (info.recovery != null && (typeof info.recovery !== "string" || info.recovery.length > 1000))) throw new Error("Invalid recovery status from Nuru");
+  if ((info.state != null && !["busy", "uncertain", "abandoned"].includes(info.state)) ||
+      (info.own != null && typeof info.own !== "boolean")) throw new Error("Invalid recovery status from Nuru");
   return info;
 }
 class ContextPanel {
@@ -50,7 +52,7 @@ class ContextPanel {
       const recovery = this.client.contextRecovery ? await this.client.contextRecovery() : { reserved: false };
       if (this.closed || !this.current()) return;
       checkedRecovery(recovery);
-      this.recoveryChanged(recovery.reserved); this.recoveryReserved = recovery.reserved;
+      this.recoveryChanged(recovery.reserved, recovery.state === "busy"); this.recoveryReserved = recovery.reserved;
       if (recovery.reserved) { this.renderRecovery(recovery); return; }
       const info = checked(await this.client.contextSettings(this.model), this.model);
       if (this.closed || !this.current()) return;
@@ -59,11 +61,17 @@ class ContextPanel {
   }
   renderRecovery(info) {
     this.body.empty(); this.note.setText(""); this.restarted = false;
+    if (info.state === "busy") {
+      this.body.createEl("p", { text: info.own ? "Nuru is measuring or reloading a model. Chat waits until it finishes." : "Another Nuru is measuring or reloading a model. Wait for it to finish." });
+      const check = this.body.createEl("button", { text: "Check again" });
+      check.addEventListener("click", () => this.load());
+      return;
+    }
     this.body.createEl("p", { text: info.owner_running === false ? "⚠ Nuru is paused: a model load was interrupted" : "⚠ Nuru is paused: local model compute is reserved", cls: "nuru-context-warning" });
     this.body.createEl("p", { text: "Nuru can't tell whether Ollama is still loading. Messages wait until this is cleared. Your notes and chats are not affected." });
     if (info.recovery && !info.run_id) this.body.createEl("p", { text: info.recovery });
     const stopped = info.owner_running === false;
-    this.body.createEl("p", { text: stopped ? "✓ The Nuru that started it has stopped" : "The Nuru that started it is still running or its ownership could not be checked. Stop that service before continuing." });
+    this.body.createEl("p", { text: stopped ? "✓ The Nuru that started it has stopped" : "The Nuru that started it is still running or its ownership could not be checked. Quit and reopen Obsidian to restart Nuru, then check again." });
     const label = this.body.createEl("label");
     const checkbox = label.createEl("input", { attr: { type: "checkbox" } });
     label.createEl("span", { text: "I've restarted Ollama" });

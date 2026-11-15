@@ -623,7 +623,7 @@ class ChatView extends ItemView {
     const client = this.client, generation = this.generation;
     this.contextPanel = new ContextPanel(this.contextRing, {
       client, model, label: this.currentModel()?.label || model,
-      recoveryChanged: (paused) => this.setComputePaused(paused),
+      recoveryChanged: (paused, busy) => this.setComputePaused(paused, busy),
       usage: this.contextRing.getAttribute("title"), busy: () => Boolean(this.running),
       current: () => this.client === client && this.generation === generation &&
         (this.choice?.model ?? this.service?.models?.default) === model,
@@ -636,11 +636,11 @@ class ChatView extends ItemView {
     });
   }
 
-  setComputePaused(paused) {
+  setComputePaused(paused, busy = false) {
     this.computePaused = paused;
     this.recoveryGeneration = (this.recoveryGeneration || 0) + 1;
-    this.contextRing?.toggleClass("nuru-context-paused", paused);
-    if (this.contextRing) this.contextRing.setAttr("aria-description", paused ? "Model load interrupted; open recovery" : "");
+    this.contextRing?.toggleClass("nuru-context-paused", paused && !busy);
+    if (this.contextRing) this.contextRing.setAttr("aria-description", paused ? (busy ? "Model memory operation in progress; chat waits" : "Model load interrupted; open recovery") : "");
     this.updateButtons();
   }
 
@@ -1036,7 +1036,7 @@ class ChatView extends ItemView {
     try {
       const generation = this.recoveryGeneration;
       const info = checkedRecovery(await client.contextRecovery());
-      if (client === this.client && generation === this.recoveryGeneration) this.setComputePaused(info.reserved);
+      if (client === this.client && generation === this.recoveryGeneration) this.setComputePaused(info.reserved, info.state === "busy");
     } catch (_) { /* Keep the last known pause state on transport or validation failure. */ }
   }
 

@@ -1642,3 +1642,12 @@ test("F40 stale status response cannot undo explicit recovery or a client switch
   view.client = fakeClient(); finish({ reserved: true, owner_running: false }); await old;
   assert.equal(view.computePaused, false);
 });
+
+test("status polling healthy memory work blocks sends without an interrupted badge", async () => {
+  const client = fakeClient(); client.contextRecovery = async () => ({ reserved: true, owner_running: true, state: "busy", own: false });
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  await view.checkStatus();
+  assert.equal(view.sendButton.disabled, true);
+  assert.equal(view.contextRing.classList.contains("nuru-context-paused"), false);
+  assert.match(view.contextRing.getAttribute("aria-description"), /in progress/);
+});

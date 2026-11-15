@@ -53,6 +53,7 @@ def inspect(directory=None):
     if owner is None:
         return {"reserved": False}
     return {"reserved": True, "run_id": owner["run_id"], "owner_running": alive,
+            "state": "abandoned" if not alive else "uncertain" if "uncertain" in owner else "busy",
             "recovery": "Stop the owning Nuru service, restart Ollama, then release this exact run ID explicitly."}
 
 

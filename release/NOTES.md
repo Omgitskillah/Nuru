@@ -20,7 +20,7 @@ Nuru for Obsidian on Windows and macOS. Install it with the BRAT plugin from thi
 
 - **The Python tool (`run_python`) is unavailable.** It runs scripts in a Docker sandbox, so it needs Docker installed and running. It also needs a developer setup: a `.env.python` file, and Rust to build its server. Without them, Nuru starts as usual, with every other tool.
 - **Phone capture is off on Windows.** It works on macOS.
-- **Context-memory measurement is for local Ollama models.** It needs exclusive use of the model runner and refuses while other models are resident. Measurement can take time; it does not run in the background automatically.
+- **Context-memory measurement is for local Ollama models.** It needs exclusive use of the model runner and refuses while other models are resident. Measurement can take time; it does not run in the background automatically. Send a message with the model first: Measure starts from the model as it is loaded.
 
 ## What the checksums do and don't prove
 

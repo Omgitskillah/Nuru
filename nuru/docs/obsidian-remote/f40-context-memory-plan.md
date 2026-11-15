@@ -71,3 +71,25 @@ runtime window, including any unsaved override. Failed rollback reports uncertai
 The reservation releases on each path. Fault-injection tests cover stale edits, reload,
 verification, live-state update, publication, and rollback failures. Runtime adapters must
 still supply real identity checks, residency verification and all-session live overrides.
+
+## Panel implemented against a draft client contract
+
+The approved unmeasured/measured popover is wired to the ring, with keyboard access,
+Escape/outside/Close dismissal, model/conversation navigation cleanup, live status and
+plain-text output. Minus/plus only stage changes. Close discards them. Requests never
+retry automatically after an uncertain network response, and the panel requires reopening
+before another action after a failed request. Reload clears usage numbers but preserves
+actual-omission notices, draft text and caret selection.
+
+The draft client contract is GET `/v1/models/context?model=...` and PUT to that path with
+`model`, `operation` (measure/apply), `expected_revision`, and `gb` only for apply.
+Both must be local authenticated administration, subject to service admission/reservations.
+These routes are NOT implemented yet. The UI is tested with scripted responses and must
+not be presented as end-to-end working or as a live-memory measurement screenshot.
+
+The response binds `model`, `revision`, `window_tokens`, booleans `measured`, `can_measure`,
+`busy`, optional plain-text `reason`/`notice`/`limit_reason`; a measured response additionally
+has integer `gb`, `min_gb`, `max_gb`, `max_tokens` and positive finite `bytes_per_token`.
+A bounded measurement envelope must be described honestly in `limit_reason`, rather than
+labelled as the model's architectural maximum. Claude's fixed-window explanation replaces
+local measurement instructions when measurement is unavailable.

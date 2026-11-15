@@ -76,3 +76,16 @@
 .nuru-context-ring:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 .nuru-context-ring-arc { display: block; width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(var(--interactive-accent) var(--nuru-context-angle, 0deg), var(--interactive-normal) 0); mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0); }
 .nuru-context-last { opacity: 0.7; }
+
+/* F40: local edits above the ring, independent of the composer and reply. */
+.nuru-actions { position: relative; }
+.nuru-context-ring { cursor: pointer; }
+.nuru-context-panel { position: absolute; bottom: calc(100% + 12px); right: 0; z-index: 20; width: min(390px, calc(100vw - 40px)); padding: 16px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l); background: var(--background-primary); box-shadow: var(--shadow-s); color: var(--text-normal); }
+.nuru-context-panel::after { content: ""; position: absolute; bottom: -6px; right: 58px; width: 10px; height: 10px; transform: rotate(45deg); border-right: 1px solid var(--background-modifier-border); border-bottom: 1px solid var(--background-modifier-border); background: var(--background-primary); }
+.nuru-context-panel-body { max-height: 55vh; overflow: auto; }
+.nuru-context-panel h3 { margin-top: 0; font-size: var(--font-ui-medium); }
+.nuru-context-muted { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.nuru-context-size { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: center; }
+.nuru-context-size strong { font-size: 1.6em; }
+.nuru-context-size > button { font-size: 1.6em; min-width: 42px; min-height: 42px; }
+.nuru-context-panel > button { margin-top: 8px; }

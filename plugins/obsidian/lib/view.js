@@ -16,6 +16,7 @@ const { LaunchProblem } = require("./launcher");
 const { renderReply, sourceLink, linkSources } = require("./render");
 const sourceTargets = require("./sources");
 const { HistoryModal } = require("./history");
+const { ContextPanel } = require("./context-panel");
 const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
@@ -151,8 +152,12 @@ class ChatView extends ItemView {
     this.thinkingButton = actions.createEl("button", { cls: "nuru-pill", attr: { "aria-label": "Thinking" } });
     this.registerDomEvent(this.thinkingButton, "click", (event) => this.pickThinking(event));
     this.contextRing = actions.createEl("span", { cls: "nuru-context-ring", attr: {
-      role: "img", tabindex: "0", "aria-label": "Context usage unavailable",
+      role: "img", tabindex: "0", "aria-label": "Context usage unavailable", "aria-haspopup": "dialog", "aria-expanded": "false",
     } });
+    this.registerDomEvent(this.contextRing, "click", () => this.openContextPanel());
+    this.registerDomEvent(this.contextRing, "keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openContextPanel(); }
+    });
     this.contextArc = this.contextRing.createEl("span", { cls: "nuru-context-ring-arc", attr: { "aria-hidden": "true" } });
     this.choice = { model: null, thinking: null }; // null: the conversation's (or the service's) default
     this.changed = {}; // what the user picked since the conversation's last message
@@ -167,6 +172,7 @@ class ChatView extends ItemView {
   }
 
   async onClose() {
+    this.contextPanel?.close(false);
     this.historyDialog?.close();
     this.generation += 1;
     for (const turn of this.turns.values()) this.forget(turn);
@@ -178,6 +184,7 @@ class ChatView extends ItemView {
   // setting, or the Start button: `clicked`). By itself it starts only when the launcher says it may.
   async reconnect({ start = this.plugin.settings.autoStart !== false, clicked = false } = {}) {
     const generation = ++this.generation;
+    this.contextPanel?.close(false);
     this.client = null;
     this.setStatus("Connecting to Nuru…");
     let client, status;
@@ -223,6 +230,7 @@ class ChatView extends ItemView {
   }
 
   async openConversation(id) {
+    this.contextPanel?.close(false);
     const generation = ++this.generation;
     for (const turn of this.turns.values()) this.forget(turn);
     this.turns.clear();
@@ -605,6 +613,26 @@ class ChatView extends ItemView {
     if (turn.contextEl.textContent !== words) turn.contextEl.setText(words);
   }
 
+  openContextPanel() {
+    if (!this.client) return;
+    if (this.contextPanel && !this.contextPanel.closed) { this.contextPanel.close(); return; }
+    const model = this.choice?.model ?? this.service?.models?.default;
+    if (!model) return;
+    const client = this.client, generation = this.generation;
+    this.contextPanel = new ContextPanel(this.contextRing, {
+      client, model, label: this.currentModel()?.label || model,
+      usage: this.contextRing.getAttribute("title"), busy: () => Boolean(this.running),
+      current: () => this.client === client && this.generation === generation &&
+        (this.choice?.model ?? this.service?.models?.default) === model,
+      reloading: () => {
+        for (const turn of this.turns.values()) if (turn.runner.display.context?.model === model) {
+          turn.runner.display.context = { ...turn.runner.display.context, used_tokens: null, window_tokens: null };
+        }
+        this.renderContextRing();
+      },
+    });
+  }
+
   renderContextRing() {
     if (!this.contextRing) return;
     const turn = [...this.turns.values()].at(-1);
@@ -918,6 +946,7 @@ class ChatView extends ItemView {
   }
 
   renderChoice() {
+    if (this.contextPanel && !this.contextPanel.current()) this.contextPanel.close(false);
     if (!this.modelButton) return;
     const model = this.currentModel();
     const thinking = this.currentThinking(model);

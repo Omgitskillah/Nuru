@@ -1592,3 +1592,28 @@ test("F18 ring fills zero to full, resets across models/conversations and ignore
   assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
   await view.close();
 });
+
+test("F40 ring opens the model panel by keyboard, preserves draft and omissions, closes on navigation", async () => {
+  const display = displayOf(FIXTURES.streams.context_with_omissions);
+  display.context.model = MODELS.default;
+  const client = fakeClient({ history: [{ turn_id: "turn00000001", text: "Q", state: "completed", display }] });
+  const info = { model: MODELS.default, revision: "initial", window_tokens: 32768, measured: false, can_measure: true, busy: false };
+  client.contextSettings = async () => info;
+  client.changeContext = async () => ({ ...info, notice: "Measured" });
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  view.input.value = "Keep the draft"; view.input.setSelectionRange(2, 6);
+  view.contextRing.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" })); assert.equal(view.contextPanel, undefined);
+  view.contextRing.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); await view.contextPanel.ready;
+  assert.equal(view.contextPanel.info.model, MODELS.default);
+  await view.contextPanel.run("measure");
+  assert.match(view.contextRing.getAttribute("title"), /unavailable/);
+  assert.equal([...view.turns.values()][0].runner.display.context.history_omitted, true);
+  assert.equal(view.input.value, "Keep the draft"); assert.equal(view.input.selectionStart, 2); assert.equal(view.input.selectionEnd, 6);
+  view.contextRing.click(); assert.equal(view.contextPanel.closed, true);
+  view.contextRing.dispatchEvent(new KeyboardEvent("keydown", { key: " " })); await view.contextPanel.ready;
+  const panel = view.contextPanel;
+  view.choice.model = MODELS.choices.find((m) => m.id !== MODELS.default).id; view.renderChoice(); assert.equal(panel.closed, true);
+  view.choice.model = MODELS.default; view.openContextPanel(); await view.contextPanel.ready;
+  await view.openConversation(null); assert.equal(view.contextPanel.closed, true);
+  await view.close();
+});

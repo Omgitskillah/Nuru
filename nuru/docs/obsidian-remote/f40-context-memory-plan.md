@@ -61,3 +61,13 @@ mockup. Neither a pending panel value nor merely opening it may reload the model
   explicit recurrent flags take precedence; otherwise full attention at interval boundaries.
 - [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.mdx): cache precision is a
   server configuration. The initial implementation refuses non-f16 rather than guessing.
+
+## Apply transaction implemented, adapter still pending
+
+`core.context_apply` now checks revisions before loading, verifies the new runner window
+before publication, and keeps a successfully applied runtime choice when saving fails,
+with an explicit unsaved notice. Reload/verification failure attempts the previous actual
+runtime window, including any unsaved override. Failed rollback reports uncertainty.
+The reservation releases on each path. Fault-injection tests cover stale edits, reload,
+verification, live-state update, publication, and rollback failures. Runtime adapters must
+still supply real identity checks, residency verification and all-session live overrides.

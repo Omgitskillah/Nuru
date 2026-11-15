@@ -151,7 +151,7 @@ class ChatView extends ItemView {
     this.thinkingButton = actions.createEl("button", { cls: "nuru-pill", attr: { "aria-label": "Thinking" } });
     this.registerDomEvent(this.thinkingButton, "click", (event) => this.pickThinking(event));
     this.contextRing = actions.createEl("span", { cls: "nuru-context-ring", attr: {
-      role: "meter", tabindex: "0", "aria-label": "Context usage", "aria-valuemin": "0", "aria-valuemax": "100",
+      role: "img", tabindex: "0", "aria-label": "Context usage unavailable",
     } });
     this.contextArc = this.contextRing.createEl("span", { cls: "nuru-context-ring-arc", attr: { "aria-hidden": "true" } });
     this.choice = { model: null, thinking: null }; // null: the conversation's (or the service's) default
@@ -620,9 +620,16 @@ class ChatView extends ItemView {
       : "Context usage unavailable";
     this.contextArc.style.setProperty("--nuru-context-angle", `${percent * 3.6}deg`);
     this.contextRing.setAttr("title", words);
-    this.contextRing.setAttr("aria-valuetext", words);
-    if (known) this.contextRing.setAttr("aria-valuenow", String(percent));
-    else this.contextRing.removeAttribute("aria-valuenow");
+    this.contextRing.setAttr("role", known ? "meter" : "img");
+    this.contextRing.setAttr("aria-label", known ? "Context usage" : words);
+    if (known) {
+      this.contextRing.setAttr("aria-valuemin", "0");
+      this.contextRing.setAttr("aria-valuemax", "100");
+      this.contextRing.setAttr("aria-valuenow", String(percent));
+      this.contextRing.setAttr("aria-valuetext", words);
+    } else {
+      for (const attr of ["aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext"]) this.contextRing.removeAttribute(attr);
+    }
     this.contextRing.toggleClass("nuru-context-last", Boolean(known && context.phase === "calling"));
   }
 

@@ -1567,6 +1567,7 @@ test("F18 ring fills zero to full, resets across models/conversations and ignore
   assert.equal(view.contextRing.previousElementSibling, view.thinkingButton);
   assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
   assert.equal(view.contextRing.getAttribute("aria-valuenow"), "0");
+  assert.equal(view.contextRing.getAttribute("role"), "meter");
   first.runner.display.context.used_tokens = 500; view.update(first);
   assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "180deg");
   first.runner.display.context.used_tokens = 1500; view.update(first);
@@ -1575,6 +1576,9 @@ test("F18 ring fills zero to full, resets across models/conversations and ignore
   assert.equal(first.contextEl.hidden, true, "fullness alone does not mean actual omission");
   view.modelButton.click(); Menu.shown.pick("Claude Haiku 5.5 ☁ cloud");
   assert.equal(view.contextRing.hasAttribute("aria-valuenow"), false);
+  assert.equal(view.contextRing.getAttribute("role"), "img");
+  assert.equal(view.contextRing.hasAttribute("aria-valuemax"), false);
+  assert.match(view.contextRing.getAttribute("aria-label"), /unavailable/);
   assert.equal(view.contextArc.style.getPropertyValue("--nuru-context-angle"), "0deg");
   view.choice = { model: MODELS.default, thinking: null }; view.renderChoice();
   const second = view.addTurn("turn00000002", "Next", { ...display, context: null });

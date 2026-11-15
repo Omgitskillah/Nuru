@@ -34,3 +34,19 @@ validation does not mean these manual checks have been performed.
 
 No release or merge approval is implied by this checklist. Record actual observations
 and any failures in the PR; do not tick off steps that were not performed.
+
+## Dialog focus regression (macOS and Windows)
+
+Use disposable test conversations. Do not test permanent erasure on real history.
+
+- Open Move to Trash: Cancel is focused after the dialog appears. Press Enter;
+  the dialog closes and the conversation stays in the visible history.
+- Open Rename: the conversation-name input is focused and editable immediately.
+  Cancel leaves the stored title unchanged; explicitly choosing Rename still works.
+- With one disposable conversation already in Trash, open Empty trash:
+  the title says “Permanently erase 1 conversation?” and Cancel is focused.
+  Press Enter; the dialog closes and that conversation remains in Trash.
+- With two disposable conversations in Trash, the title says
+  “Permanently erase 2 conversations?”; Cancel remains the default focus.
+- Tab to the destructive action deliberately and check that explicit confirmation
+  still works for disposable conversations. Record the OS and Obsidian version.

@@ -94,3 +94,5 @@
 .nuru-context-ring.nuru-context-paused { position: relative; }
 .nuru-context-warning { padding: 12px; border-radius: var(--radius-m); color: var(--text-warning); background: var(--background-secondary); font-weight: bold; }
 .nuru-context-recovery-actions { display: flex; gap: 12px; margin-top: 12px; }
+
+.nuru-context-panel button.mod-cta:disabled { background: var(--interactive-normal); color: var(--text-muted); opacity: 1; }

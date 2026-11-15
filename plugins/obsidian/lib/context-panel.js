@@ -126,7 +126,7 @@ class ContextPanel {
       this.body.createEl("p", { text: "Measure memory use before changing the size. Nuru briefly loads the model at a few bounded sizes, then puts it back. This may take a few minutes; chat waits. It cannot run while a reply is in progress." });
       this.body.createEl("p", { text: "Only when you press it. Never in the background.", cls: "nuru-context-muted" });
     }
-    if (info.reason) this.body.createEl("p", { text: info.reason });
+    if (info.reason && (info.measured || !info.can_measure)) this.body.createEl("p", { text: info.reason });
     this.body.createEl("p", { text: `Applies to every ${this.label} conversation`, cls: "nuru-context-muted" });
     this.action = this.body.createEl("button", { text: this.working ? (this.operation === "measure" ? "Measuring…" : "Reloading the model…") : info.measured ? "Apply" : "Measure memory use", cls: "mod-cta" });
     this.action.disabled = disabled || (info.measured ? this.pending === info.gb && !info.needs_apply : !info.can_measure);

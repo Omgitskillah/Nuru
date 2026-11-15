@@ -147,7 +147,7 @@ def test_real_16gb_mac_resident_replacement_probes_do_not_double_count_cache(bas
     r.metadata = lambda model: ({"size": weights}, *metadata(model)[1:])
     def row(model):
         size = baseline + current[0] * slope
-        return {"context_length": current[0], "size": size, "size_vram": size}
+        return {"context_length": current[0], "size": size, "size_vram": size, "digest": "digest"}
     r.resident = row
     r.reclaimable = lambda resident: resident["size"] if resident else 0
     # Captured Mac: 17.18 GB total, 1.40 GB free, 6.03 GB already resident.
@@ -157,9 +157,10 @@ def test_real_16gb_mac_resident_replacement_probes_do_not_double_count_cache(bas
         original(model, window); current[0] = window
         return Sample(window, baseline + window * slope), "gpu"
     r.cold_load = load
-    result = measure(r, "qwen", layout, minimum=16384, lease=lease)
+    result = measure(r, "qwen", layout, minimum=20480, lease=lease)
     assert r.calls == [8192, 16384, 32768]
-    assert result.curve.maximum == 16384 and current[0] == 32768 and not lease.retained
+    assert result.samples[2].window == 32768
+    assert result.curve.maximum == 32768 and current[0] == 32768 and not lease.retained
 
 
 def test_unloaded_default_is_not_evidence_that_a_probe_fits():
@@ -174,3 +175,27 @@ def test_one_probe_uses_observed_allocation_before_unproven_larger_probe():
     r.available = lambda: (17_180_000_000, 7_000_000_000)
     with pytest.raises(Unsupported): measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
     assert r.calls == [8192, 8192] and not lease.retained
+
+
+@pytest.mark.parametrize("changes", [{"digest": "different"}, {"size": 6_800_000_000, "size_vram": 6_800_000_000}, {"size_vram": None}, {"size_vram": 1}])
+def test_resident_sample_requires_matching_identity_allocation_and_placement(changes):
+    r, lease = Fake(), Lease(); original = r.resident
+    r.resident = lambda model: {**original(model), "digest": "digest", **changes}
+    r.available = lambda: (17_180_000_000, 7_000_000_000)
+    load = r.cold_load
+    def restored(model, window):
+        point, place = load(model, window)
+        return point, "mixed" if window == 32768 and changes.get("size_vram") == 1 else place
+    r.cold_load = restored
+    with pytest.raises(Unsupported): measure(r, "qwen", LAYOUT, minimum=20480, lease=lease)
+    if changes.get("size_vram", 0) is None:
+        assert not r.calls
+    else:
+        assert r.calls[-1] == 32768
+
+
+def test_unloaded_pressure_refusal_explains_how_to_establish_resident_evidence():
+    r, lease = Fake(previous=None), Lease(); r.available = lambda: (17_180_000_000, 5_950_000_000)
+    with pytest.raises(Unsupported, match="Send a message with this model first"):
+        measure(r, "qwen", LAYOUT, minimum=20480, lease=lease)
+    assert not r.calls

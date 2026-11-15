@@ -99,3 +99,12 @@ def test_cold_load_and_reclaimable_memory_do_not_treat_dedicated_vram_as_free_ra
 def test_available_memory_signal_on_this_platform_is_real_and_bounded():
     total, available = Runner(lambda model: model).available()
     assert type(total) is int and type(available) is int and 0 < available <= total
+
+
+def test_normal_chat_lookup_tolerates_embedding_residency_but_measurement_does_not():
+    r, h = setup(); r.load("qwen", 16384)
+    h.rows.append({"name": "embedding:latest", "size": 100, "size_vram": 100})
+    assert r.resident("qwen", exclusive=False)["name"] == "nuru:latest"
+    assert r.verify("qwen", 16384, exclusive=False)[0].window == 16384
+    with pytest.raises(Unsupported): r.resident("qwen")
+    with pytest.raises(Unsupported): r.load("qwen", 32768)

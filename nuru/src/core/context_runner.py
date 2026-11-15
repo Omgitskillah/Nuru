@@ -32,7 +32,7 @@ class Runner:
         response.raise_for_status()
         return response.json()
 
-    def resident(self, model):
+    def resident(self, model, *, exclusive=True):
         target = ollama._normalize_model_name(self.alias(model))
         rows = self._get("/api/ps").get("models")
         if not isinstance(rows, list):
@@ -42,7 +42,9 @@ class Runner:
             if not isinstance(row, dict) or not isinstance(row.get("name"), str):
                 raise Unsupported("Ollama reported invalid model residency")
             if ollama._normalize_model_name(row["name"]) != target:
-                raise Unsupported("Another model is resident; memory measurement will not unload it")
+                if exclusive:
+                    raise Unsupported("Another model is resident; memory measurement will not unload it")
+                continue
             if own is not None:
                 raise Unsupported("Ollama reported ambiguous model residency")
             own = row
@@ -95,8 +97,8 @@ class Runner:
             raise Uncertain("The load did not complete with a verified response; the model may still be loading") from error
         return self.verify(model, window)
 
-    def verify(self, model, window):
-        row = self.resident(model)
+    def verify(self, model, window, *, exclusive=True):
+        row = self.resident(model, exclusive=exclusive)
         if row is None or type(row.get("context_length")) is not int or row["context_length"] != window:
             raise Unsupported("Ollama did not confirm the requested context window")
         size = _integer(row.get("size"), "resident bytes", 1 << 50)

@@ -18,17 +18,17 @@ class Runner:
         self.uncertain = False; self.current = 8192; self.calls = []; self.size_offset = 0; self.fingerprint = "f" * 64
     def available(self): return 32_000_000_000, 28_000_000_000
     def reclaimable(self, row): return 0
-    def resident(self, model):
+    def resident(self, model, *, exclusive=True):
         size = 4_800_000_000 + self.current * 37376 + self.size_offset
         return {"name": "nuru", "context_length": self.current, "size": size, "size_vram": size}
     def metadata(self, model):
         return {"size": 4_500_000_000, "model_info": {"general.architecture": "qwen35", "qwen35.context_length": 32768,
           "qwen35.block_count": 32, "qwen35.full_attention_interval": 4, "qwen35.attention.head_count_kv": 4,
           "qwen35.attention.key_length": 256, "qwen35.attention.value_length": 256}}, "digest", "0.40.11", self.fingerprint
-    def verify(self, model, window):
+    def verify(self, model, window, *, exclusive=True):
         from core.context_memory import Sample
         if window != self.current: raise Unsupported("wrong actual context")
-        return Sample(window, self.resident(model)["size"]), "gpu"
+        return Sample(window, self.resident(model, exclusive=exclusive)["size"]), "gpu"
     def load(self, model, window):
         self.calls.append(window); self.current = window; return self.verify(model, window)
     def cold_load(self, model, window): return self.load(model, window)
@@ -133,6 +133,19 @@ def test_saved_choice_remains_unchanged_if_publication_fails_after_apply(tmp_pat
 
 def test_partial_gpu_placement_after_apply_is_explicit(tmp_path):
     d, r = setup(tmp_path); d.measure("qwen"); original = r.verify
-    r.verify = lambda model, window: (original(model, window)[0], "mixed")
+    r.verify = lambda model, window, **kwargs: (original(model, window, **kwargs)[0], "mixed")
     result = d.apply("qwen", 1, "initial")
     assert "Doesn't fully fit in GPU memory" in result["notice"]
+
+
+def test_saved_window_normal_chat_uses_nonexclusive_residency_checks(tmp_path):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    original = r.resident
+    def with_embedding(model, *, exclusive=True):
+        if exclusive: raise Unsupported("Another model is resident")
+        return original(model, exclusive=False)
+    r.resident = with_embedding
+    assert d.window("qwen", {}, 8192) == 26755
+    d.verify_loaded("qwen")
+    assert not d.describe("qwen")["can_measure"]
+    with pytest.raises(Unsupported): d.apply("qwen", 1, prefs.read("qwen", d.root).revision)

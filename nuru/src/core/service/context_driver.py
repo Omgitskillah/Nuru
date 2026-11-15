@@ -153,16 +153,16 @@ class ContextDriver:
         resident = self.runner.resident(model)
         return _integer(resident.get("context_length"), "current runtime window") if resident is not None else self.default_window({"context_window": layout.window})
 
-    def _affordable(self, model, value, record):
+    def _affordable(self, model, value, record, *, exclusive=True):
         total, available = self.runner.available()
-        row = self.runner.resident(model)
+        row = self.runner.resident(model, exclusive=exclusive)
         available = min(total, available + self.runner.reclaimable(row))
         budget = min(total * 66 // 100, available * 8 // 10)
         # A resident reference checks this runner configuration. Without one, account
         # for the worst supported precision/slot product rather than trusting an old
         # calibration across an unobservable server restart/configuration change.
         if row is not None:
-            point, _ = self.runner.verify(model, row["context_length"])
+            point, _ = self.runner.verify(model, row["context_length"], exclusive=exclusive)
             if not record.curve.agrees(point): raise Unsupported("Memory use changed: measure again")
             allocation = record.curve.intercept + record.curve.allocation(value)
         else:
@@ -184,7 +184,7 @@ class ContextDriver:
             if not saved.usable(identity, stored_layout):
                 raise Unsupported("Saved context belongs to another runner configuration; measure and apply again")
         value = self.live.get(model, saved.tokens)
-        self._affordable(model, value, record)
+        self._affordable(model, value, record, exclusive=False)
         if value > min(record.curve.maximum, self._admin() or layout.window):
             raise Unsupported("The saved context exceeds the current verified/admin limit; reopen the panel")
         return value
@@ -195,6 +195,6 @@ class ContextDriver:
         _, _, record = self._evidence(model)
         if record is None: raise Unsupported("Memory use changed: measure again")
         value = self.live.get(model, saved.tokens)
-        point, location = self.runner.verify(model, value)
+        point, location = self.runner.verify(model, value, exclusive=False)
         if not record.curve.agrees(point):
             raise Unsupported("Memory use changed: measure again")

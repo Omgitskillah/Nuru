@@ -65,6 +65,8 @@ _ROUTES = [  # (method, path pattern, handler name)
     ("POST", r"/v1/service/stop", "stop_service"),
     ("GET", r"/v2/status", "status_v2"),  # protocol v2 is only what changed (protocol-v2.md)
     # Local administration (model-settings-v1.schema.json): refused on the remote listener (route()).
+    ("GET", r"/v1/models/context/recovery", "context_recovery"),
+    ("PUT", r"/v1/models/context/recovery", "recover_context"),
     ("GET", r"/v1/models/context", "context_settings"),
     ("PUT", r"/v1/models/context", "change_context"),
     ("GET", r"/v1/models/settings", "model_settings"),
@@ -425,6 +427,12 @@ class Handler(BaseHTTPRequestHandler):
         if controller is None:
             raise ProtocolError("model_unavailable", "Context memory control is not available in this service")
         return controller
+
+    def on_context_recovery(self, principal, query):
+        self.answer(200, self._context_settings().recovery())
+
+    def on_recover_context(self, principal, query):
+        self.answer(200, self._context_settings().recover(self.json_body(1024)))
 
     def on_context_settings(self, principal, query):
         self.answer(200, self._context_settings().describe(self._one(query, "model")))

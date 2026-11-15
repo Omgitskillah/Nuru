@@ -10,7 +10,7 @@ from pathlib import Path
 
 import jsonschema
 
-from core import context_apply, user_models
+from core import context_apply, context_recovery, user_models
 from core.providers import claude
 from core.context_memory import Unsupported
 from core.context_runner import Uncertain
@@ -97,3 +97,31 @@ class ContextSettings:
             raise
         except (OSError, ValueError) as error:
             raise ProtocolError("model_unavailable", "Couldn't change context memory; reopen the panel to check its state") from error
+
+    def recovery(self):
+        try:
+            result = context_recovery.inspect(self.driver.lease("recovery").directory)
+            if not result["reserved"] and getattr(getattr(self.driver, "runner", None), "uncertain", False):
+                return {"reserved": True, "owner_running": True,
+                        "recovery": "This service cannot verify its model state. Restart Nuru and Ollama before continuing."}
+            validate("recovery", result)
+            return result
+        except (OSError, ValueError):
+            return {"reserved": True, "owner_running": True,
+                    "recovery": "Ownership could not be checked. Stop the owning service and inspect with nuru-serve compute check."}
+
+    def recover(self, body):
+        if (not isinstance(body, dict) or set(body) != {"run_id", "ollama_restarted"}
+                or not isinstance(body["run_id"], str) or len(body["run_id"]) != 32
+                or any(c not in "0123456789abcdef" for c in body["run_id"])
+                or body["ollama_restarted"] is not True):
+            raise ProtocolError("invalid_request", "Give the exact reservation ID and confirm restarting Ollama")
+        try:
+            with self.service.model_change():
+                context_recovery.release(body["run_id"], ollama_restarted=True,
+                                         directory=self.driver.lease("recovery").directory)
+            return self.recovery()
+        except OSError:
+            raise ProtocolError("conflict", "Could not verify or clear ownership; inspect with nuru-serve compute check") from None
+        except ValueError as error:
+            raise ProtocolError("conflict", str(error)[:500]) from None

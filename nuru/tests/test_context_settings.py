@@ -107,3 +107,69 @@ def test_uncertain_adapter_error_and_wrong_result_model_refuse(harness):
     d.measure = lambda model: settings("wrong")
     with pytest.raises(ProtocolError, match="different model"):
         control.change({"model": "qwen", "operation": "measure", "expected_revision": "initial"})
+
+
+def recovery_controller(service, tmp_path):
+    from functools import partial
+    from core.context_lease import ComputeLease
+    control, driver = controller(service)
+    driver.lease = partial(ComputeLease, directory=tmp_path / "compute")
+    return control, driver
+
+
+def test_recovery_read_and_release_enforce_identity_acknowledgement_and_admission(harness, tmp_path, monkeypatch):
+    import psutil
+    from core import context_recovery
+    h = harness(); control, driver = recovery_controller(h.service, tmp_path)
+    assert control.recovery() == {"reserved": False}
+    with driver.lease("qwen") as lease: lease.retain("uncertain")
+    body = {"run_id": lease.run, "ollama_restarted": True}
+    assert control.recovery()["owner_running"]
+    with pytest.raises(ProtocolError): control.recover(body)
+    def dead(pid): raise psutil.NoSuchProcess(pid)
+    monkeypatch.setattr(context_recovery.psutil, "Process", dead)
+    assert control.recovery()["owner_running"] is False
+    with h.service.model_change():
+        with pytest.raises(ProtocolError): control.recover(body)
+    assert lease.path.exists()
+    with pytest.raises(ProtocolError): control.recover({**body, "run_id": "b" * 32})
+    assert control.recover(body) == {"reserved": False}
+    assert not lease.path.exists() and not h.built
+
+
+@pytest.mark.parametrize("body", [None, [], {}, {"run_id": "a"*32, "ollama_restarted": False}, {"run_id": "a"*32, "ollama_restarted": True, "extra": 1}, {"run_id": [], "ollama_restarted": True}, {"run_id": "g"*32, "ollama_restarted": True}])
+def test_malformed_recovery_never_releases(harness, tmp_path, body):
+    h = harness(); control, _ = recovery_controller(h.service, tmp_path)
+    with pytest.raises(ProtocolError): control.recover(body)
+
+
+def test_recovery_errors_preserve_ownership_and_never_leak_private_paths(harness, tmp_path, monkeypatch):
+    from core import context_recovery
+    h = harness(); control, _ = recovery_controller(h.service, tmp_path)
+    def fail(*args, **kwargs): raise OSError("/private/secret/path")
+    monkeypatch.setattr(context_recovery, "inspect", fail)
+    info = control.recovery(); assert info["reserved"] and info["owner_running"]
+    assert "/private" not in str(info)
+    monkeypatch.setattr(context_recovery, "release", fail)
+    with pytest.raises(ProtocolError) as error: control.recover({"run_id": "a"*32, "ollama_restarted": True})
+    assert "/private" not in str(error.value)
+
+
+def test_recovery_http_is_authenticated_and_metadata_only(served, tmp_path):
+    client, service, _, built = served
+    control, driver = recovery_controller(service, tmp_path)
+    path = "/v1/models/context/recovery"
+    assert client.call("GET", path, token=None)[0] == 401
+    assert client.call("GET", path)[:2] == (200, {"reserved": False})
+    assert client.call("PUT", path, {"run_id": "a"*32, "ollama_restarted": False})[0] == 400
+    assert client.call("PUT", path, {"run_id": "a"*32, "ollama_restarted": True})[0] == 409
+    assert built == []
+
+
+def test_uncertain_runner_without_lease_still_keeps_composer_paused(harness, tmp_path):
+    from types import SimpleNamespace
+    h = harness(); control, driver = recovery_controller(h.service, tmp_path)
+    driver.runner = SimpleNamespace(uncertain=True)
+    info = control.recovery()
+    assert info["reserved"] and info["owner_running"] and "run_id" not in info
+    assert "Restart Nuru and Ollama" in info["recovery"]

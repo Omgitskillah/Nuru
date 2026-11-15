@@ -151,6 +151,45 @@
           }
         }
       ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reserved"
+      ],
+      "properties": {
+        "reserved": {
+          "type": "boolean"
+        },
+        "owner_running": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "recovery": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reserved": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "owner_running"
+            ]
+          }
+        }
+      ]
     }
   }
 }

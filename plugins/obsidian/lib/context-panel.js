@@ -11,9 +11,16 @@ function checked(info, model) {
       !Number.isFinite(info.bytes_per_token) || info.bytes_per_token <= 0)) throw new Error("Invalid context memory limits from Nuru");
   return info;
 }
+function checkedRecovery(info) {
+  if (!info || typeof info.reserved !== "boolean" ||
+      (info.reserved && typeof info.owner_running !== "boolean") ||
+      (info.run_id != null && !/^[0-9a-f]{32}$/.test(info.run_id)) ||
+      (info.recovery != null && (typeof info.recovery !== "string" || info.recovery.length > 1000))) throw new Error("Invalid recovery status from Nuru");
+  return info;
+}
 class ContextPanel {
-  constructor(anchor, { client, model, label, usage, busy = () => false, current = () => true, reloading = () => {} }) {
-    Object.assign(this, { anchor, client, model, label, usage, busy, current, reloading });
+  constructor(anchor, { client, model, label, usage, busy = () => false, current = () => true, reloading = () => {}, recoveryChanged = () => {} }) {
+    Object.assign(this, { anchor, client, model, label, usage, busy, current, reloading, recoveryChanged });
     this.anchor.setAttr("aria-expanded", "true");
     this.closed = false; this.working = false; this.failed = false; this.document = anchor.ownerDocument;
     this.el = anchor.parentElement.createDiv({ cls: "nuru-context-panel", attr: { role: "dialog", "aria-label": `Context window · ${label}` } });
@@ -40,10 +47,54 @@ class ContextPanel {
   async load() {
     this.note.setText("Reading context settings…");
     try {
+      const recovery = this.client.contextRecovery ? await this.client.contextRecovery() : { reserved: false };
+      if (this.closed || !this.current()) return;
+      checkedRecovery(recovery);
+      this.recoveryChanged(recovery.reserved); this.recoveryReserved = recovery.reserved;
+      if (recovery.reserved) { this.renderRecovery(recovery); return; }
       const info = checked(await this.client.contextSettings(this.model), this.model);
       if (this.closed || !this.current()) return;
-      this.info = info; this.pending = info.gb; this.note.setText(""); this.render();
+      this.info = info; this.pending = info.gb; this.failed = false; this.note.setText(""); this.render();
     } catch (error) { if (!this.closed) this.note.setText(error.message); }
+  }
+  renderRecovery(info) {
+    this.body.empty(); this.note.setText(""); this.restarted = false;
+    this.body.createEl("p", { text: info.owner_running === false ? "⚠ Nuru is paused: a model load was interrupted" : "⚠ Nuru is paused: local model compute is reserved", cls: "nuru-context-warning" });
+    this.body.createEl("p", { text: "Nuru can't tell whether Ollama is still loading. Messages wait until this is cleared. Your notes and chats are not affected." });
+    if (info.recovery && !info.run_id) this.body.createEl("p", { text: info.recovery });
+    const stopped = info.owner_running === false;
+    this.body.createEl("p", { text: stopped ? "✓ The Nuru that started it has stopped" : "The Nuru that started it is still running or its ownership could not be checked. Stop that service before continuing." });
+    const label = this.body.createEl("label");
+    const checkbox = label.createEl("input", { attr: { type: "checkbox" } });
+    label.createEl("span", { text: "I've restarted Ollama" });
+    this.body.createEl("p", { text: "Quit Ollama, then open it again. On macOS, use its menu bar icon.", cls: "nuru-context-muted" });
+    const actions = this.body.createDiv({ cls: "nuru-context-recovery-actions" });
+    const check = actions.createEl("button", { text: "Check again" });
+    const clear = actions.createEl("button", { text: "Clear and continue", cls: "mod-cta" });
+    clear.disabled = true;
+    checkbox.addEventListener("change", () => {
+      this.restarted = checkbox.checked;
+      clear.disabled = !stopped || !this.restarted || this.working || this.busy() || !/^[0-9a-f]{32}$/.test(info.run_id || "");
+    });
+    check.addEventListener("click", () => { if (!this.working) this.load(); });
+    clear.addEventListener("click", async () => {
+      if (clear.disabled || this.working || this.closed || !this.current() || !this.restarted) return;
+      this.working = true; clear.disabled = true; check.disabled = true; checkbox.disabled = true;
+      this.note.setText("Checking and clearing the reservation…");
+      try {
+        await this.client.recoverContext(info.run_id);
+        if (!this.closed && this.current()) await this.load();
+      } catch (error) {
+        if (!this.closed && this.current()) this.note.setText(`${error.message} Check again before retrying.`);
+      } finally {
+        this.working = false;
+        if (!this.closed && this.current()) {
+          check.disabled = false;
+          if (!this.recoveryReserved && this.info) this.render();
+        }
+      }
+    });
+    this.body.createEl("p", { text: `Reservation ${info.run_id || "unknown"} · Same steps: nuru-serve compute check`, cls: "nuru-context-muted" });
   }
   render() {
     this.body.empty();
@@ -64,7 +115,7 @@ class ContextPanel {
       if (info.limit_reason) this.body.createEl("p", { text: info.limit_reason, cls: "nuru-context-muted" });
       this.body.createEl("p", { text: HINT });
     } else if (info.can_measure) {
-      this.body.createEl("p", { text: "Measure memory use before changing the size. Nuru briefly loads the model at three bounded sizes, then puts it back. This takes about a minute; chat waits. It cannot run while a reply is in progress." });
+      this.body.createEl("p", { text: "Measure memory use before changing the size. Nuru briefly loads the model at a few bounded sizes, then puts it back. This may take a few minutes; chat waits. It cannot run while a reply is in progress." });
       this.body.createEl("p", { text: "Only when you press it. Never in the background.", cls: "nuru-context-muted" });
     }
     if (info.reason) this.body.createEl("p", { text: info.reason });
@@ -96,4 +147,4 @@ class ContextPanel {
     }
   }
 }
-module.exports = { ContextPanel, checked };
+module.exports = { ContextPanel, checked, checkedRecovery };

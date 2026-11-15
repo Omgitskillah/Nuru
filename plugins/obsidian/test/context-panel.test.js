@@ -2,14 +2,16 @@
 const { until } = require("./helpers/setup");
 require("obsidian");
 const test = require("node:test"), assert = require("node:assert/strict");
-const { ContextPanel, checked } = require("../lib/context-panel");
+const { ContextPanel, checked, checkedRecovery } = require("../lib/context-panel");
 const fresh = (extra = {}) => ({ model: "qwen", revision: "r1", window_tokens: 32768, measured: false, can_measure: true, busy: false, ...extra });
 const measured = (extra = {}) => fresh({ measured: true, gb: 2, min_gb: 1, max_gb: 4, max_tokens: 65536, bytes_per_token: 65536, ...extra });
 const panels = [], roots = [];
 test.afterEach(() => { for (const p of panels.splice(0)) p.close(false); for (const r of roots.splice(0)) r.remove(); });
-async function setup({ info = fresh(), change, get, ...options } = {}) {
+async function setup({ info = fresh(), change, get, recovery, recover, ...options } = {}) {
   const root = document.body.createDiv(), anchor = root.createEl("span", { attr: { tabindex: "0" } }); roots.push(root);
   const calls = [], client = { async contextSettings(model) { calls.push(["read", model]); return get ? get() : info; }, async changeContext(...args) { calls.push(["change", ...args]); return change ? change(...args) : measured(); } };
+  if (recovery) client.contextRecovery = recovery;
+  if (recover) client.recoverContext = recover;
   const panel = new ContextPanel(anchor, { client, model: "qwen", label: "Qwen", ...options }); panels.push(panel); await panel.ready;
   return { panel, anchor, calls };
 }
@@ -74,4 +76,47 @@ test("a measured but unapplied suggestion can Apply without first changing its G
   const { panel, calls } = await setup({ info: measured({ needs_apply: true }) });
   assert.equal(panel.action.disabled, false);
   await panel.run("apply"); assert.equal(calls.length, 2);
+});
+
+const reservation = (changes = {}) => ({ reserved: true, owner_running: false, run_id: "a".repeat(32), ...changes });
+function recoveryButtons(panel) { return [...panel.body.querySelectorAll("button")]; }
+test("recovery is explicit, requires both checks, clears once and restores enabled controls", async () => {
+  let reserved = true, finish; const releases = [], pauses = [];
+  const { panel, calls } = await setup({ recovery: async () => reserved ? reservation() : { reserved: false },
+    recover: (id) => { releases.push(id); return new Promise((resolve) => { finish = () => { reserved = false; resolve({ reserved: false }); }; }); },
+    recoveryChanged: (paused) => pauses.push(paused) });
+  assert.equal(calls.length, 0); assert.match(panel.body.textContent, /Nuru is paused/);
+  const [check, clear] = recoveryButtons(panel), checkbox = panel.body.querySelector("input");
+  assert.ok(clear.disabled); clear.click(); assert.equal(releases.length, 0);
+  checkbox.checked = true; checkbox.dispatchEvent(new Event("change")); assert.equal(clear.disabled, false);
+  clear.click(); clear.click(); assert.deepEqual(releases, ["a".repeat(32)]); assert.ok(check.disabled && checkbox.disabled);
+  finish(); await until(() => !panel.working);
+  assert.deepEqual(pauses, [true, false]); assert.equal(panel.action.disabled, false); assert.equal(calls.length, 1);
+});
+test("live or unknown owner cannot clear even with checkbox; Check again discards acknowledgement", async () => {
+  for (const changes of [{ owner_running: true }, { run_id: undefined, recovery: "Restart Nuru and Ollama" }]) {
+    const { panel } = await setup({ recovery: async () => reservation(changes), recover: () => { throw new Error("must not clear"); } });
+    const checkbox = panel.body.querySelector("input"); checkbox.checked = true; checkbox.dispatchEvent(new Event("change"));
+    assert.equal(recoveryButtons(panel)[1].disabled, true);
+    recoveryButtons(panel)[0].click(); await until(() => panel.body.querySelector("input") !== checkbox);
+    assert.equal(panel.body.querySelector("input").checked, false);
+  }
+});
+test("failed recovery never retries itself; check again is required", async () => {
+  let attempts = 0;
+  const { panel } = await setup({ recovery: async () => reservation(), recover: async () => { attempts++; throw new Error("owner changed"); } });
+  const checkbox = panel.body.querySelector("input"); checkbox.checked = true; checkbox.dispatchEvent(new Event("change"));
+  recoveryButtons(panel)[1].click(); await until(() => !panel.working);
+  assert.equal(attempts, 1); assert.match(panel.note.textContent, /owner changed/);
+  assert.ok(recoveryButtons(panel)[1].disabled); assert.equal(recoveryButtons(panel)[0].disabled, false);
+});
+test("invalid and late recovery reads cannot change a closed or navigated panel", async () => {
+  const bad = await setup({ recovery: async () => null }); assert.match(bad.panel.note.textContent, /Invalid recovery/);
+  let finish; const pending = setup({ recovery: () => new Promise((resolve) => { finish = resolve; }) });
+  panels.at(-1).close(); finish(reservation()); const { panel } = await pending; assert.equal(panel.info, undefined);
+});
+
+test("malformed recovery status cannot enable clearing or unpause the composer", () => {
+  for (const bad of [null, {}, { reserved: true }, reservation({ owner_running: "false" }), reservation({ run_id: "bad" }), reservation({ recovery: {} }), reservation({ recovery: "x".repeat(1001) })]) assert.throws(() => checkedRecovery(bad));
+  assert.equal(checkedRecovery({ reserved: false }).reserved, false);
 });

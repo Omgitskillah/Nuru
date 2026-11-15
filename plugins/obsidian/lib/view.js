@@ -16,7 +16,7 @@ const { LaunchProblem } = require("./launcher");
 const { renderReply, sourceLink, linkSources } = require("./render");
 const sourceTargets = require("./sources");
 const { HistoryModal } = require("./history");
-const { ContextPanel } = require("./context-panel");
+const { ContextPanel, checkedRecovery } = require("./context-panel");
 const { TurnRunner } = require("./turns");
 
 const VIEW_TYPE = "nuru-chat";
@@ -212,6 +212,8 @@ class ChatView extends ItemView {
     if (generation !== this.generation) return;
     this.client = client;
     this.showService(status);
+    await this.refreshRecovery(client);
+    if (generation !== this.generation) return;
     this.setStatus("");
     if (await this.loadConversations(generation)) await this.openConversation(this.plugin.settings.conversationId);
   }
@@ -318,7 +320,7 @@ class ChatView extends ItemView {
   // in the same conversation again reuses its request IDs, so the service replays it rather than starting
   // a second turn. Anything else first finds out what became of it, without leaving this conversation.
   async send() {
-    if (this.sending || !this.client) return;
+    if (this.sending || !this.client || this.computePaused) return;
     const text = this.input.value.trim();
     if (!text) return;
     this.sending = true;
@@ -371,7 +373,7 @@ class ChatView extends ItemView {
       }
     } finally {
       this.sending = false;
-      this.sendButton.disabled = false;
+      this.sendButton.disabled = Boolean(this.computePaused);
       this.updateButtons();
     }
   }
@@ -621,6 +623,7 @@ class ChatView extends ItemView {
     const client = this.client, generation = this.generation;
     this.contextPanel = new ContextPanel(this.contextRing, {
       client, model, label: this.currentModel()?.label || model,
+      recoveryChanged: (paused) => this.setComputePaused(paused),
       usage: this.contextRing.getAttribute("title"), busy: () => Boolean(this.running),
       current: () => this.client === client && this.generation === generation &&
         (this.choice?.model ?? this.service?.models?.default) === model,
@@ -631,6 +634,14 @@ class ChatView extends ItemView {
         this.renderContextRing();
       },
     });
+  }
+
+  setComputePaused(paused) {
+    this.computePaused = paused;
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1;
+    this.contextRing?.toggleClass("nuru-context-paused", paused);
+    if (this.contextRing) this.contextRing.setAttr("aria-description", paused ? "Model load interrupted; open recovery" : "");
+    this.updateButtons();
   }
 
   renderContextRing() {
@@ -1020,11 +1031,24 @@ class ChatView extends ItemView {
     return this.checkStatus();
   }
 
+  async refreshRecovery(client) {
+    if (!client.contextRecovery) return;
+    try {
+      const generation = this.recoveryGeneration;
+      const info = checkedRecovery(await client.contextRecovery());
+      if (client === this.client && generation === this.recoveryGeneration) this.setComputePaused(info.reserved);
+    } catch (_) { /* Keep the last known pause state on transport or validation failure. */ }
+  }
+
   checkStatus() {
     if (this.statusCheck || !this.client) return;
     const client = this.client;
     return this.statusCheck = client.status()
-      .then((status) => { if (client === this.client) this.showService(status); })
+      .then(async (status) => {
+        if (client !== this.client) return;
+        this.showService(status);
+        await this.refreshRecovery(client);
+      })
       .catch(() => {}) // the turn's own stream reports a lost service
       .finally(() => {
         this.statusCheck = null;
@@ -1061,6 +1085,7 @@ class ChatView extends ItemView {
   updateButtons() {
     if (!this.sendButton) return;
     this.running = [...this.turns.values()].some((turn) => !turn.runner.display.ended && turn.runner.connection !== "lost");
+    this.sendButton.disabled = Boolean(this.sending || (this.computePaused && !this.running));
     setIcon(this.sendButton, this.running ? "square" : "arrow-up");
     this.sendButton.toggleClass("nuru-stop", this.running);
     this.sendButton.setAttr("aria-label", this.running ? "Stop Nuru" : "Send");

@@ -290,3 +290,17 @@ test("F40 reads escape model IDs and reload requests never retry on lost answers
   assert.equal(calls.length, 2); assert.equal(calls[1][1].method, "PUT");
   assert.deepEqual(JSON.parse(calls[1][1].body), { model: "qwen", operation: "measure", expected_revision: "r1" });
 });
+
+
+test("F40 recovery reads are authenticated and release is one exact acknowledged request without retry", async () => {
+  const calls = [];
+  const client = new NuruClient({ baseUrl: "http://x", token: "secret", fetch: async (url, init) => {
+    calls.push([url, init]); if (init.method === "PUT") throw new Error("lost reply");
+    return json(200, { reserved: false });
+  } });
+  assert.deepEqual(await client.contextRecovery(), { reserved: false });
+  await assert.rejects(client.recoverContext("a".repeat(32)));
+  assert.equal(calls.length, 2); assert.match(calls[0][0], /models\/context\/recovery$/);
+  assert.equal(calls[0][1].headers.Authorization, "Bearer secret");
+  assert.deepEqual(JSON.parse(calls[1][1].body), { run_id: "a".repeat(32), ollama_restarted: true });
+});

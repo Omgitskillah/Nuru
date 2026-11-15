@@ -89,3 +89,8 @@
 .nuru-context-size strong { font-size: 1.6em; }
 .nuru-context-size > button { font-size: 1.6em; min-width: 42px; min-height: 42px; }
 .nuru-context-panel > button { margin-top: 8px; }
+
+.nuru-context-ring.nuru-context-paused::after { content: "!"; position: absolute; top: -4px; right: -4px; border-radius: 50%; width: 13px; height: 13px; line-height: 13px; text-align: center; font-weight: bold; color: var(--background-primary); background: var(--text-warning); }
+.nuru-context-ring.nuru-context-paused { position: relative; }
+.nuru-context-warning { padding: 12px; border-radius: var(--radius-m); color: var(--text-warning); background: var(--background-secondary); font-weight: bold; }
+.nuru-context-recovery-actions { display: flex; gap: 12px; margin-top: 12px; }

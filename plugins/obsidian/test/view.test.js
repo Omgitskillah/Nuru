@@ -1617,3 +1617,28 @@ test("F40 ring opens the model panel by keyboard, preserves draft and omissions,
   await view.openConversation(null); assert.equal(view.contextPanel.closed, true);
   await view.close();
 });
+
+
+test("F40 recovery pauses sending without losing the draft, retains pause on failed checks, and unpauses", async () => {
+  const client = fakeClient(); let reserved = true;
+  client.contextRecovery = async () => ({ reserved, ...(reserved ? { owner_running: false, run_id: "a".repeat(32) } : {}) });
+  const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  view.input.value = "keep my draft";
+  await view.checkStatus(); assert.ok(view.sendButton.disabled); assert.ok(view.contextRing.classList.contains("nuru-context-paused"));
+  await view.send(); assert.equal(client.calls.filter((c) => c[0] === "submit").length, 0); assert.equal(view.input.value, "keep my draft");
+  const working = client.contextRecovery; client.contextRecovery = async () => { throw new Error("offline"); };
+  await view.checkStatus(); assert.ok(view.computePaused);
+  client.contextRecovery = working; reserved = false;
+  await view.checkStatus(); assert.equal(view.sendButton.disabled, false); assert.equal(view.computePaused, false);
+});
+
+test("F40 stale status response cannot undo explicit recovery or a client switch", async () => {
+  const client = fakeClient(); const { view } = await open({ client, status: { ready: { chat: "ready" }, models: MODELS } });
+  let finish; client.contextRecovery = () => new Promise((resolve) => { finish = resolve; });
+  const pending = view.checkStatus(); await until(() => finish);
+  view.setComputePaused(false); finish({ reserved: true, owner_running: false }); await pending;
+  assert.equal(view.computePaused, false);
+  finish = null; const old = view.checkStatus(); await until(() => finish);
+  view.client = fakeClient(); finish({ reserved: true, owner_running: false }); await old;
+  assert.equal(view.computePaused, false);
+});

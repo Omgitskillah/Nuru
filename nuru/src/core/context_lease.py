@@ -2,6 +2,8 @@
 import json
 import os
 import secrets
+
+import psutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,7 +25,7 @@ class ComputeLease:
             self.path.mkdir(mode=0o700)
         except FileExistsError:
             raise Unsupported("Local model compute is reserved; wait for its owner to finish") from None
-        self.owner = {"owner": "Nuru F40", "run_id": self.run, "pid": os.getpid(), "models": [self.model],
+        self.owner = {"owner": "Nuru F40", "run_id": self.run, "pid": os.getpid(), "process_created": psutil.Process().create_time(), "models": [self.model],
                       "purpose": "Explicit context-memory measurement or reload",
                       "expected_duration": "Up to four bounded loads plus restore; no expiry on uncertainty", "acquired_at": datetime.now(timezone.utc).isoformat()}
         # An interrupted metadata write intentionally leaves the reservation occupied.

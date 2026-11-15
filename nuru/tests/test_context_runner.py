@@ -41,7 +41,7 @@ def test_metadata_and_memory_are_read_only_and_fingerprinted():
 def test_load_is_bounded_empty_and_actual_context_and_gpu_are_verified():
     r, h = setup(); sample, placement = r.load("qwen", 16384)
     assert sample == Sample(16384, 5_000_000_000) and placement == "gpu"
-    assert [c for c in h.calls if c[0] == "POST"][0][2] == {"json": {"model": "nuru", "options": {"num_ctx": 16384}, "keep_alive": "30m", "stream": False}, "timeout": 30}
+    assert [c for c in h.calls if c[0] == "POST"][0][2] == {"json": {"model": "nuru", "options": {"num_ctx": 16384}, "keep_alive": "30m", "stream": False}, "timeout": (10, 300)}
     for vram, expected in ((0, "cpu"), (1, "mixed")):
         h.rows[0]["size_vram"] = vram; assert r.verify("qwen", 16384)[1] == expected
     r.unload_owned("qwen"); assert h.rows == []
@@ -108,3 +108,22 @@ def test_normal_chat_lookup_tolerates_embedding_residency_but_measurement_does_n
     assert r.verify("qwen", 16384, exclusive=False)[0].window == 16384
     with pytest.raises(Unsupported): r.resident("qwen")
     with pytest.raises(Unsupported): r.load("qwen", 32768)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("inf"), float("nan"), 3601])
+def test_invalid_load_wait_is_rejected(timeout):
+    with pytest.raises(ValueError): Runner(lambda model: model, load_timeout=timeout)
+
+
+def test_cleanup_can_leave_other_resident_models_untouched():
+    r, h = setup(); r.load("qwen", 16384)
+    h.rows.append({"name": "embedding:latest"})
+    original = h.post
+    def unload(url, **kwargs):
+        response = original(url, **kwargs)
+        h.rows = [{"name": "embedding:latest"}]
+        return response
+    h.post = unload
+    r.unload_owned("qwen", exclusive=False)
+    assert h.rows == [{"name": "embedding:latest"}]
+    assert h.calls[-2][2]["json"] == {"model": "nuru", "keep_alive": 0}

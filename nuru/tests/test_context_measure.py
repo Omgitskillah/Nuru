@@ -77,7 +77,7 @@ def test_bad_budget_or_admin_limit_refuses_before_model_loads():
     with pytest.raises(Unsupported): measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
     assert not r.calls and not lease.retained
 
-@pytest.mark.parametrize("stage", [2, 3])
+@pytest.mark.parametrize("stage", [2])
 def test_placement_change_restores_original_state_and_refuses_measurement(stage):
     r, lease = Fake(), Lease(); original = r.cold_load
     def changed(model, window):
@@ -123,3 +123,17 @@ def test_memory_pressure_after_slope_probes_cannot_trigger_an_oversized_candidat
     with pytest.raises(Unsupported, match="available memory"):
         measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
     assert r.calls == [8192, 16384, 32768] and not lease.retained
+
+
+@pytest.mark.parametrize("spill_both", [False, True])
+def test_candidate_spill_steps_down_and_restores(spill_both):
+    r, lease = Fake(), Lease(); original = r.cold_load
+    def changed(model, window):
+        point, place = original(model, window)
+        spill = len(r.calls) == 3 or (spill_both and len(r.calls) == 4)
+        return point, "mixed" if spill else place
+    r.cold_load = changed
+    result = measure(r, "qwen", LAYOUT, minimum=16384, lease=lease)
+    assert r.calls[3] < r.calls[2] and r.calls[-1] == 32768
+    assert result.curve.maximum == (16384 if spill_both else r.calls[3])
+    assert result.placement == "gpu" and not lease.retained

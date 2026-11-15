@@ -668,6 +668,7 @@ def serve(port: int, queue_limit: int, remote_origin: str | None = None, remote_
         current = base_factory(conversation_id)
         current.context_policy = driver.window
         current.context_verify = driver.verify_loaded
+        current.context_before_load = driver.before_load
         return current
     service = Service(store, ConversationStore(db_path), factory, vault, queue_limit=queue_limit,
                       models=lambda: main_models.choices(default_model), vault_uuid=vault_uuid)
@@ -765,6 +766,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--managed", action="store_true",
                         help="started by the Obsidian plugin: stop when stdin closes; another vault may stop it when idle")
     commands = parser.add_subparsers(dest="command")
+    recovery = commands.add_parser("compute", help="inspect or explicitly recover an abandoned local compute reservation")
+    recovery.add_argument("action", choices=["check", "release"])
+    recovery.add_argument("--run-id", help="exact reservation ID shown by compute check")
+    recovery.add_argument("--ollama-restarted", action="store_true", help="confirm you stopped the owner and restarted Ollama after the interrupted operation")
     commands.add_parser("remote-check", help="inspect Tailscale HTTPS target and reject public Funnel; read-only")
     vault_command = commands.add_parser("vault", help="vault IDs on this computer: list, or settle a copied vault")
     vault_command.add_argument("action", choices=["list", "rebind", "clone", "adopt-legacy"])
@@ -792,6 +797,14 @@ def main(argv: list[str] | None = None) -> None:
             args.remote_origin = remote_access.https_origin(args.remote_origin)
         except ValueError as error:
             parser.error(str(error))
+    if args.command == "compute":
+        from core import context_recovery
+        try:
+            result = context_recovery.inspect() if args.action == "check" else context_recovery.release(args.run_id, ollama_restarted=args.ollama_restarted)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        print(json.dumps(result))
+        return
     if args.command == "remote-check":
         from core.service.private_transport import inspect
         if not args.remote_origin:

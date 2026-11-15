@@ -21,10 +21,13 @@ class Uncertain(RuntimeError):
 
 
 class Runner:
-    def __init__(self, alias, *, http=requests, base=None, memory=psutil.virtual_memory):
+    def __init__(self, alias, *, http=requests, base=None, memory=psutil.virtual_memory, load_timeout=300):
         self.alias, self.http = alias, http
         self.base = base or ollama.BASE
         self.memory = memory
+        if type(load_timeout) not in (int, float) or not 0 < load_timeout <= 3600:
+            raise ValueError("Load request timeout must be between zero and one hour")
+        self.load_timeout = load_timeout
         self.uncertain = False
 
     def _get(self, path):
@@ -90,7 +93,7 @@ class Runner:
             raise Uncertain("A previous load is still uncertain; reconcile it before another load")
         try:
             response = self.http.post(self.base + "/api/generate", json={"model": self.alias(model),
-                "options": {"num_ctx": window}, "keep_alive": "30m", "stream": False}, timeout=30)
+                "options": {"num_ctx": window}, "keep_alive": "30m", "stream": False}, timeout=(10, self.load_timeout))
             response.raise_for_status()
         except requests.RequestException as error:
             self.uncertain = True
@@ -111,9 +114,9 @@ class Runner:
         self.unload_owned(model)
         return self.load(model, window)
 
-    def unload_owned(self, model):
+    def unload_owned(self, model, *, exclusive=True):
         """Only the reserved target may be unloaded for an explicit measurement or restoration."""
-        self.resident(model)
+        self.resident(model, exclusive=exclusive)
         if self.uncertain:
             raise Uncertain("An uncertain load must be reconciled before restoration")
         try:
@@ -122,5 +125,5 @@ class Runner:
         except requests.RequestException as error:
             self.uncertain = True
             raise Uncertain("Model restoration is uncertain") from error
-        if self.resident(model) is not None:
+        if self.resident(model, exclusive=exclusive) is not None:
             raise Unsupported("The initially-unloaded model could not be restored to that state")

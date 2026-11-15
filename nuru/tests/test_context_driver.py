@@ -149,3 +149,35 @@ def test_saved_window_normal_chat_uses_nonexclusive_residency_checks(tmp_path):
     d.verify_loaded("qwen")
     assert not d.describe("qwen")["can_measure"]
     with pytest.raises(Unsupported): d.apply("qwen", 1, prefs.read("qwen", d.root).revision)
+
+
+def test_saved_choice_after_unload_uses_measured_curve_on_16gb_machine(tmp_path):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    r.resident = lambda *args, **kwargs: None
+    r.available = lambda: (16_000_000_000, 12_000_000_000)
+    assert d.window("qwen", {}, 8192) == 26755
+
+
+def test_exact_resident_choice_does_not_require_additional_free_memory(tmp_path):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    def no_memory_probe():
+        raise AssertionError("An existing verified allocation needs no memory preflight")
+    r.available = no_memory_probe
+    assert d.window("qwen", {}, 8192) == 26755
+    r.size_offset = 500_000_000
+    with pytest.raises(Unsupported): d.window("qwen", {}, 8192)
+
+
+@pytest.mark.parametrize("initially_resident", [False, True])
+def test_post_load_mismatch_cleans_only_newly_loaded_target(tmp_path, initially_resident):
+    d, r = setup(tmp_path); d.measure("qwen"); d.apply("qwen", 1, "initial")
+    original = r.resident
+    if not initially_resident: r.resident = lambda *args, **kwargs: None
+    d.before_load("qwen")
+    r.resident = original
+    r.size_offset = 500_000_000
+    unloaded = []
+    r.unload_owned = lambda model, **kwargs: unloaded.append((model, kwargs))
+    with pytest.raises(Unsupported): d.verify_loaded("qwen")
+    assert unloaded == ([] if initially_resident else [("qwen", {"exclusive": False})])
+    assert not d.pending_loads

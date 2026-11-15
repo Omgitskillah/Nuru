@@ -75,9 +75,11 @@ def measure(runner, model, layout, *, minimum: int, lease, admin_limit=None, pro
                 break
             progress(3 + attempt, 4)
             point, location = runner.cold_load(model, proposed)
-            if location != placement or runner.metadata(model)[1:] != (digest, version, fingerprint):
-                raise Unsupported("Model placement or runner configuration changed during measurement")
+            if runner.metadata(model)[1:] != (digest, version, fingerprint):
+                raise Unsupported("Runner configuration changed during measurement")
             try:
+                if location != placement:
+                    raise Unsupported("Candidate changed model placement")
                 verified = fit(layout, points[0], points[1], point)
                 verified_point = point
                 break

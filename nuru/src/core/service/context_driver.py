@@ -21,6 +21,7 @@ class ContextDriver:
         self.progress = None
         self.owns_compute = False
         self.live_keys = {}
+        self.pending_loads = set()
 
     def _minimum(self, model):
         s = self.service._session
@@ -55,7 +56,7 @@ class ContextDriver:
         try:
             minimum = self._minimum(model)
             if self.compute_blocked():
-                raise Unsupported("Local compute is reserved or uncertain; wait for its owner to reconcile it")
+                raise Unsupported("Local compute is reserved or uncertain; stop the owning service, restart Ollama, then use nuru-serve compute check for recovery")
             resident = self.runner.resident(model)  # no load, and no implicit eviction of another model
             if resident is not None:
                 window = _integer(resident.get("context_length"), "actual context window")
@@ -154,24 +155,24 @@ class ContextDriver:
         return _integer(resident.get("context_length"), "current runtime window") if resident is not None else self.default_window({"context_window": layout.window})
 
     def _affordable(self, model, value, record, *, exclusive=True):
-        total, available = self.runner.available()
         row = self.runner.resident(model, exclusive=exclusive)
-        available = min(total, available + self.runner.reclaimable(row))
-        budget = min(total * 66 // 100, available * 8 // 10)
-        # A resident reference checks this runner configuration. Without one, account
-        # for the worst supported precision/slot product rather than trusting an old
-        # calibration across an unobservable server restart/configuration change.
         if row is not None:
             point, _ = self.runner.verify(model, row["context_length"], exclusive=exclusive)
             if not record.curve.agrees(point): raise Unsupported("Memory use changed: measure again")
-            allocation = record.curve.intercept + record.curve.allocation(value)
-        else:
-            allocation = record.curve.intercept + record.curve.geometry.bytes_per_token * value * 5
+            # Reusing this exact allocation needs no additional memory or reload.
+            if point.window == value:
+                return
+        total, available = self.runner.available()
+        available = min(total, available + self.runner.reclaimable(row))
+        budget = min(total * 66 // 100, available * 8 // 10)
+        # Identity was checked by the caller; use the measured curve for preflight.
+        # Post-load verification still rejects hidden runner configuration changes.
+        allocation = record.curve.intercept + record.curve.allocation(value)
         if allocation + 1_500_000_000 > budget:
             raise Unsupported("Not enough available memory for this context size; measure again or choose a smaller size")
 
     def window(self, model, info, default):
-        if self.compute_blocked(): raise Unsupported("Local model compute is reserved or uncertain; wait for its owner to reconcile it")
+        if self.compute_blocked(): raise Unsupported("Local model compute is reserved or uncertain; stop the owning service, restart Ollama, then use nuru-serve compute check for recovery")
         saved = preferences.read(model, self.root)
         if model not in self.live and saved.tokens is None: return default
         _, layout, record = self._evidence(model)
@@ -189,12 +190,26 @@ class ContextDriver:
             raise Unsupported("The saved context exceeds the current verified/admin limit; reopen the panel")
         return value
 
+    def before_load(self, model):
+        # Track only a model absent immediately before this attempt. Never unload a
+        # pre-existing allocation merely because a later verification disagrees.
+        self.pending_loads.discard(model)
+        if self.runner.resident(model, exclusive=False) is None:
+            self.pending_loads.add(model)
+
     def verify_loaded(self, model):
+        newly_loaded = model in self.pending_loads
+        self.pending_loads.discard(model)
         saved = preferences.read(model, self.root)
         if model not in self.live and saved.tokens is None: return
-        _, _, record = self._evidence(model)
-        if record is None: raise Unsupported("Memory use changed: measure again")
-        value = self.live.get(model, saved.tokens)
-        point, location = self.runner.verify(model, value, exclusive=False)
-        if not record.curve.agrees(point):
-            raise Unsupported("Memory use changed: measure again")
+        try:
+            _, _, record = self._evidence(model)
+            if record is None: raise Unsupported("Memory use changed: measure again")
+            value = self.live.get(model, saved.tokens)
+            point, location = self.runner.verify(model, value, exclusive=False)
+            if not record.curve.agrees(point):
+                raise Unsupported("Memory use changed: measure again")
+        except Unsupported:
+            if newly_loaded:
+                self.runner.unload_owned(model, exclusive=False)
+            raise

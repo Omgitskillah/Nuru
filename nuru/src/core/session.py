@@ -771,6 +771,9 @@ class Session:
         """Make sure the Ollama server is up and the model is loaded, starting either if it isn't."""
         server_spawned = ensure_server_running()  # with Claude too: the notes search embeds through Ollama
         model = self._model()
+        before_load = getattr(self, "context_before_load", None)
+        if before_load is not None and not self._claude():
+            before_load(self.model_id())
         self.model_info = claude_provider.model_info(model) if self._claude() else ensure_model_loaded(model, self._requested_context)
         verify = getattr(self, "context_verify", None)
         if verify is not None and not self._claude():
